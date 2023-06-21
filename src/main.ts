@@ -89,9 +89,8 @@ async function run(): Promise<void> {
 
 **» [View eval results](${output.shareableUrl}) «**`;
       await octokit.rest.issues.createComment({
-        issue_number: github.context.issue.number,
-        owner: github.context.repo.owner,
-        repo: github.context.repo.repo,
+        ...github.context.repo,
+        issue_number: pullRequest.number,
         body,
       });
     }
