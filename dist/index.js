@@ -39,7 +39,6 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-// src/main.ts
 const core = __importStar(__nccwpck_require__(2186));
 const github = __importStar(__nccwpck_require__(5438));
 const exec = __importStar(__nccwpck_require__(1514));
@@ -64,6 +63,7 @@ function run() {
             const cachePath = core.getInput('cache-path', { required: false });
             core.setSecret(openaiApiKey);
             core.setSecret(githubToken);
+            console.log('Github context payload:', github.context.payload);
             const pullRequest = github.context.payload.pull_request;
             if (!pullRequest) {
                 throw new Error('No pull request found.');
