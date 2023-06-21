@@ -1,4 +1,3 @@
-// src/main.ts
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import * as exec from '@actions/exec';
@@ -25,6 +24,8 @@ async function run(): Promise<void> {
 
     core.setSecret(openaiApiKey);
     core.setSecret(githubToken);
+
+    console.log('Github context payload:', github.context.payload);
 
     const pullRequest = github.context.payload.pull_request;
     if (!pullRequest) {
