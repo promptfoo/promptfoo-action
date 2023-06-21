@@ -61,13 +61,12 @@ async function run(): Promise<void> {
         outputFile,
         '--share',
       ];
-      await exec.exec('npx promptfoo', promptfooArgs, {
-        env: {
-          ...process.env,
-          OPENAI_API_KEY: openaiApiKey,
-          PROMPTFOO_CACHE_PATH: cachePath,
-        },
-      });
+      const env = {
+        ...process.env,
+        ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
+        ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
+      };
+      await exec.exec('npx promptfoo', promptfooArgs, {env});
 
       // Comment PR
       const octokit = github.getOctokit(githubToken);
