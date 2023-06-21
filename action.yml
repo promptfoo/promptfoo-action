@@ -1,7 +1,7 @@
 name: 'Promptfoo Evaluate'
 description: 'Automatically run a before vs. after evaluation of a prompt change using `promptfoo` and Github Actions.'
 runs:
-  using: 'node18'
+  using: 'node16'
   main: 'dist/index.js'
 inputs:
   github-token:
