@@ -61,7 +61,7 @@ function run() {
             const configPath = core.getInput('config', {
                 required: true,
             });
-            const cachePath = core.getInput('cache-path', { required: true });
+            const cachePath = core.getInput('cache-path', { required: false });
             core.setSecret(openaiApiKey);
             core.setSecret(githubToken);
             const pullRequest = github.context.payload.pull_request;
@@ -94,9 +94,8 @@ function run() {
                     outputFile,
                     '--share',
                 ];
-                yield exec.exec('npx promptfoo', promptfooArgs, {
-                    env: Object.assign(Object.assign({}, process.env), { OPENAI_API_KEY: openaiApiKey, PROMPTFOO_CACHE_PATH: cachePath }),
-                });
+                const env = Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
+                yield exec.exec('npx promptfoo', promptfooArgs, { env });
                 // Comment PR
                 const octokit = github.getOctokit(githubToken);
                 const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
