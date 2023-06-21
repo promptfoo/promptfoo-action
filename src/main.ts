@@ -21,7 +21,7 @@ async function run(): Promise<void> {
     const configPath: string = core.getInput('config', {
       required: true,
     });
-    const cachePath: string = core.getInput('cache-path', {required: true});
+    const cachePath: string = core.getInput('cache-path', {required: false});
 
     core.setSecret(openaiApiKey);
     core.setSecret(githubToken);
