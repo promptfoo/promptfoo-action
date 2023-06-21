@@ -33,12 +33,19 @@ async function run(): Promise<void> {
     }
 
     // Get list of changed files in PR
-    await exec.exec('git', ['fetch', 'origin', pullRequest.base.ref]);
-    await exec.exec('git', ['fetch', 'origin', pullRequest.head.ref]);
+    const baseRef = pullRequest.base.ref;
+    const headRef = pullRequest.head.ref;
+
+    await exec.exec('git', ['fetch', 'origin', baseRef]);
+    const baseFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
+
+    await exec.exec('git', ['fetch', 'origin', headRef]);
+    const headFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
+
     const changedFiles = await gitInterface.diff([
       '--name-only',
-      pullRequest.base.ref,
-      pullRequest.head.ref,
+      baseFetchHead,
+      headFetchHead,
     ]);
 
     // Resolve glob patterns to file paths

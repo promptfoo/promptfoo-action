@@ -69,12 +69,16 @@ function run() {
                 throw new Error('No pull request found.');
             }
             // Get list of changed files in PR
-            yield exec.exec('git', ['fetch', 'origin', pullRequest.base.ref]);
-            yield exec.exec('git', ['fetch', 'origin', pullRequest.head.ref]);
+            const baseRef = pullRequest.base.ref;
+            const headRef = pullRequest.head.ref;
+            yield exec.exec('git', ['fetch', 'origin', baseRef]);
+            const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
+            yield exec.exec('git', ['fetch', 'origin', headRef]);
+            const headFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
             const changedFiles = yield gitInterface.diff([
                 '--name-only',
-                pullRequest.base.ref,
-                pullRequest.head.ref,
+                baseFetchHead,
+                headFetchHead,
             ]);
             // Resolve glob patterns to file paths
             const promptFiles = [];
