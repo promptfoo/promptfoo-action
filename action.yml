@@ -1,11 +1,21 @@
-name: 'Your name here'
-description: 'Provide a description here'
-author: 'Your name or organization here'
-inputs:
-  milliseconds: # change this
-    required: true
-    description: 'input description here'
-    default: 'default value if applicable'
+name: 'Promptfoo Evaluate'
+description: 'Automatically run a before vs. after evaluation of a prompt change using `promptfoo` and Github Actions.'
 runs:
-  using: 'node16'
+  using: 'node18'
   main: 'dist/index.js'
+inputs:
+  github-token:
+    description: 'Github Token, used to add comments to the PR'
+    required: true
+  prompts:
+    description: 'List of prompt files to watch'
+    required: true
+  config:
+    description: 'Path to a promptfoo config file'
+    required: true
+  cache-path:
+    description: 'Path to cache directory'
+    required: false
+  openai-api-key:
+    description: 'OpenAI API Key'
+    required: false
