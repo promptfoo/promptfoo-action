@@ -69,6 +69,8 @@ function run() {
                 throw new Error('No pull request found.');
             }
             // Get list of changed files in PR
+            yield exec.exec('git', ['fetch', 'origin', pullRequest.base.ref]);
+            yield exec.exec('git', ['fetch', 'origin', pullRequest.head.ref]);
             const changedFiles = yield gitInterface.diff([
                 '--name-only',
                 pullRequest.base.ref,

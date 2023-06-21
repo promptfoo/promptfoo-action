@@ -33,6 +33,8 @@ async function run(): Promise<void> {
     }
 
     // Get list of changed files in PR
+    await exec.exec('git', ['fetch', 'origin', pullRequest.base.ref]);
+    await exec.exec('git', ['fetch', 'origin', pullRequest.head.ref]);
     const changedFiles = await gitInterface.diff([
       '--name-only',
       pullRequest.base.ref,
