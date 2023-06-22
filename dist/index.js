@@ -84,7 +84,7 @@ function run() {
             const promptFiles = [];
             for (const globPattern of promptFilesGlobs) {
                 const matches = glob.sync(globPattern);
-                const changedMatches = matches.filter(file => changedFiles.includes(file));
+                const changedMatches = matches.filter(file => file !== configPath && changedFiles.includes(file));
                 promptFiles.push(...changedMatches);
             }
             // Run promptfoo evaluation only for changed files
@@ -105,7 +105,8 @@ function run() {
                 // Comment PR
                 const octokit = github.getOctokit(githubToken);
                 const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
-                const body = `⚠️ LLM prompt was modified.
+                const modifiedFiles = promptFiles.join(', ');
+                const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
