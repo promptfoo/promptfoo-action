@@ -39,6 +39,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.handleError = exports.run = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const github = __importStar(__nccwpck_require__(5438));
 const exec = __importStar(__nccwpck_require__(1514));
@@ -63,7 +64,6 @@ function run() {
             const cachePath = core.getInput('cache-path', { required: false });
             core.setSecret(openaiApiKey);
             core.setSecret(githubToken);
-            console.log('Github context payload:', github.context.payload);
             const pullRequest = github.context.payload.pull_request;
             if (!pullRequest) {
                 throw new Error('No pull request found.');
@@ -112,20 +112,27 @@ function run() {
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 **» [View eval results](${output.shareableUrl}) «**`;
-                yield octokit.rest.issues.createComment({
-                    issue_number: github.context.issue.number,
-                    owner: github.context.repo.owner,
-                    repo: github.context.repo.repo,
-                    body,
-                });
+                yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             }
         }
         catch (error) {
-            core.setFailed(error.message);
+            if (error instanceof Error) {
+                handleError(error);
+            }
+            else {
+                handleError(new Error(String(error)));
+            }
         }
     });
 }
-run();
+exports.run = run;
+function handleError(error) {
+    core.setFailed(error.message);
+}
+exports.handleError = handleError;
+if (require.main === require.cache[eval('__filename')]) {
+    run();
+}
 
 
 /***/ }),
