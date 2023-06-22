@@ -24,6 +24,6 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           prompts: |
-            prompts/**
-            more-prompts/*.json
+            prompts/*.{json,txt}
+            more-prompts/*.{json,txt}
           config: 'prompts/promptfooconfig.yaml'

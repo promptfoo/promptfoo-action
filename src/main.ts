@@ -50,8 +50,8 @@ export async function run(): Promise<void> {
     const promptFiles: string[] = [];
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern);
-      const changedMatches = matches.filter(file =>
-        changedFiles.includes(file),
+      const changedMatches = matches.filter(
+        file => file !== configPath && changedFiles.includes(file),
       );
       promptFiles.push(...changedMatches);
     }
@@ -79,7 +79,8 @@ export async function run(): Promise<void> {
       // Comment PR
       const octokit = github.getOctokit(githubToken);
       const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
-      const body = `⚠️ LLM prompt was modified.
+      const modifiedFiles = promptFiles.join(', ');
+      const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
