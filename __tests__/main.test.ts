@@ -1,15 +1,14 @@
-import * as process from 'process';
-import * as cp from 'child_process';
-import * as path from 'path';
+import { run, handleError } from '../src/main';
+import * as core from '@actions/core';
 import {expect, test} from '@jest/globals';
 
-// shows how the runner will run a javascript action with env / stdout protocol
-test('test runs', () => {
-  process.env['INPUT_MILLISECONDS'] = '500';
-  const np = process.execPath;
-  const ip = path.join(__dirname, '..', 'lib', 'main.js');
-  const options: cp.ExecFileSyncOptions = {
-    env: process.env,
-  };
-  console.log(cp.execFileSync(np, [ip], options).toString());
+test('test runs', async () => {
+  await run();
+});
+
+test('handleError calls core.setFailed with error message', () => {
+  const error = new Error('Test error');
+  const setFailedMock = jest.spyOn(core, 'setFailed');
+  handleError(error);
+  expect(setFailedMock).toHaveBeenCalledWith('Test error');
 });

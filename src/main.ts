@@ -8,7 +8,7 @@ import {simpleGit} from 'simple-git';
 
 const gitInterface = simpleGit();
 
-async function run(): Promise<void> {
+export async function run(): Promise<void> {
   try {
     const openaiApiKey: string = core.getInput('openai-api-key', {
       required: false,
@@ -24,8 +24,6 @@ async function run(): Promise<void> {
 
     core.setSecret(openaiApiKey);
     core.setSecret(githubToken);
-
-    console.log('Github context payload:', github.context.payload);
 
     const pullRequest = github.context.payload.pull_request;
     if (!pullRequest) {
@@ -95,8 +93,18 @@ async function run(): Promise<void> {
       });
     }
   } catch (error) {
-    core.setFailed((error as Error).message);
+    if (error instanceof Error) {
+      handleError(error);
+    } else {
+      handleError(new Error(String(error)));
+    }
   }
 }
 
-run();
+export function handleError(error: Error): void {
+  core.setFailed(error.message);
+}
+
+if (require.main === module) {
+  run();
+}
