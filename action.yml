@@ -19,3 +19,6 @@ inputs:
   openai-api-key:
     description: 'OpenAI API Key'
     required: false
+branding:
+  icon: 'box'
+  color: 'yellow'
