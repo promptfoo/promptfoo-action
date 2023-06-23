@@ -35,6 +35,9 @@ on:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
+    permissions:
+      # This permission is used to post comments on Pull Requests
+      pull-requests: write
     steps:
       # This cache is optional, but you'll save money and time by setting it up!
       - name: Set up promptfoo cache
@@ -55,5 +58,7 @@ jobs:
           config: 'prompts/promptfooconfig.yaml'
           cache-path: ~/.cache/promptfoo
 ```
+
+If you are using an OpenAI model, remember to create the secret in Repository Settings > Secrets and Variables > Actions > New repository secret.
 
 For more information on how to set up the promptfoo config, see [documentation](https://promptfoo.dev/docs/getting-started).
