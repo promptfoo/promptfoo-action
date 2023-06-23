@@ -14,6 +14,8 @@ jobs:
       - run: |
           npm run all
   test: # make sure the action works on a clean machine without building
+    permissions:
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -22,6 +24,6 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           prompts: |
-            prompts/**
-            more-prompts/*.json
+            prompts/*.{json,txt}
+            more-prompts/*.{json,txt}
           config: 'prompts/promptfooconfig.yaml'

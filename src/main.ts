@@ -1,4 +1,3 @@
-// src/main.ts
 import * as core from '@actions/core';
 import * as github from '@actions/github';
 import * as exec from '@actions/exec';
@@ -9,7 +8,7 @@ import {simpleGit} from 'simple-git';
 
 const gitInterface = simpleGit();
 
-async function run(): Promise<void> {
+export async function run(): Promise<void> {
   try {
     const openaiApiKey: string = core.getInput('openai-api-key', {
       required: false,
@@ -21,7 +20,7 @@ async function run(): Promise<void> {
     const configPath: string = core.getInput('config', {
       required: true,
     });
-    const cachePath: string = core.getInput('cache-path', {required: true});
+    const cachePath: string = core.getInput('cache-path', {required: false});
 
     core.setSecret(openaiApiKey);
     core.setSecret(githubToken);
@@ -32,18 +31,27 @@ async function run(): Promise<void> {
     }
 
     // Get list of changed files in PR
+    const baseRef = pullRequest.base.ref;
+    const headRef = pullRequest.head.ref;
+
+    await exec.exec('git', ['fetch', 'origin', baseRef]);
+    const baseFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
+
+    await exec.exec('git', ['fetch', 'origin', headRef]);
+    const headFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
+
     const changedFiles = await gitInterface.diff([
       '--name-only',
-      pullRequest.base.ref,
-      pullRequest.head.ref,
+      baseFetchHead,
+      headFetchHead,
     ]);
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern);
-      const changedMatches = matches.filter(file =>
-        changedFiles.includes(file),
+      const changedMatches = matches.filter(
+        file => file !== configPath && changedFiles.includes(file),
       );
       promptFiles.push(...changedMatches);
     }
@@ -61,18 +69,18 @@ async function run(): Promise<void> {
         outputFile,
         '--share',
       ];
-      await exec.exec('npx promptfoo', promptfooArgs, {
-        env: {
-          ...process.env,
-          OPENAI_API_KEY: openaiApiKey,
-          PROMPTFOO_CACHE_PATH: cachePath,
-        },
-      });
+      const env = {
+        ...process.env,
+        ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
+        ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
+      };
+      await exec.exec('npx promptfoo', promptfooArgs, {env});
 
       // Comment PR
       const octokit = github.getOctokit(githubToken);
       const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
-      const body = `⚠️ LLM prompt was modified.
+      const modifiedFiles = promptFiles.join(', ');
+      const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
@@ -80,15 +88,24 @@ async function run(): Promise<void> {
 
 **» [View eval results](${output.shareableUrl}) «**`;
       await octokit.rest.issues.createComment({
-        issue_number: github.context.issue.number,
-        owner: github.context.repo.owner,
-        repo: github.context.repo.repo,
+        ...github.context.repo,
+        issue_number: pullRequest.number,
         body,
       });
     }
   } catch (error) {
-    core.setFailed((error as Error).message);
+    if (error instanceof Error) {
+      handleError(error);
+    } else {
+      handleError(new Error(String(error)));
+    }
   }
 }
 
-run();
+export function handleError(error: Error): void {
+  core.setFailed(error.message);
+}
+
+if (require.main === module) {
+  run();
+}

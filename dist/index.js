@@ -39,7 +39,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-// src/main.ts
+exports.handleError = exports.run = void 0;
 const core = __importStar(__nccwpck_require__(2186));
 const github = __importStar(__nccwpck_require__(5438));
 const exec = __importStar(__nccwpck_require__(1514));
@@ -61,7 +61,7 @@ function run() {
             const configPath = core.getInput('config', {
                 required: true,
             });
-            const cachePath = core.getInput('cache-path', { required: true });
+            const cachePath = core.getInput('cache-path', { required: false });
             core.setSecret(openaiApiKey);
             core.setSecret(githubToken);
             const pullRequest = github.context.payload.pull_request;
@@ -69,16 +69,22 @@ function run() {
                 throw new Error('No pull request found.');
             }
             // Get list of changed files in PR
+            const baseRef = pullRequest.base.ref;
+            const headRef = pullRequest.head.ref;
+            yield exec.exec('git', ['fetch', 'origin', baseRef]);
+            const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
+            yield exec.exec('git', ['fetch', 'origin', headRef]);
+            const headFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
             const changedFiles = yield gitInterface.diff([
                 '--name-only',
-                pullRequest.base.ref,
-                pullRequest.head.ref,
+                baseFetchHead,
+                headFetchHead,
             ]);
             // Resolve glob patterns to file paths
             const promptFiles = [];
             for (const globPattern of promptFilesGlobs) {
                 const matches = glob.sync(globPattern);
-                const changedMatches = matches.filter(file => changedFiles.includes(file));
+                const changedMatches = matches.filter(file => file !== configPath && changedFiles.includes(file));
                 promptFiles.push(...changedMatches);
             }
             // Run promptfoo evaluation only for changed files
@@ -94,33 +100,40 @@ function run() {
                     outputFile,
                     '--share',
                 ];
-                yield exec.exec('npx promptfoo', promptfooArgs, {
-                    env: Object.assign(Object.assign({}, process.env), { OPENAI_API_KEY: openaiApiKey, PROMPTFOO_CACHE_PATH: cachePath }),
-                });
+                const env = Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
+                yield exec.exec('npx promptfoo', promptfooArgs, { env });
                 // Comment PR
                 const octokit = github.getOctokit(githubToken);
                 const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
-                const body = `⚠️ LLM prompt was modified.
+                const modifiedFiles = promptFiles.join(', ');
+                const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 **» [View eval results](${output.shareableUrl}) «**`;
-                yield octokit.rest.issues.createComment({
-                    issue_number: github.context.issue.number,
-                    owner: github.context.repo.owner,
-                    repo: github.context.repo.repo,
-                    body,
-                });
+                yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             }
         }
         catch (error) {
-            core.setFailed(error.message);
+            if (error instanceof Error) {
+                handleError(error);
+            }
+            else {
+                handleError(new Error(String(error)));
+            }
         }
     });
 }
-run();
+exports.run = run;
+function handleError(error) {
+    core.setFailed(error.message);
+}
+exports.handleError = handleError;
+if (require.main === require.cache[eval('__filename')]) {
+    run();
+}
 
 
 /***/ }),
