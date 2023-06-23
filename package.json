@@ -1,8 +1,9 @@
 {
-  "name": "typescript-action",
-  "version": "0.0.0",
-  "private": true,
-  "description": "TypeScript template action",
+  "name": "promptfoo-action",
+  "version": "1.0.0",
+  "description": "GitHub Action for evaluating LLM outputs with promptfoo",
+  "author": "Ian Webster",
+  "license": "MIT",
   "main": "lib/main.js",
   "scripts": {
     "build": "tsc",
@@ -24,8 +25,6 @@
     "node",
     "setup"
   ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
     "@actions/core": "^1.10.0",
     "@actions/exec": "^1.1.1",

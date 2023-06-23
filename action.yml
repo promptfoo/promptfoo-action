@@ -1,5 +1,5 @@
-name: 'Test LLM prompts'
-description: 'Automatically run a before vs. after evaluation of a prompt change using Promptfoo.'
+name: 'Test LLM outputs'
+description: 'Automatically run a before vs. after evaluation of modified prompts using Promptfoo.'
 runs:
   using: 'node16'
   main: 'dist/index.js'
