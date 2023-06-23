@@ -1,6 +1,15 @@
 # Github Action for LLM Prompt Evaluation
 
-This Github Action runs `promptfoo eval` to produce a before/after view of prompts modified in a Pull Request.
+This Github Action uses [promptfoo](https://www.promptfoo.dev) to produce a before/after view of edit prompts.
+
+When you change a prompt, an eval will automatically be posted on the pull request:
+
+<img width="650" alt="pull request llm eval" src="https://github.com/typpo/promptfoo-action/assets/310310/ec75fb39-c6b1-4395-9e41-6d66a7bf8657"/>
+
+The provided link opens the promptfoo web viewer, which allows you to interactively explore the before vs. after:
+
+<img width="650" alt="promptfoo web viewer" src="https://github.com/typpo/promptfoo-action/assets/310310/d0ef0497-0c1a-4886-b115-1ee92680891b"/>
+
 
 ## Configuration
 
