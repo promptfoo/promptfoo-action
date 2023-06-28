@@ -11448,20 +11448,23 @@ function suffixPathsPlugin() {
     type: "spawn.args",
     action(data) {
       const prefix = [];
-      const suffix = [];
+      let suffix;
+      function append2(args) {
+        (suffix = suffix || []).push(...args);
+      }
       for (let i = 0; i < data.length; i++) {
         const param = data[i];
         if (isPathSpec(param)) {
-          suffix.push(...toPaths(param));
+          append2(toPaths(param));
           continue;
         }
         if (param === "--") {
-          suffix.push(...data.slice(i + 1).flatMap((item) => isPathSpec(item) && toPaths(item) || item));
+          append2(data.slice(i + 1).flatMap((item) => isPathSpec(item) && toPaths(item) || item));
           break;
         }
         prefix.push(param);
       }
-      return !suffix.length ? prefix : [...prefix, "--", ...suffix.map(String)];
+      return !suffix ? prefix : [...prefix, "--", ...suffix.map(String)];
     }
   };
 }
@@ -21427,6 +21430,29 @@ class PathBase {
     isUnknown() {
         return (this.#type & IFMT) === UNKNOWN;
     }
+    isType(type) {
+        return this[`is${type}`]();
+    }
+    getType() {
+        return this.isUnknown()
+            ? 'Unknown'
+            : this.isDirectory()
+                ? 'Directory'
+                : this.isFile()
+                    ? 'File'
+                    : this.isSymbolicLink()
+                        ? 'SymbolicLink'
+                        : this.isFIFO()
+                            ? 'FIFO'
+                            : this.isCharacterDevice()
+                                ? 'CharacterDevice'
+                                : this.isBlockDevice()
+                                    ? 'BlockDevice'
+                                    : /* c8 ignore start */ this.isSocket()
+                                        ? 'Socket'
+                                        : 'Unknown';
+        /* c8 ignore stop */
+    }
     /**
      * Is the Path a regular file?
      */
@@ -23998,7 +24024,7 @@ class LRUCache {
         const pcall = (res, rej) => {
             const fmp = this.#fetchMethod?.(k, v, fetchOpts);
             if (fmp && fmp instanceof Promise) {
-                fmp.then(v => res(v), rej);
+                fmp.then(v => res(v === undefined ? undefined : v), rej);
             }
             // ignored, we go until we finish, regardless.
             // defer check until we are actually aborting,
@@ -24006,7 +24032,7 @@ class LRUCache {
             ac.signal.addEventListener('abort', () => {
                 if (!options.ignoreFetchAbort ||
                     options.allowStaleOnFetchAbort) {
-                    res();
+                    res(undefined);
                     // when it eventually resolves, update the cache.
                     if (options.allowStaleOnFetchAbort) {
                         res = v => cb(v, true);
