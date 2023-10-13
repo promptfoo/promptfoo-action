@@ -36,21 +36,23 @@ jobs:
   evaluate:
     runs-on: ubuntu-latest
     permissions:
-      # This permission is used to post comments on Pull Requests
-      pull-requests: write
+      contents: read # Required for actions/checkout
+      pull-requests: write # Ability to post comments on Pull Requests
     steps:
+      # Required for promptfoo-action's git usage
+      - uses: actions/checkout@v4 
+
       # This cache is optional, but you'll save money and time by setting it up!
       - name: Set up promptfoo cache
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: ~/.cache/promptfoo
           key: ${{ runner.os }}-promptfoo-v1
           restore-keys: |
             ${{ runner.os }}-promptfoo-
 
-      # This step will actually run the before/after evaluation
       - name: Run promptfoo evaluation
-        uses: typpo/promptfoo-action@v1
+        uses: promptfoo/promptfoo-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
