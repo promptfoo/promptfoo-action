@@ -13,6 +13,9 @@ export async function run(): Promise<void> {
     const openaiApiKey: string = core.getInput('openai-api-key', {
       required: false,
     });
+    const azureOpenaiApiKey: string = core.getInput('azure-openai-api-key', {
+      required: false,
+    });
     const githubToken: string = core.getInput('github-token', {required: true});
     const promptFilesGlobs: string[] = core
       .getInput('prompts', {required: true})
@@ -23,6 +26,7 @@ export async function run(): Promise<void> {
     const cachePath: string = core.getInput('cache-path', {required: false});
 
     core.setSecret(openaiApiKey);
+    core.setSecret(azureOpenaiApiKey);
     core.setSecret(githubToken);
 
     const pullRequest = github.context.payload.pull_request;
@@ -71,6 +75,7 @@ export async function run(): Promise<void> {
       ];
       const env = {
         ...process.env,
+        ...(azureOpenaiApiKey ? {AZURE_OPENAI_API_KEY: azureOpenaiApiKey} : {}),
         ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
         ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
       };
