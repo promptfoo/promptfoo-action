@@ -21,6 +21,7 @@ The action can be configured using the following inputs:
 | `prompts` | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate. | Yes |
 | `config` | The path to the configuration file. This file contains settings for the action. | Yes |
 | `openai-api-key` | The API key for OpenAI. Used to authenticate requests to the OpenAI API. | No |
+| `azure-openai-api-key` | The API key for Azure OpenAI. Used to authenticate requests to the Azure OpenAI API. | No |
 | `cache-path` | The path to the cache. This is where the action stores temporary data. | No |
 
 Here is a generic Github Action configuration using "typpo/promptfoo-action@v1" with a cache step:

@@ -19,6 +19,9 @@ inputs:
   openai-api-key:
     description: 'OpenAI API Key'
     required: false
+  azure-openai-api-key:
+    description: 'Azure OpenAI API Key'
+    required: false
 branding:
   icon: 'box'
   color: 'yellow'
