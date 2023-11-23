@@ -25,13 +25,17 @@ function findConfigFileFromPromptFile(promptFile: string): string | undefined {
 async function promptfoo(
   promptFile: string,
   env: {[key: string]: string},
+  promptFileId: number,
 ): Promise<string> {
   const configFile = findConfigFileFromPromptFile(promptFile);
   if (!configFile) {
     return `⚠️ No config file found for ${promptFile}\n\n`;
   }
 
-  const outputFile = path.join(process.cwd(), 'output.json');
+  const outputFile = path.join(
+    process.cwd(),
+    `promptfoo-output-${promptFileId}.json`,
+  );
   const promptfooArgs = [
     'eval',
     '-c',
@@ -40,7 +44,6 @@ async function promptfoo(
     promptFile,
     '-o',
     outputFile,
-    '--share',
   ];
   await exec.exec('npx promptfoo', promptfooArgs, {env});
   const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
@@ -110,9 +113,10 @@ export async function run(): Promise<void> {
       ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
       ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
     };
+    let promptFileId = 1;
     for (const promptFile of promptFiles) {
       core.info(`Running promptfoo for ${promptFile}`);
-      body += await promptfoo(promptFile, env);
+      body += await promptfoo(promptFile, env, promptFileId++);
     }
 
     // Comment PR

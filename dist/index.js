@@ -61,13 +61,13 @@ function findConfigFileFromPromptFile(promptFile) {
     }
     return undefined;
 }
-function promptfoo(promptFile, env) {
+function promptfoo(promptFile, env, promptFileId) {
     return __awaiter(this, void 0, void 0, function* () {
         const configFile = findConfigFileFromPromptFile(promptFile);
         if (!configFile) {
             return `⚠️ No config file found for ${promptFile}\n\n`;
         }
-        const outputFile = path.join(process.cwd(), 'output.json');
+        const outputFile = path.join(process.cwd(), `promptfoo-output-${promptFileId}.json`);
         const promptfooArgs = [
             'eval',
             '-c',
@@ -76,7 +76,6 @@ function promptfoo(promptFile, env) {
             promptFile,
             '-o',
             outputFile,
-            '--share',
         ];
         yield exec.exec('npx promptfoo', promptfooArgs, { env });
         const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
@@ -113,7 +112,10 @@ function run() {
                 throw new Error('No pull request found.');
             }
             core.info(`git diff --name-only origin/main`);
-            const changedFiles = yield gitInterface.diff(['--name-only', 'origin/main']);
+            const changedFiles = yield gitInterface.diff([
+                '--name-only',
+                'origin/main',
+            ]);
             core.info('Changed files:');
             core.info(JSON.stringify(changedFiles));
             // Resolve glob patterns to file paths
@@ -132,9 +134,10 @@ function run() {
             // and run promptfoo with that .yaml file as config
             let body = '';
             const env = Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (azureOpenaiApiKey ? { AZURE_OPENAI_API_KEY: azureOpenaiApiKey } : {})), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
+            let promptFileId = 1;
             for (const promptFile of promptFiles) {
                 core.info(`Running promptfoo for ${promptFile}`);
-                body += yield promptfoo(promptFile, env);
+                body += yield promptfoo(promptFile, env, promptFileId++);
             }
             // Comment PR
             const octokit = github.getOctokit(githubToken);
