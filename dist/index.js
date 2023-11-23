@@ -48,21 +48,65 @@ const fs = __importStar(__nccwpck_require__(7147));
 const glob = __importStar(__nccwpck_require__(3277));
 const simple_git_1 = __nccwpck_require__(9103);
 const gitInterface = (0, simple_git_1.simpleGit)();
+function findConfigFileFromPromptFile(promptFile) {
+    // Look for all yarm files and look for promptFile in them
+    const yamlFiles = glob.sync('*.yaml');
+    for (const yamlFile of yamlFiles) {
+        core.info(`Checking if ${yamlFile} refers to ${promptFile}`);
+        const yamlContent = fs.readFileSync(yamlFile, 'utf8');
+        if (yamlContent.includes(promptFile)) {
+            core.info(`YES!`);
+            return yamlFile;
+        }
+    }
+    return undefined;
+}
+function promptfoo(promptFile, env) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const configFile = findConfigFileFromPromptFile(promptFile);
+        if (!configFile) {
+            return `⚠️ No config file found for ${promptFile}\n\n`;
+        }
+        const outputFile = path.join(process.cwd(), 'output.json');
+        const promptfooArgs = [
+            'eval',
+            '-c',
+            configFile,
+            '--prompts',
+            promptFile,
+            '-o',
+            outputFile,
+            '--share',
+        ];
+        yield exec.exec('npx promptfoo', promptfooArgs, { env });
+        const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
+        return `⚠️ LLM prompt was modified in ${promptFile}
+
+| Success | Failure |
+|---------|---------|
+| ${output.results.stats.successes}      | ${output.results.stats.failures}       |
+
+**» [View eval results](${output.shareableUrl}) «**
+
+`;
+    });
+}
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             const openaiApiKey = core.getInput('openai-api-key', {
                 required: false,
             });
+            const azureOpenaiApiKey = core.getInput('azure-openai-api-key', {
+                required: false,
+            });
             const githubToken = core.getInput('github-token', { required: true });
             const promptFilesGlobs = core
                 .getInput('prompts', { required: true })
                 .split('\n');
-            const configPath = core.getInput('config', {
-                required: true,
-            });
             const cachePath = core.getInput('cache-path', { required: false });
             core.setSecret(openaiApiKey);
+            core.setSecret(azureOpenaiApiKey);
             core.setSecret(githubToken);
             const pullRequest = github.context.payload.pull_request;
             if (!pullRequest) {
@@ -71,9 +115,9 @@ function run() {
             // Get list of changed files in PR
             const baseRef = pullRequest.base.ref;
             const headRef = pullRequest.head.ref;
-            yield exec.exec('git', ['fetch', 'origin', baseRef]);
+            core.info(`Fetching...`);
+            yield exec.exec('git', ['fetch', 'origin', baseRef, headRef]);
             const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
-            yield exec.exec('git', ['fetch', 'origin', headRef]);
             const headFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
             const changedFiles = yield gitInterface.diff([
                 '--name-only',
@@ -84,37 +128,24 @@ function run() {
             const promptFiles = [];
             for (const globPattern of promptFilesGlobs) {
                 const matches = glob.sync(globPattern);
-                const changedMatches = matches.filter(file => file !== configPath && changedFiles.includes(file));
+                const changedMatches = matches.filter(file => changedFiles.includes(file));
                 promptFiles.push(...changedMatches);
             }
             // Run promptfoo evaluation only for changed files
-            if (promptFiles.length > 0) {
-                const outputFile = path.join(process.cwd(), 'output.json');
-                const promptfooArgs = [
-                    'eval',
-                    '-c',
-                    configPath,
-                    '--prompts',
-                    ...promptFiles,
-                    '-o',
-                    outputFile,
-                    '--share',
-                ];
-                const env = Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
-                yield exec.exec('npx promptfoo', promptfooArgs, { env });
-                // Comment PR
-                const octokit = github.getOctokit(githubToken);
-                const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
-                const modifiedFiles = promptFiles.join(', ');
-                const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
-
-| Success | Failure |
-|---------|---------|
-| ${output.results.stats.successes}      | ${output.results.stats.failures}       |
-
-**» [View eval results](${output.shareableUrl}) «**`;
-                yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
+            if (promptFiles.length === 0) {
+                return;
             }
+            // For each prompt file, find the .yaml file that references it
+            // and run promptfoo with that .yaml file as config
+            let body = '';
+            const env = Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (azureOpenaiApiKey ? { AZURE_OPENAI_API_KEY: azureOpenaiApiKey } : {})), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
+            for (const promptFile of promptFiles) {
+                core.info(`Running promptfoo for ${promptFile}`);
+                body += yield promptfoo(promptFile, env);
+            }
+            // Comment PR
+            const octokit = github.getOctokit(githubToken);
+            yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
         }
         catch (error) {
             if (error instanceof Error) {
