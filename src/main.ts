@@ -8,14 +8,40 @@ import {simpleGit} from 'simple-git';
 
 const gitInterface = simpleGit();
 
+interface IPromptFooOutput {
+  results: {
+    results: {
+      success: boolean;
+      error: string;
+      vars: {[key: string]: string | boolean | number} | undefined;
+    }[];
+  };
+}
+
+function displayResultSummary(output: IPromptFooOutput): string {
+  let text = '';
+  for (const result of output.results.results) {
+    if (result.success === true) {
+      continue;
+    }
+    text += `*FAILED:*
+      \`\`\`${result.error}\`\`\`
+    
+      *VARS:*
+      \`\`\`${JSON.stringify(result.vars)}\`\`\`
+
+      ----------
+    `;
+  }
+  return text;
+}
+
 function findConfigFileFromPromptFile(promptFile: string): string | undefined {
   // Look for all yarm files and look for promptFile in them
   const yamlFiles = glob.sync('*.yaml');
   for (const yamlFile of yamlFiles) {
-    core.info(`Checking if ${yamlFile} refers to ${promptFile}`);
     const yamlContent = fs.readFileSync(yamlFile, 'utf8');
     if (yamlContent.includes(promptFile)) {
-      core.info(`YES!`);
       return yamlFile;
     }
   }
@@ -51,9 +77,11 @@ async function promptfoo(
 
 | Success | Failure |
 |---------|---------|
-| ${output.results.stats.successes}      | ${output.results.stats.failures}       |
+| ${output.results.stats.successes}      | ${
+    output.results.stats.failures
+  }       |
 
-**» [View eval results](${output.shareableUrl}) «**
+${displayResultSummary(output)}
 
 `;
 }

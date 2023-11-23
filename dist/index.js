@@ -48,14 +48,29 @@ const fs = __importStar(__nccwpck_require__(7147));
 const glob = __importStar(__nccwpck_require__(3277));
 const simple_git_1 = __nccwpck_require__(9103);
 const gitInterface = (0, simple_git_1.simpleGit)();
+function displayResultSummary(output) {
+    let text = '';
+    for (const result of output.results.results) {
+        if (result.success === true) {
+            continue;
+        }
+        text += `*FAILED:*
+      \`\`\`${result.error}\`\`\`
+    
+      *VARS:*
+      \`\`\`${JSON.stringify(result.vars)}\`\`\`
+
+      ----------
+    `;
+    }
+    return text;
+}
 function findConfigFileFromPromptFile(promptFile) {
     // Look for all yarm files and look for promptFile in them
     const yamlFiles = glob.sync('*.yaml');
     for (const yamlFile of yamlFiles) {
-        core.info(`Checking if ${yamlFile} refers to ${promptFile}`);
         const yamlContent = fs.readFileSync(yamlFile, 'utf8');
         if (yamlContent.includes(promptFile)) {
-            core.info(`YES!`);
             return yamlFile;
         }
     }
@@ -85,7 +100,7 @@ function promptfoo(promptFile, env, promptFileId) {
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
-**» [View eval results](${output.shareableUrl}) «**
+${displayResultSummary(output)}
 
 `;
     });
