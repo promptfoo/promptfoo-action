@@ -13,10 +13,10 @@ function findConfigFileFromPromptFile(promptFile: string): string | undefined {
   // Look for all yarm files and look for promptFile in them
   const yamlFiles = glob.sync('*.yaml');
   for (const yamlFile of yamlFiles) {
-    console.log(`Checking if ${yamlFile} refers to ${promptFile}`);
+    core.info(`Checking if ${yamlFile} refers to ${promptFile}`);
     const yamlContent = fs.readFileSync(yamlFile, 'utf8');
     if (yamlContent.includes(promptFile)) {
-      console.log(`YES!`);
+      core.info(`YES!`);
       return yamlFile;
     }
   }
@@ -114,7 +114,7 @@ export async function run(): Promise<void> {
       ...(cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}),
     }
     for (const promptFile of promptFiles) {
-      console.log(`Running promptfoo for ${promptFile}`);
+      core.info(`Running promptfoo for ${promptFile}`);
       body += await promptfoo(promptFile, env);
     }
 
