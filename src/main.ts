@@ -13,8 +13,10 @@ function findConfigFileFromPromptFile(promptFile: string): string | undefined {
   // Look for all yarm files and look for promptFile in them
   const yamlFiles = glob.sync('*.yaml');
   for (const yamlFile of yamlFiles) {
+    console.log(`Checking if ${yamlFile} refers to ${promptFile}`);
     const yamlContent = fs.readFileSync(yamlFile, 'utf8');
     if (yamlContent.includes(promptFile)) {
+      console.log(`YES!`);
       return yamlFile;
     }
   }
