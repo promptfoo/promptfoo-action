@@ -79,7 +79,10 @@ export async function run(): Promise<void> {
     }
 
     core.info(`git diff --name-only origin/main`);
-    const changedFiles = await gitInterface.diff(['--name-only', 'origin/main']);
+    const changedFiles = await gitInterface.diff([
+      '--name-only',
+      'origin/main',
+    ]);
     core.info('Changed files:');
     core.info(JSON.stringify(changedFiles));
 

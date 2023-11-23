@@ -112,11 +112,8 @@ function run() {
             if (!pullRequest) {
                 throw new Error('No pull request found.');
             }
-            core.info(`git diff --name-only main`);
-            const changedFiles = yield gitInterface.diff([
-                '--name-only',
-                'main'
-            ]);
+            core.info(`git diff --name-only origin/main`);
+            const changedFiles = yield gitInterface.diff(['--name-only', 'origin/main']);
             core.info('Changed files:');
             core.info(JSON.stringify(changedFiles));
             // Resolve glob patterns to file paths
