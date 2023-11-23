@@ -30,7 +30,9 @@ ${result.error}
 \`\`\`
     
 **VARS:**
-\`\`\`${JSON.stringify(result.vars)}\`\`\`
+\`\`\`
+${JSON.stringify(result.vars)}
+\`\`\`
 
 ----------
 
@@ -76,7 +78,7 @@ async function promptfoo(
   ];
   await exec.exec('npx promptfoo', promptfooArgs, {env});
   const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
-  return `⚠️ LLM prompt was modified in ${promptFile}
+  return `# ${promptFile}
 
 | Success | Failure |
 |---------|---------|
