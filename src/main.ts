@@ -23,7 +23,12 @@ function findConfigFileFromPromptFile(promptFile: string): string | undefined {
   return undefined;
 }
 
-async function promptfoo(promptFile: string, configFile: string, env: any) {
+async function promptfoo(promptFile: string, env: any) {
+  const configFile = findConfigFileFromPromptFile(promptFile);
+  if (!configFile) {
+    return `⚠️ No config file found for ${promptFile}\n\n`;
+  }
+  
   const outputFile = path.join(process.cwd(), 'output.json');
   const promptfooArgs = [
     'eval',
@@ -109,12 +114,8 @@ export async function run(): Promise<void> {
       ...(cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}),
     }
     for (const promptFile of promptFiles) {
-      const configFile = findConfigFileFromPromptFile(promptFile);
-      if (!configFile) {
-        body += `⚠️ No config file found for ${promptFile}\n\n`;
-        continue;
-      }
-      body += await promptfoo(promptFile, configFile, env);
+      console.log(`Running promptfoo for ${promptFile}`);
+      body += await promptfoo(promptFile, env);
     }
 
     // Comment PR
