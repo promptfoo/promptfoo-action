@@ -54,14 +54,17 @@ function displayResultSummary(output) {
         if (result.success === true) {
             continue;
         }
-        text += `*FAILED:*
-      \`\`\`${result.error}\`\`\`
+        text += `**🚫 FAILED:**
+\`\`\`
+${result.error}
+\`\`\`
     
-      *VARS:*
-      \`\`\`${JSON.stringify(result.vars)}\`\`\`
+**VARS:**
+\`\`\`${JSON.stringify(result.vars)}\`\`\`
 
-      ----------
-    `;
+----------
+
+`;
     }
     return text;
 }
