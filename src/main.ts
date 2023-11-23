@@ -91,6 +91,8 @@ export async function run(): Promise<void> {
       baseFetchHead,
       headFetchHead,
     ]);
+    core.info('Changed files:');
+    core.info(JSON.stringify(changedFiles));
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
@@ -103,6 +105,7 @@ export async function run(): Promise<void> {
     }
 
     // Run promptfoo evaluation only for changed files
+    core.info(`Changed prompt files: ${promptFiles.join(', ')}`);
     if (promptFiles.length === 0) {
       return;
     }

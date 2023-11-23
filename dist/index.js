@@ -124,6 +124,8 @@ function run() {
                 baseFetchHead,
                 headFetchHead,
             ]);
+            core.info('Changed files:');
+            core.info(JSON.stringify(changedFiles));
             // Resolve glob patterns to file paths
             const promptFiles = [];
             for (const globPattern of promptFilesGlobs) {
@@ -132,6 +134,7 @@ function run() {
                 promptFiles.push(...changedMatches);
             }
             // Run promptfoo evaluation only for changed files
+            core.info(`Changed prompt files: ${promptFiles.join(', ')}`);
             if (promptFiles.length === 0) {
                 return;
             }
