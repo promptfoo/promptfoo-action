@@ -4,9 +4,47 @@ import * as exec from '@actions/exec';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import {simpleGit} from 'simple-git';
+import { simpleGit } from 'simple-git';
 
 const gitInterface = simpleGit();
+
+
+function findConfigFileFromPromptFile(promptFile: string): string | undefined {
+  // Look for all yarm files and look for promptFile in them
+  const yamlFiles = glob.sync('*.yaml');
+  for (const yamlFile of yamlFiles) {
+    const yamlContent = fs.readFileSync(yamlFile, 'utf8');
+    if (yamlContent.includes(promptFile)) {
+      return yamlFile;
+    }
+  }
+  return undefined;
+}
+
+async function promptfoo(promptFile: string, configFile: string, env: any) {
+  const outputFile = path.join(process.cwd(), 'output.json');
+  const promptfooArgs = [
+    'eval',
+    '-c',
+    configFile,
+    '--prompts',
+    promptFile,
+    '-o',
+    outputFile,
+    '--share',
+  ];
+  await exec.exec('npx promptfoo', promptfooArgs, { env });
+  const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
+  return `⚠️ LLM prompt was modified in ${promptFile}
+
+| Success | Failure |
+|---------|---------|
+| ${output.results.stats.successes}      | ${output.results.stats.failures}       |
+
+**» [View eval results](${output.shareableUrl}) «**
+
+`;
+}
 
 export async function run(): Promise<void> {
   try {
@@ -16,14 +54,11 @@ export async function run(): Promise<void> {
     const azureOpenaiApiKey: string = core.getInput('azure-openai-api-key', {
       required: false,
     });
-    const githubToken: string = core.getInput('github-token', {required: true});
+    const githubToken: string = core.getInput('github-token', { required: true });
     const promptFilesGlobs: string[] = core
-      .getInput('prompts', {required: true})
+      .getInput('prompts', { required: true })
       .split('\n');
-    const configPath: string = core.getInput('config', {
-      required: true,
-    });
-    const cachePath: string = core.getInput('cache-path', {required: false});
+    const cachePath: string = core.getInput('cache-path', { required: false });
 
     core.setSecret(openaiApiKey);
     core.setSecret(azureOpenaiApiKey);
@@ -36,11 +71,7 @@ export async function run(): Promise<void> {
 
     // Get list of changed files in PR
     const baseRef = pullRequest.base.ref;
-    console.log(`Base ref: ${baseRef}`);
-    
     const headRef = pullRequest.head.ref;
-    console.log(`Head ref: ${headRef}`);
-
     console.log(`Fetching...`);
     await exec.exec('git', ['fetch', 'origin', baseRef, headRef]);
     const baseFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
@@ -57,49 +88,40 @@ export async function run(): Promise<void> {
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern);
       const changedMatches = matches.filter(
-        file => file !== configPath && changedFiles.includes(file),
+        file => changedFiles.includes(file),
       );
       promptFiles.push(...changedMatches);
     }
 
     // Run promptfoo evaluation only for changed files
-    if (promptFiles.length > 0) {
-      const outputFile = path.join(process.cwd(), 'output.json');
-      const promptfooArgs = [
-        'eval',
-        '-c',
-        configPath,
-        '--prompts',
-        ...promptFiles,
-        '-o',
-        outputFile,
-        '--share',
-      ];
-      const env = {
-        ...process.env,
-        ...(azureOpenaiApiKey ? {AZURE_OPENAI_API_KEY: azureOpenaiApiKey} : {}),
-        ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
-        ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
-      };
-      await exec.exec('npx promptfoo', promptfooArgs, {env});
-
-      // Comment PR
-      const octokit = github.getOctokit(githubToken);
-      const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
-      const modifiedFiles = promptFiles.join(', ');
-      const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
-
-| Success | Failure |
-|---------|---------|
-| ${output.results.stats.successes}      | ${output.results.stats.failures}       |
-
-**» [View eval results](${output.shareableUrl}) «**`;
-      await octokit.rest.issues.createComment({
-        ...github.context.repo,
-        issue_number: pullRequest.number,
-        body,
-      });
+    if (promptFiles.length === 0) {
+      return;
     }
+    // For each prompt file, find the .yaml file that references it
+    // and run promptfoo with that .yaml file as config
+    let body = '';
+    const env = {
+      ...process.env,
+      ...(azureOpenaiApiKey ? { AZURE_OPENAI_API_KEY: azureOpenaiApiKey } : {}),
+      ...(openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {}),
+      ...(cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}),
+    }
+    for (const promptFile of promptFiles) {
+      const configFile = findConfigFileFromPromptFile(promptFile);
+      if (!configFile) {
+        body += `⚠️ No config file found for ${promptFile}\n\n`;
+        continue;
+      }
+      body += await promptfoo(promptFile, configFile, env);
+    }
+
+    // Comment PR
+    const octokit = github.getOctokit(githubToken);
+    await octokit.rest.issues.createComment({
+      ...github.context.repo,
+      issue_number: pullRequest.number,
+      body,
+    });
   } catch (error) {
     if (error instanceof Error) {
       handleError(error);

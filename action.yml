@@ -10,9 +10,6 @@ inputs:
   prompts:
     description: 'List of prompt files to watch'
     required: true
-  config:
-    description: 'Path to a promptfoo config file'
-    required: true
   cache-path:
     description: 'Path to cache directory'
     required: false
