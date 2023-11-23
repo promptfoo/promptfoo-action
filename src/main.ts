@@ -82,8 +82,9 @@ export async function run(): Promise<void> {
     const baseRef = pullRequest.base.ref;
     const headRef = pullRequest.head.ref;
     core.info(`Fetching...`);
-    await exec.exec('git', ['fetch', 'origin', baseRef, headRef]);
+    await exec.exec('git', ['fetch', 'origin', baseRef]);
     const baseFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
+    await exec.exec('git', ['fetch', 'origin', headRef]);
     const headFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
 
     const changedFiles = await gitInterface.diff([
