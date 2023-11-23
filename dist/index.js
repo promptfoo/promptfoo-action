@@ -112,17 +112,10 @@ function run() {
             if (!pullRequest) {
                 throw new Error('No pull request found.');
             }
-            // Get list of changed files in PR
-            const baseRef = pullRequest.base.ref;
-            const headRef = pullRequest.head.ref;
-            core.info(`Fetching...`);
-            yield exec.exec('git', ['fetch', 'origin', baseRef, headRef]);
-            const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
-            const headFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
+            core.info(`git diff --name-only main`);
             const changedFiles = yield gitInterface.diff([
                 '--name-only',
-                baseFetchHead,
-                headFetchHead,
+                'main'
             ]);
             core.info('Changed files:');
             core.info(JSON.stringify(changedFiles));

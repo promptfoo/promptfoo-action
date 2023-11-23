@@ -78,20 +78,8 @@ export async function run(): Promise<void> {
       throw new Error('No pull request found.');
     }
 
-    // Get list of changed files in PR
-    const baseRef = pullRequest.base.ref;
-    const headRef = pullRequest.head.ref;
-    core.info(`Fetching...`);
-    await exec.exec('git', ['fetch', 'origin', baseRef]);
-    const baseFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
-    await exec.exec('git', ['fetch', 'origin', headRef]);
-    const headFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
-
-    const changedFiles = await gitInterface.diff([
-      '--name-only',
-      baseFetchHead,
-      headFetchHead,
-    ]);
+    core.info(`git diff --name-only main`);
+    const changedFiles = await gitInterface.diff(['--name-only', 'main']);
     core.info('Changed files:');
     core.info(JSON.stringify(changedFiles));
 
