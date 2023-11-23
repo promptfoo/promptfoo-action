@@ -26,4 +26,3 @@ jobs:
           prompts: |
             prompts/*.{json,txt}
             more-prompts/*.{json,txt}
-          config: 'prompts/promptfooconfig.yaml'

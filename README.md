@@ -19,7 +19,6 @@ The action can be configured using the following inputs:
 | --- | --- | --- |
 | `github-token` | The Github token. Used to authenticate requests to the Github API. | Yes |
 | `prompts` | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate. | Yes |
-| `config` | The path to the configuration file. This file contains settings for the action. | Yes |
 | `openai-api-key` | The API key for OpenAI. Used to authenticate requests to the OpenAI API. | No |
 | `azure-openai-api-key` | The API key for Azure OpenAI. Used to authenticate requests to the Azure OpenAI API. | No |
 | `cache-path` | The path to the cache. This is where the action stores temporary data. | No |
@@ -58,7 +57,6 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           prompts: 'prompts/**/*.json'
-          config: 'prompts/promptfooconfig.yaml'
           cache-path: ~/.cache/promptfoo
 ```
 
