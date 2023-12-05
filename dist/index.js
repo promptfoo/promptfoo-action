@@ -115,6 +115,9 @@ function run() {
 **» [View eval results](${output.shareableUrl}) «**`;
                 yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             }
+            else {
+                core.info('No LLM prompt files were modified.');
+            }
         }
         catch (error) {
             if (error instanceof Error) {
