@@ -92,6 +92,8 @@ export async function run(): Promise<void> {
         issue_number: pullRequest.number,
         body,
       });
+    } else {
+      core.info('No LLM prompt files were modified.');
     }
   } catch (error) {
     if (error instanceof Error) {
