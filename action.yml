@@ -23,6 +23,10 @@ inputs:
     description: 'Version of promptfoo to use'
     required: false
     default: 'latest'
+  no-share:
+    description: 'Do not share the promptfoo result'
+    required: false
+    default: 'false'
 branding:
   icon: 'box'
   color: 'yellow'

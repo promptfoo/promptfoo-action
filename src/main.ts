@@ -24,6 +24,9 @@ export async function run(): Promise<void> {
     const version: string = core.getInput('promptfoo-version', {
       required: false,
     });
+    const noShare: boolean = core.getBooleanInput('no-share', {
+      required: false,
+    });
 
     core.setSecret(openaiApiKey);
     core.setSecret(githubToken);
@@ -70,8 +73,11 @@ export async function run(): Promise<void> {
         ...promptFiles,
         '-o',
         outputFile,
-        '--share',
       ];
+      if (!noShare) {
+        promptfooArgs.push('--share');
+      }
+
       const env = {
         ...process.env,
         ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),

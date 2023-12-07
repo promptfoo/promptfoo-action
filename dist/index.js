@@ -65,6 +65,9 @@ function run() {
             const version = core.getInput('promptfoo-version', {
                 required: false,
             });
+            const noShare = core.getBooleanInput('no-share', {
+                required: false,
+            });
             core.setSecret(openaiApiKey);
             core.setSecret(githubToken);
             const pullRequest = github.context.payload.pull_request;
@@ -101,8 +104,10 @@ function run() {
                     ...promptFiles,
                     '-o',
                     outputFile,
-                    '--share',
                 ];
+                if (!noShare) {
+                    promptfooArgs.push('--share');
+                }
                 const env = Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
                 yield exec.exec(`npx promptfoo@${version}`, promptfooArgs, { env });
                 // Comment PR
