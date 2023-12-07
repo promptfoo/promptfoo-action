@@ -21,6 +21,9 @@ export async function run(): Promise<void> {
       required: true,
     });
     const cachePath: string = core.getInput('cache-path', {required: false});
+    const version: string = core.getInput('promptfoo-version', {
+      required: false,
+    });
 
     core.setSecret(openaiApiKey);
     core.setSecret(githubToken);
@@ -74,7 +77,7 @@ export async function run(): Promise<void> {
         ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
         ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
       };
-      await exec.exec('npx promptfoo', promptfooArgs, {env});
+      await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {env});
 
       // Comment PR
       const octokit = github.getOctokit(githubToken);
