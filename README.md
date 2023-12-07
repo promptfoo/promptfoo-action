@@ -22,6 +22,7 @@ The action can be configured using the following inputs:
 | `config` | The path to the configuration file. This file contains settings for the action. | Yes |
 | `openai-api-key` | The API key for OpenAI. Used to authenticate requests to the OpenAI API. | No |
 | `cache-path` | The path to the cache. This is where the action stores temporary data. | No |
+| `promptfoo-version` | The version of promptfoo to use. Defaults to `latest` | No |
 
 Here is a generic Github Action configuration using "typpo/promptfoo-action@v1" with a cache step:
 
@@ -40,7 +41,7 @@ jobs:
       pull-requests: write # Ability to post comments on Pull Requests
     steps:
       # Required for promptfoo-action's git usage
-      - uses: actions/checkout@v4 
+      - uses: actions/checkout@v4
 
       # This cache is optional, but you'll save money and time by setting it up!
       - name: Set up promptfoo cache
