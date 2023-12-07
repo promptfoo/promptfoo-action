@@ -114,13 +114,19 @@ function run() {
                 const octokit = github.getOctokit(githubToken);
                 const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
                 const modifiedFiles = promptFiles.join(', ');
-                const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+                let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
-**» [View eval results](${output.shareableUrl}) «**`;
+`;
+                if (output.sharableUrl) {
+                    body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
+                }
+                else {
+                    body = body.concat('**» View eval results in CI console«**');
+                }
                 yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             }
             else {
