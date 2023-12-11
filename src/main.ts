@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as glob from 'glob';
 import {simpleGit} from 'simple-git';
 
+import type { OutputFile } from 'promptfoo';
+
 const gitInterface = simpleGit();
 
 export async function run(): Promise<void> {
@@ -81,7 +83,9 @@ export async function run(): Promise<void> {
 
       // Comment PR
       const octokit = github.getOctokit(githubToken);
-      const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
+      const output = JSON.parse(
+        fs.readFileSync(outputFile, 'utf8'),
+      ) as OutputFile;
       const modifiedFiles = promptFiles.join(', ');
       const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
