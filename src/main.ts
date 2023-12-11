@@ -6,7 +6,7 @@ import * as fs from 'fs';
 import * as glob from 'glob';
 import {simpleGit} from 'simple-git';
 
-import type { OutputFile } from 'promptfoo';
+import type {OutputFile} from 'promptfoo';
 
 const gitInterface = simpleGit();
 
