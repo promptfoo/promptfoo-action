@@ -54,6 +54,30 @@ function run() {
             const openaiApiKey = core.getInput('openai-api-key', {
                 required: false,
             });
+            const azureApiKey = core.getInput('azure-api-key', {
+                required: false,
+            });
+            const anthropicApiKey = core.getInput('anthropic-api-key', {
+                required: false,
+            });
+            const huggingfaceApiKey = core.getInput('huggingface-api-key', {
+                required: false,
+            });
+            const awsAccessKeyId = core.getInput('aws-access-key-id', {
+                required: false,
+            });
+            const awsSecretAccessKey = core.getInput('aws-secret-access-key', {
+                required: false,
+            });
+            const replicateApiKey = core.getInput('replicate-api-key', {
+                required: false,
+            });
+            const palmApiKey = core.getInput('palm-api-key', {
+                required: false,
+            });
+            const vertexApiKey = core.getInput('vertex-api-key', {
+                required: false,
+            });
             const githubToken = core.getInput('github-token', { required: true });
             const promptFilesGlobs = core
                 .getInput('prompts', { required: true })
@@ -103,7 +127,9 @@ function run() {
                     outputFile,
                     '--share',
                 ];
-                const env = Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
+                const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
+                    ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
+                    : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
                 yield exec.exec(`npx promptfoo@${version}`, promptfooArgs, { env });
                 // Comment PR
                 const octokit = github.getOctokit(githubToken);
