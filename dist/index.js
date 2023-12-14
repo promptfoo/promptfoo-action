@@ -89,9 +89,6 @@ function run() {
             const version = core.getInput('promptfoo-version', {
                 required: false,
             });
-            const noShare = core.getBooleanInput('no-share', {
-                required: false,
-            });
             core.setSecret(openaiApiKey);
             core.setSecret(githubToken);
             const pullRequest = github.context.payload.pull_request;
@@ -128,10 +125,8 @@ function run() {
                     ...promptFiles,
                     '-o',
                     outputFile,
+                    '--share',
                 ];
-                if (!noShare) {
-                    promptfooArgs.push('--share');
-                }
                 const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
                     ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
                     : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
@@ -140,19 +135,13 @@ function run() {
                 const octokit = github.getOctokit(githubToken);
                 const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
                 const modifiedFiles = promptFiles.join(', ');
-                let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+                const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
-`;
-                if (output.shareableUrl) {
-                    body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
-                }
-                else {
-                    body = body.concat('**» View eval results in CI console«**');
-                }
+**» [View eval results](${output.shareableUrl}) «**`;
                 yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             }
             else {
