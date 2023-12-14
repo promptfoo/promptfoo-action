@@ -50,6 +50,9 @@ export async function run(): Promise<void> {
     const version: string = core.getInput('promptfoo-version', {
       required: false,
     });
+    const noShare: boolean = core.getBooleanInput('no-share', {
+      required: false,
+    });
 
     core.setSecret(openaiApiKey);
     core.setSecret(githubToken);
@@ -96,8 +99,11 @@ export async function run(): Promise<void> {
         ...promptFiles,
         '-o',
         outputFile,
-        '--share',
       ];
+      if (!noShare) {
+        promptfooArgs.push('--share');
+      }
+
       const env = {
         ...process.env,
         ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
@@ -121,13 +127,20 @@ export async function run(): Promise<void> {
         fs.readFileSync(outputFile, 'utf8'),
       ) as OutputFile;
       const modifiedFiles = promptFiles.join(', ');
-      const body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
-**» [View eval results](${output.shareableUrl}) «**`;
+`;
+      if (output.shareableUrl) {
+        body = body.concat(
+          `**» [View eval results](${output.shareableUrl}) «**`,
+        );
+      } else {
+        body = body.concat('**» View eval results in CI console «**');
+      }
       await octokit.rest.issues.createComment({
         ...github.context.repo,
         issue_number: pullRequest.number,
