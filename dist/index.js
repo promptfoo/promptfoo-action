@@ -129,16 +129,12 @@ function run() {
                     '-o',
                     outputFile,
                 ];
-<<<<<<< HEAD
                 if (!noShare) {
                     promptfooArgs.push('--share');
                 }
-                const env = Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
-=======
                 const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
                     ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
                     : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
->>>>>>> upstream/main
                 yield exec.exec(`npx promptfoo@${version}`, promptfooArgs, { env });
                 // Comment PR
                 const octokit = github.getOctokit(githubToken);
@@ -151,7 +147,7 @@ function run() {
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
-                if (output.sharableUrl) {
+                if (output.shareableUrl) {
                     body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
                 }
                 else {

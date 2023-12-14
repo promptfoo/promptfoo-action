@@ -134,7 +134,7 @@ export async function run(): Promise<void> {
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
-      if (output.sharableUrl) {
+      if (output.shareableUrl) {
         body = body.concat(
           `**» [View eval results](${output.shareableUrl}) «**`,
         );
