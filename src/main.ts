@@ -139,7 +139,7 @@ export async function run(): Promise<void> {
           `**» [View eval results](${output.shareableUrl}) «**`,
         );
       } else {
-        body = body.concat('**» View eval results in CI console«**');
+        body = body.concat('**» View eval results in CI console «**');
       }
       await octokit.rest.issues.createComment({
         ...github.context.repo,
