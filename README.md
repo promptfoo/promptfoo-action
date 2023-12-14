@@ -10,19 +10,31 @@ The provided link opens the promptfoo web viewer, which allows you to interactiv
 
 <img width="650" alt="promptfoo web viewer" src="https://github.com/typpo/promptfoo-action/assets/310310/d0ef0497-0c1a-4886-b115-1ee92680891b"/>
 
-
 ## Configuration
 
 The action can be configured using the following inputs:
 
-| Parameter | Description | Required |
-| --- | --- | --- |
-| `github-token` | The Github token. Used to authenticate requests to the Github API. | Yes |
-| `prompts` | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate. | Yes |
-| `config` | The path to the configuration file. This file contains settings for the action. | Yes |
-| `openai-api-key` | The API key for OpenAI. Used to authenticate requests to the OpenAI API. | No |
-| `cache-path` | The path to the cache. This is where the action stores temporary data. | No |
-| `promptfoo-version` | The version of promptfoo to use. Defaults to `latest` | No |
+| Parameter           | Description                                                                                                               | Required |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `github-token`      | The Github token. Used to authenticate requests to the Github API.                                                        | Yes      |
+| `prompts`           | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate. | Yes      |
+| `config`            | The path to the configuration file. This file contains settings for the action.                                           | Yes      |
+| `cache-path`        | The path to the cache. This is where the action stores temporary data.                                                    | No       |
+| `promptfoo-version` | The version of promptfoo to use. Defaults to `latest`                                                                     | No       |
+
+The following API key parameters are supported:
+
+| Parameter               | Description                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| `openai-api-key`        | The API key for OpenAI. Used to authenticate requests to the OpenAI API.             |
+| `azure-api-key`         | The API key for Azure OpenAI. Used to authenticate requests to the Azure OpenAI API. |
+| `anthropic-api-key`     | The API key for Anthropic. Used to authenticate requests to the Anthropic API.       |
+| `huggingface-api-key`   | The API key for Hugging Face. Used to authenticate requests to the Hugging Face API. |
+| `aws-access-key-id`     | The AWS access key ID. Used to authenticate requests to AWS services.                |
+| `aws-secret-access-key` | The AWS secret access key. Used to authenticate requests to AWS services.            |
+| `replicate-api-key`     | The API key for Replicate. Used to authenticate requests to the Replicate API.       |
+| `palm-api-key`          | The API key for Palm. Used to authenticate requests to the Palm API.                 |
+| `vertex-api-key`        | The API key for Vertex. Used to authenticate requests to the Vertex AI API.          |
 
 Here is a generic Github Action configuration using "typpo/promptfoo-action@v1" with a cache step:
 

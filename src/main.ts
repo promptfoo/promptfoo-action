@@ -6,11 +6,37 @@ import * as fs from 'fs';
 import * as glob from 'glob';
 import {simpleGit} from 'simple-git';
 
+import type {OutputFile} from 'promptfoo';
+
 const gitInterface = simpleGit();
 
 export async function run(): Promise<void> {
   try {
     const openaiApiKey: string = core.getInput('openai-api-key', {
+      required: false,
+    });
+    const azureApiKey: string = core.getInput('azure-api-key', {
+      required: false,
+    });
+    const anthropicApiKey: string = core.getInput('anthropic-api-key', {
+      required: false,
+    });
+    const huggingfaceApiKey: string = core.getInput('huggingface-api-key', {
+      required: false,
+    });
+    const awsAccessKeyId: string = core.getInput('aws-access-key-id', {
+      required: false,
+    });
+    const awsSecretAccessKey: string = core.getInput('aws-secret-access-key', {
+      required: false,
+    });
+    const replicateApiKey: string = core.getInput('replicate-api-key', {
+      required: false,
+    });
+    const palmApiKey: string = core.getInput('palm-api-key', {
+      required: false,
+    });
+    const vertexApiKey: string = core.getInput('vertex-api-key', {
       required: false,
     });
     const githubToken: string = core.getInput('github-token', {required: true});
@@ -81,13 +107,25 @@ export async function run(): Promise<void> {
       const env = {
         ...process.env,
         ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
+        ...(azureApiKey ? {AZURE_OPENAI_API_KEY: azureApiKey} : {}),
+        ...(anthropicApiKey ? {ANTHROPIC_API_KEY: anthropicApiKey} : {}),
+        ...(huggingfaceApiKey ? {HF_API_TOKEN: huggingfaceApiKey} : {}),
+        ...(awsAccessKeyId ? {AWS_ACCESS_KEY_ID: awsAccessKeyId} : {}),
+        ...(awsSecretAccessKey
+          ? {AWS_SECRET_ACCESS_KEY: awsSecretAccessKey}
+          : {}),
+        ...(replicateApiKey ? {REPLICATE_API_KEY: replicateApiKey} : {}),
+        ...(palmApiKey ? {PALM_API_KEY: palmApiKey} : {}),
+        ...(vertexApiKey ? {VERTEX_API_KEY: vertexApiKey} : {}),
         ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
       };
       await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {env});
 
       // Comment PR
       const octokit = github.getOctokit(githubToken);
-      const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
+      const output = JSON.parse(
+        fs.readFileSync(outputFile, 'utf8'),
+      ) as OutputFile;
       const modifiedFiles = promptFiles.join(', ');
       let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
