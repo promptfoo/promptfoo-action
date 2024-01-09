@@ -21,6 +21,8 @@ The action can be configured using the following inputs:
 | `config`            | The path to the configuration file. This file contains settings for the action.                                           | Yes      |
 | `cache-path`        | The path to the cache. This is where the action stores temporary data.                                                    | No       |
 | `promptfoo-version` | The version of promptfoo to use. Defaults to `latest`                                                                     | No       |
+| `no-share` | No sharing option for promptfoo. Defaults to `false` | No       |
+| `use-config-prompts` | Use prompt files set at config file. Defaults to `false` | No       |
 
 The following API key parameters are supported:
 
