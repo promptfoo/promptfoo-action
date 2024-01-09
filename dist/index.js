@@ -92,6 +92,7 @@ function run() {
             const noShare = core.getBooleanInput('no-share', {
                 required: false,
             });
+            const useConfigPrompts = core.getBooleanInput('use-config-prompts', { required: false });
             core.setSecret(openaiApiKey);
             core.setSecret(githubToken);
             const pullRequest = github.context.payload.pull_request;
@@ -120,15 +121,10 @@ function run() {
             // Run promptfoo evaluation only for changed files
             if (promptFiles.length > 0) {
                 const outputFile = path.join(process.cwd(), 'output.json');
-                const promptfooArgs = [
-                    'eval',
-                    '-c',
-                    configPath,
-                    '--prompts',
-                    ...promptFiles,
-                    '-o',
-                    outputFile,
-                ];
+                let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
+                if (!useConfigPrompts) {
+                    promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
+                }
                 if (!noShare) {
                     promptfooArgs.push('--share');
                 }

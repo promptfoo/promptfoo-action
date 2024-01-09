@@ -27,6 +27,10 @@ inputs:
     description: 'Do not share the promptfoo result'
     required: false
     default: 'false'
+  use-config-prompts:
+    description: 'Use prompts from config file'
+    required: false
+    default: 'false'
 branding:
   icon: 'box'
   color: 'yellow'
