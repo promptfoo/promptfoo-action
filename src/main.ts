@@ -41,7 +41,7 @@ export async function run(): Promise<void> {
     });
     const githubToken: string = core.getInput('github-token', {required: true});
     const promptFilesGlobs: string[] = core
-      .getInput('prompts', {required: true})
+      .getInput('prompts', {required: false})
       .split('\n');
     const configPath: string = core.getInput('config', {
       required: true,
@@ -82,21 +82,20 @@ export async function run(): Promise<void> {
       headFetchHead,
     ]);
 
-    // Resolve glob patterns to file paths
-    const promptFiles: string[] = [];
-    for (const globPattern of promptFilesGlobs) {
-      const matches = glob.sync(globPattern);
-      const changedMatches = matches.filter(
-        file => file !== configPath && changedFiles.includes(file),
-      );
-      promptFiles.push(...changedMatches);
-    }
-
     // Run promptfoo evaluation only for changed files
     if (promptFiles.length > 0) {
       const outputFile = path.join(process.cwd(), 'output.json');
       let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
       if (!useConfigPrompts) {
+        // Resolve glob patterns to file paths
+        const promptFiles: string[] = [];
+        for (const globPattern of promptFilesGlobs) {
+          const matches = glob.sync(globPattern);
+          const changedMatches = matches.filter(
+            file => file !== configPath && changedFiles.includes(file),
+          );
+          promptFiles.push(...changedMatches);
+        }
         promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
       }
       if (!noShare) {
