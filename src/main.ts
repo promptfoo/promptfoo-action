@@ -58,7 +58,22 @@ export async function run(): Promise<void> {
       {required: false},
     );
 
-    core.setSecret(openaiApiKey);
+    const apiKeys = [
+      openaiApiKey,
+      azureApiKey,
+      anthropicApiKey,
+      huggingfaceApiKey,
+      awsAccessKeyId,
+      awsSecretAccessKey,
+      replicateApiKey,
+      palmApiKey,
+      vertexApiKey,
+    ];
+    for (const key of apiKeys) {
+      if (key) {
+        core.setSecret(key);
+      }
+    }
     core.setSecret(githubToken);
 
     const pullRequest = github.context.payload.pull_request;
