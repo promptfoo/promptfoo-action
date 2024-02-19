@@ -107,62 +107,64 @@ export async function run(): Promise<void> {
       promptFiles.push(...changedMatches);
     }
 
-    // Run promptfoo evaluation only for changed files
-    if (promptFiles.length > 0) {
-      const outputFile = path.join(process.cwd(), 'output.json');
-      let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-      if (!useConfigPrompts) {
-        promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
-      }
-      if (!noShare) {
-        promptfooArgs.push('--share');
-      }
+    const configChanged = changedFiles.includes(configPath);
+    if (promptFiles.length < 1 && !configChanged) {
+      // Run promptfoo evaluation only when files change.
+      core.info('No LLM prompt or config files were modified.');
+      return;
+    }
 
-      const env = {
-        ...process.env,
-        ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
-        ...(azureApiKey ? {AZURE_OPENAI_API_KEY: azureApiKey} : {}),
-        ...(anthropicApiKey ? {ANTHROPIC_API_KEY: anthropicApiKey} : {}),
-        ...(huggingfaceApiKey ? {HF_API_TOKEN: huggingfaceApiKey} : {}),
-        ...(awsAccessKeyId ? {AWS_ACCESS_KEY_ID: awsAccessKeyId} : {}),
-        ...(awsSecretAccessKey
-          ? {AWS_SECRET_ACCESS_KEY: awsSecretAccessKey}
-          : {}),
-        ...(replicateApiKey ? {REPLICATE_API_KEY: replicateApiKey} : {}),
-        ...(palmApiKey ? {PALM_API_KEY: palmApiKey} : {}),
-        ...(vertexApiKey ? {VERTEX_API_KEY: vertexApiKey} : {}),
-        ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
-      };
-      await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {env});
+    const outputFile = path.join(process.cwd(), 'output.json');
+    let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
+    if (!useConfigPrompts) {
+      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
+    }
+    if (!noShare) {
+      promptfooArgs.push('--share');
+    }
 
-      // Comment PR
-      const octokit = github.getOctokit(githubToken);
-      const output = JSON.parse(
-        fs.readFileSync(outputFile, 'utf8'),
-      ) as OutputFile;
-      const modifiedFiles = promptFiles.join(', ');
-      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+    const env = {
+      ...process.env,
+      ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
+      ...(azureApiKey ? {AZURE_OPENAI_API_KEY: azureApiKey} : {}),
+      ...(anthropicApiKey ? {ANTHROPIC_API_KEY: anthropicApiKey} : {}),
+      ...(huggingfaceApiKey ? {HF_API_TOKEN: huggingfaceApiKey} : {}),
+      ...(awsAccessKeyId ? {AWS_ACCESS_KEY_ID: awsAccessKeyId} : {}),
+      ...(awsSecretAccessKey
+        ? {AWS_SECRET_ACCESS_KEY: awsSecretAccessKey}
+        : {}),
+      ...(replicateApiKey ? {REPLICATE_API_KEY: replicateApiKey} : {}),
+      ...(palmApiKey ? {PALM_API_KEY: palmApiKey} : {}),
+      ...(vertexApiKey ? {VERTEX_API_KEY: vertexApiKey} : {}),
+      ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
+    };
+    await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {env});
+
+    // Comment PR
+    const octokit = github.getOctokit(githubToken);
+    const output = JSON.parse(
+      fs.readFileSync(outputFile, 'utf8'),
+    ) as OutputFile;
+    const modifiedFiles = promptFiles.join(', ');
+    let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
-      if (output.shareableUrl) {
-        body = body.concat(
-          `**» [View eval results](${output.shareableUrl}) «**`,
-        );
-      } else {
-        body = body.concat('**» View eval results in CI console «**');
-      }
-      await octokit.rest.issues.createComment({
-        ...github.context.repo,
-        issue_number: pullRequest.number,
-        body,
-      });
+    if (output.shareableUrl) {
+      body = body.concat(
+        `**» [View eval results](${output.shareableUrl}) «**`,
+      );
     } else {
-      core.info('No LLM prompt files were modified.');
+      body = body.concat('**» View eval results in CI console «**');
     }
+    await octokit.rest.issues.createComment({
+      ...github.context.repo,
+      issue_number: pullRequest.number,
+      body,
+    });
   } catch (error) {
     if (error instanceof Error) {
       handleError(error);
