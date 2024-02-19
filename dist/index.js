@@ -110,6 +110,10 @@ function run() {
                 }
             }
             core.setSecret(githubToken);
+            const event = github.context.eventName;
+            if (event !== 'pull_request') {
+                core.warning(`This action is designed to run on pull request events only, but a "${event}" event was received.`);
+            }
             const pullRequest = github.context.payload.pull_request;
             if (!pullRequest) {
                 throw new Error('No pull request found.');

@@ -76,6 +76,13 @@ export async function run(): Promise<void> {
     }
     core.setSecret(githubToken);
 
+    const event = github.context.eventName;
+    if (event !== 'pull_request') {
+      core.warning(
+        `This action is designed to run on pull request events only, but a "${event}" event was received.`,
+      );
+    }
+
     const pullRequest = github.context.payload.pull_request;
     if (!pullRequest) {
       throw new Error('No pull request found.');
@@ -163,9 +170,7 @@ export async function run(): Promise<void> {
 
 `;
     if (output.shareableUrl) {
-      body = body.concat(
-        `**» [View eval results](${output.shareableUrl}) «**`,
-      );
+      body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
     } else {
       body = body.concat('**» View eval results in CI console «**');
     }
