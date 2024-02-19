@@ -138,7 +138,16 @@ export async function run(): Promise<void> {
       ...(vertexApiKey ? {VERTEX_API_KEY: vertexApiKey} : {}),
       ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
     };
-    await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {env});
+    try {
+      await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {env});
+    } catch (error) {
+      // Ignore nonzero exit code
+      if (error instanceof Error) {
+        core.info(`promptfoo exited with error: ${error.message}`);
+      } else {
+        core.info(`promptfoo exited with an unknown error.`);
+      }
+    }
 
     // Comment PR
     const octokit = github.getOctokit(githubToken);
