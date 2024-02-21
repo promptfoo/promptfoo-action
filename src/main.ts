@@ -145,15 +145,12 @@ export async function run(): Promise<void> {
       ...(vertexApiKey ? {VERTEX_API_KEY: vertexApiKey} : {}),
       ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
     };
+    let errorToThrow: Error | undefined;
     try {
       await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {env});
     } catch (error) {
-      // Ignore nonzero exit code
-      if (error instanceof Error) {
-        core.info(`promptfoo exited with error: ${error.message}`);
-      } else {
-        core.info(`promptfoo exited with an unknown error.`);
-      }
+      // Ignore nonzero exit code, but save the error to throw later
+      errorToThrow = error as Error;
     }
 
     // Comment PR
@@ -179,6 +176,10 @@ export async function run(): Promise<void> {
       issue_number: pullRequest.number,
       body,
     });
+
+    if (errorToThrow) {
+      throw errorToThrow;
+    }
   } catch (error) {
     if (error instanceof Error) {
       handleError(error);

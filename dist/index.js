@@ -154,17 +154,13 @@ function run() {
             const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
                 ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
                 : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
+            let errorToThrow;
             try {
                 yield exec.exec(`npx promptfoo@${version}`, promptfooArgs, { env });
             }
             catch (error) {
-                // Ignore nonzero exit code
-                if (error instanceof Error) {
-                    core.info(`promptfoo exited with error: ${error.message}`);
-                }
-                else {
-                    core.info(`promptfoo exited with an unknown error.`);
-                }
+                // Ignore nonzero exit code, but save the error to throw later
+                errorToThrow = error;
             }
             // Comment PR
             const octokit = github.getOctokit(githubToken);
@@ -184,6 +180,9 @@ function run() {
                 body = body.concat('**» View eval results in CI console «**');
             }
             yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
+            if (errorToThrow) {
+                throw errorToThrow;
+            }
         }
         catch (error) {
             if (error instanceof Error) {
