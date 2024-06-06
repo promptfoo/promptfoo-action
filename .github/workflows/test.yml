@@ -9,10 +9,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          npm install
-      - run: |
-          npm run all
+      - run: npm ci
+      - run: npm run all
+  style-check:
+    name: Style Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Use Node 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+      - name: Install Dependencies
+        run: npm ci
+      - name: Run Style Check
+        run: npm run format:check
   test: # make sure the action works on a clean machine without building
     permissions:
       pull-requests: write

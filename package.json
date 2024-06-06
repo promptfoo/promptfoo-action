@@ -8,8 +8,8 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "format": "prettier --write '**/*.ts'",
-    "format-check": "prettier --check '**/*.ts'",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "lint": "eslint src/**/*.ts",
     "lint:fix": "eslint --fix src/**/*.ts",
     "package": "ncc build --source-map --license licenses.txt",
