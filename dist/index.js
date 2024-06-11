@@ -6936,11 +6936,11 @@ function getDate() {
 }
 
 /**
- * Invokes `util.format()` with the specified arguments and writes to stderr.
+ * Invokes `util.formatWithOptions()` with the specified arguments and writes to stderr.
  */
 
 function log(...args) {
-	return process.stderr.write(util.format(...args) + '\n');
+	return process.stderr.write(util.formatWithOptions(exports.inspectOpts, ...args) + '\n');
 }
 
 /**
@@ -9565,6 +9565,11 @@ function remove(target, item) {
 function asArray(source) {
   return Array.isArray(source) ? source : [source];
 }
+function asCamelCase(str) {
+  return str.replace(/[\s-]+(.)/g, (_all, chr) => {
+    return chr.toUpperCase();
+  });
+}
 function asStringArray(source) {
   return asArray(source).map(String);
 }
@@ -9817,8 +9822,8 @@ var init_task_options = __esm({
 });
 
 // src/lib/utils/task-parser.ts
-function callTaskParser(parser3, streams) {
-  return parser3(streams.stdOut, streams.stdErr);
+function callTaskParser(parser4, streams) {
+  return parser4(streams.stdOut, streams.stdErr);
 }
 function parseStringResponse(result, parsers12, texts, trim = true) {
   asArray(texts).forEach((text) => {
@@ -9853,6 +9858,7 @@ __export(utils_exports, {
   append: () => append,
   appendTaskOptions: () => appendTaskOptions,
   asArray: () => asArray,
+  asCamelCase: () => asCamelCase,
   asFunction: () => asFunction,
   asNumber: () => asNumber,
   asStringArray: () => asStringArray,
@@ -10011,11 +10017,11 @@ __export(task_exports, {
   straightThroughBufferTask: () => straightThroughBufferTask,
   straightThroughStringTask: () => straightThroughStringTask
 });
-function adhocExecTask(parser3) {
+function adhocExecTask(parser4) {
   return {
     commands: EMPTY_COMMANDS,
     format: "empty",
-    parser: parser3
+    parser: parser4
   };
 }
 function configurationErrorTask(error) {
@@ -11494,6 +11500,49 @@ var init_checkout = __esm({
   }
 });
 
+// src/lib/tasks/count-objects.ts
+function countObjectsResponse() {
+  return {
+    count: 0,
+    garbage: 0,
+    inPack: 0,
+    packs: 0,
+    prunePackable: 0,
+    size: 0,
+    sizeGarbage: 0,
+    sizePack: 0
+  };
+}
+function count_objects_default() {
+  return {
+    countObjects() {
+      return this._runTask({
+        commands: ["count-objects", "--verbose"],
+        format: "utf-8",
+        parser(stdOut) {
+          return parseStringResponse(countObjectsResponse(), [parser2], stdOut);
+        }
+      });
+    }
+  };
+}
+var parser2;
+var init_count_objects = __esm({
+  "src/lib/tasks/count-objects.ts"() {
+    "use strict";
+    init_utils();
+    parser2 = new LineParser(
+      /([a-z-]+): (\d+)$/,
+      (result, [key, value]) => {
+        const property = asCamelCase(key);
+        if (result.hasOwnProperty(property)) {
+          result[property] = asNumber(value);
+        }
+      }
+    );
+  }
+});
+
 // src/lib/parsers/parse-commit.ts
 function parseCommitResult(stdOut) {
   const result = {
@@ -11735,8 +11784,8 @@ var init_DiffSummary = __esm({
 
 // src/lib/parsers/parse-diff-summary.ts
 function getDiffParser(format = "" /* NONE */) {
-  const parser3 = diffSummaryParsers[format];
-  return (stdOut) => parseStringResponse(new DiffSummary(), parser3, stdOut, false);
+  const parser4 = diffSummaryParsers[format];
+  return (stdOut) => parseStringResponse(new DiffSummary(), parser4, stdOut, false);
 }
 var statParser, numStatParser, nameOnlyParser, nameStatusParser, diffSummaryParsers;
 var init_parse_diff_summary = __esm({
@@ -11992,11 +12041,11 @@ function parseLogOptions(opt = {}, customArgs = []) {
   };
 }
 function logTask(splitter, fields, customArgs) {
-  const parser3 = createListLogSummaryParser(splitter, fields, logFormatFromCommand(customArgs));
+  const parser4 = createListLogSummaryParser(splitter, fields, logFormatFromCommand(customArgs));
   return {
     commands: ["log", ...customArgs],
     format: "utf-8",
-    parser: parser3
+    parser: parser4
   };
 }
 function log_default() {
@@ -12515,11 +12564,11 @@ function renamedFile(line) {
     to
   };
 }
-function parser2(indexX, indexY, handler) {
+function parser3(indexX, indexY, handler) {
   return [`${indexX}${indexY}`, handler];
 }
 function conflicts(indexX, ...indexY) {
-  return indexY.map((y) => parser2(indexX, y, (result, file) => append(result.conflicted, file)));
+  return indexY.map((y) => parser3(indexX, y, (result, file) => append(result.conflicted, file)));
 }
 function splitLine(result, lineStr) {
   const trimmed2 = lineStr.trim();
@@ -12570,58 +12619,58 @@ var init_StatusSummary = __esm({
       }
     };
     parsers6 = new Map([
-      parser2(
+      parser3(
         " " /* NONE */,
         "A" /* ADDED */,
         (result, file) => append(result.created, file)
       ),
-      parser2(
+      parser3(
         " " /* NONE */,
         "D" /* DELETED */,
         (result, file) => append(result.deleted, file)
       ),
-      parser2(
+      parser3(
         " " /* NONE */,
         "M" /* MODIFIED */,
         (result, file) => append(result.modified, file)
       ),
-      parser2(
+      parser3(
         "A" /* ADDED */,
         " " /* NONE */,
         (result, file) => append(result.created, file) && append(result.staged, file)
       ),
-      parser2(
+      parser3(
         "A" /* ADDED */,
         "M" /* MODIFIED */,
         (result, file) => append(result.created, file) && append(result.staged, file) && append(result.modified, file)
       ),
-      parser2(
+      parser3(
         "D" /* DELETED */,
         " " /* NONE */,
         (result, file) => append(result.deleted, file) && append(result.staged, file)
       ),
-      parser2(
+      parser3(
         "M" /* MODIFIED */,
         " " /* NONE */,
         (result, file) => append(result.modified, file) && append(result.staged, file)
       ),
-      parser2(
+      parser3(
         "M" /* MODIFIED */,
         "M" /* MODIFIED */,
         (result, file) => append(result.modified, file) && append(result.staged, file)
       ),
-      parser2("R" /* RENAMED */, " " /* NONE */, (result, file) => {
+      parser3("R" /* RENAMED */, " " /* NONE */, (result, file) => {
         append(result.renamed, renamedFile(file));
       }),
-      parser2("R" /* RENAMED */, "M" /* MODIFIED */, (result, file) => {
+      parser3("R" /* RENAMED */, "M" /* MODIFIED */, (result, file) => {
         const renamed = renamedFile(file);
         append(result.renamed, renamed);
         append(result.modified, renamed.to);
       }),
-      parser2("!" /* IGNORED */, "!" /* IGNORED */, (_result, _file) => {
+      parser3("!" /* IGNORED */, "!" /* IGNORED */, (_result, _file) => {
         append(_result.ignored = _result.ignored || [], _file);
       }),
-      parser2(
+      parser3(
         "?" /* UNTRACKED */,
         "?" /* UNTRACKED */,
         (result, file) => append(result.not_added, file)
@@ -12790,6 +12839,7 @@ var init_simple_git_api = __esm({
     init_task_callback();
     init_change_working_directory();
     init_checkout();
+    init_count_objects();
     init_commit();
     init_config();
     init_first_commit();
@@ -12908,6 +12958,7 @@ var init_simple_git_api = __esm({
       checkout_default(),
       commit_default(),
       config_default(),
+      count_objects_default(),
       first_commit_default(),
       grep_default(),
       log_default(),
@@ -13149,11 +13200,11 @@ function branchTask(customArgs) {
   };
 }
 function branchLocalTask() {
-  const parser3 = parseBranchSummary;
+  const parser4 = parseBranchSummary;
   return {
     format: "utf-8",
     commands: ["branch", "-v"],
-    parser: parser3
+    parser: parser4
   };
 }
 function deleteBranchesTask(branches, forceDelete = false) {
@@ -13506,7 +13557,7 @@ __export(stash_list_exports, {
 function stashListTask(opt = {}, customArgs) {
   const options = parseLogOptions(opt);
   const commands = ["stash", "list", ...options.commands, ...customArgs];
-  const parser3 = createListLogSummaryParser(
+  const parser4 = createListLogSummaryParser(
     options.splitter,
     options.fields,
     logFormatFromCommand(commands)
@@ -13514,7 +13565,7 @@ function stashListTask(opt = {}, customArgs) {
   return validateLogFormatConfig(commands) || {
     commands,
     format: "utf-8",
-    parser: parser3
+    parser: parser4
   };
 }
 var init_stash_list = __esm({
