@@ -34,6 +34,7 @@
     "simple-git": "^3.19.1"
   },
   "devDependencies": {
+    "@types/cache-manager": "^4.0.6",
     "@types/jest": "^29.5.12",
     "@types/node": "^20.9.4",
     "@typescript-eslint/parser": "^5.62.0",
