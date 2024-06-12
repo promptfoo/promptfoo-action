@@ -14,15 +14,15 @@ The provided link opens the promptfoo web viewer, which allows you to interactiv
 
 The action can be configured using the following inputs:
 
-| Parameter           | Description                                                                                                               | Required |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------- |
-| `github-token`      | The Github token. Used to authenticate requests to the Github API.                                                        | Yes      |
-| `prompts`           | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate. | Yes      |
-| `config`            | The path to the configuration file. This file contains settings for the action.                                           | Yes      |
-| `cache-path`        | The path to the cache. This is where the action stores temporary data.                                                    | No       |
-| `promptfoo-version` | The version of promptfoo to use. Defaults to `latest`                                                                     | No       |
-| `no-share` | No sharing option for promptfoo. Defaults to `false` | No       |
-| `use-config-prompts` | Use prompt files set at config file. Defaults to `false` | No       |
+| Parameter            | Description                                                                                                               | Required |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `github-token`       | The Github token. Used to authenticate requests to the Github API.                                                        | Yes      |
+| `prompts`            | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate. | Yes      |
+| `config`             | The path to the configuration file. This file contains settings for the action.                                           | Yes      |
+| `cache-path`         | The path to the cache. This is where the action stores temporary data.                                                    | No       |
+| `promptfoo-version`  | The version of promptfoo to use. Defaults to `latest`                                                                     | No       |
+| `no-share`           | No sharing option for promptfoo. Defaults to `false`                                                                      | No       |
+| `use-config-prompts` | Use prompt files set at config file. Defaults to `false`                                                                  | No       |
 
 The following API key parameters are supported:
 
