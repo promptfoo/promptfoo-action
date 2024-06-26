@@ -39,7 +39,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.handleError = exports.run = void 0;
+exports.run = run;
+exports.handleError = handleError;
 const core = __importStar(__nccwpck_require__(2186));
 const github = __importStar(__nccwpck_require__(5438));
 const exec = __importStar(__nccwpck_require__(1514));
@@ -194,11 +195,9 @@ function run() {
         }
     });
 }
-exports.run = run;
 function handleError(error) {
     core.setFailed(error.message);
 }
-exports.handleError = handleError;
 if (require.main === require.cache[eval('__filename')]) {
     run();
 }
