@@ -19,6 +19,30 @@ inputs:
   openai-api-key:
     description: 'OpenAI API Key'
     required: false
+  azure-api-key:
+    description: 'Azure API key'
+    required: false
+  anthropic-api-key:
+    description: 'Anthropic API key'
+    required: false
+  huggingface-api-key:
+    description: 'Huggingface API key'
+    required: false
+  aws-access-key-id:
+    description: 'AWS Access Key ID'
+    required: false
+  aws-secret-access-key:
+    description: 'AWS Secret Access Key'
+    required: false
+  replicate-api-key:
+    description: 'Replicate API key'
+    required: false
+  palm-api-key:
+    description: 'Palm API key'
+    required: false
+  vertex-api-key:
+    description: 'Google vertex API key'
+    required: false
   promptfoo-version:
     description: 'Version of promptfoo to use'
     required: false
