@@ -47,6 +47,6 @@
     "prettier": "^3.3.3",
     "promptfoo": "^0.73.4",
     "ts-jest": "^29.2.3",
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.4"
   }
 }
