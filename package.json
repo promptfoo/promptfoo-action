@@ -37,7 +37,7 @@
     "@types/cache-manager": "^4.0.6",
     "@types/jest": "^29.5.12",
     "@types/node": "^22.0.0",
-    "@typescript-eslint/parser": "^7.17.0",
+    "@typescript-eslint/parser": "^7.18.0",
     "@vercel/ncc": "^0.38.1",
     "eslint": "^8.54.0",
     "eslint-plugin-github": "^5.0.1",
