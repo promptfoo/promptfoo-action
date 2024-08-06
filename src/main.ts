@@ -41,7 +41,7 @@ export async function run(): Promise<void> {
     });
     const githubToken: string = core.getInput('github-token', {required: true});
     const promptFilesGlobs: string[] = core
-      .getInput('prompts', {required: true})
+      .getInput('prompts', {required: false})
       .split('\n');
     const configPath: string = core.getInput('config', {
       required: true,
