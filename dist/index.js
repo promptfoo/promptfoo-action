@@ -81,7 +81,7 @@ function run() {
             });
             const githubToken = core.getInput('github-token', { required: true });
             const promptFilesGlobs = core
-                .getInput('prompts', { required: true })
+                .getInput('prompts', { required: false })
                 .split('\n');
             const configPath = core.getInput('config', {
                 required: true,
