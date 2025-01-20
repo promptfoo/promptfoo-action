@@ -47,6 +47,10 @@ inputs:
     description: 'Version of promptfoo to use'
     required: false
     default: 'latest'
+  working-directory:
+    description: 'The working directory to run promptfoo in'
+    required: false
+    default: '.'
   no-share:
     description: 'Do not share the promptfoo result'
     required: false
