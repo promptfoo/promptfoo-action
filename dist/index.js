@@ -100,6 +100,7 @@ function run() {
             const version = core.getInput('promptfoo-version', {
                 required: false,
             });
+            const workingDirectory = path.join(process.cwd(), core.getInput('working-directory', { required: false }));
             const noShare = core.getBooleanInput('no-share', {
                 required: false,
             });
@@ -154,7 +155,7 @@ function run() {
                 core.info('No LLM prompt or config files were modified.');
                 return;
             }
-            const outputFile = path.join(process.cwd(), 'output.json');
+            const outputFile = path.join(workingDirectory, 'output.json');
             let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
             if (!useConfigPrompts) {
                 promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
@@ -167,7 +168,10 @@ function run() {
                 : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
             let errorToThrow;
             try {
-                yield exec.exec(`npx promptfoo@${version}`, promptfooArgs, { env });
+                yield exec.exec(`npx promptfoo@${version}`, promptfooArgs, {
+                    env,
+                    cwd: workingDirectory,
+                });
             }
             catch (error) {
                 // Ignore nonzero exit code, but save the error to throw later

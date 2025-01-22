@@ -50,6 +50,10 @@ export async function run(): Promise<void> {
     const version: string = core.getInput('promptfoo-version', {
       required: false,
     });
+    const workingDirectory: string = path.join(
+      process.cwd(),
+      core.getInput('working-directory', {required: false}),
+    );
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
     });
@@ -121,7 +125,7 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const outputFile = path.join(process.cwd(), 'output.json');
+    const outputFile = path.join(workingDirectory, 'output.json');
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
     if (!useConfigPrompts) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
@@ -147,7 +151,10 @@ export async function run(): Promise<void> {
     };
     let errorToThrow: Error | undefined;
     try {
-      await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {env});
+      await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {
+        env,
+        cwd: workingDirectory,
+      });
     } catch (error) {
       // Ignore nonzero exit code, but save the error to throw later
       errorToThrow = error as Error;

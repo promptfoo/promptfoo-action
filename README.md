@@ -21,6 +21,7 @@ The action can be configured using the following inputs:
 | `cache-path`         | The path to the cache. This is where the action stores temporary data.                                                    | No       |
 | `no-share`           | No sharing option for promptfoo. Defaults to `false`                                                                      | No       |
 | `promptfoo-version`  | The version of promptfoo to use. Defaults to `latest`                                                                     | No       |
+| `working-directory`  | The working directory to run `promptfoo` in. Can be set to a location where `promptfoo` is already installed.             | No       |
 | `prompts`            | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate. | No       |
 | `use-config-prompts` | Use prompt files set at config file. Defaults to `false`                                                                  | No       |
 
