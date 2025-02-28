@@ -9,7 +9,7 @@ inputs:
     required: true
   prompts:
     description: 'List of prompt files to watch'
-    required: true
+    required: false
   config:
     description: 'Path to a promptfoo config file'
     required: true
