@@ -4,6 +4,10 @@ on:
     paths:
       - 'prompts/**'
 
+permissions:
+  contents: read
+  checks: read
+
 jobs:
   build: # make sure build/ci work properly
     runs-on: ubuntu-latest
@@ -28,6 +32,7 @@ jobs:
         run: npm run format:check
   test: # make sure the action works on a clean machine without building
     permissions:
+      contents: read
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
