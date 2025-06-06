@@ -9080,27 +9080,10 @@ function onceStrict (fn) {
 
 var __create = Object.create;
 var __defProp = Object.defineProperty;
-var __defProps = Object.defineProperties;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getOwnPropSymbols = Object.getOwnPropertySymbols;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __propIsEnum = Object.prototype.propertyIsEnumerable;
-var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
-var __spreadValues = (a, b) => {
-  for (var prop in b || (b = {}))
-    if (__hasOwnProp.call(b, prop))
-      __defNormalProp(a, prop, b[prop]);
-  if (__getOwnPropSymbols)
-    for (var prop of __getOwnPropSymbols(b)) {
-      if (__propIsEnum.call(b, prop))
-        __defNormalProp(a, prop, b[prop]);
-    }
-  return a;
-};
-var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
 var __esm = (fn, res) => function __init() {
   return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
 };
@@ -9120,30 +9103,14 @@ var __copyProps = (to, from, except, desc) => {
   return to;
 };
 var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+  // If the importer is in node compatibility mode or this is not an ESM
+  // file that has been converted to a CommonJS file using a Babel-
+  // compatible transform (i.e. "__esModule" has not been set), then set
+  // "default" to the CommonJS "module.exports" for node compatibility.
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-var __async = (__this, __arguments, generator) => {
-  return new Promise((resolve, reject) => {
-    var fulfilled = (value) => {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var rejected = (value) => {
-      try {
-        step(generator.throw(value));
-      } catch (e) {
-        reject(e);
-      }
-    };
-    var step = (x) => x.done ? resolve(x.value) : Promise.resolve(x.value).then(fulfilled, rejected);
-    step((generator = generator.apply(__this, __arguments)).next());
-  });
-};
 
 // src/lib/errors/git-error.ts
 var GitError;
@@ -9243,7 +9210,10 @@ var init_task_configuration_error = __esm({
 
 // src/lib/utils/util.ts
 function asFunction(source) {
-  return typeof source === "function" ? source : NOOP;
+  if (typeof source !== "function") {
+    return NOOP;
+  }
+  return source;
 }
 function isUserFunction(source) {
   return typeof source === "function" && source !== NOOP;
@@ -9334,7 +9304,7 @@ function prefixedArray(input, prefix) {
   return output;
 }
 function bufferToString(input) {
-  return (Array.isArray(input) ? Buffer.concat(input) : input).toString("utf-8");
+  return (Array.isArray(input) ? import_node_buffer.Buffer.concat(input) : input).toString("utf-8");
 }
 function pick(source, properties) {
   return Object.assign(
@@ -9351,10 +9321,11 @@ function orVoid(input) {
   }
   return input;
 }
-var import_file_exists, NULL, NOOP, objectToString;
+var import_node_buffer, import_file_exists, NULL, NOOP, objectToString;
 var init_util = __esm({
   "src/lib/utils/util.ts"() {
     "use strict";
+    import_node_buffer = __nccwpck_require__(4573);
     import_file_exists = __nccwpck_require__(7117);
     NULL = "\0";
     NOOP = () => {
@@ -9427,13 +9398,13 @@ var GitOutputStreams;
 var init_git_output_streams = __esm({
   "src/lib/utils/git-output-streams.ts"() {
     "use strict";
-    GitOutputStreams = class {
+    GitOutputStreams = class _GitOutputStreams {
       constructor(stdOut, stdErr) {
         this.stdOut = stdOut;
         this.stdErr = stdErr;
       }
       asStrings() {
-        return new GitOutputStreams(this.stdOut.toString("utf8"), this.stdErr.toString("utf8"));
+        return new _GitOutputStreams(this.stdOut.toString("utf8"), this.stdErr.toString("utf8"));
       }
     };
   }
@@ -9459,6 +9430,7 @@ var init_line_parser = __esm({
           this.useMatches = useMatches;
         }
       }
+      // @ts-ignore
       useMatches(target, match) {
         throw new Error(`LineParser:useMatches not implemented`);
       }
@@ -9496,7 +9468,7 @@ var init_line_parser = __esm({
 function createInstanceConfig(...options) {
   const baseDir = process.cwd();
   const config = Object.assign(
-    __spreadValues({ baseDir }, defaultOptions),
+    { baseDir, ...defaultOptions },
     ...options.filter((o) => typeof o === "object" && o)
   );
   config.baseDir = config.baseDir || baseDir;
@@ -9527,6 +9499,12 @@ function appendTaskOptions(options, commands = []) {
       commands2.push(value);
     } else if (filterPrimitives(value, ["boolean"])) {
       commands2.push(key + "=" + value);
+    } else if (Array.isArray(value)) {
+      for (const v of value) {
+        if (!filterPrimitives(v, ["string", "number"])) {
+          commands2.push(key + "=" + v);
+        }
+      }
     } else {
       commands2.push(key);
     }
@@ -10423,27 +10401,24 @@ function completionDetectionPlugin({
   }
   return {
     type: "spawn.after",
-    action(_0, _1) {
-      return __async(this, arguments, function* (_data, { spawned, close }) {
-        var _a3, _b;
-        const events = createEvents();
-        let deferClose = true;
-        let quickClose = () => void (deferClose = false);
-        (_a3 = spawned.stdout) == null ? void 0 : _a3.on("data", quickClose);
-        (_b = spawned.stderr) == null ? void 0 : _b.on("data", quickClose);
-        spawned.on("error", quickClose);
-        spawned.on("close", (code) => events.close(code));
-        spawned.on("exit", (code) => events.exit(code));
-        try {
-          yield events.result;
-          if (deferClose) {
-            yield delay(50);
-          }
-          close(events.exitCode);
-        } catch (err) {
-          close(events.exitCode, err);
+    async action(_data, { spawned, close }) {
+      const events = createEvents();
+      let deferClose = true;
+      let quickClose = () => void (deferClose = false);
+      spawned.stdout?.on("data", quickClose);
+      spawned.stderr?.on("data", quickClose);
+      spawned.on("error", quickClose);
+      spawned.on("close", (code) => events.close(code));
+      spawned.on("exit", (code) => events.exit(code));
+      try {
+        await events.result;
+        if (deferClose) {
+          await delay(50);
         }
-      });
+        close(events.exitCode);
+      } catch (err) {
+        close(events.exitCode, err);
+      }
     }
   };
 }
@@ -10592,11 +10567,10 @@ function progressMonitorPlugin(progress) {
   const onProgress = {
     type: "spawn.after",
     action(_data, context) {
-      var _a2;
       if (!context.commands.includes(progressCommand)) {
         return;
       }
-      (_a2 = context.spawned.stderr) == null ? void 0 : _a2.on("data", (chunk) => {
+      context.spawned.stderr?.on("data", (chunk) => {
         const message = /^([\s\S]+?):\s*(\d+)% \((\d+)\/(\d+)\)/.exec(chunk.toString("utf8"));
         if (!message) {
           return;
@@ -10645,7 +10619,7 @@ function spawnOptionsPlugin(spawnOptions) {
   return {
     type: "spawn.options",
     action(data) {
-      return __spreadValues(__spreadValues({}, options), data);
+      return { ...options, ...data };
     }
   };
 }
@@ -10666,16 +10640,14 @@ function timeoutPlugin({
     return {
       type: "spawn.after",
       action(_data, context) {
-        var _a2, _b;
         let timeout;
         function wait() {
           timeout && clearTimeout(timeout);
           timeout = setTimeout(kill, block);
         }
         function stop() {
-          var _a3, _b2;
-          (_a3 = context.spawned.stdout) == null ? void 0 : _a3.off("data", wait);
-          (_b2 = context.spawned.stderr) == null ? void 0 : _b2.off("data", wait);
+          context.spawned.stdout?.off("data", wait);
+          context.spawned.stderr?.off("data", wait);
           context.spawned.off("exit", stop);
           context.spawned.off("close", stop);
           timeout && clearTimeout(timeout);
@@ -10684,8 +10656,8 @@ function timeoutPlugin({
           stop();
           context.kill(new GitPluginError(void 0, "timeout", `block timeout reached`));
         }
-        stdOut && ((_a2 = context.spawned.stdout) == null ? void 0 : _a2.on("data", wait));
-        stdErr && ((_b = context.spawned.stderr) == null ? void 0 : _b.on("data", wait));
+        stdOut && context.spawned.stdout?.on("data", wait);
+        stdErr && context.spawned.stderr?.on("data", wait);
         context.spawned.on("exit", stop);
         context.spawned.on("close", stop);
         wait();
@@ -10809,7 +10781,7 @@ var import_debug;
 var init_git_logger = __esm({
   "src/lib/git-logger.ts"() {
     "use strict";
-    import_debug = __toESM(__nccwpck_require__(2830));
+    import_debug = __toESM(__nccwpck_require__(1567));
     init_utils();
     import_debug.default.formatters.L = (value) => String(filterHasLength(value) ? value.length : "-");
     import_debug.default.formatters.B = (value) => {
@@ -10822,13 +10794,13 @@ var init_git_logger = __esm({
 });
 
 // src/lib/runners/tasks-pending-queue.ts
-var _TasksPendingQueue, TasksPendingQueue;
+var TasksPendingQueue;
 var init_tasks_pending_queue = __esm({
   "src/lib/runners/tasks-pending-queue.ts"() {
     "use strict";
     init_git_error();
     init_git_logger();
-    _TasksPendingQueue = class {
+    TasksPendingQueue = class _TasksPendingQueue {
       constructor(logLabel = "GitExecutor") {
         this.logLabel = logLabel;
         this._queue = /* @__PURE__ */ new Map();
@@ -10887,9 +10859,10 @@ var init_tasks_pending_queue = __esm({
       static getName(name = "empty") {
         return `task:${name}:${++_TasksPendingQueue.counter}`;
       }
+      static {
+        this.counter = 0;
+      }
     };
-    TasksPendingQueue = _TasksPendingQueue;
-    TasksPendingQueue.counter = 0;
   }
 });
 
@@ -10949,20 +10922,18 @@ var init_git_executor_chain = __esm({
         this._queue.push(task);
         return this._chain = this._chain.then(() => this.attemptTask(task));
       }
-      attemptTask(task) {
-        return __async(this, null, function* () {
-          const onScheduleComplete = yield this._scheduler.next();
-          const onQueueComplete = () => this._queue.complete(task);
-          try {
-            const { logger } = this._queue.attempt(task);
-            return yield isEmptyTask(task) ? this.attemptEmptyTask(task, logger) : this.attemptRemoteTask(task, logger);
-          } catch (e) {
-            throw this.onFatalException(task, e);
-          } finally {
-            onQueueComplete();
-            onScheduleComplete();
-          }
-        });
+      async attemptTask(task) {
+        const onScheduleComplete = await this._scheduler.next();
+        const onQueueComplete = () => this._queue.complete(task);
+        try {
+          const { logger } = this._queue.attempt(task);
+          return await (isEmptyTask(task) ? this.attemptEmptyTask(task, logger) : this.attemptRemoteTask(task, logger));
+        } catch (e) {
+          throw this.onFatalException(task, e);
+        } finally {
+          onQueueComplete();
+          onScheduleComplete();
+        }
       }
       onFatalException(task, e) {
         const gitError = e instanceof GitError ? Object.assign(e, { task }) : new GitError(task, e && String(e));
@@ -10970,34 +10941,30 @@ var init_git_executor_chain = __esm({
         this._queue.fatal(gitError);
         return gitError;
       }
-      attemptRemoteTask(task, logger) {
-        return __async(this, null, function* () {
-          const binary = this._plugins.exec("spawn.binary", "", pluginContext(task, task.commands));
-          const args = this._plugins.exec(
-            "spawn.args",
-            [...task.commands],
-            pluginContext(task, task.commands)
-          );
-          const raw = yield this.gitResponse(
-            task,
-            binary,
-            args,
-            this.outputHandler,
-            logger.step("SPAWN")
-          );
-          const outputStreams = yield this.handleTaskData(task, args, raw, logger.step("HANDLE"));
-          logger(`passing response to task's parser as a %s`, task.format);
-          if (isBufferTask(task)) {
-            return callTaskParser(task.parser, outputStreams);
-          }
-          return callTaskParser(task.parser, outputStreams.asStrings());
-        });
+      async attemptRemoteTask(task, logger) {
+        const binary = this._plugins.exec("spawn.binary", "", pluginContext(task, task.commands));
+        const args = this._plugins.exec(
+          "spawn.args",
+          [...task.commands],
+          pluginContext(task, task.commands)
+        );
+        const raw = await this.gitResponse(
+          task,
+          binary,
+          args,
+          this.outputHandler,
+          logger.step("SPAWN")
+        );
+        const outputStreams = await this.handleTaskData(task, args, raw, logger.step("HANDLE"));
+        logger(`passing response to task's parser as a %s`, task.format);
+        if (isBufferTask(task)) {
+          return callTaskParser(task.parser, outputStreams);
+        }
+        return callTaskParser(task.parser, outputStreams.asStrings());
       }
-      attemptEmptyTask(task, logger) {
-        return __async(this, null, function* () {
-          logger(`empty task bypassing child process to call to task's parser`);
-          return task.parser(this);
-        });
+      async attemptEmptyTask(task, logger) {
+        logger(`empty task bypassing child process to call to task's parser`);
+        return task.parser(this);
       }
       handleTaskData(task, args, result, logger) {
         const { exitCode, rejection, stdOut, stdErr } = result;
@@ -11006,7 +10973,10 @@ var init_git_executor_chain = __esm({
           const { error } = this._plugins.exec(
             "task.error",
             { error: rejection },
-            __spreadValues(__spreadValues({}, pluginContext(task, args)), result)
+            {
+              ...pluginContext(task, args),
+              ...result
+            }
           );
           if (error && task.onError) {
             logger.info(`exitCode=%s handling with custom error handler`);
@@ -11039,79 +11009,80 @@ var init_git_executor_chain = __esm({
           done(new GitOutputStreams(Buffer.concat(stdOut), Buffer.concat(stdErr)));
         });
       }
-      gitResponse(task, command, args, outputHandler, logger) {
-        return __async(this, null, function* () {
-          const outputLogger = logger.sibling("output");
-          const spawnOptions = this._plugins.exec(
-            "spawn.options",
-            {
-              cwd: this.cwd,
-              env: this.env,
-              windowsHide: true
-            },
-            pluginContext(task, task.commands)
+      async gitResponse(task, command, args, outputHandler, logger) {
+        const outputLogger = logger.sibling("output");
+        const spawnOptions = this._plugins.exec(
+          "spawn.options",
+          {
+            cwd: this.cwd,
+            env: this.env,
+            windowsHide: true
+          },
+          pluginContext(task, task.commands)
+        );
+        return new Promise((done) => {
+          const stdOut = [];
+          const stdErr = [];
+          logger.info(`%s %o`, command, args);
+          logger("%O", spawnOptions);
+          let rejection = this._beforeSpawn(task, args);
+          if (rejection) {
+            return done({
+              stdOut,
+              stdErr,
+              exitCode: 9901,
+              rejection
+            });
+          }
+          this._plugins.exec("spawn.before", void 0, {
+            ...pluginContext(task, args),
+            kill(reason) {
+              rejection = reason || rejection;
+            }
+          });
+          const spawned = (0, import_child_process.spawn)(command, args, spawnOptions);
+          spawned.stdout.on(
+            "data",
+            onDataReceived(stdOut, "stdOut", logger, outputLogger.step("stdOut"))
           );
-          return new Promise((done) => {
-            const stdOut = [];
-            const stdErr = [];
-            logger.info(`%s %o`, command, args);
-            logger("%O", spawnOptions);
-            let rejection = this._beforeSpawn(task, args);
-            if (rejection) {
-              return done({
+          spawned.stderr.on(
+            "data",
+            onDataReceived(stdErr, "stdErr", logger, outputLogger.step("stdErr"))
+          );
+          spawned.on("error", onErrorReceived(stdErr, logger));
+          if (outputHandler) {
+            logger(`Passing child process stdOut/stdErr to custom outputHandler`);
+            outputHandler(command, spawned.stdout, spawned.stderr, [...args]);
+          }
+          this._plugins.exec("spawn.after", void 0, {
+            ...pluginContext(task, args),
+            spawned,
+            close(exitCode, reason) {
+              done({
                 stdOut,
                 stdErr,
-                exitCode: 9901,
-                rejection
+                exitCode,
+                rejection: rejection || reason
               });
-            }
-            this._plugins.exec("spawn.before", void 0, __spreadProps(__spreadValues({}, pluginContext(task, args)), {
-              kill(reason) {
-                rejection = reason || rejection;
+            },
+            kill(reason) {
+              if (spawned.killed) {
+                return;
               }
-            }));
-            const spawned = (0, import_child_process.spawn)(command, args, spawnOptions);
-            spawned.stdout.on(
-              "data",
-              onDataReceived(stdOut, "stdOut", logger, outputLogger.step("stdOut"))
-            );
-            spawned.stderr.on(
-              "data",
-              onDataReceived(stdErr, "stdErr", logger, outputLogger.step("stdErr"))
-            );
-            spawned.on("error", onErrorReceived(stdErr, logger));
-            if (outputHandler) {
-              logger(`Passing child process stdOut/stdErr to custom outputHandler`);
-              outputHandler(command, spawned.stdout, spawned.stderr, [...args]);
+              rejection = reason;
+              spawned.kill("SIGINT");
             }
-            this._plugins.exec("spawn.after", void 0, __spreadProps(__spreadValues({}, pluginContext(task, args)), {
-              spawned,
-              close(exitCode, reason) {
-                done({
-                  stdOut,
-                  stdErr,
-                  exitCode,
-                  rejection: rejection || reason
-                });
-              },
-              kill(reason) {
-                if (spawned.killed) {
-                  return;
-                }
-                rejection = reason;
-                spawned.kill("SIGINT");
-              }
-            }));
           });
         });
       }
       _beforeSpawn(task, args) {
         let rejection;
-        this._plugins.exec("spawn.before", void 0, __spreadProps(__spreadValues({}, pluginContext(task, args)), {
+        this._plugins.exec("spawn.before", void 0, {
+          ...pluginContext(task, args),
           kill(reason) {
             rejection = reason || rejection;
           }
-        }));
+        });
         return rejection;
       }
     };
@@ -11151,7 +11122,7 @@ function taskCallback(task, response, callback = NOOP) {
     callback(null, data);
   };
   const onError2 = (err) => {
-    if ((err == null ? void 0 : err.task) === task) {
+    if (err?.task === task) {
       callback(
         err instanceof GitResponseError ? addDeprecationNoticeToError(err) : err,
         void 0
@@ -11571,8 +11542,8 @@ var init_parse_diff_summary = __esm({
           const inserted = /(\d+) i/.exec(summary);
           const deleted = /(\d+) d/.exec(summary);
           result.changed = asNumber(changed);
-          result.insertions = asNumber(inserted == null ? void 0 : inserted[1]);
-          result.deletions = asNumber(deleted == null ? void 0 : deleted[1]);
+          result.insertions = asNumber(inserted?.[1]);
+          result.deletions = asNumber(deleted?.[1]);
         }
       )
     ];
@@ -11622,7 +11593,7 @@ var init_parse_diff_summary = __esm({
         (result, [status, similarity, from, _to, to]) => {
           result.changed++;
           result.files.push({
-            file: to != null ? to : from,
+            file: to ?? from,
             changes: 0,
             insertions: 0,
             deletions: 0,
@@ -11752,7 +11723,7 @@ function userOptions(input) {
 }
 function parseLogOptions(opt = {}, customArgs = []) {
   const splitter = filterType(opt.splitter, filterString, SPLITTER);
-  const format = !filterPrimitives(opt.format) && opt.format ? opt.format : {
+  const format = filterPlainObject(opt.format) ? opt.format : {
     hash: "%H",
     date: opt.strictDate === false ? "%ai" : "%aI",
     message: "%s",
@@ -12171,9 +12142,10 @@ var init_parse_push = __esm({
         result.repo = repo;
       }),
       new LineParser(/^updating local tracking ref '(.+)'/, (result, [local]) => {
-        result.ref = __spreadProps(__spreadValues({}, result.ref || {}), {
+        result.ref = {
+          ...result.ref || {},
           local
-        });
+        };
       }),
       new LineParser(/^[=*-]\s+([^:]+):(\S+)\s+\[(.+)]$/, (result, [local, remote, type]) => {
         result.pushed.push(pushResultPushedItem(local, remote, type));
@@ -12181,11 +12153,12 @@ var init_parse_push = __esm({
       new LineParser(
         /^Branch '([^']+)' set up to track remote branch '([^']+)' from '([^']+)'/,
         (result, [local, remote, remoteName]) => {
-          result.branch = __spreadProps(__spreadValues({}, result.branch || {}), {
+          result.branch = {
+            ...result.branch || {},
             local,
             remote,
             remoteName
-          });
+          };
         }
       ),
       new LineParser(
@@ -12207,7 +12180,10 @@ var init_parse_push = __esm({
     parsePushResult = (stdOut, stdErr) => {
       const pushDetail = parsePushDetail(stdOut, stdErr);
       const responseDetail = parseRemoteMessages(stdOut, stdErr);
-      return __spreadValues(__spreadValues({}, pushDetail), responseDetail);
+      return {
+        ...pushDetail,
+        ...responseDetail
+      };
     };
     parsePushDetail = (stdOut, stdErr) => {
       return parseStringResponse({ pushed: [] }, parsers5, [stdOut, stdErr]);
@@ -12626,7 +12602,7 @@ var init_simple_git_api = __esm({
         if (typeof directory === "string") {
           return this._runTask(changeWorkingDirectoryTask(directory, this._executor), next);
         }
-        if (typeof (directory == null ? void 0 : directory.path) === "string") {
+        if (typeof directory?.path === "string") {
           return this._runTask(
             changeWorkingDirectoryTask(
               directory.path,
@@ -12725,7 +12701,7 @@ var init_scheduler = __esm({
     init_utils();
     import_promise_deferred2 = __nccwpck_require__(9997);
     init_git_logger();
-    createScheduledTask = (() => {
+    createScheduledTask = /* @__PURE__ */ (() => {
       let id = 0;
       return () => {
         id++;
@@ -12902,7 +12878,7 @@ var init_parse_branch = __esm({
         }
       ),
       new LineParser(
-        new RegExp("^([*+]\\s)?(\\S+)\\s+([a-z0-9]+)\\s?(.*)$", "s"),
+        /^([*+]\s)?(\S+)\s+([a-z0-9]+)\s?(.*)$/s,
         (result, [current, name, commit, label]) => {
           result.push(branchStatus(current), false, name, commit, label);
         }
@@ -13848,7 +13824,6 @@ function gitExportFactory(factory) {
   return Object.assign(factory.bind(null), api_exports);
 }
 function gitInstanceFactory(baseDir, options) {
-  var _a2;
   const plugins = new PluginStore();
   const config = createInstanceConfig(
     baseDir && (typeof baseDir === "string" ? { baseDir } : baseDir) || {},
@@ -13872,7 +13847,7 @@ function gitInstanceFactory(baseDir, options) {
   config.spawnOptions && plugins.add(spawnOptionsPlugin(config.spawnOptions));
   plugins.add(errorDetectionPlugin(errorDetectionHandler(true)));
   config.errors && plugins.add(errorDetectionPlugin(config.errors));
-  customBinaryPlugin(plugins, config.binary, (_a2 = config.unsafe) == null ? void 0 : _a2.allowUnsafeCustomBinary);
+  customBinaryPlugin(plugins, config.binary, config.unsafe?.allowUnsafeCustomBinary);
   return new Git(config, plugins);
 }
 var Git;
@@ -14034,6 +14009,871 @@ var { esModuleFactory: esModuleFactory2, gitInstanceFactory: gitInstanceFactory2
 var simpleGit = esModuleFactory2(gitExportFactory2(gitInstanceFactory2));
 module.exports = Object.assign(simpleGit, { gitP: gitP2, simpleGit });
 //# sourceMappingURL=index.js.map
+
+
+/***/ }),
+
+/***/ 2787:
+/***/ ((module, exports, __nccwpck_require__) => {
+
+/* eslint-env browser */
+
+/**
+ * This is the web browser implementation of `debug()`.
+ */
+
+exports.formatArgs = formatArgs;
+exports.save = save;
+exports.load = load;
+exports.useColors = useColors;
+exports.storage = localstorage();
+exports.destroy = (() => {
+	let warned = false;
+
+	return () => {
+		if (!warned) {
+			warned = true;
+			console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
+		}
+	};
+})();
+
+/**
+ * Colors.
+ */
+
+exports.colors = [
+	'#0000CC',
+	'#0000FF',
+	'#0033CC',
+	'#0033FF',
+	'#0066CC',
+	'#0066FF',
+	'#0099CC',
+	'#0099FF',
+	'#00CC00',
+	'#00CC33',
+	'#00CC66',
+	'#00CC99',
+	'#00CCCC',
+	'#00CCFF',
+	'#3300CC',
+	'#3300FF',
+	'#3333CC',
+	'#3333FF',
+	'#3366CC',
+	'#3366FF',
+	'#3399CC',
+	'#3399FF',
+	'#33CC00',
+	'#33CC33',
+	'#33CC66',
+	'#33CC99',
+	'#33CCCC',
+	'#33CCFF',
+	'#6600CC',
+	'#6600FF',
+	'#6633CC',
+	'#6633FF',
+	'#66CC00',
+	'#66CC33',
+	'#9900CC',
+	'#9900FF',
+	'#9933CC',
+	'#9933FF',
+	'#99CC00',
+	'#99CC33',
+	'#CC0000',
+	'#CC0033',
+	'#CC0066',
+	'#CC0099',
+	'#CC00CC',
+	'#CC00FF',
+	'#CC3300',
+	'#CC3333',
+	'#CC3366',
+	'#CC3399',
+	'#CC33CC',
+	'#CC33FF',
+	'#CC6600',
+	'#CC6633',
+	'#CC9900',
+	'#CC9933',
+	'#CCCC00',
+	'#CCCC33',
+	'#FF0000',
+	'#FF0033',
+	'#FF0066',
+	'#FF0099',
+	'#FF00CC',
+	'#FF00FF',
+	'#FF3300',
+	'#FF3333',
+	'#FF3366',
+	'#FF3399',
+	'#FF33CC',
+	'#FF33FF',
+	'#FF6600',
+	'#FF6633',
+	'#FF9900',
+	'#FF9933',
+	'#FFCC00',
+	'#FFCC33'
+];
+
+/**
+ * Currently only WebKit-based Web Inspectors, Firefox >= v31,
+ * and the Firebug extension (any Firefox version) are known
+ * to support "%c" CSS customizations.
+ *
+ * TODO: add a `localStorage` variable to explicitly enable/disable colors
+ */
+
+// eslint-disable-next-line complexity
+function useColors() {
+	// NB: In an Electron preload script, document will be defined but not fully
+	// initialized. Since we know we're in Chrome, we'll just detect this case
+	// explicitly
+	if (typeof window !== 'undefined' && window.process && (window.process.type === 'renderer' || window.process.__nwjs)) {
+		return true;
+	}
+
+	// Internet Explorer and Edge do not support colors.
+	if (typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/(edge|trident)\/(\d+)/)) {
+		return false;
+	}
+
+	let m;
+
+	// Is webkit? http://stackoverflow.com/a/16459606/376773
+	// document is undefined in react-native: https://github.com/facebook/react-native/pull/1632
+	// eslint-disable-next-line no-return-assign
+	return (typeof document !== 'undefined' && document.documentElement && document.documentElement.style && document.documentElement.style.WebkitAppearance) ||
+		// Is firebug? http://stackoverflow.com/a/398120/376773
+		(typeof window !== 'undefined' && window.console && (window.console.firebug || (window.console.exception && window.console.table))) ||
+		// Is firefox >= v31?
+		// https://developer.mozilla.org/en-US/docs/Tools/Web_Console#Styling_messages
+		(typeof navigator !== 'undefined' && navigator.userAgent && (m = navigator.userAgent.toLowerCase().match(/firefox\/(\d+)/)) && parseInt(m[1], 10) >= 31) ||
+		// Double check webkit in userAgent just in case we are in a worker
+		(typeof navigator !== 'undefined' && navigator.userAgent && navigator.userAgent.toLowerCase().match(/applewebkit\/(\d+)/));
+}
+
+/**
+ * Colorize log arguments if enabled.
+ *
+ * @api public
+ */
+
+function formatArgs(args) {
+	args[0] = (this.useColors ? '%c' : '') +
+		this.namespace +
+		(this.useColors ? ' %c' : ' ') +
+		args[0] +
+		(this.useColors ? '%c ' : ' ') +
+		'+' + module.exports.humanize(this.diff);
+
+	if (!this.useColors) {
+		return;
+	}
+
+	const c = 'color: ' + this.color;
+	args.splice(1, 0, c, 'color: inherit');
+
+	// The final "%c" is somewhat tricky, because there could be other
+	// arguments passed either before or after the %c, so we need to
+	// figure out the correct index to insert the CSS into
+	let index = 0;
+	let lastC = 0;
+	args[0].replace(/%[a-zA-Z%]/g, match => {
+		if (match === '%%') {
+			return;
+		}
+		index++;
+		if (match === '%c') {
+			// We only are interested in the *last* %c
+			// (the user may have provided their own)
+			lastC = index;
+		}
+	});
+
+	args.splice(lastC, 0, c);
+}
+
+/**
+ * Invokes `console.debug()` when available.
+ * No-op when `console.debug` is not a "function".
+ * If `console.debug` is not available, falls back
+ * to `console.log`.
+ *
+ * @api public
+ */
+exports.log = console.debug || console.log || (() => {});
+
+/**
+ * Save `namespaces`.
+ *
+ * @param {String} namespaces
+ * @api private
+ */
+function save(namespaces) {
+	try {
+		if (namespaces) {
+			exports.storage.setItem('debug', namespaces);
+		} else {
+			exports.storage.removeItem('debug');
+		}
+	} catch (error) {
+		// Swallow
+		// XXX (@Qix-) should we be logging these?
+	}
+}
+
+/**
+ * Load `namespaces`.
+ *
+ * @return {String} returns the previously persisted debug modes
+ * @api private
+ */
+function load() {
+	let r;
+	try {
+		r = exports.storage.getItem('debug') || exports.storage.getItem('DEBUG') ;
+	} catch (error) {
+		// Swallow
+		// XXX (@Qix-) should we be logging these?
+	}
+
+	// If debug isn't set in LS, and we're in Electron, try to load $DEBUG
+	if (!r && typeof process !== 'undefined' && 'env' in process) {
+		r = process.env.DEBUG;
+	}
+
+	return r;
+}
+
+/**
+ * Localstorage attempts to return the localstorage.
+ *
+ * This is necessary because safari throws
+ * when a user disables cookies/localstorage
+ * and you attempt to access it.
+ *
+ * @return {LocalStorage}
+ * @api private
+ */
+
+function localstorage() {
+	try {
+		// TVMLKit (Apple TV JS Runtime) does not have a window object, just localStorage in the global context
+		// The Browser also has localStorage in the global context.
+		return localStorage;
+	} catch (error) {
+		// Swallow
+		// XXX (@Qix-) should we be logging these?
+	}
+}
+
+module.exports = __nccwpck_require__(8142)(exports);
+
+const {formatters} = module.exports;
+
+/**
+ * Map %j to `JSON.stringify()`, since no Web Inspectors do that by default.
+ */
+
+formatters.j = function (v) {
+	try {
+		return JSON.stringify(v);
+	} catch (error) {
+		return '[UnexpectedJSONParseError]: ' + error.message;
+	}
+};
+
+
+/***/ }),
+
+/***/ 8142:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+
+/**
+ * This is the common logic for both the Node.js and web browser
+ * implementations of `debug()`.
+ */
+
+function setup(env) {
+	createDebug.debug = createDebug;
+	createDebug.default = createDebug;
+	createDebug.coerce = coerce;
+	createDebug.disable = disable;
+	createDebug.enable = enable;
+	createDebug.enabled = enabled;
+	createDebug.humanize = __nccwpck_require__(744);
+	createDebug.destroy = destroy;
+
+	Object.keys(env).forEach(key => {
+		createDebug[key] = env[key];
+	});
+
+	/**
+	* The currently active debug mode names, and names to skip.
+	*/
+
+	createDebug.names = [];
+	createDebug.skips = [];
+
+	/**
+	* Map of special "%n" handling functions, for the debug "format" argument.
+	*
+	* Valid key names are a single, lower or upper-case letter, i.e. "n" and "N".
+	*/
+	createDebug.formatters = {};
+
+	/**
+	* Selects a color for a debug namespace
+	* @param {String} namespace The namespace string for the debug instance to be colored
+	* @return {Number|String} An ANSI color code for the given namespace
+	* @api private
+	*/
+	function selectColor(namespace) {
+		let hash = 0;
+
+		for (let i = 0; i < namespace.length; i++) {
+			hash = ((hash << 5) - hash) + namespace.charCodeAt(i);
+			hash |= 0; // Convert to 32bit integer
+		}
+
+		return createDebug.colors[Math.abs(hash) % createDebug.colors.length];
+	}
+	createDebug.selectColor = selectColor;
+
+	/**
+	* Create a debugger with the given `namespace`.
+	*
+	* @param {String} namespace
+	* @return {Function}
+	* @api public
+	*/
+	function createDebug(namespace) {
+		let prevTime;
+		let enableOverride = null;
+		let namespacesCache;
+		let enabledCache;
+
+		function debug(...args) {
+			// Disabled?
+			if (!debug.enabled) {
+				return;
+			}
+
+			const self = debug;
+
+			// Set `diff` timestamp
+			const curr = Number(new Date());
+			const ms = curr - (prevTime || curr);
+			self.diff = ms;
+			self.prev = prevTime;
+			self.curr = curr;
+			prevTime = curr;
+
+			args[0] = createDebug.coerce(args[0]);
+
+			if (typeof args[0] !== 'string') {
+				// Anything else let's inspect with %O
+				args.unshift('%O');
+			}
+
+			// Apply any `formatters` transformations
+			let index = 0;
+			args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
+				// If we encounter an escaped % then don't increase the array index
+				if (match === '%%') {
+					return '%';
+				}
+				index++;
+				const formatter = createDebug.formatters[format];
+				if (typeof formatter === 'function') {
+					const val = args[index];
+					match = formatter.call(self, val);
+
+					// Now we need to remove `args[index]` since it's inlined in the `format`
+					args.splice(index, 1);
+					index--;
+				}
+				return match;
+			});
+
+			// Apply env-specific formatting (colors, etc.)
+			createDebug.formatArgs.call(self, args);
+
+			const logFn = self.log || createDebug.log;
+			logFn.apply(self, args);
+		}
+
+		debug.namespace = namespace;
+		debug.useColors = createDebug.useColors();
+		debug.color = createDebug.selectColor(namespace);
+		debug.extend = extend;
+		debug.destroy = createDebug.destroy; // XXX Temporary. Will be removed in the next major release.
+
+		Object.defineProperty(debug, 'enabled', {
+			enumerable: true,
+			configurable: false,
+			get: () => {
+				if (enableOverride !== null) {
+					return enableOverride;
+				}
+				if (namespacesCache !== createDebug.namespaces) {
+					namespacesCache = createDebug.namespaces;
+					enabledCache = createDebug.enabled(namespace);
+				}
+
+				return enabledCache;
+			},
+			set: v => {
+				enableOverride = v;
+			}
+		});
+
+		// Env-specific initialization logic for debug instances
+		if (typeof createDebug.init === 'function') {
+			createDebug.init(debug);
+		}
+
+		return debug;
+	}
+
+	function extend(namespace, delimiter) {
+		const newDebug = createDebug(this.namespace + (typeof delimiter === 'undefined' ? ':' : delimiter) + namespace);
+		newDebug.log = this.log;
+		return newDebug;
+	}
+
+	/**
+	* Enables a debug mode by namespaces. This can include modes
+	* separated by a colon and wildcards.
+	*
+	* @param {String} namespaces
+	* @api public
+	*/
+	function enable(namespaces) {
+		createDebug.save(namespaces);
+		createDebug.namespaces = namespaces;
+
+		createDebug.names = [];
+		createDebug.skips = [];
+
+		const split = (typeof namespaces === 'string' ? namespaces : '')
+			.trim()
+			.replace(/\s+/g, ',')
+			.split(',')
+			.filter(Boolean);
+
+		for (const ns of split) {
+			if (ns[0] === '-') {
+				createDebug.skips.push(ns.slice(1));
+			} else {
+				createDebug.names.push(ns);
+			}
+		}
+	}
+
+	/**
+	 * Checks if the given string matches a namespace template, honoring
+	 * asterisks as wildcards.
+	 *
+	 * @param {String} search
+	 * @param {String} template
+	 * @return {Boolean}
+	 */
+	function matchesTemplate(search, template) {
+		let searchIndex = 0;
+		let templateIndex = 0;
+		let starIndex = -1;
+		let matchIndex = 0;
+
+		while (searchIndex < search.length) {
+			if (templateIndex < template.length && (template[templateIndex] === search[searchIndex] || template[templateIndex] === '*')) {
+				// Match character or proceed with wildcard
+				if (template[templateIndex] === '*') {
+					starIndex = templateIndex;
+					matchIndex = searchIndex;
+					templateIndex++; // Skip the '*'
+				} else {
+					searchIndex++;
+					templateIndex++;
+				}
+			} else if (starIndex !== -1) { // eslint-disable-line no-negated-condition
+				// Backtrack to the last '*' and try to match more characters
+				templateIndex = starIndex + 1;
+				matchIndex++;
+				searchIndex = matchIndex;
+			} else {
+				return false; // No match
+			}
+		}
+
+		// Handle trailing '*' in template
+		while (templateIndex < template.length && template[templateIndex] === '*') {
+			templateIndex++;
+		}
+
+		return templateIndex === template.length;
+	}
+
+	/**
+	* Disable debug output.
+	*
+	* @return {String} namespaces
+	* @api public
+	*/
+	function disable() {
+		const namespaces = [
+			...createDebug.names,
+			...createDebug.skips.map(namespace => '-' + namespace)
+		].join(',');
+		createDebug.enable('');
+		return namespaces;
+	}
+
+	/**
+	* Returns true if the given mode name is enabled, false otherwise.
+	*
+	* @param {String} name
+	* @return {Boolean}
+	* @api public
+	*/
+	function enabled(name) {
+		for (const skip of createDebug.skips) {
+			if (matchesTemplate(name, skip)) {
+				return false;
+			}
+		}
+
+		for (const ns of createDebug.names) {
+			if (matchesTemplate(name, ns)) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	* Coerce `val`.
+	*
+	* @param {Mixed} val
+	* @return {Mixed}
+	* @api private
+	*/
+	function coerce(val) {
+		if (val instanceof Error) {
+			return val.stack || val.message;
+		}
+		return val;
+	}
+
+	/**
+	* XXX DO NOT USE. This is a temporary stub function.
+	* XXX It WILL be removed in the next major release.
+	*/
+	function destroy() {
+		console.warn('Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.');
+	}
+
+	createDebug.enable(createDebug.load());
+
+	return createDebug;
+}
+
+module.exports = setup;
+
+
+/***/ }),
+
+/***/ 1567:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+/**
+ * Detect Electron renderer / nwjs process, which is node, but we should
+ * treat as a browser.
+ */
+
+if (typeof process === 'undefined' || process.type === 'renderer' || process.browser === true || process.__nwjs) {
+	module.exports = __nccwpck_require__(2787);
+} else {
+	module.exports = __nccwpck_require__(6431);
+}
+
+
+/***/ }),
+
+/***/ 6431:
+/***/ ((module, exports, __nccwpck_require__) => {
+
+/**
+ * Module dependencies.
+ */
+
+const tty = __nccwpck_require__(2018);
+const util = __nccwpck_require__(9023);
+
+/**
+ * This is the Node.js implementation of `debug()`.
+ */
+
+exports.init = init;
+exports.log = log;
+exports.formatArgs = formatArgs;
+exports.save = save;
+exports.load = load;
+exports.useColors = useColors;
+exports.destroy = util.deprecate(
+	() => {},
+	'Instance method `debug.destroy()` is deprecated and no longer does anything. It will be removed in the next major version of `debug`.'
+);
+
+/**
+ * Colors.
+ */
+
+exports.colors = [6, 2, 3, 4, 5, 1];
+
+try {
+	// Optional dependency (as in, doesn't need to be installed, NOT like optionalDependencies in package.json)
+	// eslint-disable-next-line import/no-extraneous-dependencies
+	const supportsColor = __nccwpck_require__(1450);
+
+	if (supportsColor && (supportsColor.stderr || supportsColor).level >= 2) {
+		exports.colors = [
+			20,
+			21,
+			26,
+			27,
+			32,
+			33,
+			38,
+			39,
+			40,
+			41,
+			42,
+			43,
+			44,
+			45,
+			56,
+			57,
+			62,
+			63,
+			68,
+			69,
+			74,
+			75,
+			76,
+			77,
+			78,
+			79,
+			80,
+			81,
+			92,
+			93,
+			98,
+			99,
+			112,
+			113,
+			128,
+			129,
+			134,
+			135,
+			148,
+			149,
+			160,
+			161,
+			162,
+			163,
+			164,
+			165,
+			166,
+			167,
+			168,
+			169,
+			170,
+			171,
+			172,
+			173,
+			178,
+			179,
+			184,
+			185,
+			196,
+			197,
+			198,
+			199,
+			200,
+			201,
+			202,
+			203,
+			204,
+			205,
+			206,
+			207,
+			208,
+			209,
+			214,
+			215,
+			220,
+			221
+		];
+	}
+} catch (error) {
+	// Swallow - we only care if `supports-color` is available; it doesn't have to be.
+}
+
+/**
+ * Build up the default `inspectOpts` object from the environment variables.
+ *
+ *   $ DEBUG_COLORS=no DEBUG_DEPTH=10 DEBUG_SHOW_HIDDEN=enabled node script.js
+ */
+
+exports.inspectOpts = Object.keys(process.env).filter(key => {
+	return /^debug_/i.test(key);
+}).reduce((obj, key) => {
+	// Camel-case
+	const prop = key
+		.substring(6)
+		.toLowerCase()
+		.replace(/_([a-z])/g, (_, k) => {
+			return k.toUpperCase();
+		});
+
+	// Coerce string value into JS value
+	let val = process.env[key];
+	if (/^(yes|on|true|enabled)$/i.test(val)) {
+		val = true;
+	} else if (/^(no|off|false|disabled)$/i.test(val)) {
+		val = false;
+	} else if (val === 'null') {
+		val = null;
+	} else {
+		val = Number(val);
+	}
+
+	obj[prop] = val;
+	return obj;
+}, {});
+
+/**
+ * Is stdout a TTY? Colored output is enabled when `true`.
+ */
+
+function useColors() {
+	return 'colors' in exports.inspectOpts ?
+		Boolean(exports.inspectOpts.colors) :
+		tty.isatty(process.stderr.fd);
+}
+
+/**
+ * Adds ANSI color escape codes if enabled.
+ *
+ * @api public
+ */
+
+function formatArgs(args) {
+	const {namespace: name, useColors} = this;
+
+	if (useColors) {
+		const c = this.color;
+		const colorCode = '\u001B[3' + (c < 8 ? c : '8;5;' + c);
+		const prefix = `  ${colorCode};1m${name} \u001B[0m`;
+
+		args[0] = prefix + args[0].split('\n').join('\n' + prefix);
+		args.push(colorCode + 'm+' + module.exports.humanize(this.diff) + '\u001B[0m');
+	} else {
+		args[0] = getDate() + name + ' ' + args[0];
+	}
+}
+
+function getDate() {
+	if (exports.inspectOpts.hideDate) {
+		return '';
+	}
+	return new Date().toISOString() + ' ';
+}
+
+/**
+ * Invokes `util.formatWithOptions()` with the specified arguments and writes to stderr.
+ */
+
+function log(...args) {
+	return process.stderr.write(util.formatWithOptions(exports.inspectOpts, ...args) + '\n');
+}
+
+/**
+ * Save `namespaces`.
+ *
+ * @param {String} namespaces
+ * @api private
+ */
+function save(namespaces) {
+	if (namespaces) {
+		process.env.DEBUG = namespaces;
+	} else {
+		// If you set a process.env field to null or undefined, it gets cast to the
+		// string 'null' or 'undefined'. Just delete instead.
+		delete process.env.DEBUG;
+	}
+}
+
+/**
+ * Load `namespaces`.
+ *
+ * @return {String} returns the previously persisted debug modes
+ * @api private
+ */
+
+function load() {
+	return process.env.DEBUG;
+}
+
+/**
+ * Init logic for `debug` instances.
+ *
+ * Create a new `inspectOpts` object in case `useColors` is set
+ * differently for a particular `debug` instance.
+ */
+
+function init(debug) {
+	debug.inspectOpts = {};
+
+	const keys = Object.keys(exports.inspectOpts);
+	for (let i = 0; i < keys.length; i++) {
+		debug.inspectOpts[keys[i]] = exports.inspectOpts[keys[i]];
+	}
+}
+
+module.exports = __nccwpck_require__(8142)(exports);
+
+const {formatters} = module.exports;
+
+/**
+ * Map %o to `util.inspect()`, all on a single line.
+ */
+
+formatters.o = function (v) {
+	this.inspectOpts.colors = this.useColors;
+	return util.inspect(v, this.inspectOpts)
+		.split('\n')
+		.map(str => str.trim())
+		.join(' ');
+};
+
+/**
+ * Map %O to `util.inspect()`, allowing multiple lines if needed.
+ */
+
+formatters.O = function (v) {
+	this.inspectOpts.colors = this.useColors;
+	return util.inspect(v, this.inspectOpts);
+};
 
 
 /***/ }),
@@ -36796,6 +37636,14 @@ module.exports = require("https");
 
 "use strict";
 module.exports = require("net");
+
+/***/ }),
+
+/***/ 4573:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:buffer");
 
 /***/ }),
 
