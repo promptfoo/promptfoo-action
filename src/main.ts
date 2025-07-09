@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import {simpleGit} from 'simple-git';
+import * as dotenv from 'dotenv';
 
 import type {OutputFile} from 'promptfoo';
 
@@ -61,6 +62,27 @@ export async function run(): Promise<void> {
       'use-config-prompts',
       {required: false},
     );
+    const envFiles: string = core.getInput('env-files', {required: false});
+
+    // Load .env files if specified
+    if (envFiles) {
+      const envFileList = envFiles.split(',').map(f => f.trim());
+      for (const envFile of envFileList) {
+        const envFilePath = path.join(workingDirectory, envFile);
+        if (fs.existsSync(envFilePath)) {
+          core.info(`Loading environment variables from ${envFilePath}`);
+          // Use override: true to allow later files to override earlier ones
+          const result = dotenv.config({ path: envFilePath, override: true });
+          if (result.error) {
+            core.warning(`Failed to load ${envFilePath}: ${result.error.message}`);
+          } else {
+            core.info(`Successfully loaded ${envFilePath}`);
+          }
+        } else {
+          core.warning(`Environment file ${envFilePath} not found`);
+        }
+      }
+    }
 
     const apiKeys = [
       openaiApiKey,
