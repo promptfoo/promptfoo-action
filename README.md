@@ -14,16 +14,17 @@ The provided link opens the promptfoo web viewer, which allows you to interactiv
 
 The action can be configured using the following inputs:
 
-| Parameter            | Description                                                                                                               | Required |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------- | -------- |
-| `config`             | The path to the configuration file. This file contains settings for the action.                                           | Yes      |
-| `github-token`       | The Github token. Used to authenticate requests to the Github API.                                                        | Yes      |
-| `cache-path`         | The path to the cache. This is where the action stores temporary data.                                                    | No       |
-| `no-share`           | No sharing option for promptfoo. Defaults to `false`                                                                      | No       |
-| `promptfoo-version`  | The version of promptfoo to use. Defaults to `latest`                                                                     | No       |
-| `working-directory`  | The working directory to run `promptfoo` in. Can be set to a location where `promptfoo` is already installed.             | No       |
-| `prompts`            | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate. | No       |
-| `use-config-prompts` | Use prompt files set at config file. Defaults to `false`                                                                  | No       |
+| Parameter            | Description                                                                                                                                               | Required |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `config`             | The path to the configuration file. This file contains settings for the action.                                                                           | Yes      |
+| `github-token`       | The Github token. Used to authenticate requests to the Github API.                                                                                        | Yes      |
+| `cache-path`         | The path to the cache. This is where the action stores temporary data.                                                                                    | No       |
+| `no-share`           | No sharing option for promptfoo. Defaults to `false`                                                                                                      | No       |
+| `promptfoo-version`  | The version of promptfoo to use. Defaults to `latest`                                                                                                     | No       |
+| `working-directory`  | The working directory to run `promptfoo` in. Can be set to a location where `promptfoo` is already installed.                                             | No       |
+| `prompts`            | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate.                                 | No       |
+| `use-config-prompts` | Use prompt files set at config file. Defaults to `false`                                                                                                  | No       |
+| `env-files`          | Comma-separated list of .env files to load (e.g. ".env,.env.test.local"). Environment variables from these files will be loaded before running promptfoo. | No       |
 
 The following API key parameters are supported:
 
@@ -79,3 +80,34 @@ jobs:
 If you are using an OpenAI model, remember to create the secret in Repository Settings > Secrets and Variables > Actions > New repository secret.
 
 For more information on how to set up the promptfoo config, see [documentation](https://promptfoo.dev/docs/getting-started).
+
+## Using .env Files
+
+If your application uses `.env` files to store environment variables, you can load them before running promptfoo evaluations:
+
+```yaml
+name: 'Prompt Evaluation'
+on:
+  pull_request:
+    paths:
+      - 'prompts/**'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run promptfoo evaluation
+        uses: promptfoo/promptfoo-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: 'prompts/promptfooconfig.yaml'
+          env-files: '.env,.env.test.local' # Load multiple .env files
+```
+
+This is particularly useful for Next.js applications or other frameworks that use `.env` files for configuration. The environment variables from these files will be available to promptfoo during evaluation.
