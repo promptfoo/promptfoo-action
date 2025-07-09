@@ -13,15 +13,7 @@
     "lint": "eslint src/**/*.ts --max-warnings 0",
     "lint:fix": "eslint --fix src/**/*.ts",
     "package": "ncc build --source-map --license licenses.txt",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage",
-    "test:coverage:watch": "jest --coverage --watch",
-    "test:ci": "jest --ci --coverage --maxWorkers=2",
-    "test:debug": "node --inspect-brk node_modules/.bin/jest --runInBand",
-    "test:update-snapshots": "jest --updateSnapshot",
-    "test:clear-cache": "jest --clearCache",
-    "coverage:view": "open coverage/lcov-report/index.html",
+    "test": "jest --coverage",
     "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
   },
   "repository": {
