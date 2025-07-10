@@ -116,32 +116,4 @@ This is particularly useful for Next.js applications or other frameworks that us
 
 ## Minimal Output
 
-If you want to keep the GitHub Action logs clean and minimal, you can use the `no-table` and `no-progress-bar` flags:
-
-```yaml
-name: 'Prompt Evaluation'
-on:
-  pull_request:
-    paths:
-      - 'prompts/**'
-
-jobs:
-  evaluate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@v1
-        with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          config: 'prompts/promptfooconfig.yaml'
-          no-table: true # Disable table output
-          no-progress-bar: true # Disable progress bar
-```
-
-This configuration will run promptfoo with minimal console output, showing only essential information.
+To reduce console output in CI, set `no-table: true` and `no-progress-bar: true` in your action configuration.
