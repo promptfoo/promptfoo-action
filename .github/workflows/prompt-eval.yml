@@ -1,0 +1,29 @@
+name: 'Prompt Evaluation'
+on:
+  pull_request:
+    paths:
+      - '.github/promptfoo/**'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up promptfoo cache
+        uses: actions/cache@v2
+        with:
+          path: ~/.cache/promptfoo
+          key: ${{ runner.os }}-promptfoo-v1
+          restore-keys: |
+            ${{ runner.os }}-promptfoo-
+
+      - name: Run promptfoo evaluation
+        uses: promptfoo/promptfoo-action@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: '.github/promptfoo/config.yaml'
+          cache-path: ~/.cache/promptfoo
