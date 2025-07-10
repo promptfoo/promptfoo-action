@@ -13,7 +13,7 @@
     "lint": "eslint src/**/*.ts --max-warnings 0",
     "lint:fix": "eslint --fix src/**/*.ts",
     "package": "ncc build --source-map --license licenses.txt",
-    "test": "jest",
+    "test": "jest --coverage",
     "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
   },
   "repository": {
@@ -36,6 +36,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",
+    "@swc/core": "^1.12.11",
+    "@swc/jest": "^0.2.39",
     "@types/cache-manager": "^4.0.6",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.12",
