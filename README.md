@@ -25,6 +25,8 @@ The action can be configured using the following inputs:
 | `prompts`            | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate.                                 | No       |
 | `use-config-prompts` | Use prompt files set at config file. Defaults to `false`                                                                                                  | No       |
 | `env-files`          | Comma-separated list of .env files to load (e.g. ".env,.env.test.local"). Environment variables from these files will be loaded before running promptfoo. | No       |
+| `no-table`           | Run promptfoo with `--no-table` flag to keep output minimal. Defaults to `false`                                                                          | No       |
+| `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
 
 The following API key parameters are supported:
 
@@ -111,3 +113,35 @@ jobs:
 ```
 
 This is particularly useful for Next.js applications or other frameworks that use `.env` files for configuration. The environment variables from these files will be available to promptfoo during evaluation.
+
+## Minimal Output
+
+If you want to keep the GitHub Action logs clean and minimal, you can use the `no-table` and `no-progress-bar` flags:
+
+```yaml
+name: 'Prompt Evaluation'
+on:
+  pull_request:
+    paths:
+      - 'prompts/**'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run promptfoo evaluation
+        uses: promptfoo/promptfoo-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: 'prompts/promptfooconfig.yaml'
+          no-table: true # Disable table output
+          no-progress-bar: true # Disable progress bar
+```
+
+This configuration will run promptfoo with minimal console output, showing only essential information.

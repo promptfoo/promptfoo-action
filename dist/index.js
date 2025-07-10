@@ -107,6 +107,12 @@ function run() {
             });
             const useConfigPrompts = core.getBooleanInput('use-config-prompts', { required: false });
             const envFiles = core.getInput('env-files', { required: false });
+            const noTable = core.getBooleanInput('no-table', {
+                required: false,
+            });
+            const noProgressBar = core.getBooleanInput('no-progress-bar', {
+                required: false,
+            });
             // Load .env files if specified
             if (envFiles) {
                 const envFileList = envFiles.split(',').map(f => f.trim());
@@ -185,6 +191,12 @@ function run() {
             }
             if (!noShare) {
                 promptfooArgs.push('--share');
+            }
+            if (noTable) {
+                promptfooArgs.push('--no-table');
+            }
+            if (noProgressBar) {
+                promptfooArgs.push('--no-progress-bar');
             }
             const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
                 ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }

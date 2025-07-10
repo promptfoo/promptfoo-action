@@ -63,6 +63,12 @@ export async function run(): Promise<void> {
       {required: false},
     );
     const envFiles: string = core.getInput('env-files', {required: false});
+    const noTable: boolean = core.getBooleanInput('no-table', {
+      required: false,
+    });
+    const noProgressBar: boolean = core.getBooleanInput('no-progress-bar', {
+      required: false,
+    });
 
     // Load .env files if specified
     if (envFiles) {
@@ -72,9 +78,11 @@ export async function run(): Promise<void> {
         if (fs.existsSync(envFilePath)) {
           core.info(`Loading environment variables from ${envFilePath}`);
           // Use override: true to allow later files to override earlier ones
-          const result = dotenv.config({ path: envFilePath, override: true });
+          const result = dotenv.config({path: envFilePath, override: true});
           if (result.error) {
-            core.warning(`Failed to load ${envFilePath}: ${result.error.message}`);
+            core.warning(
+              `Failed to load ${envFilePath}: ${result.error.message}`,
+            );
           } else {
             core.info(`Successfully loaded ${envFilePath}`);
           }
@@ -154,6 +162,12 @@ export async function run(): Promise<void> {
     }
     if (!noShare) {
       promptfooArgs.push('--share');
+    }
+    if (noTable) {
+      promptfooArgs.push('--no-table');
+    }
+    if (noProgressBar) {
+      promptfooArgs.push('--no-progress-bar');
     }
 
     const env = {

@@ -63,6 +63,14 @@ inputs:
     description: 'Comma-separated list of .env files to load (e.g. ".env,.env.test.local")'
     required: false
     default: ''
+  no-table:
+    description: 'Run promptfoo with --no-table flag to keep output minimal'
+    required: false
+    default: 'false'
+  no-progress-bar:
+    description: 'Run promptfoo with --no-progress-bar flag to keep output minimal'
+    required: false
+    default: 'false'
 branding:
   icon: 'box'
   color: 'yellow'
