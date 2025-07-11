@@ -3,7 +3,13 @@
   "files": {
     "maxSize": 2097152,
     "ignoreUnknown": true,
-    "includes": ["src/**/*.ts", "src/**/*.js", "__tests__/**/*.ts"],
+    "includes": [
+      "src/**/*.ts",
+      "src/**/*.js",
+      "__tests__/**/*.ts",
+      "*.js",
+      "*.ts"
+    ],
     "experimentalScannerIgnores": [
       "node_modules",
       "dist/**",
