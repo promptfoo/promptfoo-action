@@ -8,13 +8,15 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
-    "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "lint": "eslint src/**/*.ts --max-warnings 0",
-    "lint:fix": "eslint --fix src/**/*.ts",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "biome": "biome check --write .",
+    "biome:check": "biome check .",
     "package": "ncc build --source-map --license licenses.txt",
     "test": "jest --coverage",
-    "all": "npm run build && npm run format && npm run lint && npm run package && npm test"
+    "all": "npm run build && npm run biome:check && npm run package && npm test"
   },
   "repository": {
     "type": "git",
@@ -35,22 +37,16 @@
     "simple-git": "^3.28.0"
   },
   "devDependencies": {
-    "@eslint/js": "^9.30.1",
+    "@biomejs/biome": "^2.1.1",
     "@swc/core": "^1.12.11",
     "@swc/jest": "^0.2.39",
     "@types/cache-manager": "^4.0.6",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.0.12",
-    "@typescript-eslint/eslint-plugin": "^8.36.0",
-    "@typescript-eslint/parser": "^8.35.1",
     "@vercel/ncc": "^0.38.3",
-    "eslint": "^9.30.1",
-    "eslint-plugin-github": "^6.0.0",
-    "eslint-plugin-jest": "^29.0.1",
     "jest": "^30.0.4",
     "js-yaml": "^4.1.0",
-    "prettier": "^3.6.2",
-    "promptfoo": "^0.116.4",
+    "promptfoo": "^0.116.7",
     "ts-jest": "^29.4.0",
     "typescript": "^5.8.3"
   }
