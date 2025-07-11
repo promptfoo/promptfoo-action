@@ -7,6 +7,7 @@ import * as glob from 'glob';
 import * as path from 'path';
 import type { OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
+import { processApiKeys, API_KEY_CONFIGS } from './utils/security';
 
 const gitInterface = simpleGit();
 
@@ -20,33 +21,15 @@ function validateGitRef(ref: string): void {
 
 export async function run(): Promise<void> {
   try {
-    const openaiApiKey: string = core.getInput('openai-api-key', {
-      required: false,
-    });
-    const azureApiKey: string = core.getInput('azure-api-key', {
-      required: false,
-    });
-    const anthropicApiKey: string = core.getInput('anthropic-api-key', {
-      required: false,
-    });
-    const huggingfaceApiKey: string = core.getInput('huggingface-api-key', {
-      required: false,
-    });
-    const awsAccessKeyId: string = core.getInput('aws-access-key-id', {
-      required: false,
-    });
-    const awsSecretAccessKey: string = core.getInput('aws-secret-access-key', {
-      required: false,
-    });
-    const replicateApiKey: string = core.getInput('replicate-api-key', {
-      required: false,
-    });
-    const palmApiKey: string = core.getInput('palm-api-key', {
-      required: false,
-    });
-    const vertexApiKey: string = core.getInput('vertex-api-key', {
-      required: false,
-    });
+    // Collect all API key inputs
+    const apiKeyInputs: Record<string, string> = {};
+    for (const config of Object.values(API_KEY_CONFIGS)) {
+      const value = core.getInput(config.inputName, { required: false });
+      if (value) {
+        apiKeyInputs[config.inputName] = value;
+      }
+    }
+
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
@@ -95,23 +78,21 @@ export async function run(): Promise<void> {
       }
     }
 
-    const apiKeys = [
-      openaiApiKey,
-      azureApiKey,
-      anthropicApiKey,
-      huggingfaceApiKey,
-      awsAccessKeyId,
-      awsSecretAccessKey,
-      replicateApiKey,
-      palmApiKey,
-      vertexApiKey,
-    ];
-    for (const key of apiKeys) {
-      if (key) {
-        core.setSecret(key);
-      }
-    }
+    // Process and validate all API keys
+    const secureApiKeys = processApiKeys(apiKeyInputs);
+    
+    // Mask GitHub token
     core.setSecret(githubToken);
+    
+    // Log security audit summary
+    const configuredProviders = Object.keys(secureApiKeys)
+      .map(envVar => {
+        const config = Object.values(API_KEY_CONFIGS).find(c => c.envVarName === envVar);
+        return config?.inputName || envVar;
+      });
+    if (configuredProviders.length > 0) {
+      core.info(`Configured API keys for: ${configuredProviders.join(', ')}`);
+    }
 
     const event = github.context.eventName;
     if (event !== 'pull_request') {
@@ -173,17 +154,7 @@ export async function run(): Promise<void> {
 
     const env = {
       ...process.env,
-      ...(openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {}),
-      ...(azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {}),
-      ...(anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {}),
-      ...(huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {}),
-      ...(awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {}),
-      ...(awsSecretAccessKey
-        ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
-        : {}),
-      ...(replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {}),
-      ...(palmApiKey ? { PALM_API_KEY: palmApiKey } : {}),
-      ...(vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {}),
+      ...secureApiKeys,
       ...(cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}),
     };
     let errorToThrow: Error | undefined;
