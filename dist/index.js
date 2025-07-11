@@ -8921,6 +8921,13 @@ function _getRandomTip () {
   return TIPS[Math.floor(Math.random() * TIPS.length)]
 }
 
+function parseBoolean (value) {
+  if (typeof value === 'string') {
+    return !['false', '0', 'no', 'off', ''].includes(value.toLowerCase())
+  }
+  return Boolean(value)
+}
+
 function supportsAnsi () {
   return process.stdout.isTTY // && process.env.TERM !== 'dumb'
 }
@@ -9112,8 +9119,8 @@ function _resolveHome (envPath) {
 }
 
 function _configVault (options) {
-  const debug = Boolean(options && options.debug)
-  const quiet = Boolean(options && options.quiet)
+  const debug = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || (options && options.debug))
+  const quiet = parseBoolean(process.env.DOTENV_CONFIG_QUIET || (options && options.quiet))
 
   if (debug || !quiet) {
     _log('Loading env from encrypted .env.vault')
@@ -9134,8 +9141,12 @@ function _configVault (options) {
 function configDotenv (options) {
   const dotenvPath = path.resolve(process.cwd(), '.env')
   let encoding = 'utf8'
-  const debug = Boolean(options && options.debug)
-  const quiet = Boolean(options && options.quiet)
+  let processEnv = process.env
+  if (options && options.processEnv != null) {
+    processEnv = options.processEnv
+  }
+  let debug = parseBoolean(processEnv.DOTENV_CONFIG_DEBUG || (options && options.debug))
+  let quiet = parseBoolean(processEnv.DOTENV_CONFIG_QUIET || (options && options.quiet))
 
   if (options && options.encoding) {
     encoding = options.encoding
@@ -9175,12 +9186,11 @@ function configDotenv (options) {
     }
   }
 
-  let processEnv = process.env
-  if (options && options.processEnv != null) {
-    processEnv = options.processEnv
-  }
-
   const populated = DotenvModule.populate(processEnv, parsedAll, options)
+
+  // handle user settings DOTENV_CONFIG_ options inside .env file(s)
+  debug = parseBoolean(processEnv.DOTENV_CONFIG_DEBUG || debug)
+  quiet = parseBoolean(processEnv.DOTENV_CONFIG_QUIET || quiet)
 
   if (debug || !quiet) {
     const keysCount = Object.keys(populated).length
@@ -47834,7 +47844,7 @@ exports.LRUCache = LRUCache;
 /***/ ((module) => {
 
 "use strict";
-module.exports = /*#__PURE__*/JSON.parse('{"name":"dotenv","version":"17.1.0","description":"Loads environment variables from .env file","main":"lib/main.js","types":"lib/main.d.ts","exports":{".":{"types":"./lib/main.d.ts","require":"./lib/main.js","default":"./lib/main.js"},"./config":"./config.js","./config.js":"./config.js","./lib/env-options":"./lib/env-options.js","./lib/env-options.js":"./lib/env-options.js","./lib/cli-options":"./lib/cli-options.js","./lib/cli-options.js":"./lib/cli-options.js","./package.json":"./package.json"},"scripts":{"dts-check":"tsc --project tests/types/tsconfig.json","lint":"standard","pretest":"npm run lint && npm run dts-check","test":"tap run --allow-empty-coverage --disable-coverage --timeout=60000","test:coverage":"tap run --show-full-coverage --timeout=60000 --coverage-report=text --coverage-report=lcov","prerelease":"npm test","release":"standard-version"},"repository":{"type":"git","url":"git://github.com/motdotla/dotenv.git"},"homepage":"https://github.com/motdotla/dotenv#readme","funding":"https://dotenvx.com","keywords":["dotenv","env",".env","environment","variables","config","settings"],"readmeFilename":"README.md","license":"BSD-2-Clause","devDependencies":{"@types/node":"^18.11.3","decache":"^4.6.2","sinon":"^14.0.1","standard":"^17.0.0","standard-version":"^9.5.0","tap":"^19.2.0","typescript":"^4.8.4"},"engines":{"node":">=12"},"browser":{"fs":false}}');
+module.exports = /*#__PURE__*/JSON.parse('{"name":"dotenv","version":"17.2.0","description":"Loads environment variables from .env file","main":"lib/main.js","types":"lib/main.d.ts","exports":{".":{"types":"./lib/main.d.ts","require":"./lib/main.js","default":"./lib/main.js"},"./config":"./config.js","./config.js":"./config.js","./lib/env-options":"./lib/env-options.js","./lib/env-options.js":"./lib/env-options.js","./lib/cli-options":"./lib/cli-options.js","./lib/cli-options.js":"./lib/cli-options.js","./package.json":"./package.json"},"scripts":{"dts-check":"tsc --project tests/types/tsconfig.json","lint":"standard","pretest":"npm run lint && npm run dts-check","test":"tap run --allow-empty-coverage --disable-coverage --timeout=60000","test:coverage":"tap run --show-full-coverage --timeout=60000 --coverage-report=text --coverage-report=lcov","prerelease":"npm test","release":"standard-version"},"repository":{"type":"git","url":"git://github.com/motdotla/dotenv.git"},"homepage":"https://github.com/motdotla/dotenv#readme","funding":"https://dotenvx.com","keywords":["dotenv","env",".env","environment","variables","config","settings"],"readmeFilename":"README.md","license":"BSD-2-Clause","devDependencies":{"@types/node":"^18.11.3","decache":"^4.6.2","sinon":"^14.0.1","standard":"^17.0.0","standard-version":"^9.5.0","tap":"^19.2.0","typescript":"^4.8.4"},"engines":{"node":">=12"},"browser":{"fs":false}}');
 
 /***/ })
 
