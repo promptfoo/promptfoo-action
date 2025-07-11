@@ -128,13 +128,15 @@ export async function run(): Promise<void> {
       }
       isPullRequest = true;
       pullRequestNumber = pullRequest.number;
-      
+
       // Get list of changed files in PR
       baseRef = pullRequest.base.ref;
       headRef = pullRequest.head.ref;
 
       if (!baseRef || !headRef) {
-        throw new Error('Unable to determine base or head references from pull request');
+        throw new Error(
+          'Unable to determine base or head references from pull request',
+        );
       }
 
       // Validate baseRef and headRef to prevent command injection
@@ -142,10 +144,14 @@ export async function run(): Promise<void> {
       validateGitRef(headRef);
 
       await exec.exec('git', ['fetch', 'origin', baseRef]);
-      const baseFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
+      const baseFetchHead = (
+        await gitInterface.revparse(['FETCH_HEAD'])
+      ).trim();
 
       await exec.exec('git', ['fetch', 'origin', headRef]);
-      const headFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
+      const headFetchHead = (
+        await gitInterface.revparse(['FETCH_HEAD'])
+      ).trim();
 
       changedFiles = await gitInterface.diff([
         '--name-only',
@@ -154,15 +160,15 @@ export async function run(): Promise<void> {
       ]);
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
-      
+
       // For workflow_dispatch, we can either:
       // 1. Accept a list of files as input
       // 2. Compare against a base branch/commit
       // 3. Run on all prompt files
-      
+
       const workflowInputFiles = github.context.payload.inputs?.files;
       const compareBase = github.context.payload.inputs?.base || 'HEAD~1';
-      
+
       if (workflowInputFiles) {
         // Option 1: Use provided file list
         changedFiles = workflowInputFiles.split('\n').join('\n');
@@ -175,35 +181,49 @@ export async function run(): Promise<void> {
             compareBase,
             'HEAD',
           ]);
-          core.info(`Comparing against ${compareBase}, found changed files: ${changedFiles}`);
+          core.info(
+            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+          );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
-          core.warning(`Could not compare against ${compareBase}: ${error}. Will process all matching prompt files.`);
+          core.warning(
+            `Could not compare against ${compareBase}: ${error}. Will process all matching prompt files.`,
+          );
           changedFiles = '';
         }
       }
     } else if (event === 'push') {
       core.info('Running in push mode');
-      
+
       // For push events, compare the before and after commits
       const beforeSha = github.context.payload.before;
       const afterSha = github.context.payload.after || github.context.sha;
-      
-      if (beforeSha && afterSha && beforeSha !== '0000000000000000000000000000000000000000') {
+
+      if (
+        beforeSha &&
+        afterSha &&
+        beforeSha !== '0000000000000000000000000000000000000000'
+      ) {
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
             beforeSha,
             afterSha,
           ]);
-          core.info(`Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`);
+          core.info(
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+          );
         } catch (error) {
-          core.warning(`Could not compare commits: ${error}. Will process all matching prompt files.`);
+          core.warning(
+            `Could not compare commits: ${error}. Will process all matching prompt files.`,
+          );
           changedFiles = '';
         }
       } else {
         // First commit or unable to get before SHA
-        core.info('Unable to determine changed files from push event. Will process all matching prompt files.');
+        core.info(
+          'Unable to determine changed files from push event. Will process all matching prompt files.',
+        );
         changedFiles = '';
       }
     } else {
@@ -214,34 +234,41 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split('\n').filter(f => f);
-    
+    const changedFilesList = changedFiles.split('\n').filter((f) => f);
+
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern);
-      
+
       if (changedFilesList.length > 0) {
         // Filter to only changed files
         const changedMatches = matches.filter(
-          file => file !== configPath && changedFilesList.includes(file),
+          (file) => file !== configPath && changedFilesList.includes(file),
         );
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter(file => file !== configPath);
+        const allMatches = matches.filter((file) => file !== configPath);
         promptFiles.push(...allMatches);
       }
     }
 
-    const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configPath);
-    
-    if (promptFiles.length < 1 && !configChanged && changedFilesList.length > 0) {
+    const configChanged =
+      changedFilesList.length > 0 && changedFilesList.includes(configPath);
+
+    if (
+      promptFiles.length < 1 &&
+      !configChanged &&
+      changedFilesList.length > 0
+    ) {
       // We have changed files info but no prompt files were modified
       core.info('No LLM prompt or config files were modified.');
       return;
     }
 
     if (changedFilesList.length === 0) {
-      core.info(`Processing all matching prompt files: ${promptFiles.join(', ')}`);
+      core.info(
+        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+      );
     }
 
     const outputFile = path.join(workingDirectory, 'output.json');
@@ -295,7 +322,9 @@ export async function run(): Promise<void> {
 
 `;
       if (output.shareableUrl) {
-        body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
+        body = body.concat(
+          `**» [View eval results](${output.shareableUrl}) «**`,
+        );
       } else {
         body = body.concat('**» View eval results in CI console «**');
       }
@@ -309,28 +338,31 @@ export async function run(): Promise<void> {
       const output = JSON.parse(
         fs.readFileSync(outputFile, 'utf8'),
       ) as OutputFile;
-      
+
       const summary = core.summary
         .addHeading('Promptfoo Evaluation Results')
         .addTable([
-          [{data: 'Metric', header: true}, {data: 'Count', header: true}],
+          [
+            { data: 'Metric', header: true },
+            { data: 'Count', header: true },
+          ],
           ['Success', output.results.stats.successes.toString()],
           ['Failure', output.results.stats.failures.toString()],
         ]);
-      
+
       if (promptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
         summary.addList(promptFiles);
       }
-      
+
       if (output.shareableUrl) {
         summary.addLink('View detailed results', output.shareableUrl);
       } else {
         summary.addRaw('View eval results in CI console');
       }
-      
+
       await summary.write();
-      
+
       // Also output to console
       core.info('=== Promptfoo Evaluation Results ===');
       core.info(`Success: ${output.results.stats.successes}`);
