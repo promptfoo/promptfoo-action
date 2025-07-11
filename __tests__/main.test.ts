@@ -384,6 +384,91 @@ describe('GitHub Action Main', () => {
       expect(mockGlob.sync).toHaveBeenCalled();
     });
 
+    test('should prioritize action inputs over workflow inputs', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: 'workflow-input-file.txt',
+            base: 'workflow-base',
+          },
+        },
+        configurable: true,
+      });
+
+      // Mock action inputs
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          'prompts': 'prompts/**/*.txt',
+          'config': 'promptfooconfig.yaml',
+          'promptfoo-version': 'latest',
+          'working-directory': '',
+          'no-share': 'false',
+          'use-config-prompts': 'false',
+          'env-files': '',
+          'cache-path': '',
+          'no-table': 'false',
+          'no-progress-bar': 'false',
+          'disable-comment': 'false',
+          'workflow-files': 'action-input-file.txt',
+          'workflow-base': 'action-base',
+        };
+        return inputs[name] || '';
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Using manually specified files: action-input-file.txt',
+      );
+      // Since we're providing files directly, diff shouldn't be called
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should use action input base when only base is provided', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {},
+        },
+        configurable: true,
+      });
+
+      // Mock only workflow-base action input
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          'prompts': 'prompts/**/*.txt',
+          'config': 'promptfooconfig.yaml',
+          'promptfoo-version': 'latest',
+          'working-directory': '',
+          'no-share': 'false',
+          'use-config-prompts': 'false',
+          'env-files': '',
+          'cache-path': '',
+          'no-table': 'false',
+          'no-progress-bar': 'false',
+          'disable-comment': 'false',
+          'workflow-files': '', // Empty
+          'workflow-base': 'feature-branch',
+        };
+        return inputs[name] || '';
+      });
+
+      await run();
+
+      // Verify that diff was called with the action input base
+      const diffCalls = (mockGitInterface.diff as any).mock.calls;
+      expect(diffCalls[0][0]).toEqual(['--name-only', 'feature-branch', 'HEAD']);
+    });
+
     test('should handle unsupported events with warning', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'issues',
@@ -586,7 +671,7 @@ describe('disable-comment feature', () => {
     );
 
     // Check that comment posting is wrapped in a condition
-    expect(mainContent).toContain('if (!disableComment) {');
+    expect(mainContent).toContain('if (isPullRequest && pullRequestNumber && !disableComment)');
     expect(mainContent).toContain('octokit.rest.issues.createComment');
   });
 

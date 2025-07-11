@@ -12,9 +12,18 @@ const gitInterface = simpleGit();
 
 function validateGitRef(ref: string): void {
   const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
-  // Reject refs starting with "--" to prevent malicious options
-  if (ref.startsWith('--') || ref.includes(' ') || !gitRefRegex.test(ref)) {
-    throw new Error(`Invalid Git ref: ${ref}`);
+  
+  // Provide specific error messages for different validation failures
+  if (ref.startsWith('--')) {
+    throw new Error(`Invalid Git ref "${ref}": refs cannot start with "--" (this could be interpreted as a command option)`);
+  }
+  
+  if (ref.includes(' ')) {
+    throw new Error(`Invalid Git ref "${ref}": refs cannot contain spaces`);
+  }
+  
+  if (!gitRefRegex.test(ref)) {
+    throw new Error(`Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`);
   }
 }
 
@@ -79,6 +88,12 @@ export async function run(): Promise<void> {
       required: false,
     });
     const disableComment: boolean = core.getBooleanInput('disable-comment', {
+      required: false,
+    });
+    const workflowFiles: string = core.getInput('workflow-files', {
+      required: false,
+    });
+    const workflowBase: string = core.getInput('workflow-base', {
       required: false,
     });
 
@@ -175,12 +190,13 @@ export async function run(): Promise<void> {
       // 2. Compare against a base branch/commit
       // 3. Run on all prompt files
 
-      const workflowInputFiles = github.context.payload.inputs?.files;
-      const compareBase = github.context.payload.inputs?.base || 'HEAD~1';
+      // Priority: action inputs > workflow inputs > defaults
+      const filesInput = workflowFiles || github.context.payload.inputs?.files;
+      const compareBase = workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
 
-      if (workflowInputFiles) {
+      if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = workflowInputFiles;
+        changedFiles = filesInput;
         core.info(`Using manually specified files: ${changedFiles}`);
       } else {
         // Option 2: Compare against base (default to previous commit)

@@ -92,6 +92,14 @@ inputs:
     description: 'Disable posting comments to the PR'
     required: false
     default: 'false'
+  workflow-files:
+    description: 'Files to evaluate in workflow_dispatch mode (newline-separated list). If not specified, falls back to workflow inputs or auto-detection.'
+    required: false
+    default: ''
+  workflow-base:
+    description: 'Base ref to compare against in workflow_dispatch mode (e.g., main, HEAD~1). If not specified, falls back to workflow inputs or HEAD~1.'
+    required: false
+    default: ''
 branding:
   icon: 'box'
   color: 'yellow'

@@ -130,10 +130,27 @@ jobs:
 ```
 
 When triggered manually:
-- If `files` input is provided, only those files will be evaluated
+- If `files` input is provided, only those files will be evaluated (one file per line)
 - If `base` input is provided, it will compare against that branch/commit
 - If no inputs are provided, it will compare against the previous commit (HEAD~1)
 - Results will be displayed in the workflow summary instead of a PR comment
+- **Important**: The `actions: write` permission is required for writing workflow summaries
+
+#### Alternative: Using Action Inputs
+
+You can also specify files and base directly as action inputs:
+
+```yaml
+- name: Run promptfoo evaluation
+  uses: promptfoo/promptfoo-action@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    config: 'prompts/promptfooconfig.yaml'
+    workflow-files: |
+      prompts/prompt1.txt
+      prompts/prompt2.txt
+    workflow-base: 'main'
+```
 
 ### Push Event Evaluation
 

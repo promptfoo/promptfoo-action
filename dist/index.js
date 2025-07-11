@@ -62,9 +62,15 @@ const simple_git_1 = __nccwpck_require__(9065);
 const gitInterface = (0, simple_git_1.simpleGit)();
 function validateGitRef(ref) {
     const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
-    // Reject refs starting with "--" to prevent malicious options
-    if (ref.startsWith('--') || ref.includes(' ') || !gitRefRegex.test(ref)) {
-        throw new Error(`Invalid Git ref: ${ref}`);
+    // Provide specific error messages for different validation failures
+    if (ref.startsWith('--')) {
+        throw new Error(`Invalid Git ref "${ref}": refs cannot start with "--" (this could be interpreted as a command option)`);
+    }
+    if (ref.includes(' ')) {
+        throw new Error(`Invalid Git ref "${ref}": refs cannot contain spaces`);
+    }
+    if (!gitRefRegex.test(ref)) {
+        throw new Error(`Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`);
     }
 }
 function run() {
@@ -124,6 +130,12 @@ function run() {
                 required: false,
             });
             const disableComment = core.getBooleanInput('disable-comment', {
+                required: false,
+            });
+            const workflowFiles = core.getInput('workflow-files', {
+                required: false,
+            });
+            const workflowBase = core.getInput('workflow-base', {
                 required: false,
             });
             // Load .env files if specified
@@ -203,11 +215,12 @@ function run() {
                 // 1. Accept a list of files as input
                 // 2. Compare against a base branch/commit
                 // 3. Run on all prompt files
-                const workflowInputFiles = (_a = github.context.payload.inputs) === null || _a === void 0 ? void 0 : _a.files;
-                const compareBase = ((_b = github.context.payload.inputs) === null || _b === void 0 ? void 0 : _b.base) || 'HEAD~1';
-                if (workflowInputFiles) {
+                // Priority: action inputs > workflow inputs > defaults
+                const filesInput = workflowFiles || ((_a = github.context.payload.inputs) === null || _a === void 0 ? void 0 : _a.files);
+                const compareBase = workflowBase || ((_b = github.context.payload.inputs) === null || _b === void 0 ? void 0 : _b.base) || 'HEAD~1';
+                if (filesInput) {
                     // Option 1: Use provided file list
-                    changedFiles = workflowInputFiles;
+                    changedFiles = filesInput;
                     core.info(`Using manually specified files: ${changedFiles}`);
                 }
                 else {
