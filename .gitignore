@@ -100,3 +100,6 @@ lib/**/*
 
 # Jest cache
 .jest-cache
+
+# Project-specific files
+TODO.md
