@@ -10,6 +10,13 @@ The provided link opens the promptfoo web viewer, which allows you to interactiv
 
 <img width="650" alt="promptfoo web viewer" src="https://github.com/typpo/promptfoo-action/assets/310310/d0ef0497-0c1a-4886-b115-1ee92680891b"/>
 
+## Supported Events
+
+This action supports multiple GitHub event types:
+- **Pull Request** (`pull_request`, `pull_request_target`) - Compares changes between base and head branches
+- **Push** (`push`) - Compares changes between commits
+- **Manual Trigger** (`workflow_dispatch`) - Allows manual evaluation with custom inputs
+
 ## Configuration
 
 The action can be configured using the following inputs:
@@ -48,6 +55,10 @@ The following API key parameters are supported:
 | `mistral-api-key`       | The API key for Mistral. Used to authenticate requests to the Mistral API.           |
 | `groq-api-key`          | The API key for Groq. Used to authenticate requests to the Groq API.                 |
 
+## Usage Examples
+
+### Pull Request Evaluation
+
 Here is a generic Github Action configuration using "typpo/promptfoo-action@v1" with a cache step:
 
 ```yaml
@@ -84,6 +95,101 @@ jobs:
           config: 'prompts/promptfooconfig.yaml'
           cache-path: ~/.cache/promptfoo
 ```
+
+### Manual Trigger (workflow_dispatch)
+
+You can also trigger evaluations manually using workflow_dispatch:
+
+```yaml
+name: 'Prompt Evaluation - Manual'
+on:
+  workflow_dispatch:
+    inputs:
+      files:
+        description: 'Files to evaluate (leave empty to auto-detect)'
+        required: false
+        type: string
+      base:
+        description: 'Base branch/commit to compare against'
+        required: false
+        default: 'HEAD~1'
+        type: string
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # Required for workflow summaries
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history for comparisons
+
+      - name: Run promptfoo evaluation
+        uses: promptfoo/promptfoo-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: 'prompts/promptfooconfig.yaml'
+```
+
+When triggered manually:
+- If `files` input is provided, only those files will be evaluated (one file per line)
+- If `base` input is provided, it will compare against that branch/commit
+- If no inputs are provided, it will compare against the previous commit (HEAD~1)
+- Results will be displayed in the workflow summary instead of a PR comment
+- **Important**: The `actions: write` permission is required for writing workflow summaries
+
+#### Alternative: Using Action Inputs
+
+You can also specify files and base directly as action inputs:
+
+```yaml
+- name: Run promptfoo evaluation
+  uses: promptfoo/promptfoo-action@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    config: 'prompts/promptfooconfig.yaml'
+    workflow-files: |
+      prompts/prompt1.txt
+      prompts/prompt2.txt
+    workflow-base: 'main'
+```
+
+### Push Event Evaluation
+
+Evaluate prompts on every push to the main branch:
+
+```yaml
+name: 'Prompt Evaluation - Push'
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'prompts/**'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write # Required for workflow summaries
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # Need at least 2 commits for comparison
+
+      - name: Run promptfoo evaluation
+        uses: promptfoo/promptfoo-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: 'prompts/promptfooconfig.yaml'
+```
+
+## Tips
 
 If you are using an OpenAI model, remember to create the secret in Repository Settings > Secrets and Variables > Actions > New repository secret.
 
