@@ -6,10 +6,10 @@
     "includes": ["src/**/*.ts", "src/**/*.js", "__tests__/**/*.ts"],
     "experimentalScannerIgnores": [
       "node_modules",
-      "dist",
+      "dist/**",
       "build",
       "coverage",
-      "lib",
+      "lib/**",
       ".next",
       "*.min.js"
     ]

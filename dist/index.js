@@ -52,13 +52,13 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 exports.handleError = handleError;
 const core = __importStar(__nccwpck_require__(7484));
-const github = __importStar(__nccwpck_require__(3228));
 const exec = __importStar(__nccwpck_require__(5236));
-const path = __importStar(__nccwpck_require__(6928));
+const github = __importStar(__nccwpck_require__(3228));
+const dotenv = __importStar(__nccwpck_require__(8889));
 const fs = __importStar(__nccwpck_require__(9896));
 const glob = __importStar(__nccwpck_require__(1363));
+const path = __importStar(__nccwpck_require__(6928));
 const simple_git_1 = __nccwpck_require__(9065);
-const dotenv = __importStar(__nccwpck_require__(8889));
 const gitInterface = (0, simple_git_1.simpleGit)();
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
@@ -90,7 +90,9 @@ function run() {
             const vertexApiKey = core.getInput('vertex-api-key', {
                 required: false,
             });
-            const githubToken = core.getInput('github-token', { required: true });
+            const githubToken = core.getInput('github-token', {
+                required: true,
+            });
             const promptFilesGlobs = core
                 .getInput('prompts', { required: false })
                 .split('\n');
@@ -109,7 +111,7 @@ function run() {
             const envFiles = core.getInput('env-files', { required: false });
             // Load .env files if specified
             if (envFiles) {
-                const envFileList = envFiles.split(',').map(f => f.trim());
+                const envFileList = envFiles.split(',').map((f) => f.trim());
                 for (const envFile of envFileList) {
                     const envFilePath = path.join(workingDirectory, envFile);
                     if (fs.existsSync(envFilePath)) {
@@ -169,7 +171,7 @@ function run() {
             const promptFiles = [];
             for (const globPattern of promptFilesGlobs) {
                 const matches = glob.sync(globPattern);
-                const changedMatches = matches.filter(file => file !== configPath && changedFiles.includes(file));
+                const changedMatches = matches.filter((file) => file !== configPath && changedFiles.includes(file));
                 promptFiles.push(...changedMatches);
             }
             const configChanged = changedFiles.includes(configPath);
