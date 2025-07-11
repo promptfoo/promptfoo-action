@@ -52,16 +52,24 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 exports.handleError = handleError;
 const core = __importStar(__nccwpck_require__(7484));
-const github = __importStar(__nccwpck_require__(3228));
 const exec = __importStar(__nccwpck_require__(5236));
-const path = __importStar(__nccwpck_require__(6928));
+const github = __importStar(__nccwpck_require__(3228));
+const dotenv = __importStar(__nccwpck_require__(8889));
 const fs = __importStar(__nccwpck_require__(9896));
 const glob = __importStar(__nccwpck_require__(1363));
+const path = __importStar(__nccwpck_require__(6928));
 const simple_git_1 = __nccwpck_require__(9065);
-const dotenv = __importStar(__nccwpck_require__(8889));
 const gitInterface = (0, simple_git_1.simpleGit)();
+function validateGitRef(ref) {
+    const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
+    // Reject refs starting with "--" to prevent malicious options
+    if (ref.startsWith('--') || !gitRefRegex.test(ref)) {
+        throw new Error(`Invalid Git ref: ${ref}`);
+    }
+}
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b;
         try {
             const openaiApiKey = core.getInput('openai-api-key', {
                 required: false,
@@ -90,7 +98,9 @@ function run() {
             const vertexApiKey = core.getInput('vertex-api-key', {
                 required: false,
             });
-            const githubToken = core.getInput('github-token', { required: true });
+            const githubToken = core.getInput('github-token', {
+                required: true,
+            });
             const promptFilesGlobs = core
                 .getInput('prompts', { required: false })
                 .split('\n');
@@ -107,15 +117,9 @@ function run() {
             });
             const useConfigPrompts = core.getBooleanInput('use-config-prompts', { required: false });
             const envFiles = core.getInput('env-files', { required: false });
-            const noTable = core.getBooleanInput('no-table', {
-                required: false,
-            });
-            const noProgressBar = core.getBooleanInput('no-progress-bar', {
-                required: false,
-            });
             // Load .env files if specified
             if (envFiles) {
-                const envFileList = envFiles.split(',').map(f => f.trim());
+                const envFileList = envFiles.split(',').map((f) => f.trim());
                 for (const envFile of envFileList) {
                     const envFilePath = path.join(workingDirectory, envFile);
                     if (fs.existsSync(envFilePath)) {
@@ -152,37 +156,126 @@ function run() {
             }
             core.setSecret(githubToken);
             const event = github.context.eventName;
-            if (event !== 'pull_request') {
-                core.warning(`This action is designed to run on pull request events only, but a "${event}" event was received.`);
+            let changedFiles = '';
+            let baseRef;
+            let headRef;
+            let isPullRequest = false;
+            let pullRequestNumber;
+            // Handle different event types
+            if (event === 'pull_request' || event === 'pull_request_target') {
+                const pullRequest = github.context.payload.pull_request;
+                if (!pullRequest) {
+                    throw new Error('No pull request found in context.');
+                }
+                isPullRequest = true;
+                pullRequestNumber = pullRequest.number;
+                // Get list of changed files in PR
+                baseRef = pullRequest.base.ref;
+                headRef = pullRequest.head.ref;
+                if (!baseRef || !headRef) {
+                    throw new Error('Unable to determine base or head references from pull request');
+                }
+                // Validate baseRef and headRef to prevent command injection
+                validateGitRef(baseRef);
+                validateGitRef(headRef);
+                yield exec.exec('git', ['fetch', 'origin', baseRef]);
+                const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
+                yield exec.exec('git', ['fetch', 'origin', headRef]);
+                const headFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
+                changedFiles = yield gitInterface.diff([
+                    '--name-only',
+                    baseFetchHead,
+                    headFetchHead,
+                ]);
             }
-            const pullRequest = github.context.payload.pull_request;
-            if (!pullRequest) {
-                throw new Error('No pull request found.');
+            else if (event === 'workflow_dispatch') {
+                core.info('Running in workflow_dispatch mode');
+                // For workflow_dispatch, we can either:
+                // 1. Accept a list of files as input
+                // 2. Compare against a base branch/commit
+                // 3. Run on all prompt files
+                const workflowInputFiles = (_a = github.context.payload.inputs) === null || _a === void 0 ? void 0 : _a.files;
+                const compareBase = ((_b = github.context.payload.inputs) === null || _b === void 0 ? void 0 : _b.base) || 'HEAD~1';
+                if (workflowInputFiles) {
+                    // Option 1: Use provided file list
+                    changedFiles = workflowInputFiles;
+                    core.info(`Using manually specified files: ${changedFiles}`);
+                }
+                else {
+                    // Option 2: Compare against base (default to previous commit)
+                    try {
+                        // Validate compareBase to prevent command injection
+                        validateGitRef(compareBase);
+                        changedFiles = yield gitInterface.diff([
+                            '--name-only',
+                            compareBase,
+                            'HEAD',
+                        ]);
+                        core.info(`Comparing against ${compareBase}, found changed files: ${changedFiles}`);
+                    }
+                    catch (error) {
+                        // Option 3: If comparison fails, we'll process all matching prompt files
+                        core.warning(`Could not compare against ${compareBase}: ${error}. Will process all matching prompt files.`);
+                        changedFiles = '';
+                    }
+                }
             }
-            // Get list of changed files in PR
-            const baseRef = pullRequest.base.ref;
-            const headRef = pullRequest.head.ref;
-            yield exec.exec('git', ['fetch', 'origin', baseRef]);
-            const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
-            yield exec.exec('git', ['fetch', 'origin', headRef]);
-            const headFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
-            const changedFiles = yield gitInterface.diff([
-                '--name-only',
-                baseFetchHead,
-                headFetchHead,
-            ]);
+            else if (event === 'push') {
+                core.info('Running in push mode');
+                // For push events, compare the before and after commits
+                const beforeSha = github.context.payload.before;
+                const afterSha = github.context.payload.after || github.context.sha;
+                if (beforeSha &&
+                    afterSha &&
+                    beforeSha !== '0000000000000000000000000000000000000000') {
+                    try {
+                        changedFiles = yield gitInterface.diff([
+                            '--name-only',
+                            beforeSha,
+                            afterSha,
+                        ]);
+                        core.info(`Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`);
+                    }
+                    catch (error) {
+                        core.warning(`Could not compare commits: ${error}. Will process all matching prompt files.`);
+                        changedFiles = '';
+                    }
+                }
+                else {
+                    // First commit or unable to get before SHA
+                    core.info('Unable to determine changed files from push event. Will process all matching prompt files.');
+                    changedFiles = '';
+                }
+            }
+            else {
+                core.warning(`This action is designed to run on pull request, push, or workflow_dispatch events, but a "${event}" event was received. Will process all matching prompt files.`);
+            }
             // Resolve glob patterns to file paths
             const promptFiles = [];
+            const changedFilesList = changedFiles.split('\n').filter((f) => f);
             for (const globPattern of promptFilesGlobs) {
                 const matches = glob.sync(globPattern);
-                const changedMatches = matches.filter(file => file !== configPath && changedFiles.includes(file));
-                promptFiles.push(...changedMatches);
+                if (changedFilesList.length > 0) {
+                    // Filter to only changed files
+                    const changedMatches = matches.filter((file) => file !== configPath && changedFilesList.includes(file));
+                    promptFiles.push(...changedMatches);
+                }
+                else {
+                    // No changed files info available, include all matches
+                    const allMatches = matches.filter((file) => file !== configPath);
+                    promptFiles.push(...allMatches);
+                }
             }
-            const configChanged = changedFiles.includes(configPath);
-            if (promptFiles.length < 1 && !configChanged) {
-                // Run promptfoo evaluation only when files change.
+            const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configPath);
+            if (promptFiles.length < 1 &&
+                !configChanged &&
+                changedFilesList.length > 0) {
+                // We have changed files info but no prompt files were modified
                 core.info('No LLM prompt or config files were modified.');
                 return;
+            }
+            if (changedFilesList.length === 0) {
+                core.info(`Processing all matching prompt files: ${promptFiles.join(', ')}`);
             }
             const outputFile = path.join(workingDirectory, 'output.json');
             let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
@@ -191,12 +284,6 @@ function run() {
             }
             if (!noShare) {
                 promptfooArgs.push('--share');
-            }
-            if (noTable) {
-                promptfooArgs.push('--no-table');
-            }
-            if (noProgressBar) {
-                promptfooArgs.push('--no-progress-bar');
             }
             const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
                 ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
@@ -212,24 +299,59 @@ function run() {
                 // Ignore nonzero exit code, but save the error to throw later
                 errorToThrow = error;
             }
-            // Comment PR
-            const octokit = github.getOctokit(githubToken);
-            const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
-            const modifiedFiles = promptFiles.join(', ');
-            let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+            // Comment on PR or output results
+            if (isPullRequest && pullRequestNumber) {
+                // Existing PR comment logic
+                const octokit = github.getOctokit(githubToken);
+                const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
+                const modifiedFiles = promptFiles.join(', ');
+                let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
-            if (output.shareableUrl) {
-                body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
+                if (output.shareableUrl) {
+                    body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
+                }
+                else {
+                    body = body.concat('**» View eval results in CI console «**');
+                }
+                yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequestNumber, body }));
             }
             else {
-                body = body.concat('**» View eval results in CI console «**');
+                // For non-PR workflows, output results to workflow summary
+                const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
+                const summary = core.summary
+                    .addHeading('Promptfoo Evaluation Results')
+                    .addTable([
+                    [
+                        { data: 'Metric', header: true },
+                        { data: 'Count', header: true },
+                    ],
+                    ['Success', output.results.stats.successes.toString()],
+                    ['Failure', output.results.stats.failures.toString()],
+                ]);
+                if (promptFiles.length > 0) {
+                    summary.addHeading('Evaluated Files', 3);
+                    summary.addList(promptFiles);
+                }
+                if (output.shareableUrl) {
+                    summary.addLink('View detailed results', output.shareableUrl);
+                }
+                else {
+                    summary.addRaw('View eval results in CI console');
+                }
+                yield summary.write();
+                // Also output to console
+                core.info('=== Promptfoo Evaluation Results ===');
+                core.info(`Success: ${output.results.stats.successes}`);
+                core.info(`Failure: ${output.results.stats.failures}`);
+                if (output.shareableUrl) {
+                    core.info(`View results: ${output.shareableUrl}`);
+                }
             }
-            yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             if (errorToThrow) {
                 throw errorToThrow;
             }
