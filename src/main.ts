@@ -1,15 +1,22 @@
 import * as core from '@actions/core';
-import * as github from '@actions/github';
 import * as exec from '@actions/exec';
-import * as path from 'path';
+import * as github from '@actions/github';
+import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import {simpleGit} from 'simple-git';
-import * as dotenv from 'dotenv';
-
-import type {OutputFile} from 'promptfoo';
+import * as path from 'path';
+import type { OutputFile } from 'promptfoo';
+import { simpleGit } from 'simple-git';
 
 const gitInterface = simpleGit();
+
+function validateGitRef(ref: string): void {
+  const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
+  // Reject refs starting with "--" to prevent malicious options
+  if (ref.startsWith('--') || !gitRefRegex.test(ref)) {
+    throw new Error(`Invalid Git ref: ${ref}`);
+  }
+}
 
 export async function run(): Promise<void> {
   try {
@@ -40,36 +47,38 @@ export async function run(): Promise<void> {
     const vertexApiKey: string = core.getInput('vertex-api-key', {
       required: false,
     });
-    const githubToken: string = core.getInput('github-token', {required: true});
+    const githubToken: string = core.getInput('github-token', {
+      required: true,
+    });
     const promptFilesGlobs: string[] = core
-      .getInput('prompts', {required: false})
+      .getInput('prompts', { required: false })
       .split('\n');
     const configPath: string = core.getInput('config', {
       required: true,
     });
-    const cachePath: string = core.getInput('cache-path', {required: false});
+    const cachePath: string = core.getInput('cache-path', { required: false });
     const version: string = core.getInput('promptfoo-version', {
       required: false,
     });
     const workingDirectory: string = path.join(
       process.cwd(),
-      core.getInput('working-directory', {required: false}),
+      core.getInput('working-directory', { required: false }),
     );
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
     });
     const useConfigPrompts: boolean = core.getBooleanInput(
       'use-config-prompts',
-      {required: false},
+      { required: false },
     );
-    const envFiles: string = core.getInput('env-files', {required: false});
+    const envFiles: string = core.getInput('env-files', { required: false });
     const disableComment: boolean = core.getBooleanInput('disable-comment', {
       required: false,
     });
 
     // Load .env files if specified
     if (envFiles) {
-      const envFileList = envFiles.split(',').map(f => f.trim());
+      const envFileList = envFiles.split(',').map((f) => f.trim());
       for (const envFile of envFileList) {
         const envFilePath = path.join(workingDirectory, envFile);
         if (fs.existsSync(envFilePath)) {
@@ -77,7 +86,9 @@ export async function run(): Promise<void> {
           // Use override: true to allow later files to override earlier ones
           const result = dotenv.config({ path: envFilePath, override: true });
           if (result.error) {
-            core.warning(`Failed to load ${envFilePath}: ${result.error.message}`);
+            core.warning(
+              `Failed to load ${envFilePath}: ${result.error.message}`,
+            );
           } else {
             core.info(`Successfully loaded ${envFilePath}`);
           }
@@ -121,6 +132,10 @@ export async function run(): Promise<void> {
     const baseRef = pullRequest.base.ref;
     const headRef = pullRequest.head.ref;
 
+    // Validate baseRef and headRef to prevent command injection
+    validateGitRef(baseRef);
+    validateGitRef(headRef);
+
     await exec.exec('git', ['fetch', 'origin', baseRef]);
     const baseFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
 
@@ -138,7 +153,7 @@ export async function run(): Promise<void> {
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern);
       const changedMatches = matches.filter(
-        file => file !== configPath && changedFiles.includes(file),
+        (file) => file !== configPath && changedFiles.includes(file),
       );
       promptFiles.push(...changedMatches);
     }
@@ -161,18 +176,18 @@ export async function run(): Promise<void> {
 
     const env = {
       ...process.env,
-      ...(openaiApiKey ? {OPENAI_API_KEY: openaiApiKey} : {}),
-      ...(azureApiKey ? {AZURE_OPENAI_API_KEY: azureApiKey} : {}),
-      ...(anthropicApiKey ? {ANTHROPIC_API_KEY: anthropicApiKey} : {}),
-      ...(huggingfaceApiKey ? {HF_API_TOKEN: huggingfaceApiKey} : {}),
-      ...(awsAccessKeyId ? {AWS_ACCESS_KEY_ID: awsAccessKeyId} : {}),
+      ...(openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {}),
+      ...(azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {}),
+      ...(anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {}),
+      ...(huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {}),
+      ...(awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {}),
       ...(awsSecretAccessKey
-        ? {AWS_SECRET_ACCESS_KEY: awsSecretAccessKey}
+        ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
         : {}),
-      ...(replicateApiKey ? {REPLICATE_API_KEY: replicateApiKey} : {}),
-      ...(palmApiKey ? {PALM_API_KEY: palmApiKey} : {}),
-      ...(vertexApiKey ? {VERTEX_API_KEY: vertexApiKey} : {}),
-      ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
+      ...(replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {}),
+      ...(palmApiKey ? { PALM_API_KEY: palmApiKey } : {}),
+      ...(vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {}),
+      ...(cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}),
     };
     let errorToThrow: Error | undefined;
     try {
