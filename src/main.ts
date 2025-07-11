@@ -9,8 +9,8 @@ import type { OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
 import {
   ErrorCodes,
-  PromptfooActionError,
   formatErrorMessage,
+  PromptfooActionError,
 } from './utils/errors';
 
 const gitInterface = simpleGit();
@@ -19,7 +19,7 @@ const gitInterface = simpleGit();
  * Validates git refs to prevent command injection attacks.
  * This is a critical security function that must be called before using any
  * user-provided input in git commands.
- * 
+ *
  * Security considerations:
  * - Refs starting with "--" could be interpreted as command options
  * - Spaces could allow command chaining
@@ -29,7 +29,7 @@ const gitInterface = simpleGit();
 function validateGitRef(ref: string): void {
   // Strict validation: only allow safe characters for git refs
   const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
-  
+
   // Security check: prevent option injection
   if (ref.startsWith('--') || ref.startsWith('-')) {
     throw new PromptfooActionError(
@@ -38,18 +38,43 @@ function validateGitRef(ref: string): void {
       'Git refs should not start with dashes to prevent command injection',
     );
   }
-  
+
   // Security check: prevent command chaining
-  if (ref.includes(' ') || ref.includes('\t') || ref.includes('\n') || ref.includes('\r')) {
+  if (
+    ref.includes(' ') ||
+    ref.includes('\t') ||
+    ref.includes('\n') ||
+    ref.includes('\r')
+  ) {
     throw new PromptfooActionError(
       `Invalid Git ref "${ref}": refs cannot contain whitespace characters`,
       ErrorCodes.INVALID_GIT_REF,
       'Git refs should not contain spaces or other whitespace',
     );
   }
-  
+
   // Security check: prevent special shell characters
-  const dangerousChars = ['$', '`', '\\', '!', '&', '|', ';', '(', ')', '<', '>', '"', "'", '*', '?', '[', ']', '{', '}'];
+  const dangerousChars = [
+    '$',
+    '`',
+    '\\',
+    '!',
+    '&',
+    '|',
+    ';',
+    '(',
+    ')',
+    '<',
+    '>',
+    '"',
+    "'",
+    '*',
+    '?',
+    '[',
+    ']',
+    '{',
+    '}',
+  ];
   for (const char of dangerousChars) {
     if (ref.includes(char)) {
       throw new PromptfooActionError(
@@ -59,7 +84,7 @@ function validateGitRef(ref: string): void {
       );
     }
   }
-  
+
   // Final check: ensure ref matches allowed pattern
   if (!gitRefRegex.test(ref)) {
     throw new PromptfooActionError(
@@ -164,7 +189,9 @@ export async function run(): Promise<void> {
     // Validate fail-on-threshold input
     if (
       failOnThreshold !== undefined &&
-      (Number.isNaN(failOnThreshold) || failOnThreshold < 0 || failOnThreshold > 100)
+      (Number.isNaN(failOnThreshold) ||
+        failOnThreshold < 0 ||
+        failOnThreshold > 100)
     ) {
       throw new PromptfooActionError(
         'fail-on-threshold must be a number between 0 and 100',
@@ -289,7 +316,8 @@ export async function run(): Promise<void> {
 
       // Priority: action inputs > workflow inputs > defaults
       const filesInput = workflowFiles || github.context.payload.inputs?.files;
-      const compareBase = workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
+      const compareBase =
+        workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
 
       if (filesInput) {
         // Option 1: Use provided file list
@@ -524,8 +552,9 @@ export async function run(): Promise<void> {
 
     // Check if we should fail based on threshold
     if (failOnThreshold !== undefined) {
-      const totalTests = output.results.stats.successes + output.results.stats.failures;
-      
+      const totalTests =
+        output.results.stats.successes + output.results.stats.failures;
+
       // If no tests were run, fail the threshold check
       if (totalTests === 0) {
         throw new PromptfooActionError(
@@ -534,9 +563,9 @@ export async function run(): Promise<void> {
           `Ensure your configuration includes valid tests to run`,
         );
       }
-      
+
       const successRate = (output.results.stats.successes / totalTests) * 100;
-      
+
       if (successRate < failOnThreshold) {
         throw new PromptfooActionError(
           `Evaluation success rate (${successRate.toFixed(

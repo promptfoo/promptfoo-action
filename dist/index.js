@@ -80,11 +80,34 @@ function validateGitRef(ref) {
         throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should not start with dashes to prevent command injection');
     }
     // Security check: prevent command chaining
-    if (ref.includes(' ') || ref.includes('\t') || ref.includes('\n') || ref.includes('\r')) {
+    if (ref.includes(' ') ||
+        ref.includes('\t') ||
+        ref.includes('\n') ||
+        ref.includes('\r')) {
         throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot contain whitespace characters`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should not contain spaces or other whitespace');
     }
     // Security check: prevent special shell characters
-    const dangerousChars = ['$', '`', '\\', '!', '&', '|', ';', '(', ')', '<', '>', '"', "'", '*', '?', '[', ']', '{', '}'];
+    const dangerousChars = [
+        '$',
+        '`',
+        '\\',
+        '!',
+        '&',
+        '|',
+        ';',
+        '(',
+        ')',
+        '<',
+        '>',
+        '"',
+        "'",
+        '*',
+        '?',
+        '[',
+        ']',
+        '{',
+        '}',
+    ];
     for (const char of dangerousChars) {
         if (ref.includes(char)) {
             throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot contain special character "${char}"`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should only contain alphanumerics, underscores, hyphens, slashes, and dots');
@@ -183,7 +206,9 @@ function run() {
             });
             // Validate fail-on-threshold input
             if (failOnThreshold !== undefined &&
-                (Number.isNaN(failOnThreshold) || failOnThreshold < 0 || failOnThreshold > 100)) {
+                (Number.isNaN(failOnThreshold) ||
+                    failOnThreshold < 0 ||
+                    failOnThreshold > 100)) {
                 throw new errors_1.PromptfooActionError('fail-on-threshold must be a number between 0 and 100', errors_1.ErrorCodes.INVALID_THRESHOLD, 'Please provide a valid percentage value, e.g., 80 for 80% success rate');
             }
             // Validate max-concurrency input

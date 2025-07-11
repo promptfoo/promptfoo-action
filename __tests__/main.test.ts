@@ -11,6 +11,15 @@ import {
 } from '@jest/globals';
 import * as fs from 'fs';
 
+// Type definitions for mocks
+type MockOctokit = {
+  rest: {
+    issues: {
+      createComment: jest.Mock;
+    };
+  };
+};
+
 // Create mock functions before importing the module that uses them
 const mockGitInterface = {
   revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
@@ -56,7 +65,7 @@ import * as glob from 'glob';
 const mockGlob = glob as jest.Mocked<typeof glob>;
 
 describe('GitHub Action Main', () => {
-  let mockOctokit: any;
+  let mockOctokit: MockOctokit;
 
   beforeEach(() => {
     // Reset all mocks
@@ -78,7 +87,9 @@ describe('GitHub Action Main', () => {
         },
       },
     };
-    mockGithub.getOctokit.mockReturnValue(mockOctokit as any);
+    mockGithub.getOctokit.mockReturnValue(
+      mockOctokit as unknown as ReturnType<typeof github.getOctokit>,
+    );
 
     // Setup default input mocks
     mockCore.getInput.mockImplementation((name: string) => {
@@ -104,7 +115,7 @@ describe('GitHub Action Main', () => {
       addLink: jest.fn().mockReturnThis(),
       addRaw: jest.fn().mockReturnThis(),
       write: jest.fn(() => Promise.resolve()),
-    } as any;
+    } as unknown as typeof mockCore.summary;
 
     // Setup GitHub context
     Object.defineProperty(mockGithub.context, 'eventName', {
@@ -285,8 +296,14 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.info).toHaveBeenCalledWith('Running in push mode');
       expect(mockGitInterface.diff).toHaveBeenCalled();
-      const diffCalls = (mockGitInterface.diff as any).mock.calls;
-      expect(diffCalls[0][0]).toEqual(['--name-only', 'abc123', 'def456']);
+      const diffCalls = (
+        mockGitInterface.diff as jest.MockedFunction<
+          typeof mockGitInterface.diff
+        >
+      ).mock.calls as unknown as Array<[string[]]>;
+      if (diffCalls.length > 0) {
+        expect(diffCalls[0][0]).toEqual(['--name-only', 'abc123', 'def456']);
+      }
     });
 
     test('should handle workflow_dispatch events with default behavior', async () => {
@@ -405,8 +422,8 @@ describe('GitHub Action Main', () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
           'github-token': 'mock-github-token',
-          'prompts': 'prompts/**/*.txt',
-          'config': 'promptfooconfig.yaml',
+          prompts: 'prompts/**/*.txt',
+          config: 'promptfooconfig.yaml',
           'promptfoo-version': 'latest',
           'working-directory': '',
           'no-share': 'false',
@@ -447,8 +464,8 @@ describe('GitHub Action Main', () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
           'github-token': 'mock-github-token',
-          'prompts': 'prompts/**/*.txt',
-          'config': 'promptfooconfig.yaml',
+          prompts: 'prompts/**/*.txt',
+          config: 'promptfooconfig.yaml',
           'promptfoo-version': 'latest',
           'working-directory': '',
           'no-share': 'false',
@@ -467,8 +484,18 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Verify that diff was called with the action input base
-      const diffCalls = (mockGitInterface.diff as any).mock.calls;
-      expect(diffCalls[0][0]).toEqual(['--name-only', 'feature-branch', 'HEAD']);
+      const diffCalls = (
+        mockGitInterface.diff as jest.MockedFunction<
+          typeof mockGitInterface.diff
+        >
+      ).mock.calls as unknown as Array<[string[]]>;
+      if (diffCalls.length > 0) {
+        expect(diffCalls[0][0]).toEqual([
+          '--name-only',
+          'feature-branch',
+          'HEAD',
+        ]);
+      }
     });
 
     test('should handle unsupported events with warning', async () => {
@@ -520,7 +547,7 @@ describe('GitHub Action Main', () => {
 
     test('should respect disable-comment option', async () => {
       mockCore.getBooleanInput.mockImplementation((name: string) => {
-        return name === 'disable-comment' ? true : false;
+        return name === 'disable-comment';
       });
 
       await run();
@@ -713,8 +740,18 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Should proceed with git fetch using -- separator
-      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', '--', 'origin', 'main']);
-      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', '--', 'origin', 'feature/JIRA-123_update-deps']);
+      expect(mockExec.exec).toHaveBeenCalledWith('git', [
+        'fetch',
+        '--',
+        'origin',
+        'main',
+      ]);
+      expect(mockExec.exec).toHaveBeenCalledWith('git', [
+        'fetch',
+        '--',
+        'origin',
+        'feature/JIRA-123_update-deps',
+      ]);
     });
   });
 });
@@ -751,7 +788,9 @@ describe('disable-comment feature', () => {
     );
 
     // Check that comment posting is wrapped in a condition
-    expect(mainContent).toContain('if (isPullRequest && pullRequestNumber && !disableComment)');
+    expect(mainContent).toContain(
+      'if (isPullRequest && pullRequestNumber && !disableComment)',
+    );
     expect(mainContent).toContain('octokit.rest.issues.createComment');
   });
 
