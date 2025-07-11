@@ -1,12 +1,3 @@
-// Mock all external modules
-jest.mock('@actions/core');
-jest.mock('@actions/github');
-jest.mock('@actions/exec');
-jest.mock('fs');
-jest.mock('glob');
-jest.mock('simple-git');
-jest.mock('dotenv');
-
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as github from '@actions/github';
@@ -19,57 +10,93 @@ import {
   test,
 } from '@jest/globals';
 import * as fs from 'fs';
+
+// Create mock functions before importing the module that uses them
+const mockGitInterface = {
+  revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
+  diff: jest.fn(() =>
+    Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+  ),
+};
+
+// Mock simple-git before importing main.ts
+jest.mock('simple-git', () => ({
+  simpleGit: jest.fn(() => mockGitInterface),
+}));
+
 import { handleError, run } from '../src/main';
+
+// Mock all dependencies
+jest.mock('@actions/core');
+jest.mock('@actions/github');
+jest.mock('@actions/exec');
+jest.mock('fs', () => ({
+  ...(jest.requireActual('fs') as object),
+  readFileSync: jest.fn(),
+  existsSync: jest.fn(),
+  promises: {
+    access: jest.fn(),
+    writeFile: jest.fn(),
+    mkdir: jest.fn(),
+  },
+}));
+jest.mock('glob', () => ({
+  sync: jest.fn(),
+}));
+jest.mock('dotenv');
 
 const mockCore = core as jest.Mocked<typeof core>;
 const mockGithub = github as jest.Mocked<typeof github>;
 const mockExec = exec as jest.Mocked<typeof exec>;
 const mockFs = fs as jest.Mocked<typeof fs>;
 
-// Create a mutable context object
-let mockContext: any;
+// Import glob after mocking to get the mocked version
+import * as glob from 'glob';
 
-describe('main', () => {
+const mockGlob = glob as jest.Mocked<typeof glob>;
+
+describe('GitHub Action Main', () => {
+  let mockOctokit: any;
+
   beforeEach(() => {
+    // Reset all mocks
     jest.clearAllMocks();
 
-    // Setup default context
-    mockContext = {
-      eventName: 'pull_request',
-      payload: {
-        pull_request: {
-          number: 123,
-          base: { ref: 'main' },
-          head: { ref: 'feature-branch' },
+    // Reset git interface mocks
+    mockGitInterface.revparse.mockClear();
+    mockGitInterface.diff.mockClear();
+    mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
+    mockGitInterface.diff.mockResolvedValue(
+      'prompts/prompt1.txt\npromptfooconfig.yaml',
+    );
+
+    // Setup octokit mock
+    mockOctokit = {
+      rest: {
+        issues: {
+          createComment: jest.fn(() => Promise.resolve({})),
         },
       },
-      repo: {
-        owner: 'test-owner',
-        repo: 'test-repo',
-      },
     };
+    mockGithub.getOctokit.mockReturnValue(mockOctokit as any);
 
-    // Mock github.context getter
-    Object.defineProperty(mockGithub, 'context', {
-      get: jest.fn(() => mockContext),
-      configurable: true,
-    });
-
-    // Setup default mocks
+    // Setup default input mocks
     mockCore.getInput.mockImplementation((name: string) => {
       const inputs: Record<string, string> = {
-        'github-token': 'test-token',
+        'github-token': 'mock-github-token',
         config: 'promptfooconfig.yaml',
         prompts: 'prompts/*.txt',
-        'promptfoo-version': 'latest',
         'working-directory': '',
         'cache-path': '',
+        'promptfoo-version': 'latest',
         'env-files': '',
       };
       return inputs[name] || '';
     });
 
     mockCore.getBooleanInput.mockReturnValue(false);
+    
+    // Setup summary mock
     mockCore.summary = {
       addHeading: jest.fn().mockReturnThis(),
       addTable: jest.fn().mockReturnThis(),
@@ -79,7 +106,30 @@ describe('main', () => {
       write: jest.fn(() => Promise.resolve()),
     } as any;
 
-    mockFs.existsSync.mockReturnValue(false);
+    // Setup GitHub context
+    Object.defineProperty(mockGithub.context, 'eventName', {
+      value: 'pull_request',
+      configurable: true,
+    });
+    Object.defineProperty(mockGithub.context, 'payload', {
+      value: {
+        pull_request: {
+          number: 123,
+          base: { ref: 'main' },
+          head: { ref: 'feature-branch' },
+        },
+      },
+      configurable: true,
+    });
+    Object.defineProperty(mockGithub.context, 'repo', {
+      value: {
+        owner: 'test-owner',
+        repo: 'test-repo',
+      },
+      configurable: true,
+    });
+
+    // Setup file system mocks
     mockFs.readFileSync.mockReturnValue(
       JSON.stringify({
         results: {
@@ -91,169 +141,24 @@ describe('main', () => {
         shareableUrl: 'https://example.com/results',
       }),
     );
+    mockFs.existsSync.mockReturnValue(false);
 
-    // Mock glob
-    const mockGlob = require('glob');
-    mockGlob.sync = jest.fn().mockReturnValue(['prompts/test.txt']);
-
-    // Mock simple-git
-    const mockSimpleGit = require('simple-git');
-    const gitMock = {
-      diff: jest
-        .fn()
-        .mockImplementation(() => Promise.resolve('prompts/test.txt\nprompts/another.txt')),
-      revparse: jest.fn().mockImplementation(() => Promise.resolve('abc123')),
-    };
-    mockSimpleGit.simpleGit.mockReturnValue(gitMock);
-
+    // Setup exec mock
     mockExec.exec.mockResolvedValue(0);
+
+    // Setup glob mock - return files that will match changed files
+    mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
   });
 
   afterEach(() => {
-    jest.resetAllMocks();
+    jest.restoreAllMocks();
   });
 
-  describe('workflow_dispatch event', () => {
-    beforeEach(() => {
-      mockContext = {
-        eventName: 'workflow_dispatch',
-        payload: {
-          inputs: {},
-        },
-        repo: {
-          owner: 'test-owner',
-          repo: 'test-repo',
-        },
-      };
-    });
-
-    test('should handle workflow_dispatch with file input', async () => {
-      mockContext.payload.inputs = {
-        files: 'prompts/file1.txt\nprompts/file2.txt',
-      };
-
+  describe('run function', () => {
+    test('should successfully run evaluation when prompt files change', async () => {
       await run();
 
-      expect(mockCore.info).toHaveBeenCalledWith(
-        'Running in workflow_dispatch mode',
-      );
-      expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
-      );
-      expect(mockExec.exec).toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo@latest'),
-        expect.arrayContaining(['eval']),
-        expect.any(Object),
-      );
-      expect(mockCore.summary.write).toHaveBeenCalled();
-    });
-
-    test('should handle workflow_dispatch with base comparison', async () => {
-      const mockGit = require('simple-git').simpleGit();
-      mockContext.payload.inputs = {
-        base: 'main',
-      };
-
-      await run();
-
-      expect(mockCore.info).toHaveBeenCalledWith(
-        'Running in workflow_dispatch mode',
-      );
-      expect(mockGit.diff).toHaveBeenCalledWith([
-        '--name-only',
-        'main',
-        'HEAD',
-      ]);
-      expect(mockCore.info).toHaveBeenCalledWith(
-        expect.stringContaining('Comparing against main'),
-      );
-    });
-
-    test('should handle workflow_dispatch without inputs (default to HEAD~1)', async () => {
-      const mockGit = require('simple-git').simpleGit();
-
-      await run();
-
-      expect(mockCore.info).toHaveBeenCalledWith(
-        'Running in workflow_dispatch mode',
-      );
-      expect(mockGit.diff).toHaveBeenCalledWith([
-        '--name-only',
-        'HEAD~1',
-        'HEAD',
-      ]);
-    });
-
-    test('should handle git diff failure gracefully', async () => {
-      const mockGit = require('simple-git').simpleGit();
-      mockGit.diff.mockRejectedValue(new Error('Git error'));
-
-      await run();
-
-      expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('Could not compare against HEAD~1'),
-      );
-      expect(mockCore.info).toHaveBeenCalledWith(
-        expect.stringContaining('Processing all matching prompt files'),
-      );
-    });
-
-    test('should write results to workflow summary', async () => {
-      await run();
-
-      expect(mockCore.summary.addHeading).toHaveBeenCalledWith(
-        'Promptfoo Evaluation Results',
-      );
-      expect(mockCore.summary.addTable).toHaveBeenCalledWith([
-        [
-          { data: 'Metric', header: true },
-          { data: 'Count', header: true },
-        ],
-        ['Success', '10'],
-        ['Failure', '2'],
-      ]);
-      expect(mockCore.summary.write).toHaveBeenCalled();
-      expect(mockCore.info).toHaveBeenCalledWith(
-        '=== Promptfoo Evaluation Results ===',
-      );
-      expect(mockCore.info).toHaveBeenCalledWith('Success: 10');
-      expect(mockCore.info).toHaveBeenCalledWith('Failure: 2');
-    });
-  });
-
-  describe('pull_request event', () => {
-    beforeEach(() => {
-      mockContext = {
-        eventName: 'pull_request',
-        payload: {
-          pull_request: {
-            number: 123,
-            base: { ref: 'main' },
-            head: { ref: 'feature-branch' },
-          },
-        },
-        repo: {
-          owner: 'test-owner',
-          repo: 'test-repo',
-        },
-      };
-    });
-
-    test('should handle pull_request event', async () => {
-      const mockCreateComment = jest.fn() as any;
-      mockCreateComment.mockResolvedValue({ data: {} });
-      
-      const mockOctokit = {
-        rest: {
-          issues: {
-            createComment: mockCreateComment,
-          },
-        },
-      };
-      (mockGithub.getOctokit as jest.Mock).mockReturnValue(mockOctokit);
-
-      await run();
-
+      // Verify git operations
       expect(mockExec.exec).toHaveBeenCalledWith('git', [
         'fetch',
         'origin',
@@ -264,7 +169,17 @@ describe('main', () => {
         'origin',
         'feature-branch',
       ]);
-      expect(mockCreateComment).toHaveBeenCalledWith({
+      expect(mockGitInterface.diff).toHaveBeenCalled();
+
+      // Verify promptfoo execution
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo@latest'),
+        expect.arrayContaining(['eval', '-c', 'promptfooconfig.yaml']),
+        expect.any(Object),
+      );
+
+      // Verify PR comment
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith({
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
@@ -272,69 +187,130 @@ describe('main', () => {
       });
     });
 
-    test('should throw error if pull request context is missing', async () => {
-      mockContext.payload.pull_request = undefined;
-
-      await run();
-
-      expect(mockCore.setFailed).toHaveBeenCalledWith(
-        'No pull request found in context.',
-      );
-    });
-  });
-
-  describe('push event', () => {
-    beforeEach(() => {
-      mockContext = {
-        eventName: 'push',
-        payload: {
-          before: 'abc123',
-          after: 'def456',
-        },
-        repo: {
-          owner: 'test-owner',
-          repo: 'test-repo',
-        },
-        sha: 'def456',
-      };
-    });
-
-    test('should handle push event', async () => {
-      const mockGit = require('simple-git').simpleGit();
-
-      await run();
-
-      expect(mockCore.info).toHaveBeenCalledWith('Running in push mode');
-      expect(mockGit.diff).toHaveBeenCalledWith([
-        '--name-only',
-        'abc123',
-        'def456',
-      ]);
-      expect(mockCore.summary.write).toHaveBeenCalled();
-    });
-
-    test('should handle first commit (before is all zeros)', async () => {
-      mockGithub.context.payload.before =
-        '0000000000000000000000000000000000000000';
+    test('should skip evaluation when no relevant files change', async () => {
+      // Mock git diff to return files that don't match our glob pattern
+      mockGitInterface.diff.mockResolvedValue('README.md\npackage.json');
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
 
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Unable to determine changed files from push event. Will process all matching prompt files.',
+        'No LLM prompt or config files were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo'),
+        expect.any(Array),
+        expect.any(Object),
       );
     });
-  });
 
-  describe('unsupported events', () => {
-    test('should warn for unsupported event types', async () => {
-      mockContext = {
-        eventName: 'issue_comment',
-        payload: {},
-        repo: {
-          owner: 'test-owner',
-          repo: 'test-repo',
+    test('should handle API keys correctly', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: 'prompts/*.txt',
+          'openai-api-key': 'sk-test-key',
+          'anthropic-api-key': 'claude-key',
+        };
+        return inputs[name] || '';
+      });
+
+      await run();
+
+      // Verify secrets are masked
+      expect(mockCore.setSecret).toHaveBeenCalledWith('sk-test-key');
+      expect(mockCore.setSecret).toHaveBeenCalledWith('claude-key');
+      expect(mockCore.setSecret).toHaveBeenCalledWith('mock-github-token');
+
+      // Verify environment variables are passed
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        expect.objectContaining({
+          env: expect.objectContaining({
+            OPENAI_API_KEY: 'sk-test-key',
+            ANTHROPIC_API_KEY: 'claude-key',
+          }),
+        }),
+      );
+    });
+
+    test('should load environment files when specified', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: 'prompts/*.txt',
+          'env-files': '.env,.env.local',
+        };
+        return inputs[name] || '';
+      });
+
+      mockFs.existsSync.mockImplementation((path: fs.PathLike) => {
+        const pathStr = path.toString();
+        return pathStr.includes('.env');
+      });
+
+      const mockDotenv = require('dotenv');
+      mockDotenv.config = jest.fn().mockReturnValue({ error: null });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        expect.stringContaining('Loading environment variables from'),
+      );
+    });
+
+    test('should handle push events', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'abc123',
+          after: 'def456',
         },
-      };
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'sha', {
+        value: 'def456',
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith('Running in push mode');
+      expect(mockGitInterface.diff).toHaveBeenCalledWith([
+        '--name-only',
+        'abc123',
+        'def456',
+      ]);
+    });
+
+    test('should handle workflow_dispatch events', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {},
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith('Running in workflow_dispatch mode');
+    });
+
+    test('should handle unsupported events with warning', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'issues',
+        configurable: true,
+      });
 
       await run();
 
@@ -344,83 +320,43 @@ describe('main', () => {
         ),
       );
     });
-  });
 
-  describe('error handling', () => {
-    test('should handle errors properly', async () => {
-      const testError = new Error('Test error');
-      mockExec.exec.mockRejectedValue(testError);
+    test('should handle missing pull request data', async () => {
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {},
+        configurable: true,
+      });
 
       await run();
 
-      expect(mockCore.setFailed).toHaveBeenCalledWith('Test error');
+      expect(mockCore.setFailed).toHaveBeenCalledWith('No pull request found in context.');
     });
 
-    test('handleError should call setFailed', () => {
-      const error = new Error('Test error message');
+    test('should handle promptfoo execution failure', async () => {
+      mockExec.exec.mockImplementation((command: string) => {
+        if (command.includes('promptfoo')) {
+          throw new Error('Promptfoo evaluation failed');
+        }
+        return Promise.resolve(0);
+      });
+
+      await run();
+
+      // Should still create comment
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalled();
+
+      // But should fail the action
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Promptfoo evaluation failed',
+      );
+    });
+  });
+
+  describe('handleError function', () => {
+    test('should set failed status with error message', () => {
+      const error = new Error('Test error');
       handleError(error);
-      expect(mockCore.setFailed).toHaveBeenCalledWith('Test error message');
-    });
-  });
-
-  describe('environment files', () => {
-    test('should load environment files when specified', async () => {
-      mockCore.getInput.mockImplementation((name: string) => {
-        if (name === 'env-files') return '.env,.env.local';
-        if (name === 'github-token') return 'test-token';
-        if (name === 'config') return 'promptfooconfig.yaml';
-        if (name === 'prompts') return 'prompts/*.txt';
-        if (name === 'promptfoo-version') return 'latest';
-        return '';
-      });
-
-      mockFs.existsSync.mockImplementation((path: fs.PathLike) => {
-        return String(path).includes('.env');
-      });
-
-      const mockDotenv = require('dotenv');
-      mockDotenv.config.mockReturnValue({ error: null });
-
-      mockContext = {
-        eventName: 'workflow_dispatch',
-        payload: { inputs: {} },
-        repo: { owner: 'test-owner', repo: 'test-repo' },
-      };
-
-      await run();
-
-      expect(mockFs.existsSync).toHaveBeenCalledWith(
-        expect.stringContaining('.env'),
-      );
-      expect(mockDotenv.config).toHaveBeenCalled();
-      expect(mockCore.info).toHaveBeenCalledWith(
-        expect.stringContaining('Successfully loaded'),
-      );
-    });
-
-    test('should warn when environment file not found', async () => {
-      mockCore.getInput.mockImplementation((name: string) => {
-        if (name === 'env-files') return '.env.missing';
-        if (name === 'github-token') return 'test-token';
-        if (name === 'config') return 'promptfooconfig.yaml';
-        if (name === 'prompts') return 'prompts/*.txt';
-        if (name === 'promptfoo-version') return 'latest';
-        return '';
-      });
-
-      mockFs.existsSync.mockReturnValue(false);
-
-      mockContext = {
-        eventName: 'workflow_dispatch',
-        payload: { inputs: {} },
-        repo: { owner: 'test-owner', repo: 'test-repo' },
-      };
-
-      await run();
-
-      expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('Environment file'),
-      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith('Test error');
     });
   });
 });

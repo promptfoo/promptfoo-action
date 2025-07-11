@@ -2,6 +2,7 @@ module.exports = {
   clearMocks: true,
   moduleFileExtensions: ['js', 'ts'],
   testMatch: ['**/__tests__/**/*.ts'],
+  testPathIgnorePatterns: ['/node_modules/', '/promptfoo/'],
   transform: {
     '^.+\\.ts$': 'ts-jest',
   },
