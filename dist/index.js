@@ -59,6 +59,7 @@ const fs = __importStar(__nccwpck_require__(9896));
 const glob = __importStar(__nccwpck_require__(1363));
 const path = __importStar(__nccwpck_require__(6928));
 const simple_git_1 = __nccwpck_require__(9065);
+const errors_1 = __nccwpck_require__(4651);
 const gitInterface = (0, simple_git_1.simpleGit)();
 /**
  * Validates git refs to prevent command injection attacks.
@@ -76,14 +77,14 @@ function validateGitRef(ref) {
     const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
     // Security check: prevent option injection
     if (ref.startsWith('--') || ref.startsWith('-')) {
-        throw new Error(`Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`);
+        throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should not start with dashes to prevent command injection');
     }
     // Security check: prevent command chaining
     if (ref.includes(' ') ||
         ref.includes('\t') ||
         ref.includes('\n') ||
         ref.includes('\r')) {
-        throw new Error(`Invalid Git ref "${ref}": refs cannot contain whitespace characters`);
+        throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot contain whitespace characters`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should not contain spaces or other whitespace');
     }
     // Security check: prevent special shell characters
     const dangerousChars = [
@@ -109,12 +110,12 @@ function validateGitRef(ref) {
     ];
     for (const char of dangerousChars) {
         if (ref.includes(char)) {
-            throw new Error(`Invalid Git ref "${ref}": refs cannot contain special character "${char}"`);
+            throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot contain special character "${char}"`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should only contain alphanumerics, underscores, hyphens, slashes, and dots');
         }
     }
     // Final check: ensure ref matches allowed pattern
     if (!gitRefRegex.test(ref)) {
-        throw new Error(`Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`);
+        throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Please use a valid git reference format');
     }
 }
 function run() {
@@ -148,6 +149,15 @@ function run() {
             const vertexApiKey = core.getInput('vertex-api-key', {
                 required: false,
             });
+            const cohereApiKey = core.getInput('cohere-api-key', {
+                required: false,
+            });
+            const mistralApiKey = core.getInput('mistral-api-key', {
+                required: false,
+            });
+            const groqApiKey = core.getInput('groq-api-key', {
+                required: false,
+            });
             const githubToken = core.getInput('github-token', {
                 required: true,
             });
@@ -168,6 +178,18 @@ function run() {
             });
             const useConfigPrompts = core.getBooleanInput('use-config-prompts', { required: false });
             const envFiles = core.getInput('env-files', { required: false });
+            const failOnThresholdInput = core.getInput('fail-on-threshold', {
+                required: false,
+            });
+            const failOnThreshold = failOnThresholdInput
+                ? parseFloat(failOnThresholdInput)
+                : undefined;
+            const maxConcurrencyInput = core.getInput('max-concurrency', {
+                required: false,
+            });
+            const maxConcurrency = maxConcurrencyInput
+                ? parseInt(maxConcurrencyInput, 10)
+                : undefined;
             const noTable = core.getBooleanInput('no-table', {
                 required: false,
             });
@@ -183,6 +205,18 @@ function run() {
             const workflowBase = core.getInput('workflow-base', {
                 required: false,
             });
+            // Validate fail-on-threshold input
+            if (failOnThreshold !== undefined &&
+                (Number.isNaN(failOnThreshold) ||
+                    failOnThreshold < 0 ||
+                    failOnThreshold > 100)) {
+                throw new errors_1.PromptfooActionError('fail-on-threshold must be a number between 0 and 100', errors_1.ErrorCodes.INVALID_THRESHOLD, 'Please provide a valid percentage value, e.g., 80 for 80% success rate');
+            }
+            // Validate max-concurrency input
+            if (maxConcurrency !== undefined &&
+                (Number.isNaN(maxConcurrency) || maxConcurrency < 1)) {
+                throw new errors_1.PromptfooActionError('max-concurrency must be a positive integer', errors_1.ErrorCodes.INVALID_CONFIGURATION, 'Please provide a valid concurrency value, e.g., 10 for 10 concurrent requests');
+            }
             // Load .env files if specified
             if (envFiles) {
                 const envFileList = envFiles.split(',').map((f) => f.trim());
@@ -193,14 +227,14 @@ function run() {
                         // Use override: true to allow later files to override earlier ones
                         const result = dotenv.config({ path: envFilePath, override: true });
                         if (result.error) {
-                            core.warning(`Failed to load ${envFilePath}: ${result.error.message}`);
+                            throw new errors_1.PromptfooActionError(`Failed to load ${envFilePath}: ${result.error.message}`, errors_1.ErrorCodes.ENV_FILE_LOAD_ERROR, `Check that the file exists and has valid .env format`);
                         }
                         else {
                             core.info(`Successfully loaded ${envFilePath}`);
                         }
                     }
                     else {
-                        core.warning(`Environment file ${envFilePath} not found`);
+                        throw new errors_1.PromptfooActionError(`Environment file ${envFilePath} not found`, errors_1.ErrorCodes.ENV_FILE_NOT_FOUND, `Make sure the file path is correct relative to ${workingDirectory}`);
                     }
                 }
             }
@@ -214,6 +248,9 @@ function run() {
                 replicateApiKey,
                 palmApiKey,
                 vertexApiKey,
+                cohereApiKey,
+                mistralApiKey,
+                groqApiKey,
             ];
             for (const key of apiKeys) {
                 if (key) {
@@ -354,15 +391,18 @@ function run() {
             if (!noShare) {
                 promptfooArgs.push('--share');
             }
+            if (maxConcurrency !== undefined) {
+                promptfooArgs.push('--max-concurrency', maxConcurrency.toString());
+            }
             if (noTable) {
                 promptfooArgs.push('--no-table');
             }
             if (noProgressBar) {
                 promptfooArgs.push('--no-progress-bar');
             }
-            const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
+            const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
                 ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
-                : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
+                : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {})), (mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {})), (groqApiKey ? { GROQ_API_KEY: groqApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
             let errorToThrow;
             try {
                 yield exec.exec(`npx promptfoo@${version}`, promptfooArgs, {
@@ -371,14 +411,21 @@ function run() {
                 });
             }
             catch (error) {
-                // Ignore nonzero exit code, but save the error to throw later
-                errorToThrow = error;
+                // Wrap the error with more context
+                errorToThrow = new errors_1.PromptfooActionError(`Promptfoo evaluation failed: ${error instanceof Error ? error.message : String(error)}`, errors_1.ErrorCodes.PROMPTFOO_EXECUTION_FAILED, 'Check that your promptfoo configuration is valid and all required API keys are set');
+            }
+            // Read output file
+            let output;
+            try {
+                const outputContent = fs.readFileSync(outputFile, 'utf8');
+                output = JSON.parse(outputContent);
+            }
+            catch (error) {
+                throw new errors_1.PromptfooActionError(`Failed to read or parse output file: ${error instanceof Error ? error.message : String(error)}`, errors_1.ErrorCodes.INVALID_OUTPUT_FILE, 'This usually happens when promptfoo fails to generate valid output. Check the logs above for more details');
             }
             // Comment on PR or output results
             if (isPullRequest && pullRequestNumber && !disableComment) {
-                // Existing PR comment logic
                 const octokit = github.getOctokit(githubToken);
-                const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
                 const modifiedFiles = promptFiles.join(', ');
                 let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
@@ -427,6 +474,18 @@ function run() {
                     core.info(`View results: ${output.shareableUrl}`);
                 }
             }
+            // Check if we should fail based on threshold
+            if (failOnThreshold !== undefined) {
+                const totalTests = output.results.stats.successes + output.results.stats.failures;
+                // If no tests were run, fail the threshold check
+                if (totalTests === 0) {
+                    throw new errors_1.PromptfooActionError(`No tests were run - cannot calculate success rate`, errors_1.ErrorCodes.THRESHOLD_NOT_MET, `Ensure your configuration includes valid tests to run`);
+                }
+                const successRate = (output.results.stats.successes / totalTests) * 100;
+                if (successRate < failOnThreshold) {
+                    throw new errors_1.PromptfooActionError(`Evaluation success rate (${successRate.toFixed(2)}%) is below the required threshold (${failOnThreshold}%)`, errors_1.ErrorCodes.THRESHOLD_NOT_MET, `Consider adjusting your prompts or lowering the threshold`);
+                }
+            }
             if (errorToThrow) {
                 throw errorToThrow;
             }
@@ -442,10 +501,55 @@ function run() {
     });
 }
 function handleError(error) {
-    core.setFailed(error.message);
+    core.setFailed((0, errors_1.formatErrorMessage)(error));
 }
 if (require.main === require.cache[eval('__filename')]) {
     run();
+}
+
+
+/***/ }),
+
+/***/ 4651:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.ErrorCodes = exports.PromptfooActionError = void 0;
+exports.formatErrorMessage = formatErrorMessage;
+class PromptfooActionError extends Error {
+    constructor(message, code, helpText) {
+        super(message);
+        this.code = code;
+        this.helpText = helpText;
+        this.name = 'PromptfooActionError';
+    }
+}
+exports.PromptfooActionError = PromptfooActionError;
+exports.ErrorCodes = {
+    NO_PULL_REQUEST: 'NO_PULL_REQUEST',
+    INVALID_GIT_REF: 'INVALID_GIT_REF',
+    INVALID_THRESHOLD: 'INVALID_THRESHOLD',
+    THRESHOLD_NOT_MET: 'THRESHOLD_NOT_MET',
+    PROMPTFOO_EXECUTION_FAILED: 'PROMPTFOO_EXECUTION_FAILED',
+    INVALID_OUTPUT_FILE: 'INVALID_OUTPUT_FILE',
+    ENV_FILE_NOT_FOUND: 'ENV_FILE_NOT_FOUND',
+    ENV_FILE_LOAD_ERROR: 'ENV_FILE_LOAD_ERROR',
+    INVALID_CONFIGURATION: 'INVALID_CONFIGURATION',
+};
+function formatErrorMessage(error) {
+    if (error instanceof PromptfooActionError) {
+        let message = `Error: ${error.message}`;
+        if (error.helpText) {
+            message += `\n\nHelp: ${error.helpText}`;
+        }
+        return message;
+    }
+    if (error instanceof Error) {
+        return `Error: ${error.message}`;
+    }
+    return `Error: ${String(error)}`;
 }
 
 

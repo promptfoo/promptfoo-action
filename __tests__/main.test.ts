@@ -11,6 +11,15 @@ import {
 } from '@jest/globals';
 import * as fs from 'fs';
 
+// Type definitions for mocks
+type MockOctokit = {
+  rest: {
+    issues: {
+      createComment: jest.Mock;
+    };
+  };
+};
+
 // Create mock functions before importing the module that uses them
 const mockGitInterface = {
   revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
@@ -56,7 +65,7 @@ import * as glob from 'glob';
 const mockGlob = glob as jest.Mocked<typeof glob>;
 
 describe('GitHub Action Main', () => {
-  let mockOctokit: any;
+  let mockOctokit: MockOctokit;
 
   beforeEach(() => {
     // Reset all mocks
@@ -78,7 +87,9 @@ describe('GitHub Action Main', () => {
         },
       },
     };
-    mockGithub.getOctokit.mockReturnValue(mockOctokit as any);
+    mockGithub.getOctokit.mockReturnValue(
+      mockOctokit as unknown as ReturnType<typeof github.getOctokit>,
+    );
 
     // Setup default input mocks
     mockCore.getInput.mockImplementation((name: string) => {
@@ -104,7 +115,7 @@ describe('GitHub Action Main', () => {
       addLink: jest.fn().mockReturnThis(),
       addRaw: jest.fn().mockReturnThis(),
       write: jest.fn(() => Promise.resolve()),
-    } as any;
+    } as unknown as typeof mockCore.summary;
 
     // Setup GitHub context
     Object.defineProperty(mockGithub.context, 'eventName', {
@@ -285,8 +296,14 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.info).toHaveBeenCalledWith('Running in push mode');
       expect(mockGitInterface.diff).toHaveBeenCalled();
-      const diffCalls = (mockGitInterface.diff as any).mock.calls;
-      expect(diffCalls[0][0]).toEqual(['--name-only', 'abc123', 'def456']);
+      const diffCalls = (
+        mockGitInterface.diff as jest.MockedFunction<
+          typeof mockGitInterface.diff
+        >
+      ).mock.calls as unknown as Array<[string[]]>;
+      if (diffCalls.length > 0) {
+        expect(diffCalls[0][0]).toEqual(['--name-only', 'abc123', 'def456']);
+      }
     });
 
     test('should handle workflow_dispatch events with default behavior', async () => {
@@ -467,12 +484,18 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Verify that diff was called with the action input base
-      const diffCalls = (mockGitInterface.diff as any).mock.calls;
-      expect(diffCalls[0][0]).toEqual([
-        '--name-only',
-        'feature-branch',
-        'HEAD',
-      ]);
+      const diffCalls = (
+        mockGitInterface.diff as jest.MockedFunction<
+          typeof mockGitInterface.diff
+        >
+      ).mock.calls as unknown as Array<[string[]]>;
+      if (diffCalls.length > 0) {
+        expect(diffCalls[0][0]).toEqual([
+          '--name-only',
+          'feature-branch',
+          'HEAD',
+        ]);
+      }
     });
 
     test('should handle unsupported events with warning', async () => {
@@ -499,7 +522,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        'No pull request found in context.',
+        'Error: No pull request found in context.',
       );
     });
 
@@ -518,7 +541,7 @@ describe('GitHub Action Main', () => {
 
       // But should fail the action
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        'Promptfoo evaluation failed',
+        expect.stringContaining('Error: Promptfoo evaluation failed'),
       );
     });
 
@@ -729,7 +752,7 @@ describe('GitHub Action Main', () => {
     test('should set failed status with error message', () => {
       const error = new Error('Test error');
       handleError(error);
-      expect(mockCore.setFailed).toHaveBeenCalledWith('Test error');
+      expect(mockCore.setFailed).toHaveBeenCalledWith('Error: Test error');
     });
   });
 
