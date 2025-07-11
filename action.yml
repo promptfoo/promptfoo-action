@@ -1,7 +1,7 @@
 name: 'Test LLM outputs'
 description: 'Automatically run a before/after comparison of edited prompts and posts the result to your Pull Request.'
 runs:
-  using: 'node16'
+  using: 'node20'
   main: 'dist/index.js'
 inputs:
   github-token:
