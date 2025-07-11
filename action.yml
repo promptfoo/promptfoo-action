@@ -43,6 +43,15 @@ inputs:
   vertex-api-key:
     description: 'Google vertex API key'
     required: false
+  cohere-api-key:
+    description: 'Cohere API key'
+    required: false
+  mistral-api-key:
+    description: 'Mistral API key'
+    required: false
+  groq-api-key:
+    description: 'Groq API key'
+    required: false
   promptfoo-version:
     description: 'Version of promptfoo to use'
     required: false
@@ -63,6 +72,18 @@ inputs:
     description: 'Comma-separated list of .env files to load (e.g. ".env,.env.test.local")'
     required: false
     default: ''
+  fail-on-threshold:
+    description: 'Fail the action if the evaluation success rate is below this percentage (0-100)'
+    required: false
+    default: ''
+  debug:
+    description: 'Enable debug logging for troubleshooting'
+    required: false
+    default: 'false'
+  max-concurrency:
+    description: 'Maximum number of concurrent API calls (default: 4)'
+    required: false
+    default: '4'
 branding:
   icon: 'box'
   color: 'yellow'

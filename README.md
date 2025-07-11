@@ -25,6 +25,8 @@ The action can be configured using the following inputs:
 | `prompts`            | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate.                                 | No       |
 | `use-config-prompts` | Use prompt files set at config file. Defaults to `false`                                                                                                  | No       |
 | `env-files`          | Comma-separated list of .env files to load (e.g. ".env,.env.test.local"). Environment variables from these files will be loaded before running promptfoo. | No       |
+| `fail-on-threshold`  | Fail the action if the evaluation success rate is below this percentage (0-100). Example: `80` for 80% success rate.                                      | No       |
+| `max-concurrency`    | Maximum number of concurrent API calls. Defaults to `4`. Useful for rate limiting.                                                                         | No       |
 
 The following API key parameters are supported:
 
@@ -39,6 +41,9 @@ The following API key parameters are supported:
 | `replicate-api-key`     | The API key for Replicate. Used to authenticate requests to the Replicate API.       |
 | `palm-api-key`          | The API key for Palm. Used to authenticate requests to the Palm API.                 |
 | `vertex-api-key`        | The API key for Vertex. Used to authenticate requests to the Vertex AI API.          |
+| `cohere-api-key`        | The API key for Cohere. Used to authenticate requests to the Cohere API.             |
+| `mistral-api-key`       | The API key for Mistral. Used to authenticate requests to the Mistral API.           |
+| `groq-api-key`          | The API key for Groq. Used to authenticate requests to the Groq API.                 |
 
 Here is a generic Github Action configuration using "typpo/promptfoo-action@v1" with a cache step:
 
