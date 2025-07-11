@@ -27,6 +27,9 @@ The action can be configured using the following inputs:
 | `env-files`          | Comma-separated list of .env files to load (e.g. ".env,.env.test.local"). Environment variables from these files will be loaded before running promptfoo. | No       |
 | `fail-on-threshold`  | Fail the action if the evaluation success rate is below this percentage (0-100). Example: `80` for 80% success rate.                                      | No       |
 | `max-concurrency`    | Maximum number of concurrent API calls. Defaults to `4`. Useful for rate limiting.                                                                         | No       |
+| `no-table`           | Run promptfoo with `--no-table` flag to keep output minimal. Defaults to `false`                                                                          | No       |
+| `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
+| `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
 
 The following API key parameters are supported:
 
@@ -116,3 +119,7 @@ jobs:
 ```
 
 This is particularly useful for Next.js applications or other frameworks that use `.env` files for configuration. The environment variables from these files will be available to promptfoo during evaluation.
+
+## Minimal Output
+
+To reduce console output in CI, set `no-table: true` and `no-progress-bar: true` in your action configuration.

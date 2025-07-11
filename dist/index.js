@@ -138,6 +138,15 @@ function run() {
             const maxConcurrency = maxConcurrencyInput
                 ? parseInt(maxConcurrencyInput, 10)
                 : undefined;
+            const noTable = core.getBooleanInput('no-table', {
+                required: false,
+            });
+            const noProgressBar = core.getBooleanInput('no-progress-bar', {
+                required: false,
+            });
+            const disableComment = core.getBooleanInput('disable-comment', {
+                required: false,
+            });
             // Validate fail-on-threshold input
             if (failOnThreshold !== undefined &&
                 (Number.isNaN(failOnThreshold) || failOnThreshold < 0 || failOnThreshold > 100)) {
@@ -236,6 +245,12 @@ function run() {
             if (maxConcurrency !== undefined) {
                 promptfooArgs.push('--max-concurrency', maxConcurrency.toString());
             }
+            if (noTable) {
+                promptfooArgs.push('--no-table');
+            }
+            if (noProgressBar) {
+                promptfooArgs.push('--no-progress-bar');
+            }
             const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
                 ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
                 : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {})), (mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {})), (groqApiKey ? { GROQ_API_KEY: groqApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
@@ -251,7 +266,6 @@ function run() {
                 errorToThrow = new errors_1.PromptfooActionError(`Promptfoo evaluation failed: ${error instanceof Error ? error.message : String(error)}`, errors_1.ErrorCodes.PROMPTFOO_EXECUTION_FAILED, 'Check that your promptfoo configuration is valid and all required API keys are set');
             }
             // Comment PR
-            const octokit = github.getOctokit(githubToken);
             let output;
             try {
                 const outputContent = fs.readFileSync(outputFile, 'utf8');
@@ -260,21 +274,24 @@ function run() {
             catch (error) {
                 throw new errors_1.PromptfooActionError(`Failed to read or parse output file: ${error instanceof Error ? error.message : String(error)}`, errors_1.ErrorCodes.INVALID_OUTPUT_FILE, 'This usually happens when promptfoo fails to generate valid output. Check the logs above for more details');
             }
-            const modifiedFiles = promptFiles.join(', ');
-            let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+            if (!disableComment) {
+                const octokit = github.getOctokit(githubToken);
+                const modifiedFiles = promptFiles.join(', ');
+                let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
-            if (output.shareableUrl) {
-                body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
+                if (output.shareableUrl) {
+                    body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
+                }
+                else {
+                    body = body.concat('**» View eval results in CI console «**');
+                }
+                yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             }
-            else {
-                body = body.concat('**» View eval results in CI console «**');
-            }
-            yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             // Check if we should fail based on threshold
             if (failOnThreshold !== undefined) {
                 const totalTests = output.results.stats.successes + output.results.stats.failures;

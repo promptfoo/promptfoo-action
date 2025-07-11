@@ -102,6 +102,15 @@ export async function run(): Promise<void> {
     const maxConcurrency: number | undefined = maxConcurrencyInput
       ? parseInt(maxConcurrencyInput, 10)
       : undefined;
+    const noTable: boolean = core.getBooleanInput('no-table', {
+      required: false,
+    });
+    const noProgressBar: boolean = core.getBooleanInput('no-progress-bar', {
+      required: false,
+    });
+    const disableComment: boolean = core.getBooleanInput('disable-comment', {
+      required: false,
+    });
 
     // Validate fail-on-threshold input
     if (
@@ -240,6 +249,12 @@ export async function run(): Promise<void> {
     if (maxConcurrency !== undefined) {
       promptfooArgs.push('--max-concurrency', maxConcurrency.toString());
     }
+    if (noTable) {
+      promptfooArgs.push('--no-table');
+    }
+    if (noProgressBar) {
+      promptfooArgs.push('--no-progress-bar');
+    }
 
     const env = {
       ...process.env,
@@ -275,7 +290,6 @@ export async function run(): Promise<void> {
     }
 
     // Comment PR
-    const octokit = github.getOctokit(githubToken);
     let output: OutputFile;
     try {
       const outputContent = fs.readFileSync(outputFile, 'utf8');
@@ -287,24 +301,30 @@ export async function run(): Promise<void> {
         'This usually happens when promptfoo fails to generate valid output. Check the logs above for more details',
       );
     }
-    const modifiedFiles = promptFiles.join(', ');
-    let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+
+    if (!disableComment) {
+      const octokit = github.getOctokit(githubToken);
+      const modifiedFiles = promptFiles.join(', ');
+      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
-    if (output.shareableUrl) {
-      body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
-    } else {
-      body = body.concat('**» View eval results in CI console «**');
+      if (output.shareableUrl) {
+        body = body.concat(
+          `**» [View eval results](${output.shareableUrl}) «**`,
+        );
+      } else {
+        body = body.concat('**» View eval results in CI console «**');
+      }
+      await octokit.rest.issues.createComment({
+        ...github.context.repo,
+        issue_number: pullRequest.number,
+        body,
+      });
     }
-    await octokit.rest.issues.createComment({
-      ...github.context.repo,
-      issue_number: pullRequest.number,
-      body,
-    });
 
     // Check if we should fail based on threshold
     if (failOnThreshold !== undefined) {

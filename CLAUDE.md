@@ -83,6 +83,53 @@ Note: This repository includes a copy of the promptfoo source code in the `/prom
 3. Commit both source and `/dist/` folder
 4. Tag release following semantic versioning
 
+## Resolving Merge Conflicts
+
+When merging branches (especially main into feature branches), follow these steps:
+
+1. **Checkout and update the target branch**:
+   ```bash
+   git checkout feature/branch-name
+   git pull origin feature/branch-name
+   ```
+
+2. **Merge main into your branch**:
+   ```bash
+   git merge main
+   ```
+
+3. **Resolve conflicts**:
+   - For `action.yml`: Keep both sets of inputs, maintaining alphabetical order
+   - For `src/main.ts`: Include all feature additions (inputs, logic)
+   - For `__tests__/main.test.ts`: Merge test suites to include tests for all features
+   - For `README.md`: Include documentation for all features
+   - For `dist/` files: These will be regenerated, so either resolution is fine
+
+4. **After resolving conflicts**:
+   ```bash
+   git add .
+   git commit  # This completes the merge
+   ```
+
+5. **Rebuild dist files** (CRITICAL for passing check-dist CI):
+   ```bash
+   npm ci  # Clean install to ensure consistency
+   npm run build && npm run package
+   git add dist/
+   git commit -m "fix: Rebuild dist files after merge"
+   ```
+
+6. **Push changes**:
+   ```bash
+   git push origin feature/branch-name
+   ```
+
+### Common CI Failures After Merge
+
+- **check-dist workflow failure**: Always rebuild dist files after merging
+- **Test failures**: Ensure all tests from both branches are included
+- **Formatting issues**: Run `npm run format` before committing
+
 ## Important Notes
 
 - The action currently uses node16 runtime but needs updating to node20

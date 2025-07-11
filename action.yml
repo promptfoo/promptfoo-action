@@ -84,6 +84,18 @@ inputs:
     description: 'Maximum number of concurrent API calls (default: 4)'
     required: false
     default: '4'
+  no-table:
+    description: 'Run promptfoo with --no-table flag to keep output minimal'
+    required: false
+    default: 'false'
+  no-progress-bar:
+    description: 'Run promptfoo with --no-progress-bar flag to keep output minimal'
+    required: false
+    default: 'false'
+  disable-comment:
+    description: 'Disable posting comments to the PR'
+    required: false
+    default: 'false'
 branding:
   icon: 'box'
   color: 'yellow'
