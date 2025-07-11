@@ -287,7 +287,7 @@ describe('GitHub Action Main', () => {
       expect(diffCalls[0][0]).toEqual(['--name-only', 'abc123', 'def456']);
     });
 
-    test('should handle workflow_dispatch events', async () => {
+    test('should handle workflow_dispatch events with default behavior', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
         configurable: true,
@@ -304,6 +304,84 @@ describe('GitHub Action Main', () => {
       expect(mockCore.info).toHaveBeenCalledWith(
         'Running in workflow_dispatch mode',
       );
+      // Verify it processes files (either through diff or all files)
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo@latest'),
+        expect.arrayContaining(['eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should handle workflow_dispatch with manual files input', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: 'prompts/file1.txt\nprompts/file2.txt',
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should handle workflow_dispatch with custom base comparison', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            base: 'main',
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      // Should still run the evaluation
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo@latest'),
+        expect.arrayContaining(['eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should handle workflow_dispatch when diff comparison fails', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            base: 'invalid-ref',
+          },
+        },
+        configurable: true,
+      });
+
+      // Make diff throw an error for this test
+      mockGitInterface.diff.mockRejectedValueOnce(new Error('Invalid ref'));
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Could not compare against invalid-ref'),
+      );
+      // Should process all matching files when diff fails
+      expect(mockGlob.sync).toHaveBeenCalled();
     });
 
     test('should handle unsupported events with warning', async () => {

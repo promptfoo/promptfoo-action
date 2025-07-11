@@ -171,7 +171,7 @@ export async function run(): Promise<void> {
 
       if (workflowInputFiles) {
         // Option 1: Use provided file list
-        changedFiles = workflowInputFiles.split('\n').join('\n');
+        changedFiles = workflowInputFiles;
         core.info(`Using manually specified files: ${changedFiles}`);
       } else {
         // Option 2: Compare against base (default to previous commit)

@@ -198,7 +198,7 @@ function run() {
                 const compareBase = ((_b = github.context.payload.inputs) === null || _b === void 0 ? void 0 : _b.base) || 'HEAD~1';
                 if (workflowInputFiles) {
                     // Option 1: Use provided file list
-                    changedFiles = workflowInputFiles.split('\n').join('\n');
+                    changedFiles = workflowInputFiles;
                     core.info(`Using manually specified files: ${changedFiles}`);
                 }
                 else {
