@@ -204,6 +204,8 @@ function run() {
                 else {
                     // Option 2: Compare against base (default to previous commit)
                     try {
+                        // Validate compareBase to prevent command injection
+                        validateGitRef(compareBase);
                         changedFiles = yield gitInterface.diff([
                             '--name-only',
                             compareBase,

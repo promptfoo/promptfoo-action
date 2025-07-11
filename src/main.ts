@@ -176,6 +176,9 @@ export async function run(): Promise<void> {
       } else {
         // Option 2: Compare against base (default to previous commit)
         try {
+          // Validate compareBase to prevent command injection
+          validateGitRef(compareBase);
+
           changedFiles = await gitInterface.diff([
             '--name-only',
             compareBase,
