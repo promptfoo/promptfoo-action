@@ -63,6 +63,10 @@ inputs:
     description: 'Comma-separated list of .env files to load (e.g. ".env,.env.test.local")'
     required: false
     default: ''
+  disable-comment:
+    description: 'Disable posting comments to the PR'
+    required: false
+    default: 'false'
 branding:
   icon: 'box'
   color: 'yellow'

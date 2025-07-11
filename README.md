@@ -25,6 +25,7 @@ The action can be configured using the following inputs:
 | `prompts`            | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate.                                 | No       |
 | `use-config-prompts` | Use prompt files set at config file. Defaults to `false`                                                                                                  | No       |
 | `env-files`          | Comma-separated list of .env files to load (e.g. ".env,.env.test.local"). Environment variables from these files will be loaded before running promptfoo. | No       |
+| `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
 
 The following API key parameters are supported:
 

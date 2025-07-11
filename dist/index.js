@@ -116,6 +116,9 @@ function run() {
             });
             const useConfigPrompts = core.getBooleanInput('use-config-prompts', { required: false });
             const envFiles = core.getInput('env-files', { required: false });
+            const disableComment = core.getBooleanInput('disable-comment', {
+                required: false,
+            });
             // Load .env files if specified
             if (envFiles) {
                 const envFileList = envFiles.split(',').map((f) => f.trim());
@@ -213,23 +216,25 @@ function run() {
                 errorToThrow = error;
             }
             // Comment PR
-            const octokit = github.getOctokit(githubToken);
-            const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
-            const modifiedFiles = promptFiles.join(', ');
-            let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+            if (!disableComment) {
+                const octokit = github.getOctokit(githubToken);
+                const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
+                const modifiedFiles = promptFiles.join(', ');
+                let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
-            if (output.shareableUrl) {
-                body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
+                if (output.shareableUrl) {
+                    body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
+                }
+                else {
+                    body = body.concat('**» View eval results in CI console «**');
+                }
+                yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             }
-            else {
-                body = body.concat('**» View eval results in CI console «**');
-            }
-            yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             if (errorToThrow) {
                 throw errorToThrow;
             }
