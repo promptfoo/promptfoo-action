@@ -60,15 +60,36 @@ const glob = __importStar(__nccwpck_require__(1363));
 const path = __importStar(__nccwpck_require__(6928));
 const simple_git_1 = __nccwpck_require__(9065);
 const gitInterface = (0, simple_git_1.simpleGit)();
+/**
+ * Validates git refs to prevent command injection attacks.
+ * This is a critical security function that must be called before using any
+ * user-provided input in git commands.
+ *
+ * Security considerations:
+ * - Refs starting with "--" could be interpreted as command options
+ * - Spaces could allow command chaining
+ * - Special characters could enable various injection attacks
+ * - Even with validation, we use "--" separator in git commands for defense in depth
+ */
 function validateGitRef(ref) {
+    // Strict validation: only allow safe characters for git refs
     const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
-    // Provide specific error messages for different validation failures
-    if (ref.startsWith('--')) {
-        throw new Error(`Invalid Git ref "${ref}": refs cannot start with "--" (this could be interpreted as a command option)`);
+    // Security check: prevent option injection
+    if (ref.startsWith('--') || ref.startsWith('-')) {
+        throw new Error(`Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`);
     }
-    if (ref.includes(' ')) {
-        throw new Error(`Invalid Git ref "${ref}": refs cannot contain spaces`);
+    // Security check: prevent command chaining
+    if (ref.includes(' ') || ref.includes('\t') || ref.includes('\n') || ref.includes('\r')) {
+        throw new Error(`Invalid Git ref "${ref}": refs cannot contain whitespace characters`);
     }
+    // Security check: prevent special shell characters
+    const dangerousChars = ['$', '`', '\\', '!', '&', '|', ';', '(', ')', '<', '>', '"', "'", '*', '?', '[', ']', '{', '}'];
+    for (const char of dangerousChars) {
+        if (ref.includes(char)) {
+            throw new Error(`Invalid Git ref "${ref}": refs cannot contain special character "${char}"`);
+        }
+    }
+    // Final check: ensure ref matches allowed pattern
     if (!gitRefRegex.test(ref)) {
         throw new Error(`Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`);
     }
@@ -199,9 +220,9 @@ function run() {
                 // Validate baseRef and headRef to prevent command injection
                 validateGitRef(baseRef);
                 validateGitRef(headRef);
-                yield exec.exec('git', ['fetch', 'origin', baseRef]);
+                yield exec.exec('git', ['fetch', '--', 'origin', baseRef]);
                 const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
-                yield exec.exec('git', ['fetch', 'origin', headRef]);
+                yield exec.exec('git', ['fetch', '--', 'origin', headRef]);
                 const headFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
                 changedFiles = yield gitInterface.diff([
                     '--name-only',

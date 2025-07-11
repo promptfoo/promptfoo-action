@@ -158,14 +158,16 @@ describe('GitHub Action Main', () => {
     test('should successfully run evaluation when prompt files change', async () => {
       await run();
 
-      // Verify git operations
+      // Verify git operations - now with -- separator for security
       expect(mockExec.exec).toHaveBeenCalledWith('git', [
         'fetch',
+        '--',
         'origin',
         'main',
       ]);
       expect(mockExec.exec).toHaveBeenCalledWith('git', [
         'fetch',
+        '--',
         'origin',
         'feature-branch',
       ]);
@@ -635,6 +637,84 @@ describe('GitHub Action Main', () => {
       const error = new Error('Test error');
       handleError(error);
       expect(mockCore.setFailed).toHaveBeenCalledWith('Test error');
+    });
+  });
+
+  describe('security validation', () => {
+    test('should reject git refs starting with --', async () => {
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          pull_request: {
+            number: 123,
+            base: { ref: '--upload-pack=/evil/script' },
+            head: { ref: 'feature-branch' },
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('refs cannot start with "-" or "--"'),
+      );
+    });
+
+    test('should reject git refs with special characters', async () => {
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          pull_request: {
+            number: 123,
+            base: { ref: 'main' },
+            head: { ref: 'feature$evil' },
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('refs cannot contain special character "$"'),
+      );
+    });
+
+    test('should reject git refs with spaces', async () => {
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          pull_request: {
+            number: 123,
+            base: { ref: 'main' },
+            head: { ref: 'feature branch' },
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('refs cannot contain whitespace characters'),
+      );
+    });
+
+    test('should accept valid git refs', async () => {
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          pull_request: {
+            number: 123,
+            base: { ref: 'main' },
+            head: { ref: 'feature/JIRA-123_update-deps' },
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      // Should proceed with git fetch using -- separator
+      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', '--', 'origin', 'main']);
+      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', '--', 'origin', 'feature/JIRA-123_update-deps']);
     });
   });
 });
