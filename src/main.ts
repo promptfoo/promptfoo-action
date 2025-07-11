@@ -13,7 +13,7 @@ const gitInterface = simpleGit();
 function validateGitRef(ref: string): void {
   const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
   // Reject refs starting with "--" to prevent malicious options
-  if (ref.startsWith('--') || !gitRefRegex.test(ref)) {
+  if (ref.startsWith('--') || ref.includes(' ') || !gitRefRegex.test(ref)) {
     throw new Error(`Invalid Git ref: ${ref}`);
   }
 }
@@ -72,6 +72,15 @@ export async function run(): Promise<void> {
       { required: false },
     );
     const envFiles: string = core.getInput('env-files', { required: false });
+    const noTable: boolean = core.getBooleanInput('no-table', {
+      required: false,
+    });
+    const noProgressBar: boolean = core.getBooleanInput('no-progress-bar', {
+      required: false,
+    });
+    const disableComment: boolean = core.getBooleanInput('disable-comment', {
+      required: false,
+    });
 
     // Load .env files if specified
     if (envFiles) {
@@ -282,6 +291,12 @@ export async function run(): Promise<void> {
     if (!noShare) {
       promptfooArgs.push('--share');
     }
+    if (noTable) {
+      promptfooArgs.push('--no-table');
+    }
+    if (noProgressBar) {
+      promptfooArgs.push('--no-progress-bar');
+    }
 
     const env = {
       ...process.env,
@@ -310,7 +325,7 @@ export async function run(): Promise<void> {
     }
 
     // Comment on PR or output results
-    if (isPullRequest && pullRequestNumber) {
+    if (isPullRequest && pullRequestNumber && !disableComment) {
       // Existing PR comment logic
       const octokit = github.getOctokit(githubToken);
       const output = JSON.parse(
@@ -336,7 +351,7 @@ export async function run(): Promise<void> {
         issue_number: pullRequestNumber,
         body,
       });
-    } else {
+    } else if (!isPullRequest) {
       // For non-PR workflows, output results to workflow summary
       const output = JSON.parse(
         fs.readFileSync(outputFile, 'utf8'),

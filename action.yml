@@ -1,7 +1,7 @@
 name: 'Test LLM outputs'
 description: 'Run promptfoo evaluations on your prompts. Works with pull requests, pushes, and manual triggers (workflow_dispatch).'
 runs:
-  using: 'node16'
+  using: 'node20'
   main: 'dist/index.js'
 # For workflow_dispatch events, you can use the following inputs in your workflow:
 # - inputs.files: Newline-separated list of files to evaluate (optional)
@@ -80,6 +80,18 @@ inputs:
     description: 'Comma-separated list of .env files to load (e.g. ".env,.env.test.local")'
     required: false
     default: ''
+  no-table:
+    description: 'Run promptfoo with --no-table flag to keep output minimal'
+    required: false
+    default: 'false'
+  no-progress-bar:
+    description: 'Run promptfoo with --no-progress-bar flag to keep output minimal'
+    required: false
+    default: 'false'
+  disable-comment:
+    description: 'Disable posting comments to the PR'
+    required: false
+    default: 'false'
 branding:
   icon: 'box'
   color: 'yellow'

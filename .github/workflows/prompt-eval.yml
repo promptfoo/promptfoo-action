@@ -22,7 +22,7 @@ jobs:
             ${{ runner.os }}-promptfoo-
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@v1
+        uses: promptfoo/promptfoo-action@831a73deccc6a4a0ce91e671a511a6e70fa52349 # v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           config: '.github/promptfoo/config.yaml'
