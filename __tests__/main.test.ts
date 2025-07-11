@@ -271,7 +271,9 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(mockCore.setFailed).toHaveBeenCalledWith('No pull request found.');
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: No pull request found\n\nHelp: This action must be run in the context of a pull request event',
+      );
     });
 
     test('should handle promptfoo execution failure', async () => {
@@ -289,7 +291,7 @@ describe('GitHub Action Main', () => {
 
       // But should fail the action
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        'Promptfoo evaluation failed',
+        expect.stringContaining('Error: Promptfoo evaluation failed'),
       );
     });
 
@@ -411,7 +413,7 @@ describe('GitHub Action Main', () => {
     test('should set failed status with error message', () => {
       const error = new Error('Test error');
       handleError(error);
-      expect(mockCore.setFailed).toHaveBeenCalledWith('Test error');
+      expect(mockCore.setFailed).toHaveBeenCalledWith('Error: Test error');
     });
   });
 });
