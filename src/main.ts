@@ -14,7 +14,7 @@ const gitInterface = simpleGit();
  * Validates git refs to prevent command injection attacks.
  * This is a critical security function that must be called before using any
  * user-provided input in git commands.
- * 
+ *
  * Security considerations:
  * - Refs starting with "--" could be interpreted as command options
  * - Spaces could allow command chaining
@@ -24,28 +24,61 @@ const gitInterface = simpleGit();
 function validateGitRef(ref: string): void {
   // Strict validation: only allow safe characters for git refs
   const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
-  
+
   // Security check: prevent option injection
   if (ref.startsWith('--') || ref.startsWith('-')) {
-    throw new Error(`Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`);
+    throw new Error(
+      `Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`,
+    );
   }
-  
+
   // Security check: prevent command chaining
-  if (ref.includes(' ') || ref.includes('\t') || ref.includes('\n') || ref.includes('\r')) {
-    throw new Error(`Invalid Git ref "${ref}": refs cannot contain whitespace characters`);
+  if (
+    ref.includes(' ') ||
+    ref.includes('\t') ||
+    ref.includes('\n') ||
+    ref.includes('\r')
+  ) {
+    throw new Error(
+      `Invalid Git ref "${ref}": refs cannot contain whitespace characters`,
+    );
   }
-  
+
   // Security check: prevent special shell characters
-  const dangerousChars = ['$', '`', '\\', '!', '&', '|', ';', '(', ')', '<', '>', '"', "'", '*', '?', '[', ']', '{', '}'];
+  const dangerousChars = [
+    '$',
+    '`',
+    '\\',
+    '!',
+    '&',
+    '|',
+    ';',
+    '(',
+    ')',
+    '<',
+    '>',
+    '"',
+    "'",
+    '*',
+    '?',
+    '[',
+    ']',
+    '{',
+    '}',
+  ];
   for (const char of dangerousChars) {
     if (ref.includes(char)) {
-      throw new Error(`Invalid Git ref "${ref}": refs cannot contain special character "${char}"`);
+      throw new Error(
+        `Invalid Git ref "${ref}": refs cannot contain special character "${char}"`,
+      );
     }
   }
-  
+
   // Final check: ensure ref matches allowed pattern
   if (!gitRefRegex.test(ref)) {
-    throw new Error(`Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`);
+    throw new Error(
+      `Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`,
+    );
   }
 }
 
@@ -81,9 +114,10 @@ export async function run(): Promise<void> {
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
-    const promptFilesGlobs: string[] = core
-      .getInput('prompts', { required: false })
-      .split('\n');
+    const promptsInput = core.getInput('prompts', { required: false });
+    const promptFilesGlobs: string[] = promptsInput
+      ? promptsInput.split('\n').filter((line) => line.trim())
+      : [];
     const configPath: string = core.getInput('config', {
       required: true,
     });
@@ -214,7 +248,8 @@ export async function run(): Promise<void> {
 
       // Priority: action inputs > workflow inputs > defaults
       const filesInput = workflowFiles || github.context.payload.inputs?.files;
-      const compareBase = workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
+      const compareBase =
+        workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
 
       if (filesInput) {
         // Option 1: Use provided file list
@@ -308,9 +343,11 @@ export async function run(): Promise<void> {
     if (
       promptFiles.length < 1 &&
       !configChanged &&
-      changedFilesList.length > 0
+      changedFilesList.length > 0 &&
+      promptFilesGlobs.length > 0
     ) {
       // We have changed files info but no prompt files were modified
+      // Only skip if prompts were actually specified
       core.info('No LLM prompt or config files were modified.');
       return;
     }
@@ -323,7 +360,7 @@ export async function run(): Promise<void> {
 
     const outputFile = path.join(workingDirectory, 'output.json');
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (!useConfigPrompts) {
+    if (!useConfigPrompts && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
     if (!noShare) {

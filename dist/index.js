@@ -79,11 +79,34 @@ function validateGitRef(ref) {
         throw new Error(`Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`);
     }
     // Security check: prevent command chaining
-    if (ref.includes(' ') || ref.includes('\t') || ref.includes('\n') || ref.includes('\r')) {
+    if (ref.includes(' ') ||
+        ref.includes('\t') ||
+        ref.includes('\n') ||
+        ref.includes('\r')) {
         throw new Error(`Invalid Git ref "${ref}": refs cannot contain whitespace characters`);
     }
     // Security check: prevent special shell characters
-    const dangerousChars = ['$', '`', '\\', '!', '&', '|', ';', '(', ')', '<', '>', '"', "'", '*', '?', '[', ']', '{', '}'];
+    const dangerousChars = [
+        '$',
+        '`',
+        '\\',
+        '!',
+        '&',
+        '|',
+        ';',
+        '(',
+        ')',
+        '<',
+        '>',
+        '"',
+        "'",
+        '*',
+        '?',
+        '[',
+        ']',
+        '{',
+        '}',
+    ];
     for (const char of dangerousChars) {
         if (ref.includes(char)) {
             throw new Error(`Invalid Git ref "${ref}": refs cannot contain special character "${char}"`);
@@ -128,9 +151,10 @@ function run() {
             const githubToken = core.getInput('github-token', {
                 required: true,
             });
-            const promptFilesGlobs = core
-                .getInput('prompts', { required: false })
-                .split('\n');
+            const promptsInput = core.getInput('prompts', { required: false });
+            const promptFilesGlobs = promptsInput
+                ? promptsInput.split('\n').filter((line) => line.trim())
+                : [];
             const configPath = core.getInput('config', {
                 required: true,
             });
@@ -312,8 +336,10 @@ function run() {
             const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configPath);
             if (promptFiles.length < 1 &&
                 !configChanged &&
-                changedFilesList.length > 0) {
+                changedFilesList.length > 0 &&
+                promptFilesGlobs.length > 0) {
                 // We have changed files info but no prompt files were modified
+                // Only skip if prompts were actually specified
                 core.info('No LLM prompt or config files were modified.');
                 return;
             }
@@ -322,7 +348,7 @@ function run() {
             }
             const outputFile = path.join(workingDirectory, 'output.json');
             let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-            if (!useConfigPrompts) {
+            if (!useConfigPrompts && promptFiles.length > 0) {
                 promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
             }
             if (!noShare) {
