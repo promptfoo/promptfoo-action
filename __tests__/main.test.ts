@@ -43,6 +43,7 @@ jest.mock('fs', () => ({
 jest.mock('glob', () => ({
   sync: jest.fn(),
 }));
+jest.mock('dotenv');
 
 const mockCore = core as jest.Mocked<typeof core>;
 const mockGithub = github as jest.Mocked<typeof github>;
@@ -94,6 +95,16 @@ describe('GitHub Action Main', () => {
     });
 
     mockCore.getBooleanInput.mockReturnValue(false);
+
+    // Setup summary mock
+    mockCore.summary = {
+      addHeading: jest.fn().mockReturnThis(),
+      addTable: jest.fn().mockReturnThis(),
+      addList: jest.fn().mockReturnThis(),
+      addLink: jest.fn().mockReturnThis(),
+      addRaw: jest.fn().mockReturnThis(),
+      write: jest.fn(() => Promise.resolve()),
+    } as any;
 
     // Setup GitHub context
     Object.defineProperty(mockGithub.context, 'eventName', {
@@ -147,14 +158,16 @@ describe('GitHub Action Main', () => {
     test('should successfully run evaluation when prompt files change', async () => {
       await run();
 
-      // Verify git operations
+      // Verify git operations - now with -- separator for security
       expect(mockExec.exec).toHaveBeenCalledWith('git', [
         'fetch',
+        '--',
         'origin',
         'main',
       ]);
       expect(mockExec.exec).toHaveBeenCalledWith('git', [
         'fetch',
+        '--',
         'origin',
         'feature-branch',
       ]);
@@ -241,6 +254,9 @@ describe('GitHub Action Main', () => {
         return pathStr.includes('.env');
       });
 
+      const mockDotenv = require('dotenv');
+      mockDotenv.config = jest.fn().mockReturnValue({ error: null });
+
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
@@ -248,9 +264,216 @@ describe('GitHub Action Main', () => {
       );
     });
 
-    test('should handle non-pull request events with warning', async () => {
+    test('should handle push events', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'abc123',
+          after: 'def456',
+        },
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'sha', {
+        value: 'def456',
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith('Running in push mode');
+      expect(mockGitInterface.diff).toHaveBeenCalled();
+      const diffCalls = (mockGitInterface.diff as any).mock.calls;
+      expect(diffCalls[0][0]).toEqual(['--name-only', 'abc123', 'def456']);
+    });
+
+    test('should handle workflow_dispatch events with default behavior', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {},
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Running in workflow_dispatch mode',
+      );
+      // Verify it processes files (either through diff or all files)
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo@latest'),
+        expect.arrayContaining(['eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should handle workflow_dispatch with manual files input', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: 'prompts/file1.txt\nprompts/file2.txt',
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should handle workflow_dispatch with custom base comparison', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            base: 'main',
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      // Should still run the evaluation
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo@latest'),
+        expect.arrayContaining(['eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should handle workflow_dispatch when diff comparison fails', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            base: 'invalid-ref',
+          },
+        },
+        configurable: true,
+      });
+
+      // Make diff throw an error for this test
+      mockGitInterface.diff.mockRejectedValueOnce(new Error('Invalid ref'));
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Could not compare against invalid-ref'),
+      );
+      // Should process all matching files when diff fails
+      expect(mockGlob.sync).toHaveBeenCalled();
+    });
+
+    test('should prioritize action inputs over workflow inputs', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: 'workflow-input-file.txt',
+            base: 'workflow-base',
+          },
+        },
+        configurable: true,
+      });
+
+      // Mock action inputs
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          'prompts': 'prompts/**/*.txt',
+          'config': 'promptfooconfig.yaml',
+          'promptfoo-version': 'latest',
+          'working-directory': '',
+          'no-share': 'false',
+          'use-config-prompts': 'false',
+          'env-files': '',
+          'cache-path': '',
+          'no-table': 'false',
+          'no-progress-bar': 'false',
+          'disable-comment': 'false',
+          'workflow-files': 'action-input-file.txt',
+          'workflow-base': 'action-base',
+        };
+        return inputs[name] || '';
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Using manually specified files: action-input-file.txt',
+      );
+      // Since we're providing files directly, diff shouldn't be called
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should use action input base when only base is provided', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {},
+        },
+        configurable: true,
+      });
+
+      // Mock only workflow-base action input
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          'prompts': 'prompts/**/*.txt',
+          'config': 'promptfooconfig.yaml',
+          'promptfoo-version': 'latest',
+          'working-directory': '',
+          'no-share': 'false',
+          'use-config-prompts': 'false',
+          'env-files': '',
+          'cache-path': '',
+          'no-table': 'false',
+          'no-progress-bar': 'false',
+          'disable-comment': 'false',
+          'workflow-files': '', // Empty
+          'workflow-base': 'feature-branch',
+        };
+        return inputs[name] || '';
+      });
+
+      await run();
+
+      // Verify that diff was called with the action input base
+      const diffCalls = (mockGitInterface.diff as any).mock.calls;
+      expect(diffCalls[0][0]).toEqual(['--name-only', 'feature-branch', 'HEAD']);
+    });
+
+    test('should handle unsupported events with warning', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'issues',
         configurable: true,
       });
 
@@ -258,7 +481,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.warning).toHaveBeenCalledWith(
         expect.stringContaining(
-          'This action is designed to run on pull request events',
+          'This action is designed to run on pull request, push, or workflow_dispatch events',
         ),
       );
     });
@@ -271,7 +494,9 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(mockCore.setFailed).toHaveBeenCalledWith('No pull request found.');
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'No pull request found in context.',
+      );
     });
 
     test('should handle promptfoo execution failure', async () => {
@@ -414,6 +639,84 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).toHaveBeenCalledWith('Test error');
     });
   });
+
+  describe('security validation', () => {
+    test('should reject git refs starting with --', async () => {
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          pull_request: {
+            number: 123,
+            base: { ref: '--upload-pack=/evil/script' },
+            head: { ref: 'feature-branch' },
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('refs cannot start with "-" or "--"'),
+      );
+    });
+
+    test('should reject git refs with special characters', async () => {
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          pull_request: {
+            number: 123,
+            base: { ref: 'main' },
+            head: { ref: 'feature$evil' },
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('refs cannot contain special character "$"'),
+      );
+    });
+
+    test('should reject git refs with spaces', async () => {
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          pull_request: {
+            number: 123,
+            base: { ref: 'main' },
+            head: { ref: 'feature branch' },
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('refs cannot contain whitespace characters'),
+      );
+    });
+
+    test('should accept valid git refs', async () => {
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          pull_request: {
+            number: 123,
+            base: { ref: 'main' },
+            head: { ref: 'feature/JIRA-123_update-deps' },
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      // Should proceed with git fetch using -- separator
+      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', '--', 'origin', 'main']);
+      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', '--', 'origin', 'feature/JIRA-123_update-deps']);
+    });
+  });
 });
 
 // Simple tests to verify the logic would work
@@ -448,7 +751,7 @@ describe('disable-comment feature', () => {
     );
 
     // Check that comment posting is wrapped in a condition
-    expect(mainContent).toContain('if (!disableComment) {');
+    expect(mainContent).toContain('if (isPullRequest && pullRequestNumber && !disableComment)');
     expect(mainContent).toContain('octokit.rest.issues.createComment');
   });
 

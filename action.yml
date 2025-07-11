@@ -1,14 +1,31 @@
 name: 'Test LLM outputs'
-description: 'Automatically run a before/after comparison of edited prompts and posts the result to your Pull Request.'
+description: 'Run promptfoo evaluations on your prompts. Works with pull requests, pushes, and manual triggers (workflow_dispatch).'
 runs:
   using: 'node20'
   main: 'dist/index.js'
+# For workflow_dispatch events, you can use the following inputs in your workflow:
+# - inputs.files: Newline-separated list of files to evaluate (optional)
+# - inputs.base: Base branch/commit to compare against (default: HEAD~1) (optional)
+#
+# Example workflow_dispatch configuration:
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       files:
+#         description: 'Files to evaluate (leave empty to auto-detect)'
+#         required: false
+#         type: string
+#       base:
+#         description: 'Base branch/commit to compare against'
+#         required: false
+#         default: 'HEAD~1'
+#         type: string
 inputs:
   github-token:
-    description: 'Github Token, used to add comments to the PR'
+    description: 'Github Token, used to add comments to PRs and write workflow summaries'
     required: true
   prompts:
-    description: 'List of prompt files to watch'
+    description: 'List of prompt files to watch (glob patterns supported, one per line)'
     required: false
   config:
     description: 'Path to a promptfoo config file'
@@ -75,6 +92,14 @@ inputs:
     description: 'Disable posting comments to the PR'
     required: false
     default: 'false'
+  workflow-files:
+    description: 'Files to evaluate in workflow_dispatch mode (newline-separated list). If not specified, falls back to workflow inputs or auto-detection.'
+    required: false
+    default: ''
+  workflow-base:
+    description: 'Base ref to compare against in workflow_dispatch mode (e.g., main, HEAD~1). If not specified, falls back to workflow inputs or HEAD~1.'
+    required: false
+    default: ''
 branding:
   icon: 'box'
   color: 'yellow'

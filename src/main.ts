@@ -10,11 +10,42 @@ import { simpleGit } from 'simple-git';
 
 const gitInterface = simpleGit();
 
+/**
+ * Validates git refs to prevent command injection attacks.
+ * This is a critical security function that must be called before using any
+ * user-provided input in git commands.
+ * 
+ * Security considerations:
+ * - Refs starting with "--" could be interpreted as command options
+ * - Spaces could allow command chaining
+ * - Special characters could enable various injection attacks
+ * - Even with validation, we use "--" separator in git commands for defense in depth
+ */
 function validateGitRef(ref: string): void {
+  // Strict validation: only allow safe characters for git refs
   const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
-  // Reject refs starting with "--" to prevent malicious options
-  if (ref.startsWith('--') || !gitRefRegex.test(ref)) {
-    throw new Error(`Invalid Git ref: ${ref}`);
+  
+  // Security check: prevent option injection
+  if (ref.startsWith('--') || ref.startsWith('-')) {
+    throw new Error(`Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`);
+  }
+  
+  // Security check: prevent command chaining
+  if (ref.includes(' ') || ref.includes('\t') || ref.includes('\n') || ref.includes('\r')) {
+    throw new Error(`Invalid Git ref "${ref}": refs cannot contain whitespace characters`);
+  }
+  
+  // Security check: prevent special shell characters
+  const dangerousChars = ['$', '`', '\\', '!', '&', '|', ';', '(', ')', '<', '>', '"', "'", '*', '?', '[', ']', '{', '}'];
+  for (const char of dangerousChars) {
+    if (ref.includes(char)) {
+      throw new Error(`Invalid Git ref "${ref}": refs cannot contain special character "${char}"`);
+    }
+  }
+  
+  // Final check: ensure ref matches allowed pattern
+  if (!gitRefRegex.test(ref)) {
+    throw new Error(`Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`);
   }
 }
 
@@ -81,6 +112,12 @@ export async function run(): Promise<void> {
     const disableComment: boolean = core.getBooleanInput('disable-comment', {
       required: false,
     });
+    const workflowFiles: string = core.getInput('workflow-files', {
+      required: false,
+    });
+    const workflowBase: string = core.getInput('workflow-base', {
+      required: false,
+    });
 
     // Load .env files if specified
     if (envFiles) {
@@ -123,52 +160,165 @@ export async function run(): Promise<void> {
     core.setSecret(githubToken);
 
     const event = github.context.eventName;
-    if (event !== 'pull_request') {
+    let changedFiles = '';
+    let baseRef: string | undefined;
+    let headRef: string | undefined;
+    let isPullRequest = false;
+    let pullRequestNumber: number | undefined;
+
+    // Handle different event types
+    if (event === 'pull_request' || event === 'pull_request_target') {
+      const pullRequest = github.context.payload.pull_request;
+      if (!pullRequest) {
+        throw new Error('No pull request found in context.');
+      }
+      isPullRequest = true;
+      pullRequestNumber = pullRequest.number;
+
+      // Get list of changed files in PR
+      baseRef = pullRequest.base.ref;
+      headRef = pullRequest.head.ref;
+
+      if (!baseRef || !headRef) {
+        throw new Error(
+          'Unable to determine base or head references from pull request',
+        );
+      }
+
+      // Validate baseRef and headRef to prevent command injection
+      validateGitRef(baseRef);
+      validateGitRef(headRef);
+
+      await exec.exec('git', ['fetch', '--', 'origin', baseRef]);
+      const baseFetchHead = (
+        await gitInterface.revparse(['FETCH_HEAD'])
+      ).trim();
+
+      await exec.exec('git', ['fetch', '--', 'origin', headRef]);
+      const headFetchHead = (
+        await gitInterface.revparse(['FETCH_HEAD'])
+      ).trim();
+
+      changedFiles = await gitInterface.diff([
+        '--name-only',
+        baseFetchHead,
+        headFetchHead,
+      ]);
+    } else if (event === 'workflow_dispatch') {
+      core.info('Running in workflow_dispatch mode');
+
+      // For workflow_dispatch, we can either:
+      // 1. Accept a list of files as input
+      // 2. Compare against a base branch/commit
+      // 3. Run on all prompt files
+
+      // Priority: action inputs > workflow inputs > defaults
+      const filesInput = workflowFiles || github.context.payload.inputs?.files;
+      const compareBase = workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
+
+      if (filesInput) {
+        // Option 1: Use provided file list
+        changedFiles = filesInput;
+        core.info(`Using manually specified files: ${changedFiles}`);
+      } else {
+        // Option 2: Compare against base (default to previous commit)
+        try {
+          // Validate compareBase to prevent command injection
+          validateGitRef(compareBase);
+
+          changedFiles = await gitInterface.diff([
+            '--name-only',
+            compareBase,
+            'HEAD',
+          ]);
+          core.info(
+            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+          );
+        } catch (error) {
+          // Option 3: If comparison fails, we'll process all matching prompt files
+          core.warning(
+            `Could not compare against ${compareBase}: ${error}. Will process all matching prompt files.`,
+          );
+          changedFiles = '';
+        }
+      }
+    } else if (event === 'push') {
+      core.info('Running in push mode');
+
+      // For push events, compare the before and after commits
+      const beforeSha = github.context.payload.before;
+      const afterSha = github.context.payload.after || github.context.sha;
+
+      if (
+        beforeSha &&
+        afterSha &&
+        beforeSha !== '0000000000000000000000000000000000000000'
+      ) {
+        try {
+          changedFiles = await gitInterface.diff([
+            '--name-only',
+            beforeSha,
+            afterSha,
+          ]);
+          core.info(
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+          );
+        } catch (error) {
+          core.warning(
+            `Could not compare commits: ${error}. Will process all matching prompt files.`,
+          );
+          changedFiles = '';
+        }
+      } else {
+        // First commit or unable to get before SHA
+        core.info(
+          'Unable to determine changed files from push event. Will process all matching prompt files.',
+        );
+        changedFiles = '';
+      }
+    } else {
       core.warning(
-        `This action is designed to run on pull request events only, but a "${event}" event was received.`,
+        `This action is designed to run on pull request, push, or workflow_dispatch events, but a "${event}" event was received. Will process all matching prompt files.`,
       );
     }
-
-    const pullRequest = github.context.payload.pull_request;
-    if (!pullRequest) {
-      throw new Error('No pull request found.');
-    }
-
-    // Get list of changed files in PR
-    const baseRef = pullRequest.base.ref;
-    const headRef = pullRequest.head.ref;
-
-    // Validate baseRef and headRef to prevent command injection
-    validateGitRef(baseRef);
-    validateGitRef(headRef);
-
-    await exec.exec('git', ['fetch', 'origin', baseRef]);
-    const baseFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
-
-    await exec.exec('git', ['fetch', 'origin', headRef]);
-    const headFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim();
-
-    const changedFiles = await gitInterface.diff([
-      '--name-only',
-      baseFetchHead,
-      headFetchHead,
-    ]);
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
+    const changedFilesList = changedFiles.split('\n').filter((f) => f);
+
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern);
-      const changedMatches = matches.filter(
-        (file) => file !== configPath && changedFiles.includes(file),
-      );
-      promptFiles.push(...changedMatches);
+
+      if (changedFilesList.length > 0) {
+        // Filter to only changed files
+        const changedMatches = matches.filter(
+          (file) => file !== configPath && changedFilesList.includes(file),
+        );
+        promptFiles.push(...changedMatches);
+      } else {
+        // No changed files info available, include all matches
+        const allMatches = matches.filter((file) => file !== configPath);
+        promptFiles.push(...allMatches);
+      }
     }
 
-    const configChanged = changedFiles.includes(configPath);
-    if (promptFiles.length < 1 && !configChanged) {
-      // Run promptfoo evaluation only when files change.
+    const configChanged =
+      changedFilesList.length > 0 && changedFilesList.includes(configPath);
+
+    if (
+      promptFiles.length < 1 &&
+      !configChanged &&
+      changedFilesList.length > 0
+    ) {
+      // We have changed files info but no prompt files were modified
       core.info('No LLM prompt or config files were modified.');
       return;
+    }
+
+    if (changedFilesList.length === 0) {
+      core.info(
+        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+      );
     }
 
     const outputFile = path.join(workingDirectory, 'output.json');
@@ -212,8 +362,9 @@ export async function run(): Promise<void> {
       errorToThrow = error as Error;
     }
 
-    // Comment PR
-    if (!disableComment) {
+    // Comment on PR or output results
+    if (isPullRequest && pullRequestNumber && !disableComment) {
+      // Existing PR comment logic
       const octokit = github.getOctokit(githubToken);
       const output = JSON.parse(
         fs.readFileSync(outputFile, 'utf8'),
@@ -235,9 +386,46 @@ export async function run(): Promise<void> {
       }
       await octokit.rest.issues.createComment({
         ...github.context.repo,
-        issue_number: pullRequest.number,
+        issue_number: pullRequestNumber,
         body,
       });
+    } else if (!isPullRequest) {
+      // For non-PR workflows, output results to workflow summary
+      const output = JSON.parse(
+        fs.readFileSync(outputFile, 'utf8'),
+      ) as OutputFile;
+
+      const summary = core.summary
+        .addHeading('Promptfoo Evaluation Results')
+        .addTable([
+          [
+            { data: 'Metric', header: true },
+            { data: 'Count', header: true },
+          ],
+          ['Success', output.results.stats.successes.toString()],
+          ['Failure', output.results.stats.failures.toString()],
+        ]);
+
+      if (promptFiles.length > 0) {
+        summary.addHeading('Evaluated Files', 3);
+        summary.addList(promptFiles);
+      }
+
+      if (output.shareableUrl) {
+        summary.addLink('View detailed results', output.shareableUrl);
+      } else {
+        summary.addRaw('View eval results in CI console');
+      }
+
+      await summary.write();
+
+      // Also output to console
+      core.info('=== Promptfoo Evaluation Results ===');
+      core.info(`Success: ${output.results.stats.successes}`);
+      core.info(`Failure: ${output.results.stats.failures}`);
+      if (output.shareableUrl) {
+        core.info(`View results: ${output.shareableUrl}`);
+      }
     }
 
     if (errorToThrow) {
