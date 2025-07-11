@@ -24,7 +24,6 @@ jest.mock('simple-git', () => ({
   simpleGit: jest.fn(() => mockGitInterface),
 }));
 
-import { simpleGit } from 'simple-git';
 import { handleError, run } from '../src/main';
 
 // Mock all dependencies
@@ -52,6 +51,7 @@ const mockFs = fs as jest.Mocked<typeof fs>;
 
 // Import glob after mocking to get the mocked version
 import * as glob from 'glob';
+
 const mockGlob = glob as jest.Mocked<typeof glob>;
 
 describe('GitHub Action Main', () => {
@@ -65,7 +65,9 @@ describe('GitHub Action Main', () => {
     mockGitInterface.revparse.mockClear();
     mockGitInterface.diff.mockClear();
     mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
-    mockGitInterface.diff.mockResolvedValue('prompts/prompt1.txt\npromptfooconfig.yaml');
+    mockGitInterface.diff.mockResolvedValue(
+      'prompts/prompt1.txt\npromptfooconfig.yaml',
+    );
 
     // Setup octokit mock
     mockOctokit = {
