@@ -72,6 +72,12 @@ export async function run(): Promise<void> {
       { required: false },
     );
     const envFiles: string = core.getInput('env-files', { required: false });
+    const noTable: boolean = core.getBooleanInput('no-table', {
+      required: false,
+    });
+    const noProgressBar: boolean = core.getBooleanInput('no-progress-bar', {
+      required: false,
+    });
     const disableComment: boolean = core.getBooleanInput('disable-comment', {
       required: false,
     });
@@ -172,6 +178,12 @@ export async function run(): Promise<void> {
     }
     if (!noShare) {
       promptfooArgs.push('--share');
+    }
+    if (noTable) {
+      promptfooArgs.push('--no-table');
+    }
+    if (noProgressBar) {
+      promptfooArgs.push('--no-progress-bar');
     }
 
     const env = {

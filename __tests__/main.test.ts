@@ -303,6 +303,108 @@ describe('GitHub Action Main', () => {
       // Should NOT create comment when disable-comment is true
       expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
     });
+
+    test('should not include flags when both are false', async () => {
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledTimes(3); // 2 git fetches + 1 promptfoo
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      expect(promptfooCall[0]).toBe('npx promptfoo@latest');
+
+      const args = promptfooCall[1] as string[];
+      expect(args).toContain('eval');
+      expect(args).toContain('-c');
+      expect(args).toContain('promptfooconfig.yaml');
+      expect(args).not.toContain('--no-table');
+      expect(args).not.toContain('--no-progress-bar');
+    });
+
+    test('should include --no-table flag when no-table is true', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'no-table') return true;
+        return false;
+      });
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).toContain('--no-table');
+      expect(args).not.toContain('--no-progress-bar');
+    });
+
+    test('should include --no-progress-bar flag when no-progress-bar is true', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'no-progress-bar') return true;
+        return false;
+      });
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--no-table');
+      expect(args).toContain('--no-progress-bar');
+    });
+
+    test('should include both flags when both are true', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'no-table') return true;
+        if (name === 'no-progress-bar') return true;
+        return false;
+      });
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).toContain('--no-table');
+      expect(args).toContain('--no-progress-bar');
+    });
+
+    test('should include --share flag when no-share is false', async () => {
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).toContain('--share');
+    });
+
+    test('should not include --share flag when no-share is true', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'no-share') return true;
+        return false;
+      });
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--share');
+    });
+
+    test('should handle all flags together correctly', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'no-table') return true;
+        if (name === 'no-progress-bar') return true;
+        if (name === 'no-share') return true;
+        if (name === 'use-config-prompts') return true;
+        return false;
+      });
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+
+      // Should have these flags
+      expect(args).toContain('--no-table');
+      expect(args).toContain('--no-progress-bar');
+
+      // Should NOT have these
+      expect(args).not.toContain('--share');
+      expect(args).not.toContain('--prompts'); // because use-config-prompts is true
+    });
   });
 
   describe('handleError function', () => {
