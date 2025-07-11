@@ -136,9 +136,10 @@ export async function run(): Promise<void> {
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
-    const promptFilesGlobs: string[] = core
-      .getInput('prompts', { required: false })
-      .split('\n');
+    const promptsInput = core.getInput('prompts', { required: false });
+    const promptFilesGlobs: string[] = promptsInput
+      ? promptsInput.split('\n').filter((line) => line.trim())
+      : [];
     const configPath: string = core.getInput('config', {
       required: true,
     });
@@ -411,9 +412,11 @@ export async function run(): Promise<void> {
     if (
       promptFiles.length < 1 &&
       !configChanged &&
-      changedFilesList.length > 0
+      changedFilesList.length > 0 &&
+      promptFilesGlobs.length > 0
     ) {
       // We have changed files info but no prompt files were modified
+      // Only skip if prompts were actually specified
       core.info('No LLM prompt or config files were modified.');
       return;
     }
@@ -426,7 +429,7 @@ export async function run(): Promise<void> {
 
     const outputFile = path.join(workingDirectory, 'output.json');
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (!useConfigPrompts) {
+    if (!useConfigPrompts && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
     if (!noShare) {

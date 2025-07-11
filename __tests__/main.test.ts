@@ -614,6 +614,95 @@ describe('GitHub Action Main', () => {
       expect(args).toContain('--no-progress-bar');
     });
 
+    test('should run evaluation when prompts is not provided', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: '', // Empty prompts
+          'working-directory': '',
+          'cache-path': '',
+          'promptfoo-version': 'latest',
+          'env-files': '',
+        };
+        return inputs[name] || '';
+      });
+
+      // Mock config file as changed
+      mockGitInterface.diff.mockResolvedValue('promptfooconfig.yaml');
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      // Should run promptfoo without --prompts argument
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo@latest'),
+        expect.arrayContaining(['eval', '-c', 'promptfooconfig.yaml']),
+        expect.any(Object),
+      );
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
+    test('should handle empty prompts with spaces', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: '  \n  \n  ', // Only whitespace
+          'working-directory': '',
+          'cache-path': '',
+          'promptfoo-version': 'latest',
+          'env-files': '',
+        };
+        return inputs[name] || '';
+      });
+
+      // Mock config file as changed
+      mockGitInterface.diff.mockResolvedValue('promptfooconfig.yaml');
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      // Should run promptfoo without --prompts argument
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
+    test('should skip evaluation when prompts are specified but no files match', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: 'prompts/*.txt', // Prompts specified
+          'working-directory': '',
+          'cache-path': '',
+          'promptfoo-version': 'latest',
+          'env-files': '',
+        };
+        return inputs[name] || '';
+      });
+
+      // Mock changed files that don't match the glob
+      mockGitInterface.diff.mockResolvedValue('README.md\npackage.json');
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']); // Files exist but weren't changed
+
+      await run();
+
+      // Should skip evaluation
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt or config files were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo'),
+        expect.any(Array),
+        expect.any(Object),
+      );
+    });
+
     test('should include --share flag when no-share is false', async () => {
       await run();
 
