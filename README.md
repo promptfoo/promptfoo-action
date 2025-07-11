@@ -27,6 +27,7 @@ The action can be configured using the following inputs:
 | `env-files`          | Comma-separated list of .env files to load (e.g. ".env,.env.test.local"). Environment variables from these files will be loaded before running promptfoo. | No       |
 | `no-table`           | Run promptfoo with `--no-table` flag to keep output minimal. Defaults to `false`                                                                          | No       |
 | `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
+| `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
 
 The following API key parameters are supported:
 

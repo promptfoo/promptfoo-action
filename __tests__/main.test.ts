@@ -293,6 +293,17 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should respect disable-comment option', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        return name === 'disable-comment' ? true : false;
+      });
+
+      await run();
+
+      // Should NOT create comment when disable-comment is true
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
     test('should not include flags when both are false', async () => {
       await run();
 
@@ -402,5 +413,54 @@ describe('GitHub Action Main', () => {
       handleError(error);
       expect(mockCore.setFailed).toHaveBeenCalledWith('Test error');
     });
+  });
+});
+
+// Simple tests to verify the logic would work
+describe('disable-comment feature', () => {
+  test('should have disable-comment parameter in action.yml', async () => {
+    const yaml = require('js-yaml');
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const actionYmlPath = path.join(__dirname, '..', 'action.yml');
+    const actionYml = realFs.readFileSync(actionYmlPath, 'utf8');
+    const action = yaml.load(actionYml);
+
+    expect(action.inputs).toHaveProperty('disable-comment');
+    expect(action.inputs['disable-comment'].description).toBe(
+      'Disable posting comments to the PR',
+    );
+    expect(action.inputs['disable-comment'].default).toBe('false');
+    expect(action.inputs['disable-comment'].required).toBe(false);
+  });
+
+  test('main.ts should have conditional comment logic', async () => {
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const mainPath = path.join(__dirname, '..', 'src', 'main.ts');
+    const mainContent = realFs.readFileSync(mainPath, 'utf8');
+
+    // Check that disableComment is read from input
+    expect(mainContent).toContain(
+      "const disableComment: boolean = core.getBooleanInput('disable-comment'",
+    );
+
+    // Check that comment posting is wrapped in a condition
+    expect(mainContent).toContain('if (!disableComment) {');
+    expect(mainContent).toContain('octokit.rest.issues.createComment');
+  });
+
+  test('README.md should document the new parameter', async () => {
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const readmePath = path.join(__dirname, '..', 'README.md');
+    const readmeContent = realFs.readFileSync(readmePath, 'utf8');
+
+    // Check that disable-comment is documented
+    expect(readmeContent).toContain('`disable-comment`');
+    expect(readmeContent).toContain('Disable posting comments to the PR');
   });
 });

@@ -71,6 +71,10 @@ inputs:
     description: 'Run promptfoo with --no-progress-bar flag to keep output minimal'
     required: false
     default: 'false'
+  disable-comment:
+    description: 'Disable posting comments to the PR'
+    required: false
+    default: 'false'
 branding:
   icon: 'box'
   color: 'yellow'

@@ -78,6 +78,9 @@ export async function run(): Promise<void> {
     const noProgressBar: boolean = core.getBooleanInput('no-progress-bar', {
       required: false,
     });
+    const disableComment: boolean = core.getBooleanInput('disable-comment', {
+      required: false,
+    });
 
     // Load .env files if specified
     if (envFiles) {
@@ -210,28 +213,32 @@ export async function run(): Promise<void> {
     }
 
     // Comment PR
-    const octokit = github.getOctokit(githubToken);
-    const output = JSON.parse(
-      fs.readFileSync(outputFile, 'utf8'),
-    ) as OutputFile;
-    const modifiedFiles = promptFiles.join(', ');
-    let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+    if (!disableComment) {
+      const octokit = github.getOctokit(githubToken);
+      const output = JSON.parse(
+        fs.readFileSync(outputFile, 'utf8'),
+      ) as OutputFile;
+      const modifiedFiles = promptFiles.join(', ');
+      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
-    if (output.shareableUrl) {
-      body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
-    } else {
-      body = body.concat('**» View eval results in CI console «**');
+      if (output.shareableUrl) {
+        body = body.concat(
+          `**» [View eval results](${output.shareableUrl}) «**`,
+        );
+      } else {
+        body = body.concat('**» View eval results in CI console «**');
+      }
+      await octokit.rest.issues.createComment({
+        ...github.context.repo,
+        issue_number: pullRequest.number,
+        body,
+      });
     }
-    await octokit.rest.issues.createComment({
-      ...github.context.repo,
-      issue_number: pullRequest.number,
-      body,
-    });
 
     if (errorToThrow) {
       throw errorToThrow;
