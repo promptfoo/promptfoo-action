@@ -1,10 +1,17 @@
-import {describe, test, expect, jest, beforeEach, afterEach} from '@jest/globals';
 import * as core from '@actions/core';
-import * as github from '@actions/github';
 import * as exec from '@actions/exec';
+import * as github from '@actions/github';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  jest,
+  test,
+} from '@jest/globals';
 import * as fs from 'fs';
-import {simpleGit} from 'simple-git';
-import {run, handleError} from '../src/main';
+import { simpleGit } from 'simple-git';
+import { handleError, run } from '../src/main';
 
 // Mock all dependencies
 jest.mock('@actions/core');
@@ -39,7 +46,9 @@ describe('GitHub Action Main', () => {
     // Setup git interface mock
     mockGitInterface = {
       revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
-      diff: jest.fn(() => Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml')),
+      diff: jest.fn(() =>
+        Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+      ),
     };
     (simpleGit as jest.Mock).mockReturnValue(mockGitInterface);
 
@@ -57,8 +66,8 @@ describe('GitHub Action Main', () => {
     mockCore.getInput.mockImplementation((name: string) => {
       const inputs: Record<string, string> = {
         'github-token': 'mock-github-token',
-        'config': 'promptfooconfig.yaml',
-        'prompts': 'prompts/*.txt',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
         'working-directory': '',
         'cache-path': '',
         'promptfoo-version': 'latest',
@@ -78,8 +87,8 @@ describe('GitHub Action Main', () => {
       value: {
         pull_request: {
           number: 123,
-          base: {ref: 'main'},
-          head: {ref: 'feature-branch'},
+          base: { ref: 'main' },
+          head: { ref: 'feature-branch' },
         },
       },
       configurable: true,
@@ -124,8 +133,16 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Verify git operations
-      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', 'origin', 'main']);
-      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', 'origin', 'feature-branch']);
+      expect(mockExec.exec).toHaveBeenCalledWith('git', [
+        'fetch',
+        'origin',
+        'main',
+      ]);
+      expect(mockExec.exec).toHaveBeenCalledWith('git', [
+        'fetch',
+        'origin',
+        'feature-branch',
+      ]);
       expect(mockGitInterface.diff).toHaveBeenCalled();
 
       // Verify promptfoo execution
@@ -149,7 +166,9 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(mockCore.info).toHaveBeenCalledWith('No LLM prompt or config files were modified.');
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt or config files were modified.',
+      );
       expect(mockExec.exec).not.toHaveBeenCalledWith(
         expect.stringContaining('npx promptfoo'),
         expect.any(Array),
@@ -161,8 +180,8 @@ describe('GitHub Action Main', () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
           'github-token': 'mock-github-token',
-          'config': 'promptfooconfig.yaml',
-          'prompts': 'prompts/*.txt',
+          config: 'promptfooconfig.yaml',
+          prompts: 'prompts/*.txt',
           'openai-api-key': 'sk-test-key',
           'anthropic-api-key': 'claude-key',
         };
@@ -193,8 +212,8 @@ describe('GitHub Action Main', () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
           'github-token': 'mock-github-token',
-          'config': 'promptfooconfig.yaml',
-          'prompts': 'prompts/*.txt',
+          config: 'promptfooconfig.yaml',
+          prompts: 'prompts/*.txt',
           'env-files': '.env,.env.local',
         };
         return inputs[name] || '';
@@ -221,7 +240,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('This action is designed to run on pull request events'),
+        expect.stringContaining(
+          'This action is designed to run on pull request events',
+        ),
       );
     });
 
@@ -248,9 +269,11 @@ describe('GitHub Action Main', () => {
 
       // Should still create comment
       expect(mockOctokit.rest.issues.createComment).toHaveBeenCalled();
-      
+
       // But should fail the action
-      expect(mockCore.setFailed).toHaveBeenCalledWith('Promptfoo evaluation failed');
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Promptfoo evaluation failed',
+      );
     });
   });
 
@@ -261,4 +284,4 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).toHaveBeenCalledWith('Test error');
     });
   });
-}); 
+});
