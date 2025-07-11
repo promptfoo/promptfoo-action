@@ -49,7 +49,7 @@
     "formatter": {
       "quoteStyle": "single",
       "semicolons": "always",
-      "trailingCommas": "es5",
+      "trailingCommas": "all",
       "jsxQuoteStyle": "double",
       "arrowParentheses": "always"
     }

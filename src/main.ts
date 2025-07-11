@@ -62,14 +62,14 @@ export async function run(): Promise<void> {
     });
     const workingDirectory: string = path.join(
       process.cwd(),
-      core.getInput('working-directory', { required: false })
+      core.getInput('working-directory', { required: false }),
     );
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
     });
     const useConfigPrompts: boolean = core.getBooleanInput(
       'use-config-prompts',
-      { required: false }
+      { required: false },
     );
     const envFiles: string = core.getInput('env-files', { required: false });
 
@@ -84,7 +84,7 @@ export async function run(): Promise<void> {
           const result = dotenv.config({ path: envFilePath, override: true });
           if (result.error) {
             core.warning(
-              `Failed to load ${envFilePath}: ${result.error.message}`
+              `Failed to load ${envFilePath}: ${result.error.message}`,
             );
           } else {
             core.info(`Successfully loaded ${envFilePath}`);
@@ -116,7 +116,7 @@ export async function run(): Promise<void> {
     const event = github.context.eventName;
     if (event !== 'pull_request') {
       core.warning(
-        `This action is designed to run on pull request events only, but a "${event}" event was received.`
+        `This action is designed to run on pull request events only, but a "${event}" event was received.`,
       );
     }
 
@@ -150,7 +150,7 @@ export async function run(): Promise<void> {
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern);
       const changedMatches = matches.filter(
-        (file) => file !== configPath && changedFiles.includes(file)
+        (file) => file !== configPath && changedFiles.includes(file),
       );
       promptFiles.push(...changedMatches);
     }
@@ -200,7 +200,7 @@ export async function run(): Promise<void> {
     // Comment PR
     const octokit = github.getOctokit(githubToken);
     const output = JSON.parse(
-      fs.readFileSync(outputFile, 'utf8')
+      fs.readFileSync(outputFile, 'utf8'),
     ) as OutputFile;
     const modifiedFiles = promptFiles.join(', ');
     let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
