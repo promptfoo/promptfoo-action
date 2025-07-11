@@ -62,7 +62,8 @@ const simple_git_1 = __nccwpck_require__(9065);
 const gitInterface = (0, simple_git_1.simpleGit)();
 function validateGitRef(ref) {
     const gitRefRegex = /^[\w\-\/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
-    if (!gitRefRegex.test(ref)) {
+    // Reject refs starting with "--" to prevent malicious options
+    if (ref.startsWith('--') || !gitRefRegex.test(ref)) {
         throw new Error(`Invalid Git ref: ${ref}`);
     }
 }

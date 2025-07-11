@@ -12,7 +12,8 @@ const gitInterface = simpleGit()
 
 function validateGitRef(ref: string): void {
   const gitRefRegex = /^[\w\-\/.]+$/ // Allow alphanumerics, underscores, hyphens, slashes, and dots
-  if (!gitRefRegex.test(ref)) {
+  // Reject refs starting with "--" to prevent malicious options
+  if (ref.startsWith('--') || !gitRefRegex.test(ref)) {
     throw new Error(`Invalid Git ref: ${ref}`)
   }
 }
