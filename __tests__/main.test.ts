@@ -95,7 +95,7 @@ describe('GitHub Action Main', () => {
     });
 
     mockCore.getBooleanInput.mockReturnValue(false);
-    
+
     // Setup summary mock
     mockCore.summary = {
       addHeading: jest.fn().mockReturnThis(),
@@ -282,11 +282,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith('Running in push mode');
-      expect(mockGitInterface.diff).toHaveBeenCalledWith([
-        '--name-only',
-        'abc123',
-        'def456',
-      ]);
+      expect(mockGitInterface.diff).toHaveBeenCalled();
+      const diffCalls = (mockGitInterface.diff as any).mock.calls;
+      expect(diffCalls[0][0]).toEqual(['--name-only', 'abc123', 'def456']);
     });
 
     test('should handle workflow_dispatch events', async () => {
@@ -303,7 +301,9 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(mockCore.info).toHaveBeenCalledWith('Running in workflow_dispatch mode');
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Running in workflow_dispatch mode',
+      );
     });
 
     test('should handle unsupported events with warning', async () => {
@@ -329,7 +329,9 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(mockCore.setFailed).toHaveBeenCalledWith('No pull request found in context.');
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'No pull request found in context.',
+      );
     });
 
     test('should handle promptfoo execution failure', async () => {
