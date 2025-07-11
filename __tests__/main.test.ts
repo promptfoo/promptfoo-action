@@ -405,8 +405,8 @@ describe('GitHub Action Main', () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
           'github-token': 'mock-github-token',
-          'prompts': 'prompts/**/*.txt',
-          'config': 'promptfooconfig.yaml',
+          prompts: 'prompts/**/*.txt',
+          config: 'promptfooconfig.yaml',
           'promptfoo-version': 'latest',
           'working-directory': '',
           'no-share': 'false',
@@ -447,8 +447,8 @@ describe('GitHub Action Main', () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
           'github-token': 'mock-github-token',
-          'prompts': 'prompts/**/*.txt',
-          'config': 'promptfooconfig.yaml',
+          prompts: 'prompts/**/*.txt',
+          config: 'promptfooconfig.yaml',
           'promptfoo-version': 'latest',
           'working-directory': '',
           'no-share': 'false',
@@ -468,7 +468,11 @@ describe('GitHub Action Main', () => {
 
       // Verify that diff was called with the action input base
       const diffCalls = (mockGitInterface.diff as any).mock.calls;
-      expect(diffCalls[0][0]).toEqual(['--name-only', 'feature-branch', 'HEAD']);
+      expect(diffCalls[0][0]).toEqual([
+        '--name-only',
+        'feature-branch',
+        'HEAD',
+      ]);
     });
 
     test('should handle unsupported events with warning', async () => {
@@ -520,7 +524,7 @@ describe('GitHub Action Main', () => {
 
     test('should respect disable-comment option', async () => {
       mockCore.getBooleanInput.mockImplementation((name: string) => {
-        return name === 'disable-comment' ? true : false;
+        return name === 'disable-comment';
       });
 
       await run();
@@ -585,6 +589,95 @@ describe('GitHub Action Main', () => {
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
+    });
+
+    test('should run evaluation when prompts is not provided', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: '', // Empty prompts
+          'working-directory': '',
+          'cache-path': '',
+          'promptfoo-version': 'latest',
+          'env-files': '',
+        };
+        return inputs[name] || '';
+      });
+
+      // Mock config file as changed
+      mockGitInterface.diff.mockResolvedValue('promptfooconfig.yaml');
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      // Should run promptfoo without --prompts argument
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo@latest'),
+        expect.arrayContaining(['eval', '-c', 'promptfooconfig.yaml']),
+        expect.any(Object),
+      );
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
+    test('should handle empty prompts with spaces', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: '  \n  \n  ', // Only whitespace
+          'working-directory': '',
+          'cache-path': '',
+          'promptfoo-version': 'latest',
+          'env-files': '',
+        };
+        return inputs[name] || '';
+      });
+
+      // Mock config file as changed
+      mockGitInterface.diff.mockResolvedValue('promptfooconfig.yaml');
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      // Should run promptfoo without --prompts argument
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
+    test('should skip evaluation when prompts are specified but no files match', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: 'prompts/*.txt', // Prompts specified
+          'working-directory': '',
+          'cache-path': '',
+          'promptfoo-version': 'latest',
+          'env-files': '',
+        };
+        return inputs[name] || '';
+      });
+
+      // Mock changed files that don't match the glob
+      mockGitInterface.diff.mockResolvedValue('README.md\npackage.json');
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']); // Files exist but weren't changed
+
+      await run();
+
+      // Should skip evaluation
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt or config files were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo'),
+        expect.any(Array),
+        expect.any(Object),
+      );
     });
 
     test('should include --share flag when no-share is false', async () => {
@@ -713,8 +806,18 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Should proceed with git fetch using -- separator
-      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', '--', 'origin', 'main']);
-      expect(mockExec.exec).toHaveBeenCalledWith('git', ['fetch', '--', 'origin', 'feature/JIRA-123_update-deps']);
+      expect(mockExec.exec).toHaveBeenCalledWith('git', [
+        'fetch',
+        '--',
+        'origin',
+        'main',
+      ]);
+      expect(mockExec.exec).toHaveBeenCalledWith('git', [
+        'fetch',
+        '--',
+        'origin',
+        'feature/JIRA-123_update-deps',
+      ]);
     });
   });
 });
@@ -751,7 +854,9 @@ describe('disable-comment feature', () => {
     );
 
     // Check that comment posting is wrapped in a condition
-    expect(mainContent).toContain('if (isPullRequest && pullRequestNumber && !disableComment)');
+    expect(mainContent).toContain(
+      'if (isPullRequest && pullRequestNumber && !disableComment)',
+    );
     expect(mainContent).toContain('octokit.rest.issues.createComment');
   });
 
