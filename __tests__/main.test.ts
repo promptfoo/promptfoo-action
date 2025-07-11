@@ -10,6 +10,20 @@ import {
   test,
 } from '@jest/globals';
 import * as fs from 'fs';
+
+// Create mock functions before importing the module that uses them
+const mockGitInterface = {
+  revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
+  diff: jest.fn(() =>
+    Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+  ),
+};
+
+// Mock simple-git before importing main.ts
+jest.mock('simple-git', () => ({
+  simpleGit: jest.fn(() => mockGitInterface),
+}));
+
 import { simpleGit } from 'simple-git';
 import { handleError, run } from '../src/main';
 
@@ -27,30 +41,31 @@ jest.mock('fs', () => ({
     mkdir: jest.fn(),
   },
 }));
-jest.mock('simple-git');
-jest.mock('glob');
+jest.mock('glob', () => ({
+  sync: jest.fn(),
+}));
 
 const mockCore = core as jest.Mocked<typeof core>;
 const mockGithub = github as jest.Mocked<typeof github>;
 const mockExec = exec as jest.Mocked<typeof exec>;
 const mockFs = fs as jest.Mocked<typeof fs>;
 
+// Import glob after mocking to get the mocked version
+import * as glob from 'glob';
+const mockGlob = glob as jest.Mocked<typeof glob>;
+
 describe('GitHub Action Main', () => {
-  let mockGitInterface: any;
   let mockOctokit: any;
 
   beforeEach(() => {
     // Reset all mocks
     jest.clearAllMocks();
 
-    // Setup git interface mock
-    mockGitInterface = {
-      revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
-      diff: jest.fn(() =>
-        Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
-      ),
-    };
-    (simpleGit as jest.Mock).mockReturnValue(mockGitInterface);
+    // Reset git interface mocks
+    mockGitInterface.revparse.mockClear();
+    mockGitInterface.diff.mockClear();
+    mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
+    mockGitInterface.diff.mockResolvedValue('prompts/prompt1.txt\npromptfooconfig.yaml');
 
     // Setup octokit mock
     mockOctokit = {
@@ -118,10 +133,8 @@ describe('GitHub Action Main', () => {
     // Setup exec mock
     mockExec.exec.mockResolvedValue(0);
 
-    // Setup glob mock
-    jest.doMock('glob', () => ({
-      sync: jest.fn().mockReturnValue(['prompts/prompt1.txt']),
-    }));
+    // Setup glob mock - return files that will match changed files
+    mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
   });
 
   afterEach(() => {
@@ -162,7 +175,9 @@ describe('GitHub Action Main', () => {
     });
 
     test('should skip evaluation when no relevant files change', async () => {
+      // Mock git diff to return files that don't match our glob pattern
       mockGitInterface.diff.mockResolvedValue('README.md\npackage.json');
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
 
       await run();
 
