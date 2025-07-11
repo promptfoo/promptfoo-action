@@ -1,4 +1,4 @@
-import {describe, test, expect} from '@jest/globals';
+import { describe, expect, test } from '@jest/globals';
 
 describe('Jest Setup', () => {
   test('should run tests successfully', () => {
@@ -16,8 +16,8 @@ describe('Jest Setup', () => {
   });
 
   test('should work with objects', () => {
-    const obj = {name: 'test', value: 42};
-    expect(obj).toEqual({name: 'test', value: 42});
+    const obj = { name: 'test', value: 42 };
+    expect(obj).toEqual({ name: 'test', value: 42 });
     expect(obj).toHaveProperty('name', 'test');
   });
 
