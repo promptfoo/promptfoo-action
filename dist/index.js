@@ -60,6 +60,12 @@ const glob = __importStar(__nccwpck_require__(1363));
 const path = __importStar(__nccwpck_require__(6928));
 const simple_git_1 = __nccwpck_require__(9065);
 const gitInterface = (0, simple_git_1.simpleGit)();
+function validateGitRef(ref) {
+    const gitRefRegex = /^[\w\-\/]+$/; // Allow alphanumerics, underscores, hyphens, and slashes
+    if (!gitRefRegex.test(ref)) {
+        throw new Error(`Invalid Git ref: ${ref}`);
+    }
+}
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -158,6 +164,9 @@ function run() {
             // Get list of changed files in PR
             const baseRef = pullRequest.base.ref;
             const headRef = pullRequest.head.ref;
+            // Validate baseRef and headRef to prevent command injection
+            validateGitRef(baseRef);
+            validateGitRef(headRef);
             yield exec.exec('git', ['fetch', 'origin', baseRef]);
             const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
             yield exec.exec('git', ['fetch', 'origin', headRef]);

@@ -10,6 +10,13 @@ import { simpleGit } from 'simple-git'
 
 const gitInterface = simpleGit()
 
+function validateGitRef(ref: string): void {
+  const gitRefRegex = /^[\w\-\/]+$/ // Allow alphanumerics, underscores, hyphens, and slashes
+  if (!gitRefRegex.test(ref)) {
+    throw new Error(`Invalid Git ref: ${ref}`)
+  }
+}
+
 export async function run(): Promise<void> {
   try {
     const openaiApiKey: string = core.getInput('openai-api-key', {
@@ -120,6 +127,10 @@ export async function run(): Promise<void> {
     // Get list of changed files in PR
     const baseRef = pullRequest.base.ref
     const headRef = pullRequest.head.ref
+
+    // Validate baseRef and headRef to prevent command injection
+    validateGitRef(baseRef)
+    validateGitRef(headRef)
 
     await exec.exec('git', ['fetch', 'origin', baseRef])
     const baseFetchHead = (await gitInterface.revparse(['FETCH_HEAD'])).trim()
