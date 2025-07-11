@@ -215,7 +215,9 @@ export async function run(): Promise<void> {
 
 `;
       if (output.shareableUrl) {
-        body = body.concat(`**» [View eval results](${output.shareableUrl}) «**`);
+        body = body.concat(
+          `**» [View eval results](${output.shareableUrl}) «**`,
+        );
       } else {
         body = body.concat('**» View eval results in CI console «**');
       }
