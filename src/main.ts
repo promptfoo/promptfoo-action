@@ -308,10 +308,19 @@ export async function run(): Promise<void> {
 
     // Check if we should fail based on threshold
     if (failOnThreshold !== undefined) {
-      const successRate =
-        (output.results.stats.successes /
-          (output.results.stats.successes + output.results.stats.failures)) *
-        100;
+      const totalTests = output.results.stats.successes + output.results.stats.failures;
+      
+      // If no tests were run, fail the threshold check
+      if (totalTests === 0) {
+        throw new PromptfooActionError(
+          `No tests were run - cannot calculate success rate`,
+          ErrorCodes.THRESHOLD_NOT_MET,
+          `Ensure your configuration includes valid tests to run`,
+        );
+      }
+      
+      const successRate = (output.results.stats.successes / totalTests) * 100;
+      
       if (successRate < failOnThreshold) {
         throw new PromptfooActionError(
           `Evaluation success rate (${successRate.toFixed(

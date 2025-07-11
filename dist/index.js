@@ -277,9 +277,12 @@ function run() {
             yield octokit.rest.issues.createComment(Object.assign(Object.assign({}, github.context.repo), { issue_number: pullRequest.number, body }));
             // Check if we should fail based on threshold
             if (failOnThreshold !== undefined) {
-                const successRate = (output.results.stats.successes /
-                    (output.results.stats.successes + output.results.stats.failures)) *
-                    100;
+                const totalTests = output.results.stats.successes + output.results.stats.failures;
+                // If no tests were run, fail the threshold check
+                if (totalTests === 0) {
+                    throw new errors_1.PromptfooActionError(`No tests were run - cannot calculate success rate`, errors_1.ErrorCodes.THRESHOLD_NOT_MET, `Ensure your configuration includes valid tests to run`);
+                }
+                const successRate = (output.results.stats.successes / totalTests) * 100;
                 if (successRate < failOnThreshold) {
                     throw new errors_1.PromptfooActionError(`Evaluation success rate (${successRate.toFixed(2)}%) is below the required threshold (${failOnThreshold}%)`, errors_1.ErrorCodes.THRESHOLD_NOT_MET, `Consider adjusting your prompts or lowering the threshold`);
                 }
