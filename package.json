@@ -45,7 +45,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.0.15",
     "@vercel/ncc": "^0.38.3",
-    "jest": "^30.0.4",
+    "jest": "^30.0.5",
     "js-yaml": "^4.1.0",
     "promptfoo": "^0.117.1",
     "ts-jest": "^29.4.0",
