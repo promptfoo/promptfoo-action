@@ -205,6 +205,9 @@ function run() {
             const workflowBase = core.getInput('workflow-base', {
                 required: false,
             });
+            const includeUnstaged = core.getBooleanInput('include-unstaged', {
+                required: false,
+            });
             // Validate fail-on-threshold input
             if (failOnThreshold !== undefined &&
                 (Number.isNaN(failOnThreshold) ||
@@ -354,14 +357,47 @@ function run() {
             else {
                 core.warning(`This action is designed to run on pull request, push, or workflow_dispatch events, but a "${event}" event was received. Will process all matching prompt files.`);
             }
+            // Check for unstaged changes if requested
+            let unstagedFiles = [];
+            if (includeUnstaged) {
+                try {
+                    // Get list of unstaged changes (both modified and untracked)
+                    const modifiedFiles = yield gitInterface.diff([
+                        '--name-only',
+                        '--diff-filter=M', // Modified files
+                    ]);
+                    const untrackedFiles = yield gitInterface.raw([
+                        'ls-files',
+                        '--others',
+                        '--exclude-standard',
+                    ]);
+                    const allUnstaged = [
+                        ...new Set([
+                            ...modifiedFiles.split('\n').filter((f) => f),
+                            ...untrackedFiles.split('\n').filter((f) => f),
+                        ]),
+                    ];
+                    if (allUnstaged.length > 0) {
+                        core.info(`Found unstaged changes in: ${allUnstaged.join(', ')}`);
+                        unstagedFiles = allUnstaged;
+                    }
+                }
+                catch (error) {
+                    core.warning(`Failed to check for unstaged changes: ${error}`);
+                }
+            }
             // Resolve glob patterns to file paths
             const promptFiles = [];
             const changedFilesList = changedFiles.split('\n').filter((f) => f);
+            // Combine committed and unstaged changes
+            const allChangedFiles = [
+                ...new Set([...changedFilesList, ...unstagedFiles]),
+            ];
             for (const globPattern of promptFilesGlobs) {
                 const matches = glob.sync(globPattern);
-                if (changedFilesList.length > 0) {
+                if (allChangedFiles.length > 0) {
                     // Filter to only changed files
-                    const changedMatches = matches.filter((file) => file !== configPath && changedFilesList.includes(file));
+                    const changedMatches = matches.filter((file) => file !== configPath && allChangedFiles.includes(file));
                     promptFiles.push(...changedMatches);
                 }
                 else {
@@ -370,17 +406,17 @@ function run() {
                     promptFiles.push(...allMatches);
                 }
             }
-            const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configPath);
+            const configChanged = allChangedFiles.length > 0 && allChangedFiles.includes(configPath);
             if (promptFiles.length < 1 &&
                 !configChanged &&
-                changedFilesList.length > 0 &&
+                allChangedFiles.length > 0 &&
                 promptFilesGlobs.length > 0) {
                 // We have changed files info but no prompt files were modified
                 // Only skip if prompts were actually specified
                 core.info('No LLM prompt or config files were modified.');
                 return;
             }
-            if (changedFilesList.length === 0) {
+            if (allChangedFiles.length === 0) {
                 core.info(`Processing all matching prompt files: ${promptFiles.join(', ')}`);
             }
             const outputFile = path.join(workingDirectory, 'output.json');

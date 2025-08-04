@@ -37,6 +37,7 @@ The action can be configured using the following inputs:
 | `no-table`           | Run promptfoo with `--no-table` flag to keep output minimal. Defaults to `false`                                                                          | No       |
 | `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
 | `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
+| `include-unstaged`   | Include unstaged/uncommitted file changes when determining which files to evaluate. Useful when modifying files in CI. Defaults to `false`               | No       |
 
 The following API key parameters are supported:
 
@@ -54,6 +55,55 @@ The following API key parameters are supported:
 | `cohere-api-key`        | The API key for Cohere. Used to authenticate requests to the Cohere API.             |
 | `mistral-api-key`       | The API key for Mistral. Used to authenticate requests to the Mistral API.           |
 | `groq-api-key`          | The API key for Groq. Used to authenticate requests to the Groq API.                 |
+
+### API Key Configuration
+
+API keys can be provided in two ways:
+
+1. **As action inputs** (recommended for secrets):
+   ```yaml
+   - name: Run promptfoo evaluation
+     uses: promptfoo/promptfoo-action@main
+     with:
+       openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+       anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+   ```
+
+2. **As environment variables** (automatically detected):
+   ```yaml
+   - name: Run promptfoo evaluation
+     uses: promptfoo/promptfoo-action@main
+     env:
+       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+     with:
+       github-token: ${{ secrets.GITHUB_TOKEN }}
+       config: 'prompts/promptfooconfig.yaml'
+   ```
+
+The action will automatically use environment variables if the corresponding input parameters are not provided. This is particularly useful when:
+- You have multiple actions that need the same API keys
+- You're using composite actions or reusable workflows
+- You want to set API keys at the job or workflow level
+
+**Note**: Input parameters take precedence over environment variables. If both are provided, the input parameter value will be used.
+
+### Environment Variable Mapping
+
+| Input Parameter | Environment Variable |
+| --------------- | -------------------- |
+| `openai-api-key` | `OPENAI_API_KEY` |
+| `azure-api-key` | `AZURE_OPENAI_API_KEY` |
+| `anthropic-api-key` | `ANTHROPIC_API_KEY` |
+| `huggingface-api-key` | `HF_API_TOKEN` |
+| `aws-access-key-id` | `AWS_ACCESS_KEY_ID` |
+| `aws-secret-access-key` | `AWS_SECRET_ACCESS_KEY` |
+| `replicate-api-key` | `REPLICATE_API_KEY` |
+| `palm-api-key` | `PALM_API_KEY` |
+| `vertex-api-key` | `VERTEX_API_KEY` |
+| `cohere-api-key` | `COHERE_API_KEY` |
+| `mistral-api-key` | `MISTRAL_API_KEY` |
+| `groq-api-key` | `GROQ_API_KEY` |
 
 ## Usage Examples
 
@@ -90,6 +140,7 @@ jobs:
       - name: Run promptfoo evaluation
         uses: promptfoo/promptfoo-action@v1
         with:
+          # API keys can be provided as inputs or environment variables
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           config: 'prompts/promptfooconfig.yaml'
@@ -229,3 +280,26 @@ This is particularly useful for Next.js applications or other frameworks that us
 ## Minimal Output
 
 To reduce console output in CI, set `no-table: true` and `no-progress-bar: true` in your action configuration.
+
+## Detecting Unstaged Changes
+
+If you're modifying files during your CI workflow (e.g., generating or updating configuration files), you can use `include-unstaged: true` to ensure these changes trigger the evaluation:
+
+```yaml
+- name: Generate dynamic config
+  run: |
+    # Example: dynamically modify promptfooconfig.yaml
+    echo "additional-config: true" >> promptfooconfig.yaml
+
+- name: Run promptfoo evaluation
+  uses: promptfoo/promptfoo-action@main
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    config: 'promptfooconfig.yaml'
+    include-unstaged: true  # This will detect the modified config file
+```
+
+This is particularly useful when:
+- Generating configuration files on the fly
+- Modifying prompts based on environment variables
+- Creating temporary test files during CI runs
