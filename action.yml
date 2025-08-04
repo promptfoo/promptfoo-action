@@ -34,22 +34,22 @@ inputs:
     description: 'Path to cache directory'
     required: false
   openai-api-key:
-    description: 'OpenAI API Key'
+    description: 'OpenAI API Key (falls back to OPENAI_API_KEY environment variable)'
     required: false
   azure-api-key:
-    description: 'Azure API key'
+    description: 'Azure API key (falls back to AZURE_OPENAI_API_KEY environment variable)'
     required: false
   anthropic-api-key:
-    description: 'Anthropic API key'
+    description: 'Anthropic API key (falls back to ANTHROPIC_API_KEY environment variable)'
     required: false
   huggingface-api-key:
-    description: 'Huggingface API key'
+    description: 'Huggingface API key (falls back to HF_API_TOKEN environment variable)'
     required: false
   aws-access-key-id:
-    description: 'AWS Access Key ID'
+    description: 'AWS Access Key ID (falls back to AWS_ACCESS_KEY_ID environment variable)'
     required: false
   aws-secret-access-key:
-    description: 'AWS Secret Access Key'
+    description: 'AWS Secret Access Key (falls back to AWS_SECRET_ACCESS_KEY environment variable)'
     required: false
   replicate-api-key:
     description: 'Replicate API key'

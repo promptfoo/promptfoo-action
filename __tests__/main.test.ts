@@ -895,3 +895,45 @@ describe('disable-comment feature', () => {
     expect(readmeContent).toContain('Disable posting comments to the PR');
   });
 });
+
+describe('environment variable documentation', () => {
+  test('README.md should document environment variable fallback', async () => {
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const readmePath = path.join(__dirname, '..', 'README.md');
+    const readmeContent = realFs.readFileSync(readmePath, 'utf8');
+
+    // Check that API key configuration section exists
+    expect(readmeContent).toContain('### API Key Configuration');
+    expect(readmeContent).toContain('API keys can be provided in two ways');
+    expect(readmeContent).toContain('As action inputs');
+    expect(readmeContent).toContain('As environment variables');
+    
+    // Check that environment variable mapping table exists
+    expect(readmeContent).toContain('### Environment Variable Mapping');
+    expect(readmeContent).toContain('OPENAI_API_KEY');
+    expect(readmeContent).toContain('AZURE_OPENAI_API_KEY');
+    expect(readmeContent).toContain('ANTHROPIC_API_KEY');
+    expect(readmeContent).toContain('HF_API_TOKEN');
+    
+    // Check that precedence is documented
+    expect(readmeContent).toContain('Input parameters take precedence over environment variables');
+  });
+
+  test('action.yml should mention environment variable fallback in descriptions', async () => {
+    const yaml = require('js-yaml');
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const actionYmlPath = path.join(__dirname, '..', 'action.yml');
+    const actionYml = realFs.readFileSync(actionYmlPath, 'utf8');
+    const action = yaml.load(actionYml);
+
+    // Check that some API key descriptions mention env var fallback
+    expect(action.inputs['openai-api-key'].description).toContain('OPENAI_API_KEY environment variable');
+    expect(action.inputs['azure-api-key'].description).toContain('AZURE_OPENAI_API_KEY environment variable');
+    expect(action.inputs['anthropic-api-key'].description).toContain('ANTHROPIC_API_KEY environment variable');
+    expect(action.inputs['huggingface-api-key'].description).toContain('HF_API_TOKEN environment variable');
+  });
+});
