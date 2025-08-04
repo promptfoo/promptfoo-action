@@ -228,7 +228,7 @@ This is particularly useful for Next.js applications or other frameworks that us
 
 ## Sharing
 
-By default, sharing is enabled but requires authentication. If `PROMPTFOO_API_KEY` environment variable is not set, sharing will be automatically skipped and results will only be shown in the action logs.
+By default, results are shared online. Without `PROMPTFOO_API_KEY`, sharing is skipped and results only appear in logs.
 
 To enable sharing with authentication:
 
