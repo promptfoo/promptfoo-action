@@ -12,6 +12,7 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
+import { extractFileDependencies } from './utils/config';
 
 const gitInterface = simpleGit();
 
@@ -184,6 +185,9 @@ export async function run(): Promise<void> {
       required: false,
     });
     const workflowBase: string = core.getInput('workflow-base', {
+      required: false,
+    });
+    const forceRun: boolean = core.getBooleanInput('force-run', {
       required: false,
     });
 
@@ -409,16 +413,58 @@ export async function run(): Promise<void> {
     const configChanged =
       changedFilesList.length > 0 && changedFilesList.includes(configPath);
 
+    // Extract dependencies from config file
+    let dependencyChanged = false;
+    if (changedFilesList.length > 0) {
+      const dependencies = extractFileDependencies(configPath);
+      if (dependencies.length > 0) {
+        core.debug(
+          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
+        );
+
+        // Check if any changed file matches the dependencies
+        dependencyChanged = dependencies.some((dep) => {
+          // Direct file match
+          if (changedFilesList.includes(dep)) {
+            return true;
+          }
+
+          // Check if the dependency is a directory and any changed file is within it
+          if (
+            dep.endsWith('/') ||
+            (fs.existsSync(dep) && fs.statSync(dep).isDirectory())
+          ) {
+            const depDir = dep.endsWith('/') ? dep : `${dep}/`;
+            return changedFilesList.some((changedFile) =>
+              changedFile.startsWith(depDir),
+            );
+          }
+
+          return false;
+        });
+
+        if (dependencyChanged) {
+          core.info('Detected changes in config file dependencies');
+        }
+      }
+    }
+
     if (
+      !forceRun &&
       promptFiles.length < 1 &&
       !configChanged &&
+      !dependencyChanged &&
       changedFilesList.length > 0 &&
       promptFilesGlobs.length > 0
     ) {
       // We have changed files info but no prompt files were modified
       // Only skip if prompts were actually specified
-      core.info('No LLM prompt or config files were modified.');
+      core.info('No LLM prompt, config files, or dependencies were modified.');
       return;
+    }
+
+    if (forceRun) {
+      core.info('Force run enabled - running evaluation regardless of changes');
     }
 
     if (changedFilesList.length === 0) {
