@@ -280,6 +280,8 @@ The action provides the following outputs when artifacts are enabled:
 
 Artifacts are retained for 90 days by default and can be downloaded from the GitHub Actions UI or via the API.
 
+**Note**: Artifact names are automatically sanitized to remove invalid characters. If using the same artifact name across multiple workflow runs, newer artifacts will overwrite older ones. Consider including a unique identifier (like run number or timestamp) in the artifact name to preserve multiple versions.
+
 ## Minimal Output
 
 To reduce console output in CI, set `no-table: true` and `no-progress-bar: true` in your action configuration.

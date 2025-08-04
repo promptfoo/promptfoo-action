@@ -944,6 +944,7 @@ describe('artifact upload feature', () => {
       expect.any(String),
       {
         retentionDays: 90,
+        compressionLevel: 6,
       }
     );
 
@@ -983,6 +984,47 @@ describe('artifact upload feature', () => {
     
     // But output-path should still be set
     expect(mockCore.setOutput).toHaveBeenCalledWith('output-path', expect.stringContaining('output.json'));
+  });
+
+  test('should sanitize artifact names', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'artifact-name': 'test artifact/with*special?chars',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+      };
+      return inputs[name] || '';
+    });
+    mockCore.getBooleanInput.mockImplementation((name: string) => {
+      if (name === 'upload-artifact') return true;
+      if (name === 'no-share') return false;
+      if (name === 'use-config-prompts') return false;
+      if (name === 'no-table') return false;
+      if (name === 'no-progress-bar') return false;
+      if (name === 'disable-comment') return false;
+      return false;
+    });
+
+    await run();
+
+    // Verify artifact upload was called with sanitized name
+    expect(mockArtifact.uploadArtifact).toHaveBeenCalledWith(
+      'test_artifact_with_special_chars',
+      [expect.stringContaining('output.json')],
+      expect.any(String),
+      {
+        retentionDays: 90,
+        compressionLevel: 6,
+      }
+    );
+
+    // Verify outputs were set with sanitized name
+    expect(mockCore.setOutput).toHaveBeenCalledWith('artifact-name', 'test_artifact_with_special_chars');
   });
 
   test('should handle artifact upload failure gracefully', async () => {
@@ -1041,7 +1083,7 @@ describe('artifact upload feature', () => {
 
     expect(action.inputs).toHaveProperty('artifact-name');
     expect(action.inputs['artifact-name'].description).toBe(
-      'Name for uploaded artifact'
+      'Name for uploaded artifact (invalid characters will be replaced with underscores)'
     );
     expect(action.inputs['artifact-name'].default).toBe('promptfoo-eval-results');
 

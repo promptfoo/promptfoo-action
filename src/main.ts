@@ -567,18 +567,22 @@ export async function run(): Promise<void> {
         const files = [outputFile];
         const rootDirectory = path.dirname(outputFile);
         
-        core.info(`Uploading evaluation results as artifact: ${artifactName}`);
+        // Sanitize artifact name (remove invalid characters)
+        const sanitizedArtifactName = artifactName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        
+        core.info(`Uploading evaluation results as artifact: ${sanitizedArtifactName}`);
         const uploadResult = await artifactClient.uploadArtifact(
-          artifactName,
+          sanitizedArtifactName,
           files,
           rootDirectory,
           {
             retentionDays: 90, // Keep artifacts for 90 days
+            compressionLevel: 6, // Default compression for JSON files
           }
         );
         
         if (uploadResult.id) {
-          core.info(`Artifact uploaded successfully: ${artifactName}`);
+          core.info(`Artifact uploaded successfully: ${sanitizedArtifactName}`);
           core.info(`Artifact ID: ${uploadResult.id}`);
           if (uploadResult.size) {
             core.info(`Artifact size: ${uploadResult.size} bytes`);
@@ -586,7 +590,7 @@ export async function run(): Promise<void> {
         }
         
         // Set outputs
-        core.setOutput('artifact-name', artifactName);
+        core.setOutput('artifact-name', sanitizedArtifactName);
       } catch (error) {
         core.warning(
           `Failed to upload artifact: ${error instanceof Error ? error.message : String(error)}`

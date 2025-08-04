@@ -131,7 +131,7 @@ inputs:
     required: false
     default: 'false'
   artifact-name:
-    description: 'Name for uploaded artifact'
+    description: 'Name for uploaded artifact (invalid characters will be replaced with underscores)'
     required: false
     default: 'promptfoo-eval-results'
 branding:
