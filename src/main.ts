@@ -1,3 +1,4 @@
+import artifact from '@actions/artifact';
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as github from '@actions/github';
@@ -186,6 +187,31 @@ export async function run(): Promise<void> {
     const workflowBase: string = core.getInput('workflow-base', {
       required: false,
     });
+    const uploadArtifact: boolean = core.getBooleanInput('upload-artifact', {
+      required: false,
+    });
+    const artifactName: string = core.getInput('artifact-name', {
+      required: false,
+    });
+    const artifactRetentionDaysInput: string = core.getInput('artifact-retention-days', {
+      required: false,
+    });
+
+    // Parse and validate retention days
+    let artifactRetentionDays = 90; // default
+    if (artifactRetentionDaysInput) {
+      artifactRetentionDays = parseInt(artifactRetentionDaysInput, 10);
+      if (
+        Number.isNaN(artifactRetentionDays) ||
+        artifactRetentionDays < 1 ||
+        artifactRetentionDays > 90
+      ) {
+        core.warning(
+          `Invalid artifact-retention-days value: ${artifactRetentionDaysInput}. Using default of 90 days.`
+        );
+        artifactRetentionDays = 90;
+      }
+    }
 
     // Validate fail-on-threshold input
     if (
@@ -552,6 +578,47 @@ export async function run(): Promise<void> {
         core.info(`View results: ${output.shareableUrl}`);
       }
     }
+
+    // Upload artifact if requested
+    if (uploadArtifact) {
+      try {
+        const artifactClient = artifact;
+        const files = [outputFile];
+        const rootDirectory = path.dirname(outputFile);
+        
+        // Sanitize artifact name (remove invalid characters)
+        const sanitizedArtifactName = artifactName.replace(/[^a-zA-Z0-9_-]/g, '_');
+        
+        core.info(`Uploading evaluation results as artifact: ${sanitizedArtifactName}`);
+        const uploadResult = await artifactClient.uploadArtifact(
+          sanitizedArtifactName,
+          files,
+          rootDirectory,
+          {
+            retentionDays: artifactRetentionDays,
+            compressionLevel: 6, // Default compression for JSON files
+          }
+        );
+        
+        if (uploadResult.id) {
+          core.info(`Artifact uploaded successfully: ${sanitizedArtifactName}`);
+          core.info(`Artifact ID: ${uploadResult.id}`);
+          if (uploadResult.size) {
+            core.info(`Artifact size: ${uploadResult.size} bytes`);
+          }
+        }
+        
+        // Set outputs
+        core.setOutput('artifact-name', sanitizedArtifactName);
+      } catch (error) {
+        core.warning(
+          `Failed to upload artifact: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    
+    // Always set the output path
+    core.setOutput('output-path', outputFile);
 
     // Check if we should fail based on threshold
     if (failOnThreshold !== undefined) {
