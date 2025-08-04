@@ -37,6 +37,8 @@ The action can be configured using the following inputs:
 | `no-table`           | Run promptfoo with `--no-table` flag to keep output minimal. Defaults to `false`                                                                          | No       |
 | `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
 | `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
+| `upload-artifact`    | Upload evaluation results as GitHub Action artifact. Defaults to `false`                                                                                  | No       |
+| `artifact-name`      | Name for the uploaded artifact. Defaults to `promptfoo-eval-results`                                                                                      | No       |
 
 The following API key parameters are supported:
 
@@ -225,6 +227,58 @@ jobs:
 ```
 
 This is particularly useful for Next.js applications or other frameworks that use `.env` files for configuration. The environment variables from these files will be available to promptfoo during evaluation.
+
+## Artifact Support
+
+The action can upload evaluation results as GitHub Action artifacts, allowing you to persist results beyond the 2-week lifespan of shareable URLs:
+
+```yaml
+name: 'Prompt Evaluation'
+on:
+  pull_request:
+    paths:
+      - 'prompts/**'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run promptfoo evaluation
+        id: promptfoo
+        uses: promptfoo/promptfoo-action@main
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: 'prompts/promptfooconfig.yaml'
+          upload-artifact: true
+          artifact-name: 'eval-results-${{ github.run_number }}'
+
+      # You can reference the outputs
+      - name: Display artifact info
+        run: |
+          echo "Artifact name: ${{ steps.promptfoo.outputs.artifact-name }}"
+          echo "Output path: ${{ steps.promptfoo.outputs.output-path }}"
+
+      # Download and use the artifact in a later job
+      - name: Download evaluation results
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.promptfoo.outputs.artifact-name }}
+```
+
+### Artifact Outputs
+
+The action provides the following outputs when artifacts are enabled:
+
+- `artifact-name`: The name of the uploaded artifact (only set if `upload-artifact` is true)
+- `output-path`: The path to the evaluation results JSON file (always set)
+
+Artifacts are retained for 90 days by default and can be downloaded from the GitHub Actions UI or via the API.
 
 ## Minimal Output
 

@@ -1,5 +1,10 @@
 name: 'Test LLM outputs'
 description: 'Run promptfoo evaluations on your prompts. Works with pull requests, pushes, and manual triggers (workflow_dispatch).'
+outputs:
+  artifact-name:
+    description: 'Name of the uploaded artifact (if upload-artifact is enabled)'
+  output-path:
+    description: 'Path to the evaluation results JSON file'
 runs:
   using: 'node20'
   main: 'dist/index.js'
@@ -121,6 +126,14 @@ inputs:
     description: 'Base ref to compare against in workflow_dispatch mode (e.g., main, HEAD~1). If not specified, falls back to workflow inputs or HEAD~1.'
     required: false
     default: ''
+  upload-artifact:
+    description: 'Upload evaluation results as artifact'
+    required: false
+    default: 'false'
+  artifact-name:
+    description: 'Name for uploaded artifact'
+    required: false
+    default: 'promptfoo-eval-results'
 branding:
   icon: 'box'
   color: 'yellow'

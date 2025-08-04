@@ -1,3 +1,4 @@
+import artifact from '@actions/artifact';
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as github from '@actions/github';
@@ -184,6 +185,12 @@ export async function run(): Promise<void> {
       required: false,
     });
     const workflowBase: string = core.getInput('workflow-base', {
+      required: false,
+    });
+    const uploadArtifact: boolean = core.getBooleanInput('upload-artifact', {
+      required: false,
+    });
+    const artifactName: string = core.getInput('artifact-name', {
       required: false,
     });
 
@@ -552,6 +559,43 @@ export async function run(): Promise<void> {
         core.info(`View results: ${output.shareableUrl}`);
       }
     }
+
+    // Upload artifact if requested
+    if (uploadArtifact) {
+      try {
+        const artifactClient = artifact;
+        const files = [outputFile];
+        const rootDirectory = path.dirname(outputFile);
+        
+        core.info(`Uploading evaluation results as artifact: ${artifactName}`);
+        const uploadResult = await artifactClient.uploadArtifact(
+          artifactName,
+          files,
+          rootDirectory,
+          {
+            retentionDays: 90, // Keep artifacts for 90 days
+          }
+        );
+        
+        if (uploadResult.id) {
+          core.info(`Artifact uploaded successfully: ${artifactName}`);
+          core.info(`Artifact ID: ${uploadResult.id}`);
+          if (uploadResult.size) {
+            core.info(`Artifact size: ${uploadResult.size} bytes`);
+          }
+        }
+        
+        // Set outputs
+        core.setOutput('artifact-name', artifactName);
+      } catch (error) {
+        core.warning(
+          `Failed to upload artifact: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    
+    // Always set the output path
+    core.setOutput('output-path', outputFile);
 
     // Check if we should fail based on threshold
     if (failOnThreshold !== undefined) {

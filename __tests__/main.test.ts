@@ -1,3 +1,4 @@
+import artifact from '@actions/artifact';
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as github from '@actions/github';
@@ -39,6 +40,7 @@ import { handleError, run } from '../src/main';
 jest.mock('@actions/core');
 jest.mock('@actions/github');
 jest.mock('@actions/exec');
+jest.mock('@actions/artifact');
 jest.mock('fs', () => ({
   ...(jest.requireActual('fs') as object),
   readFileSync: jest.fn(),
@@ -54,6 +56,7 @@ jest.mock('glob', () => ({
 }));
 jest.mock('dotenv');
 
+const mockArtifact = artifact as any;
 const mockCore = core as jest.Mocked<typeof core>;
 const mockGithub = github as jest.Mocked<typeof github>;
 const mockExec = exec as jest.Mocked<typeof exec>;
@@ -90,6 +93,9 @@ describe('GitHub Action Main', () => {
     mockGithub.getOctokit.mockReturnValue(
       mockOctokit as unknown as ReturnType<typeof github.getOctokit>,
     );
+    
+    // Setup artifact mock
+    mockArtifact.uploadArtifact = jest.fn();
 
     // Setup default input mocks
     mockCore.getInput.mockImplementation((name: string) => {
@@ -893,5 +899,161 @@ describe('disable-comment feature', () => {
     // Check that disable-comment is documented
     expect(readmeContent).toContain('`disable-comment`');
     expect(readmeContent).toContain('Disable posting comments to the PR');
+  });
+});
+
+describe('artifact upload feature', () => {
+  beforeEach(() => {
+    mockArtifact.uploadArtifact.mockResolvedValue({
+      id: 123456,
+      size: 12345,
+    });
+  });
+
+  test('should upload artifact when upload-artifact is true', async () => {
+    // Mock inputs
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'artifact-name': 'test-artifact',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+      };
+      return inputs[name] || '';
+    });
+    mockCore.getBooleanInput.mockImplementation((name: string) => {
+      if (name === 'upload-artifact') return true;
+      if (name === 'no-share') return false;
+      if (name === 'use-config-prompts') return false;
+      if (name === 'no-table') return false;
+      if (name === 'no-progress-bar') return false;
+      if (name === 'disable-comment') return false;
+      return false;
+    });
+
+    await run();
+
+    // Verify artifact upload was called
+    expect(mockArtifact.uploadArtifact).toHaveBeenCalledWith(
+      'test-artifact',
+      [expect.stringContaining('output.json')],
+      expect.any(String),
+      {
+        retentionDays: 90,
+      }
+    );
+
+    // Verify outputs were set
+    expect(mockCore.setOutput).toHaveBeenCalledWith('artifact-name', 'test-artifact');
+    expect(mockCore.setOutput).toHaveBeenCalledWith('output-path', expect.stringContaining('output.json'));
+  });
+
+  test('should not upload artifact when upload-artifact is false', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'artifact-name': 'test-artifact',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+      };
+      return inputs[name] || '';
+    });
+    mockCore.getBooleanInput.mockImplementation((name: string) => {
+      if (name === 'upload-artifact') return false;
+      if (name === 'no-share') return false;
+      if (name === 'use-config-prompts') return false;
+      if (name === 'no-table') return false;
+      if (name === 'no-progress-bar') return false;
+      if (name === 'disable-comment') return false;
+      return false;
+    });
+
+    await run();
+
+    // Verify artifact upload was not called
+    expect(mockArtifact.uploadArtifact).not.toHaveBeenCalled();
+    
+    // But output-path should still be set
+    expect(mockCore.setOutput).toHaveBeenCalledWith('output-path', expect.stringContaining('output.json'));
+  });
+
+  test('should handle artifact upload failure gracefully', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'artifact-name': 'test-artifact',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+      };
+      return inputs[name] || '';
+    });
+    mockCore.getBooleanInput.mockImplementation((name: string) => {
+      if (name === 'upload-artifact') return true;
+      if (name === 'no-share') return false;
+      if (name === 'use-config-prompts') return false;
+      if (name === 'no-table') return false;
+      if (name === 'no-progress-bar') return false;
+      if (name === 'disable-comment') return false;
+      return false;
+    });
+
+    // Mock upload failure
+    mockArtifact.uploadArtifact.mockRejectedValue(new Error('Upload failed'));
+
+    await run();
+
+    // Verify warning was logged
+    expect(mockCore.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to upload artifact: Upload failed')
+    );
+
+    // Output path should still be set even if upload fails
+    expect(mockCore.setOutput).toHaveBeenCalledWith('output-path', expect.stringContaining('output.json'));
+  });
+
+  test('should have artifact parameters in action.yml', async () => {
+    const yaml = require('js-yaml');
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const actionYmlPath = path.join(__dirname, '..', 'action.yml');
+    const actionYml = realFs.readFileSync(actionYmlPath, 'utf8');
+    const action = yaml.load(actionYml);
+
+    // Check inputs
+    expect(action.inputs).toHaveProperty('upload-artifact');
+    expect(action.inputs['upload-artifact'].description).toBe(
+      'Upload evaluation results as artifact'
+    );
+    expect(action.inputs['upload-artifact'].default).toBe('false');
+
+    expect(action.inputs).toHaveProperty('artifact-name');
+    expect(action.inputs['artifact-name'].description).toBe(
+      'Name for uploaded artifact'
+    );
+    expect(action.inputs['artifact-name'].default).toBe('promptfoo-eval-results');
+
+    // Check outputs
+    expect(action.outputs).toHaveProperty('artifact-name');
+    expect(action.outputs['artifact-name'].description).toBe(
+      'Name of the uploaded artifact (if upload-artifact is enabled)'
+    );
+
+    expect(action.outputs).toHaveProperty('output-path');
+    expect(action.outputs['output-path'].description).toBe(
+      'Path to the evaluation results JSON file'
+    );
   });
 });
