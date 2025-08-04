@@ -102,4 +102,5 @@ lib/**/*
 .jest-cache
 
 # Project-specific files
-TODO.mdissues.md
+TODO.md
+issues.md
