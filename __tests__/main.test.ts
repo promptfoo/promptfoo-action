@@ -26,6 +26,7 @@ const mockGitInterface = {
   diff: jest.fn(() =>
     Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
   ),
+  raw: jest.fn(() => Promise.resolve('')),
 };
 
 // Mock simple-git before importing main.ts
@@ -74,10 +75,12 @@ describe('GitHub Action Main', () => {
     // Reset git interface mocks
     mockGitInterface.revparse.mockClear();
     mockGitInterface.diff.mockClear();
+    mockGitInterface.raw.mockClear();
     mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
     mockGitInterface.diff.mockResolvedValue(
       'prompts/prompt1.txt\npromptfooconfig.yaml',
     );
+    mockGitInterface.raw.mockResolvedValue('');
 
     // Setup octokit mock
     mockOctokit = {
@@ -746,6 +749,116 @@ describe('GitHub Action Main', () => {
       expect(args).not.toContain('--share');
       expect(args).not.toContain('--prompts'); // because use-config-prompts is true
     });
+
+    test('should detect unstaged changes when include-unstaged is true', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'include-unstaged') return true;
+        return false;
+      });
+
+      // Mock unstaged changes
+      mockGitInterface.diff.mockImplementation((args?: string[]) => {
+        if (args?.includes('--diff-filter=M')) {
+          // Return unstaged modified files
+          return Promise.resolve('promptfooconfig.yaml\nprompts/unstaged.txt');
+        }
+        // Return committed changes
+        return Promise.resolve('prompts/prompt1.txt');
+      });
+
+      // Mock untracked files
+      mockGitInterface.raw.mockResolvedValue('prompts/new-file.txt\n');
+
+      await run();
+
+      // Verify git commands for unstaged changes were called
+      const diffCalls = mockGitInterface.diff.mock.calls;
+      const hasUnstagedCall = diffCalls.some(
+        (call: unknown[]) =>
+          call[0] &&
+          Array.isArray(call[0]) &&
+          (call[0] as string[]).includes('--diff-filter=M'),
+      );
+      expect(hasUnstagedCall).toBe(true);
+
+      const rawCalls = mockGitInterface.raw.mock.calls;
+      const hasLsFilesCall = rawCalls.some(
+        (call: unknown[]) =>
+          call[0] &&
+          Array.isArray(call[0]) &&
+          (call[0] as string[]).includes('ls-files'),
+      );
+      expect(hasLsFilesCall).toBe(true);
+
+      // Verify info message about unstaged changes
+      expect(mockCore.info).toHaveBeenCalledWith(
+        expect.stringContaining('Found unstaged changes in:'),
+      );
+
+      // Verify promptfoo was called
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo'),
+        expect.any(Array),
+        expect.any(Object),
+      );
+    });
+
+    test('should not check unstaged changes when include-unstaged is false', async () => {
+      mockCore.getBooleanInput.mockImplementation(() => {
+        return false; // All boolean inputs are false
+      });
+
+      // Reset the raw mock
+      mockGitInterface.raw.mockClear();
+
+      // Mock only committed changes
+      mockGitInterface.diff.mockResolvedValue('prompts/prompt1.txt');
+
+      await run();
+
+      // Verify raw (for untracked files) was NOT called
+      expect(mockGitInterface.raw).not.toHaveBeenCalled();
+
+      // Verify only standard diff was called (no --diff-filter=M)
+      const diffCalls = mockGitInterface.diff.mock.calls;
+      const hasModifiedFilter = diffCalls.some(
+        (call: unknown[]) =>
+          call[0] &&
+          Array.isArray(call[0]) &&
+          (call[0] as string[]).includes('--diff-filter=M'),
+      );
+      expect(hasModifiedFilter).toBe(false);
+    });
+
+    test('should handle failure to check unstaged changes gracefully', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'include-unstaged') return true;
+        return false;
+      });
+
+      // Mock failure when checking unstaged changes
+      mockGitInterface.diff.mockImplementation((args?: string[]) => {
+        if (args?.includes('--diff-filter=M')) {
+          throw new Error('Failed to get unstaged changes');
+        }
+        // Return committed changes normally
+        return Promise.resolve('prompts/prompt1.txt');
+      });
+
+      await run();
+
+      // Verify warning was logged
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to check for unstaged changes:'),
+      );
+
+      // Verify the action continues and runs promptfoo
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo'),
+        expect.any(Array),
+        expect.any(Object),
+      );
+    });
   });
 
   describe('handleError function', () => {
@@ -893,5 +1006,94 @@ describe('disable-comment feature', () => {
     // Check that disable-comment is documented
     expect(readmeContent).toContain('`disable-comment`');
     expect(readmeContent).toContain('Disable posting comments to the PR');
+  });
+});
+
+describe('environment variable documentation', () => {
+  test('README.md should document environment variable fallback', async () => {
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const readmePath = path.join(__dirname, '..', 'README.md');
+    const readmeContent = realFs.readFileSync(readmePath, 'utf8');
+
+    // Check that API key configuration section exists
+    expect(readmeContent).toContain('### API Key Configuration');
+    expect(readmeContent).toContain('API keys can be provided in two ways');
+    expect(readmeContent).toContain('As action inputs');
+    expect(readmeContent).toContain('As environment variables');
+
+    // Check that environment variable mapping table exists
+    expect(readmeContent).toContain('### Environment Variable Mapping');
+    expect(readmeContent).toContain('OPENAI_API_KEY');
+    expect(readmeContent).toContain('AZURE_OPENAI_API_KEY');
+    expect(readmeContent).toContain('ANTHROPIC_API_KEY');
+    expect(readmeContent).toContain('HF_API_TOKEN');
+
+    // Check that precedence is documented
+    expect(readmeContent).toContain(
+      'Input parameters take precedence over environment variables',
+    );
+  });
+
+  test('action.yml should mention environment variable fallback in descriptions', async () => {
+    const yaml = require('js-yaml');
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const actionYmlPath = path.join(__dirname, '..', 'action.yml');
+    const actionYml = realFs.readFileSync(actionYmlPath, 'utf8');
+    const action = yaml.load(actionYml);
+
+    // Check that some API key descriptions mention env var fallback
+    expect(action.inputs['openai-api-key'].description).toContain(
+      'OPENAI_API_KEY environment variable',
+    );
+    expect(action.inputs['azure-api-key'].description).toContain(
+      'AZURE_OPENAI_API_KEY environment variable',
+    );
+    expect(action.inputs['anthropic-api-key'].description).toContain(
+      'ANTHROPIC_API_KEY environment variable',
+    );
+    expect(action.inputs['huggingface-api-key'].description).toContain(
+      'HF_API_TOKEN environment variable',
+    );
+  });
+});
+
+describe('include-unstaged feature', () => {
+  test('should have include-unstaged parameter in action.yml', async () => {
+    const yaml = require('js-yaml');
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const actionYmlPath = path.join(__dirname, '..', 'action.yml');
+    const actionYml = realFs.readFileSync(actionYmlPath, 'utf8');
+    const action = yaml.load(actionYml);
+
+    expect(action.inputs).toHaveProperty('include-unstaged');
+    expect(action.inputs['include-unstaged'].description).toBe(
+      'Include unstaged/uncommitted file changes when determining which files to evaluate',
+    );
+    expect(action.inputs['include-unstaged'].default).toBe('false');
+    expect(action.inputs['include-unstaged'].required).toBe(false);
+  });
+
+  test('README.md should document the include-unstaged parameter', async () => {
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const readmePath = path.join(__dirname, '..', 'README.md');
+    const readmeContent = realFs.readFileSync(readmePath, 'utf8');
+
+    // Check that include-unstaged is documented
+    expect(readmeContent).toContain('`include-unstaged`');
+    expect(readmeContent).toContain(
+      'Include unstaged/uncommitted file changes',
+    );
+
+    // Check that example section exists
+    expect(readmeContent).toContain('## Detecting Unstaged Changes');
+    expect(readmeContent).toContain('include-unstaged: true');
   });
 });
