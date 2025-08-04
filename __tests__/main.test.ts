@@ -1027,6 +1027,89 @@ describe('artifact upload feature', () => {
     expect(mockCore.setOutput).toHaveBeenCalledWith('artifact-name', 'test_artifact_with_special_chars');
   });
 
+  test('should use custom retention days', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'artifact-name': 'test-artifact',
+        'artifact-retention-days': '30',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+      };
+      return inputs[name] || '';
+    });
+    mockCore.getBooleanInput.mockImplementation((name: string) => {
+      if (name === 'upload-artifact') return true;
+      if (name === 'no-share') return false;
+      if (name === 'use-config-prompts') return false;
+      if (name === 'no-table') return false;
+      if (name === 'no-progress-bar') return false;
+      if (name === 'disable-comment') return false;
+      return false;
+    });
+
+    await run();
+
+    // Verify artifact upload was called with custom retention days
+    expect(mockArtifact.uploadArtifact).toHaveBeenCalledWith(
+      'test-artifact',
+      [expect.stringContaining('output.json')],
+      expect.any(String),
+      {
+        retentionDays: 30,
+        compressionLevel: 6,
+      }
+    );
+  });
+
+  test('should handle invalid retention days gracefully', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'artifact-name': 'test-artifact',
+        'artifact-retention-days': '999', // Invalid - too high
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+      };
+      return inputs[name] || '';
+    });
+    mockCore.getBooleanInput.mockImplementation((name: string) => {
+      if (name === 'upload-artifact') return true;
+      if (name === 'no-share') return false;
+      if (name === 'use-config-prompts') return false;
+      if (name === 'no-table') return false;
+      if (name === 'no-progress-bar') return false;
+      if (name === 'disable-comment') return false;
+      return false;
+    });
+
+    await run();
+
+    // Should warn about invalid retention days
+    expect(mockCore.warning).toHaveBeenCalledWith(
+      'Invalid artifact-retention-days value: 999. Using default of 90 days.'
+    );
+
+    // Should use default retention days (90)
+    expect(mockArtifact.uploadArtifact).toHaveBeenCalledWith(
+      'test-artifact',
+      [expect.stringContaining('output.json')],
+      expect.any(String),
+      {
+        retentionDays: 90,
+        compressionLevel: 6,
+      }
+    );
+  });
+
   test('should handle artifact upload failure gracefully', async () => {
     mockCore.getInput.mockImplementation((name: string) => {
       const inputs: Record<string, string> = {
@@ -1086,6 +1169,12 @@ describe('artifact upload feature', () => {
       'Name for uploaded artifact (invalid characters will be replaced with underscores)'
     );
     expect(action.inputs['artifact-name'].default).toBe('promptfoo-eval-results');
+
+    expect(action.inputs).toHaveProperty('artifact-retention-days');
+    expect(action.inputs['artifact-retention-days'].description).toBe(
+      'Number of days to retain the artifact (1-90 days, default: 90)'
+    );
+    expect(action.inputs['artifact-retention-days'].default).toBe('90');
 
     // Check outputs
     expect(action.outputs).toHaveProperty('artifact-name');

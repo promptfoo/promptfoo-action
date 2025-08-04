@@ -134,6 +134,10 @@ inputs:
     description: 'Name for uploaded artifact (invalid characters will be replaced with underscores)'
     required: false
     default: 'promptfoo-eval-results'
+  artifact-retention-days:
+    description: 'Number of days to retain the artifact (1-90 days, default: 90)'
+    required: false
+    default: '90'
 branding:
   icon: 'box'
   color: 'yellow'

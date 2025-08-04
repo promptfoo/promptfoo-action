@@ -193,6 +193,25 @@ export async function run(): Promise<void> {
     const artifactName: string = core.getInput('artifact-name', {
       required: false,
     });
+    const artifactRetentionDaysInput: string = core.getInput('artifact-retention-days', {
+      required: false,
+    });
+
+    // Parse and validate retention days
+    let artifactRetentionDays = 90; // default
+    if (artifactRetentionDaysInput) {
+      artifactRetentionDays = parseInt(artifactRetentionDaysInput, 10);
+      if (
+        Number.isNaN(artifactRetentionDays) ||
+        artifactRetentionDays < 1 ||
+        artifactRetentionDays > 90
+      ) {
+        core.warning(
+          `Invalid artifact-retention-days value: ${artifactRetentionDaysInput}. Using default of 90 days.`
+        );
+        artifactRetentionDays = 90;
+      }
+    }
 
     // Validate fail-on-threshold input
     if (
@@ -576,7 +595,7 @@ export async function run(): Promise<void> {
           files,
           rootDirectory,
           {
-            retentionDays: 90, // Keep artifacts for 90 days
+            retentionDays: artifactRetentionDays,
             compressionLevel: 6, // Default compression for JSON files
           }
         );
