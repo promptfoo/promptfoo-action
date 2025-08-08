@@ -37,7 +37,7 @@
     "simple-git": "^3.28.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.1.3",
+    "@biomejs/biome": "^2.1.4",
     "@swc/core": "^1.13.3",
     "@swc/jest": "^0.2.39",
     "@types/cache-manager": "^4.0.6",
