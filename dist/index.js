@@ -388,8 +388,17 @@ function run() {
             if (!useConfigPrompts && promptFiles.length > 0) {
                 promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
             }
+            // Check if sharing is enabled and authentication is available
             if (!noShare) {
-                promptfooArgs.push('--share');
+                const hasPromptfooApiKey = process.env.PROMPTFOO_API_KEY || false;
+                const hasRemoteConfig = process.env.PROMPTFOO_REMOTE_API_BASE_URL || false;
+                if (hasPromptfooApiKey || hasRemoteConfig) {
+                    promptfooArgs.push('--share');
+                }
+                else {
+                    core.info('Sharing is enabled but no authentication found (PROMPTFOO_API_KEY or PROMPTFOO_REMOTE_API_BASE_URL). ' +
+                        'Skipping share step. To enable sharing, set PROMPTFOO_API_KEY as an environment variable.');
+                }
             }
             if (maxConcurrency !== undefined) {
                 promptfooArgs.push('--max-concurrency', maxConcurrency.toString());
