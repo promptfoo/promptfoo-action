@@ -37,6 +37,7 @@ The action can be configured using the following inputs:
 | `no-table`           | Run promptfoo with `--no-table` flag to keep output minimal. Defaults to `false`                                                                          | No       |
 | `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
 | `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
+| `include-unstaged`   | Include unstaged/uncommitted file changes when determining which files to evaluate. Useful when modifying files in CI. Defaults to `false`               | No       |
 
 The following API key parameters are supported:
 
@@ -229,3 +230,26 @@ This is particularly useful for Next.js applications or other frameworks that us
 ## Minimal Output
 
 To reduce console output in CI, set `no-table: true` and `no-progress-bar: true` in your action configuration.
+
+## Detecting Unstaged Changes
+
+If you're modifying files during your CI workflow (e.g., generating or updating configuration files), you can use `include-unstaged: true` to ensure these changes trigger the evaluation:
+
+```yaml
+- name: Generate dynamic config
+  run: |
+    # Example: dynamically modify promptfooconfig.yaml
+    echo "additional-config: true" >> promptfooconfig.yaml
+
+- name: Run promptfoo evaluation
+  uses: promptfoo/promptfoo-action@main
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    config: 'promptfooconfig.yaml'
+    include-unstaged: true  # This will detect the modified config file
+```
+
+This is particularly useful when:
+- Generating configuration files on the fly
+- Modifying prompts based on environment variables
+- Creating temporary test files during CI runs
