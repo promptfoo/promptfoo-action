@@ -1,8 +1,8 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import * as path from 'path';
 import * as yaml from 'js-yaml';
+import * as path from 'path';
 
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
