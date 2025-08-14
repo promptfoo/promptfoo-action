@@ -29,7 +29,7 @@ jest.mock('fs', () => ({
 }));
 
 const mockCore = core as jest.Mocked<typeof core>;
-const mockFs = fs as jest.Mocked<typeof fs>;
+const mockFs = fs as any; // Complex mock types, using any for test simplicity
 
 describe('Cache Utilities', () => {
   beforeEach(() => {
@@ -204,14 +204,16 @@ describe('Cache Utilities', () => {
 
     it('should calculate cache statistics', async () => {
       mockFs.existsSync.mockReturnValue(true);
-      mockFs.readdirSync.mockImplementation((dir: string) => {
-        if (dir.endsWith('subdir')) {
-          return [] as unknown as string[]; // Empty subdirectory to stop recursion
+      mockFs.readdirSync.mockImplementation((dir: any) => {
+        const dirStr = String(dir);
+        if (dirStr.endsWith('subdir')) {
+          return []; // Empty subdirectory to stop recursion
         }
-        return ['file1.json', 'file2.json', 'subdir'] as unknown as string[];
+        return ['file1.json', 'file2.json', 'subdir'];
       });
-      mockFs.statSync.mockImplementation((filePath: string) => {
-        if (filePath.endsWith('subdir')) {
+      mockFs.statSync.mockImplementation((filePath: any) => {
+        const filePathStr = String(filePath);
+        if (filePathStr.endsWith('subdir')) {
           return {
             isDirectory: () => true,
             size: 0,
@@ -254,9 +256,10 @@ describe('Cache Utilities', () => {
       mockFs.readdirSync.mockReturnValue([
         'old.json',
         'new.json',
-      ] as unknown as fs.Dirent[]);
-      mockFs.statSync.mockImplementation((filePath: string) => {
-        if (filePath.endsWith('old.json')) {
+      ]);
+      mockFs.statSync.mockImplementation((filePath: any) => {
+        const filePathStr = String(filePath);
+        if (filePathStr.endsWith('old.json')) {
           return {
             isDirectory: () => false,
             mtime: oldDate,
@@ -286,12 +289,13 @@ describe('Cache Utilities', () => {
 
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readdirSync
-        .mockReturnValueOnce(['subdir'] as unknown as fs.Dirent[]) // Root directory
-        .mockReturnValueOnce(['old.json'] as unknown as fs.Dirent[]) // Subdirectory with old file
-        .mockReturnValueOnce([] as unknown as fs.Dirent[]); // Empty after file deletion
+        .mockReturnValueOnce(['subdir']) // Root directory
+        .mockReturnValueOnce(['old.json']) // Subdirectory with old file
+        .mockReturnValueOnce([]); // Empty after file deletion
 
-      mockFs.statSync.mockImplementation((filePath: string) => {
-        if (filePath.includes('subdir') && !filePath.includes('.json')) {
+      mockFs.statSync.mockImplementation((filePath: any) => {
+        const filePathStr = String(filePath);
+        if (filePathStr.includes('subdir') && !filePath.includes('.json')) {
           return {
             isDirectory: () => true,
             mtime: oldDate,
@@ -323,7 +327,7 @@ describe('Cache Utilities', () => {
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readdirSync.mockReturnValue([
         'file.json',
-      ] as unknown as fs.Dirent[]);
+      ]);
       mockFs.statSync.mockReturnValue({
         isDirectory: () => false,
         size: 1024,
