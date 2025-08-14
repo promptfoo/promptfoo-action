@@ -13,7 +13,7 @@ import {
 // Mock dependencies
 jest.mock('@actions/core');
 jest.mock('fs', () => ({
-  ...(jest.requireActual('fs') as any),
+  ...(jest.requireActual('fs') as Record<string, unknown>),
   existsSync: jest.fn(),
   mkdirSync: jest.fn(),
   readdirSync: jest.fn(),
@@ -141,7 +141,7 @@ describe('Cache Utilities', () => {
     const originalDate = Date;
 
     beforeAll(() => {
-      global.Date = jest.fn(() => mockDate) as any;
+      global.Date = jest.fn(() => mockDate) as unknown as DateConstructor;
       global.Date.UTC = originalDate.UTC;
       global.Date.parse = originalDate.parse;
       global.Date.now = originalDate.now;
@@ -204,25 +204,25 @@ describe('Cache Utilities', () => {
 
     it('should calculate cache statistics', async () => {
       mockFs.existsSync.mockReturnValue(true);
-      mockFs.readdirSync.mockImplementation((dir: any) => {
+      mockFs.readdirSync.mockImplementation((dir: string) => {
         if (dir.endsWith('subdir')) {
-          return [] as any; // Empty subdirectory to stop recursion
+          return [] as unknown as string[]; // Empty subdirectory to stop recursion
         }
-        return ['file1.json', 'file2.json', 'subdir'] as any;
+        return ['file1.json', 'file2.json', 'subdir'] as unknown as string[];
       });
-      mockFs.statSync.mockImplementation((filePath: any) => {
+      mockFs.statSync.mockImplementation((filePath: string) => {
         if (filePath.endsWith('subdir')) {
           return {
             isDirectory: () => true,
             size: 0,
             mtime: new Date('2025-01-01'),
-          } as any;
+          } as fs.Stats;
         }
         return {
           isDirectory: () => false,
           size: 1024,
           mtime: new Date('2025-01-15'),
-        } as any;
+        } as fs.Stats;
       });
 
       const stats = await getCacheStats('/cache/path');
@@ -251,18 +251,21 @@ describe('Cache Utilities', () => {
       const newDate = new Date(now - 1 * 24 * 60 * 60 * 1000); // 1 day old
 
       mockFs.existsSync.mockReturnValue(true);
-      mockFs.readdirSync.mockReturnValue(['old.json', 'new.json'] as any);
-      mockFs.statSync.mockImplementation((filePath: any) => {
+      mockFs.readdirSync.mockReturnValue([
+        'old.json',
+        'new.json',
+      ] as unknown as fs.Dirent[]);
+      mockFs.statSync.mockImplementation((filePath: string) => {
         if (filePath.endsWith('old.json')) {
           return {
             isDirectory: () => false,
             mtime: oldDate,
-          } as any;
+          } as fs.Stats;
         }
         return {
           isDirectory: () => false,
           mtime: newDate,
-        } as any;
+        } as fs.Stats;
       });
       mockFs.unlinkSync.mockImplementation(() => undefined);
 
@@ -283,21 +286,21 @@ describe('Cache Utilities', () => {
 
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readdirSync
-        .mockReturnValueOnce(['subdir'] as any) // Root directory
-        .mockReturnValueOnce(['old.json'] as any) // Subdirectory with old file
-        .mockReturnValueOnce([] as any); // Empty after file deletion
+        .mockReturnValueOnce(['subdir'] as unknown as fs.Dirent[]) // Root directory
+        .mockReturnValueOnce(['old.json'] as unknown as fs.Dirent[]) // Subdirectory with old file
+        .mockReturnValueOnce([] as unknown as fs.Dirent[]); // Empty after file deletion
 
-      mockFs.statSync.mockImplementation((filePath: any) => {
+      mockFs.statSync.mockImplementation((filePath: string) => {
         if (filePath.includes('subdir') && !filePath.includes('.json')) {
           return {
             isDirectory: () => true,
             mtime: oldDate,
-          } as any;
+          } as fs.Stats;
         }
         return {
           isDirectory: () => false,
           mtime: oldDate,
-        } as any;
+        } as fs.Stats;
       });
 
       mockFs.unlinkSync.mockImplementation(() => undefined);
@@ -318,12 +321,14 @@ describe('Cache Utilities', () => {
   describe('createCacheManifest', () => {
     it('should create cache manifest', async () => {
       mockFs.existsSync.mockReturnValue(true);
-      mockFs.readdirSync.mockReturnValue(['file.json'] as any);
+      mockFs.readdirSync.mockReturnValue([
+        'file.json',
+      ] as unknown as fs.Dirent[]);
       mockFs.statSync.mockReturnValue({
         isDirectory: () => false,
         size: 1024,
         mtime: new Date('2025-01-15'),
-      } as any);
+      } as fs.Stats);
       mockFs.writeFileSync.mockImplementation(() => undefined);
 
       await createCacheManifest('/cache/path');
