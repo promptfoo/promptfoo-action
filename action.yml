@@ -121,6 +121,10 @@ inputs:
     description: 'Base ref to compare against in workflow_dispatch mode (e.g., main, HEAD~1). If not specified, falls back to workflow inputs or HEAD~1.'
     required: false
     default: ''
+  force-run:
+    description: 'Force evaluation to run even if no files changed'
+    required: false
+    default: 'false'
 branding:
   icon: 'box'
   color: 'yellow'

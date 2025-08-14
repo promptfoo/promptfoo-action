@@ -37,6 +37,7 @@ The action can be configured using the following inputs:
 | `no-table`           | Run promptfoo with `--no-table` flag to keep output minimal. Defaults to `false`                                                                          | No       |
 | `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
 | `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
+| `force-run`          | Force evaluation to run even if no files changed. Defaults to `false`                                                                                      | No       |
 
 The following API key parameters are supported:
 
@@ -225,6 +226,70 @@ jobs:
 ```
 
 This is particularly useful for Next.js applications or other frameworks that use `.env` files for configuration. The environment variables from these files will be available to promptfoo during evaluation.
+
+## Custom Provider Detection
+
+The action automatically detects changes to custom provider files referenced in your promptfoo configuration. When you use custom providers with `file://` URLs, the action will trigger evaluations when these files change.
+
+### Supported Patterns
+
+1. **Direct file references:**
+   ```yaml
+   providers:
+     - file://custom_provider.py
+     - id: file://providers/my_provider.js
+   ```
+
+2. **Wildcard patterns:**
+   ```yaml
+   providers:
+     - file://providers/*.py          # All Python files in providers/
+     - file://lib/**/*.js            # All JS files recursively in lib/
+   ```
+
+3. **Directory watching:**
+   ```yaml
+   providers:
+     - file://providers/             # Watch entire directory
+   ```
+
+### How It Works
+
+- When you specify a wildcard pattern (e.g., `file://providers/*.py`), the action watches the entire directory
+- Changes to any file matching the pattern will trigger evaluation
+- Directory paths automatically watch all files within that directory
+- This works for providers, prompts, test data files, and assertion files
+
+### Example Configuration
+
+```yaml
+# promptfooconfig.yaml
+providers:
+  - file://providers/**/*.py      # Watch all Python files recursively
+  
+prompts:
+  - file://prompts/               # Watch entire prompts directory
+
+tests:
+  - vars:
+      context: file://data/*.json # Watch all JSON files in data/
+    assert:
+      - type: javascript
+        value: file://validators/ # Watch all files in validators/
+```
+
+### Force Running Evaluations
+
+If you need to run evaluations regardless of file changes, use the `force-run` option:
+
+```yaml
+- name: Run promptfoo evaluation
+  uses: promptfoo/promptfoo-action@v1
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    config: 'prompts/promptfooconfig.yaml'
+    force-run: true
+```
 
 ## Sharing
 

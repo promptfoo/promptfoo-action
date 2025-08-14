@@ -208,7 +208,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'No LLM prompt or config files were modified.',
+        'No LLM prompt, config files, or dependencies were modified.',
       );
       expect(mockExec.exec).not.toHaveBeenCalledWith(
         expect.stringContaining('npx promptfoo'),
@@ -694,7 +694,7 @@ describe('GitHub Action Main', () => {
 
       // Should skip evaluation
       expect(mockCore.info).toHaveBeenCalledWith(
-        'No LLM prompt or config files were modified.',
+        'No LLM prompt, config files, or dependencies were modified.',
       );
       expect(mockExec.exec).not.toHaveBeenCalledWith(
         expect.stringContaining('npx promptfoo'),
