@@ -1,4 +1,4 @@
-import { describe, expect, jest, test, beforeEach } from '@jest/globals';
+import { beforeEach, describe, expect, jest, test } from '@jest/globals';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import { extractFileDependencies } from '../../src/utils/config';

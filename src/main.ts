@@ -8,17 +8,17 @@ import * as path from 'path';
 import type { OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
 import {
+  cleanupOldCache,
+  createCacheManifest,
+  logCacheMetrics,
+  setupCacheEnvironment,
+} from './utils/cache';
+import { extractFileDependencies } from './utils/config';
+import {
   ErrorCodes,
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
-import { extractFileDependencies } from './utils/config';
-import {
-  setupCacheEnvironment,
-  logCacheMetrics,
-  cleanupOldCache,
-  createCacheManifest,
-} from './utils/cache';
 
 const gitInterface = simpleGit();
 

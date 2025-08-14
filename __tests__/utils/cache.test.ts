@@ -2,12 +2,12 @@ import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
-  getDefaultCacheConfig,
-  setupCacheEnvironment,
-  generateCacheKey,
-  getCacheStats,
   cleanupOldCache,
   createCacheManifest,
+  generateCacheKey,
+  getCacheStats,
+  getDefaultCacheConfig,
+  setupCacheEnvironment,
 } from '../../src/utils/cache';
 
 // Mock dependencies
@@ -253,10 +253,7 @@ describe('Cache Utilities', () => {
       const newDate = new Date(now - 1 * 24 * 60 * 60 * 1000); // 1 day old
 
       mockFs.existsSync.mockReturnValue(true);
-      mockFs.readdirSync.mockReturnValue([
-        'old.json',
-        'new.json',
-      ]);
+      mockFs.readdirSync.mockReturnValue(['old.json', 'new.json']);
       mockFs.statSync.mockImplementation((filePath: any) => {
         const filePathStr = String(filePath);
         if (filePathStr.endsWith('old.json')) {
@@ -325,9 +322,7 @@ describe('Cache Utilities', () => {
   describe('createCacheManifest', () => {
     it('should create cache manifest', async () => {
       mockFs.existsSync.mockReturnValue(true);
-      mockFs.readdirSync.mockReturnValue([
-        'file.json',
-      ]);
+      mockFs.readdirSync.mockReturnValue(['file.json']);
       mockFs.statSync.mockReturnValue({
         isDirectory: () => false,
         size: 1024,
