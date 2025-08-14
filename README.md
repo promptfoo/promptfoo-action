@@ -80,12 +80,16 @@ jobs:
       - uses: actions/checkout@v4
 
       # This cache is optional, but you'll save money and time by setting it up!
+      # IMPORTANT: Use actions/cache@v4 or later (required after Feb 1, 2025)
       - name: Set up promptfoo cache
         uses: actions/cache@v4
         with:
-          path: ~/.cache/promptfoo
-          key: ${{ runner.os }}-promptfoo-v1
+          path: |
+            ~/.promptfoo/cache
+            .promptfoo-cache
+          key: ${{ runner.os }}-promptfoo-${{ hashFiles('prompts/**') }}-${{ github.sha }}
           restore-keys: |
+            ${{ runner.os }}-promptfoo-${{ hashFiles('prompts/**') }}-
             ${{ runner.os }}-promptfoo-
 
       - name: Run promptfoo evaluation
@@ -94,7 +98,7 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           config: 'prompts/promptfooconfig.yaml'
-          cache-path: ~/.cache/promptfoo
+          cache-path: '.promptfoo-cache'
 ```
 
 ### Manual Trigger (workflow_dispatch)
@@ -290,6 +294,145 @@ If you need to run evaluations regardless of file changes, use the `force-run` o
     config: 'prompts/promptfooconfig.yaml'
     force-run: true
 ```
+
+## Caching for Better Performance
+
+promptfoo-action integrates with both GitHub Actions caching and promptfoo's internal caching to significantly reduce API costs and evaluation time. 
+
+### Why Caching Matters
+
+- **Cost Savings**: Avoid redundant API calls to OpenAI, Anthropic, and other providers
+- **Speed**: Cached evaluations complete in seconds vs. minutes
+- **Reliability**: Reduce dependency on external API availability
+- **Consistency**: Ensure reproducible results across runs
+
+### How It Works
+
+The action uses a multi-layer caching strategy:
+
+1. **promptfoo Internal Cache**: Caches individual API responses (default: 1 day TTL in CI)
+2. **GitHub Actions Cache**: Persists the cache across workflow runs
+3. **Smart Invalidation**: Cache keys include content hashes for automatic invalidation
+
+### Basic Setup
+
+```yaml
+name: 'Prompt Evaluation with Caching'
+on:
+  pull_request:
+    paths:
+      - 'prompts/**'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Required for git diff comparisons
+
+      # IMPORTANT: Use actions/cache@v4 or later (required after Feb 1, 2025)
+      - name: Cache promptfoo evaluations
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.promptfoo/cache
+            .promptfoo-cache
+          # Cache key includes content hash for automatic invalidation
+          key: ${{ runner.os }}-promptfoo-${{ hashFiles('prompts/**') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-promptfoo-${{ hashFiles('prompts/**') }}-
+            ${{ runner.os }}-promptfoo-
+
+      - name: Run promptfoo evaluation
+        uses: promptfoo/promptfoo-action@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          config: 'prompts/promptfooconfig.yaml'
+          cache-path: '.promptfoo-cache'  # Local cache directory
+```
+
+### Advanced Caching with Weekly Rotation
+
+For better cache freshness while maintaining efficiency:
+
+```yaml
+- name: Get cache rotation key
+  id: cache-key
+  run: echo "week=$(date +%Y-W%U)" >> $GITHUB_OUTPUT
+
+- name: Cache with weekly rotation
+  uses: actions/cache@v4
+  with:
+    path: ~/.promptfoo/cache
+    # Weekly rotation ensures fresh results
+    key: promptfoo-${{ runner.os }}-${{ hashFiles('prompts/**') }}-${{ steps.cache-key.outputs.week }}
+    restore-keys: |
+      promptfoo-${{ runner.os }}-${{ hashFiles('prompts/**') }}-
+```
+
+### Environment Variables for Cache Control
+
+The action automatically configures optimal caching settings for CI:
+
+```yaml
+- name: Configure cache environment
+  run: |
+    echo "PROMPTFOO_CACHE_ENABLED=true" >> $GITHUB_ENV
+    echo "PROMPTFOO_CACHE_TYPE=disk" >> $GITHUB_ENV
+    echo "PROMPTFOO_CACHE_PATH=$HOME/.promptfoo/cache" >> $GITHUB_ENV
+    echo "PROMPTFOO_CACHE_TTL=86400" >> $GITHUB_ENV  # 1 day for CI
+    echo "PROMPTFOO_CACHE_MAX_SIZE=52428800" >> $GITHUB_ENV  # 50MB
+```
+
+### Cache Metrics and Monitoring
+
+The action provides cache statistics as outputs:
+
+```yaml
+- name: Run evaluation
+  id: eval
+  uses: promptfoo/promptfoo-action@main
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    config: 'prompts/promptfooconfig.yaml'
+    cache-path: '.promptfoo-cache'
+
+- name: Display cache metrics
+  run: |
+    echo "Cache size: ${{ steps.eval.outputs.cache-size-mb }}MB"
+    echo "Cache files: ${{ steps.eval.outputs.cache-file-count }}"
+```
+
+### Best Practices
+
+1. **Always use actions/cache@v4 or later** (required after February 1, 2025)
+2. **Include content hashes in cache keys** for automatic invalidation
+3. **Use restore-keys for fallback** to partial cache hits
+4. **Set appropriate TTL** - shorter for development (1 day), longer for stable prompts
+5. **Monitor cache size** to avoid hitting GitHub's 10GB limit
+6. **Use separate caches** for different prompt sets or environments
+
+### Troubleshooting Cache Issues
+
+If caching isn't working as expected:
+
+1. **Enable debug mode** to see cache hits/misses:
+   ```yaml
+   - uses: promptfoo/promptfoo-action@main
+     with:
+       debug: true
+   ```
+
+2. **Check cache statistics** in the action output
+3. **Verify cache paths** match between save and restore
+4. **Clear cache manually** if needed via GitHub UI or API
+
+For a complete example with all caching features, see [.github/workflows/example-cached.yml](.github/workflows/example-cached.yml).
 
 ## Sharing
 

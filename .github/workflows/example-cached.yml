@@ -1,0 +1,203 @@
+name: 'Promptfoo with Optimized Caching'
+
+# This example workflow demonstrates best practices for using
+# promptfoo-action with GitHub Actions caching in 2025
+
+on:
+  pull_request:
+    paths:
+      # Trigger on changes to prompts or configs
+      - 'prompts/**'
+      - 'configs/**'
+      - '**/*.prompt.*'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      force-cache-refresh:
+        description: 'Force cache refresh'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  evaluate-prompts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          # Fetch full history for accurate git diff comparisons
+          fetch-depth: 0
+
+      # Step 1: Set up Node.js with built-in caching
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          # Automatically cache npm dependencies
+          cache: 'npm'
+
+      # Step 2: Cache promptfoo evaluation results
+      # This caches the actual AI model responses to avoid redundant API calls
+      - name: Cache promptfoo evaluations
+        id: cache-promptfoo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.promptfoo/cache
+            .promptfoo-cache
+          # Key includes content hash for automatic invalidation
+          key: promptfoo-${{ runner.os }}-${{ hashFiles('prompts/**', 'configs/**', '**/promptfooconfig.yaml') }}-${{ github.sha }}
+          # Fallback keys for partial cache hits
+          restore-keys: |
+            promptfoo-${{ runner.os }}-${{ hashFiles('prompts/**', 'configs/**', '**/promptfooconfig.yaml') }}-
+            promptfoo-${{ runner.os }}-
+
+      # Step 3: Cache API responses with weekly rotation
+      # This provides a balance between cache freshness and API cost savings
+      - name: Get cache rotation key
+        id: cache-key
+        run: |
+          echo "week=$(date +%Y-W%U)" >> $GITHUB_OUTPUT
+          echo "day=$(date +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          echo "hour=$(date +%Y-%m-%d-%H)" >> $GITHUB_OUTPUT
+
+      - name: Cache provider API responses
+        uses: actions/cache@v4
+        with:
+          path: ~/.promptfoo/provider-cache
+          # Weekly rotation ensures fresh results while maintaining efficiency
+          key: provider-${{ runner.os }}-${{ hashFiles('prompts/**') }}-${{ steps.cache-key.outputs.week }}
+          restore-keys: |
+            provider-${{ runner.os }}-${{ hashFiles('prompts/**') }}-
+            provider-${{ runner.os }}-
+
+      # Step 4: Set up promptfoo cache environment
+      - name: Configure cache environment
+        run: |
+          # Enable and configure promptfoo caching
+          echo "PROMPTFOO_CACHE_ENABLED=true" >> $GITHUB_ENV
+          echo "PROMPTFOO_CACHE_TYPE=disk" >> $GITHUB_ENV
+          echo "PROMPTFOO_CACHE_PATH=$HOME/.promptfoo/cache" >> $GITHUB_ENV
+          # Use shorter TTL in CI for fresher results (1 day)
+          echo "PROMPTFOO_CACHE_TTL=86400" >> $GITHUB_ENV
+          # Increase cache size for CI (50MB)
+          echo "PROMPTFOO_CACHE_MAX_SIZE=52428800" >> $GITHUB_ENV
+          echo "PROMPTFOO_CACHE_MAX_FILE_COUNT=5000" >> $GITHUB_ENV
+          
+          # Create cache directories
+          mkdir -p ~/.promptfoo/cache
+          mkdir -p ~/.promptfoo/provider-cache
+          mkdir -p .promptfoo-cache
+
+      # Step 5: Display cache status before evaluation
+      - name: Cache status (before)
+        run: |
+          echo "Cache restored: ${{ steps.cache-promptfoo.outputs.cache-hit }}"
+          if [ -d ~/.promptfoo/cache ]; then
+            echo "Cache size: $(du -sh ~/.promptfoo/cache 2>/dev/null | cut -f1 || echo '0')"
+            echo "Cache files: $(find ~/.promptfoo/cache -type f 2>/dev/null | wc -l || echo '0')"
+          else
+            echo "Cache directory not found"
+          fi
+
+      # Step 6: Run promptfoo evaluation with caching
+      - name: Run promptfoo evaluation
+        uses: ./  # or mdangelo/promptfoo-action@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: 'prompts/promptfooconfig.yaml'
+          prompts: |
+            prompts/**/*.json
+            prompts/**/*.txt
+            prompts/**/*.yaml
+          # Use local cache directory for persistence
+          cache-path: '.promptfoo-cache'
+          # API keys (store as secrets)
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Performance optimizations
+          max-concurrency: '8'  # Increase for faster evaluation
+          no-progress-bar: 'true'  # Cleaner CI output
+          # Enable debug mode to see cache hits/misses
+          debug: ${{ runner.debug == '1' }}
+
+      # Step 7: Display cache statistics after evaluation
+      - name: Cache statistics (after)
+        if: always()
+        run: |
+          echo "=== Cache Statistics ==="
+          if [ -d ~/.promptfoo/cache ]; then
+            echo "Cache size: $(du -sh ~/.promptfoo/cache 2>/dev/null | cut -f1 || echo '0')"
+            echo "Cache files: $(find ~/.promptfoo/cache -type f 2>/dev/null | wc -l || echo '0')"
+            echo ""
+            echo "=== Cache age distribution ==="
+            find ~/.promptfoo/cache -type f -mtime +7 2>/dev/null | wc -l | xargs echo "Files older than 7 days:"
+            find ~/.promptfoo/cache -type f -mtime -1 2>/dev/null | wc -l | xargs echo "Files modified today:"
+          fi
+          
+          if [ -f .promptfoo-cache/.cache-manifest.json ]; then
+            echo ""
+            echo "=== Cache Manifest ==="
+            cat .promptfoo-cache/.cache-manifest.json
+          fi
+
+      # Step 8: Upload cache artifacts for debugging (optional)
+      - name: Upload cache artifacts
+        if: failure() || runner.debug == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-cache-${{ github.run_id }}
+          path: |
+            .promptfoo-cache/.cache-manifest.json
+            ~/.promptfoo/cache/.cache-manifest.json
+          retention-days: 7
+
+  # Advanced job with cache warming strategy
+  cache-warmer:
+    runs-on: ubuntu-latest
+    # Run daily to keep cache warm
+    if: github.event_name == 'schedule' || github.event.inputs.force-cache-refresh == 'true'
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Restore promptfoo cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.promptfoo/cache
+            .promptfoo-cache
+          key: promptfoo-warm-${{ runner.os }}-${{ hashFiles('prompts/**') }}
+          restore-keys: |
+            promptfoo-warm-${{ runner.os }}-
+
+      - name: Warm cache with common evaluations
+        uses: ./
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: 'prompts/promptfooconfig.yaml'
+          cache-path: '.promptfoo-cache'
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          # Force evaluation of all prompts
+          force-run: 'true'
+          disable-comment: 'true'  # Don't comment on schedule runs
+
+      - name: Save warmed cache
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.promptfoo/cache
+            .promptfoo-cache
+          key: promptfoo-warm-${{ runner.os }}-${{ hashFiles('prompts/**') }}-${{ github.run_id }}
+
+# Schedule cache warming (optional)
+# Uncomment to run daily at 2 AM UTC
+# on:
+#   schedule:
+#     - cron: '0 2 * * *'
