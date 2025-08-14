@@ -26,7 +26,7 @@ The action can be configured using the following inputs:
 | `config`             | The path to the configuration file. This file contains settings for the action.                                                                           | Yes      |
 | `github-token`       | The Github token. Used to authenticate requests to the Github API.                                                                                        | Yes      |
 | `cache-path`         | The path to the cache. This is where the action stores temporary data.                                                                                    | No       |
-| `no-share`           | No sharing option for promptfoo. Defaults to `false`                                                                                                      | No       |
+| `no-share`           | Disable sharing of evaluation results. Defaults to `false` (sharing enabled). See [Sharing Results](#sharing-results) for details.                       | No       |
 | `promptfoo-version`  | The version of promptfoo to use. Defaults to `latest`                                                                                                     | No       |
 | `working-directory`  | The working directory to run `promptfoo` in. Can be set to a location where `promptfoo` is already installed.                                             | No       |
 | `prompts`            | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate.                                 | No       |
@@ -81,7 +81,7 @@ jobs:
 
       # This cache is optional, but you'll save money and time by setting it up!
       - name: Set up promptfoo cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/promptfoo
           key: ${{ runner.os }}-promptfoo-v1
@@ -89,7 +89,7 @@ jobs:
             ${{ runner.os }}-promptfoo-
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@v1
+        uses: promptfoo/promptfoo-action@main
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -128,7 +128,7 @@ jobs:
           fetch-depth: 0 # Fetch all history for comparisons
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@v1
+        uses: promptfoo/promptfoo-action@main
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -148,7 +148,7 @@ You can also specify files and base directly as action inputs:
 
 ```yaml
 - name: Run promptfoo evaluation
-  uses: promptfoo/promptfoo-action@v1
+  uses: promptfoo/promptfoo-action@main
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     config: 'prompts/promptfooconfig.yaml'
@@ -183,7 +183,7 @@ jobs:
           fetch-depth: 2 # Need at least 2 commits for comparison
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@v1
+        uses: promptfoo/promptfoo-action@main
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -217,7 +217,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@v1
+        uses: promptfoo/promptfoo-action@main
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -289,6 +289,33 @@ If you need to run evaluations regardless of file changes, use the `force-run` o
     github-token: ${{ secrets.GITHUB_TOKEN }}
     config: 'prompts/promptfooconfig.yaml'
     force-run: true
+```
+
+## Sharing
+
+By default, results are shared online. Without `PROMPTFOO_API_KEY`, sharing is skipped and results only appear in logs.
+
+To enable sharing with authentication:
+
+```yaml
+- name: Run promptfoo evaluation
+  uses: promptfoo/promptfoo-action@main
+  env:
+    PROMPTFOO_API_KEY: ${{ secrets.PROMPTFOO_API_KEY }}
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    config: 'prompts/promptfooconfig.yaml'
+```
+
+To explicitly disable sharing:
+
+```yaml
+- name: Run promptfoo evaluation
+  uses: promptfoo/promptfoo-action@main
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    config: 'prompts/promptfooconfig.yaml'
+    no-share: true
 ```
 
 ## Minimal Output

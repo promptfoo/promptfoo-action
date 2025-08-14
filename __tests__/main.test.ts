@@ -703,12 +703,16 @@ describe('GitHub Action Main', () => {
       );
     });
 
-    test('should include --share flag when no-share is false', async () => {
+    test('should include --share flag when no-share is false and auth is present', async () => {
+      process.env.PROMPTFOO_API_KEY = 'test-api-key';
+
       await run();
 
       const promptfooCall = mockExec.exec.mock.calls[2];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--share');
+
+      delete process.env.PROMPTFOO_API_KEY;
     });
 
     test('should not include --share flag when no-share is true', async () => {
@@ -722,6 +726,47 @@ describe('GitHub Action Main', () => {
       const promptfooCall = mockExec.exec.mock.calls[2];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--share');
+    });
+
+    test('should skip sharing when no auth is present', async () => {
+      // Ensure no auth environment variables are set
+      delete process.env.PROMPTFOO_API_KEY;
+      delete process.env.PROMPTFOO_REMOTE_API_BASE_URL;
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--share');
+      expect(mockCore.info).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Sharing is enabled but no authentication found',
+        ),
+      );
+    });
+
+    test('should include --share when PROMPTFOO_API_KEY is set', async () => {
+      process.env.PROMPTFOO_API_KEY = 'test-api-key';
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).toContain('--share');
+
+      delete process.env.PROMPTFOO_API_KEY;
+    });
+
+    test('should include --share when PROMPTFOO_REMOTE_API_BASE_URL is set', async () => {
+      process.env.PROMPTFOO_REMOTE_API_BASE_URL = 'https://example.com';
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[2];
+      const args = promptfooCall[1] as string[];
+      expect(args).toContain('--share');
+
+      delete process.env.PROMPTFOO_REMOTE_API_BASE_URL;
     });
 
     test('should handle all flags together correctly', async () => {
