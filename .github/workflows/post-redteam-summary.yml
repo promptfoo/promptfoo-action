@@ -63,31 +63,35 @@ jobs:
           const fs = require('fs');
           const out = JSON.parse(fs.readFileSync('output.json','utf8'));
           const stats = out?.results?.stats || {};
-          const tests = out?.results?.tests || [];
+          // Redteam outputs place test array at results.results (not results.tests)
+          const tests = out?.results?.results || out?.results?.tests || [];
           const share = out?.shareableUrl;
 
-          const failures = tests.flatMap(t => (t.assertions || [])
-            .filter(a => a?.pass === false)
-            .map(a => ({ a, t }))
-          );
+          // Derive failures from test-level success/grading rather than per-assertion
+          const failureTests = tests.filter(t => {
+            const pass = (typeof t.success === 'boolean') ? t.success : (t?.gradingResult?.pass === true);
+            return pass === false;
+          });
 
           const inc = (obj, key) => { obj[key] = (obj[key] || 0) + 1; };
           const byPlugin = {}, byStrategy = {}, byProvider = {};
-          for (const { a, t } of failures) {
-            const plugin = a?.metadata?.plugin || a?.plugin || 'unknown';
+          const examples = [];
+
+          for (const t of failureTests) {
+            const plugin = t?.metadata?.pluginId || t?.testCase?.metadata?.pluginId || t?.gradingResult?.componentResults?.[0]?.metadata?.pluginId || 'unknown';
             inc(byPlugin, plugin);
-            const strategy = a?.metadata?.strategy || a?.strategy || a?.name || 'unknown';
+            const strategy = t?.metadata?.strategyId || t?.testCase?.metadata?.strategyId || t?.gradingResult?.componentResults?.[0]?.metadata?.strategyId || 'unknown';
             inc(byStrategy, strategy);
-            const provider = t?.provider || t?.model || t?.config?.provider || 'unknown';
+            const provider = t?.provider?.label || t?.provider?.id || t?.testCase?.provider?.id || 'unknown';
             inc(byProvider, provider);
+            if (examples.length < 3) {
+              const prompt = (t?.vars?.prompt || t?.prompt?.raw || t?.testCase?.vars?.prompt || '').toString().slice(0,500);
+              const reason = t?.gradingResult?.reason || t?.gradingResult?.componentResults?.[0]?.reason || t?.error || '';
+              examples.push({ plugin, strategy, prompt, reason });
+            }
           }
+
           const top = (obj, n=8) => Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,n);
-          const examples = failures.slice(0,3).map(({a,t}) => ({
-            plugin: a?.metadata?.plugin || a?.plugin || 'unknown',
-            strategy: a?.metadata?.strategy || a?.strategy || a?.name || 'unknown',
-            prompt: (t?.vars?.input || t?.input || t?.prompt || '').toString().slice(0,500),
-            reason: a?.reason || a?.message || a?.details || ''
-          }));
 
           const lines = [];
           lines.push('⚠️ LLM redteam results');
