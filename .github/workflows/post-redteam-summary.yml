@@ -79,7 +79,11 @@ jobs:
           const tu = runStats?.tokenUsage || {};
           const evalId = out?.evalId || '';
           const ts = resultsRoot?.timestamp || '';
-          const share = out?.shareableUrl || '';
+          let share = out?.shareableUrl || '';
+          if (!share && evalId) {
+            const host = (process.env.PROMPTFOO_REMOTE_APP_BASE_URL || process.env.PROMPTFOO_APP_HOST || 'https://www.promptfoo.app').replace(/\/$/, '');
+            share = `${host}/redteam/report/${encodeURIComponent(evalId)}`;
+          }
 
           const isPass = (t) => (typeof t?.success === 'boolean' ? t.success : t?.gradingResult?.pass === true);
           const getPlugin = (t) => t?.metadata?.pluginId || t?.testCase?.metadata?.pluginId || t?.gradingResult?.componentResults?.[0]?.metadata?.pluginId || 'unknown';
@@ -202,24 +206,10 @@ jobs:
             }
           }
 
-          // Examples (collapsed)
-          if (failureExamples.length) {
+          // Link to full report (no examples)
+          if (share) {
             lines.push('');
-            lines.push('<details>');
-            lines.push('<summary><strong>Failure examples</strong> (click to expand)</summary>');
-            lines.push('');
-            const maxExamples = 4;
-            failureExamples.slice(0, maxExamples).forEach((e, i) => {
-              lines.push(`- **${esc(e.plugin)}** | **${esc(e.strategy)}** | **${esc(e.provider)}**`);
-              if (e.reason) lines.push(`  - Reason: ${esc(e.reason)}`);
-              lines.push('');
-              lines.push('  ```');
-              lines.push((e.prompt || '').toString());
-              lines.push('  ```');
-              lines.push('');
-            });
-            if (share) lines.push(`- Open the full report for complete transcripts: ${share}`);
-            lines.push('</details>');
+            lines.push(`> View full redteam report: ${share}`);
           }
 
           // Remediations
