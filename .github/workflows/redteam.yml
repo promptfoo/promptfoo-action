@@ -28,14 +28,14 @@ jobs:
 
       - name: Promptfoo auth login
         run: |
-          npx --yes promptfoo@latest auth login \
+          npx promptfoo@latest auth login \
             --host https://www.promptfoo.app \
             --api-key sk-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJlY2M3MDE0Yy01N2ZkLTQ1ZjktYjJmMy00OTA3ZjQyNzk5ZjAiLCJvcmdhbml6YXRpb25JZCI6IjM2YmUwMTYyLTFiYmYtNDQ1Ny1iZGI0LWJmOGVkM2ZjZmM3YyIsInR5cGUiOiJ1c2VyX2FwaV90b2tlbiIsImlhdCI6MTc1NTU2ODcyMywiZXhwIjoxNzg3MTI2MzIzfQ.WsiENya35Z3ggX9Yz4_j5RKFm9JrNsR1is9vJyxxIWo
 
       - name: Run Promptfoo redteam
         run: |
           start=$(date +%s)
-          npx --yes promptfoo@latest redteam run \
+          npx promptfoo@latest redteam run \
             -c 9d32de26-7926-44f1-af13-bd06cb86f691 \
             -t 213c2235-865c-4aa4-90cc-a002256e0a94 \
             -j 5 \
@@ -46,104 +46,29 @@ jobs:
 
       - name: Build redteam summary (JS)
         run: |
-          node - <<'EOF'
-          const fs = require('fs');
-          const esc = (s) => (s || '').toString().replace(/\|/g, '\\|');
-          const pct = (num, den) => (den ? `${((num / den) * 100).toFixed(1)}%` : '—');
-          const out = JSON.parse(fs.readFileSync('output.json', 'utf8'));
-          const resultsRoot = out?.results || {};
-          const tests = resultsRoot?.results || resultsRoot?.tests || [];
-          const runStats = resultsRoot?.stats || {};
-          const tu = runStats?.tokenUsage || {};
-          const evalId = out?.evalId || '';
-          const ts = resultsRoot?.timestamp || '';
-          let share = out?.shareableUrl || '';
-          if (!share && evalId) {
-            const host = (process.env.PROMPTFOO_REMOTE_APP_BASE_URL || process.env.PROMPTFOO_APP_HOST || 'https://www.promptfoo.app').replace(/\/$/, '');
-            // redteam report path
-            share = `${host}/redteam/report/${encodeURIComponent(evalId)}`;
-          }
-
-          const isPass = (t) => (typeof t?.success === 'boolean' ? t.success : t?.gradingResult?.pass === true);
-          const getPlugin = (t) => t?.metadata?.pluginId || t?.testCase?.metadata?.pluginId || t?.gradingResult?.componentResults?.[0]?.metadata?.pluginId || 'unknown';
-          const getStrategy = (t) => t?.metadata?.strategyId || t?.testCase?.metadata?.strategyId || t?.gradingResult?.componentResults?.[0]?.metadata?.strategyId || 'basic';
-          const getProvider = (t) => t?.provider?.label || t?.provider?.id || t?.testCase?.provider?.label || t?.testCase?.provider?.id || 'unknown';
-
-          const overall = { total: tests.length, pass: 0, fail: 0 };
-          const agg = () => ({ total: 0, pass: 0, fail: 0 });
-          const byPlugin = new Map();
-          const byStrategy = new Map();
-          const byProvider = new Map();
-
-          for (const t of tests) {
-            const passed = isPass(t) === true;
-            overall.total += 1;
-            if (passed) overall.pass += 1; else overall.fail += 1;
-            const plugin = getPlugin(t);
-            const strategy = getStrategy(t);
-            const provider = getProvider(t);
-            const bump = (m, k) => { if (!m.has(k)) m.set(k, agg()); const a = m.get(k); a.total += 1; if (passed) a.pass += 1; else a.fail += 1; };
-            bump(byPlugin, plugin);
-            bump(byStrategy, strategy);
-            bump(byProvider, provider);
-          }
-
-          const topN = (map, n = 10) => Array.from(map.entries()).sort((a,b) => b[1].fail - a[1].fail || (a[1].pass/(a[1].total||1)) - (b[1].pass/(b[1].total||1))).slice(0,n);
-
-          const lines = [];
-          lines.push('### ⚠️ LLM redteam summary');
-          lines.push('');
-          lines.push(`- **Eval**: ${esc(evalId)}  `);
-          lines.push(`- **Timestamp**: ${esc(ts)}  `);
-          lines.push(`- **Total tests**: ${overall.total}  `);
-          lines.push(`- **Passed**: ${overall.pass}  `);
-          lines.push(`- **Failed**: ${overall.fail}  `);
-          lines.push(`- **Pass rate**: ${pct(overall.pass, overall.total)}`);
-          if (process.env.DURATION_SECONDS) lines.push(`- **Duration**: ${process.env.DURATION_SECONDS}s`);
-          if (share) lines.push(`- **Report**: ${share}`);
-
-          lines.push('');
-          lines.push('| Total | Passed | Failed | Pass rate |');
-          lines.push('|------:|------:|-------:|:---------:|');
-          lines.push(`| ${overall.total} | ${overall.pass} | ${overall.fail} | ${pct(overall.pass, overall.total)} |`);
-
-          const section = (title, rows) => {
-            if (!rows.length) return;
-            lines.push('');
-            lines.push(`### ${title}`);
-            lines.push('');
-            lines.push('| ' + title.split(' ')[0] + ' | Pass | Fail | Pass rate |');
-            lines.push('|---|---:|---:|:--:|');
-            for (const [k, v] of rows) lines.push(`| ${esc(k)} | ${v.pass} | ${v.fail} | ${pct(v.pass, v.total)} |`);
-          };
-
-          section('Plugin performance', topN(byPlugin, 20));
-          section('Strategy performance', topN(byStrategy, 10));
-          section('Provider/model performance', topN(byProvider, 10));
-
-          const tuTotal = (tu.total ?? (tu.prompt || 0) + (tu.completion || 0)) || 0;
-          if (tuTotal) {
-            lines.push('');
-            lines.push('<details>');
-            lines.push('<summary><strong>Token usage</strong> (click to expand)</summary>');
-            lines.push('');
-            lines.push(`- Total tokens: ${tuTotal}`);
-            if (typeof tu.prompt === 'number') lines.push(`- Prompt tokens: ${tu.prompt}`);
-            if (typeof tu.completion === 'number') lines.push(`- Completion tokens: ${tu.completion}`);
-            if (typeof tu.numRequests === 'number') lines.push(`- Requests: ${tu.numRequests}`);
-            if (tu.assertions) lines.push(`\n- Assertions tokens: total=${tu.assertions.total ?? 0}, prompt=${tu.assertions.prompt ?? 0}, completion=${tu.assertions.completion ?? 0}`);
-            lines.push('</details>');
-          }
-
-          const md = lines.join('\n');
-          fs.writeFileSync('comment.md', md);
-          console.log(md);
-          EOF
+          node .github/scripts/redteam-summary.js --input output.json --out comment.md --print
 
       - name: Print summary file
         run: |
           echo "----- BEGIN SUMMARY -----"
           cat comment.md
           echo "------ END SUMMARY ------"
+          # Also emit a workflow annotation with duration if set
+          if [ -n "$DURATION_SECONDS" ]; then
+            echo "::notice title=Redteam Duration::${DURATION_SECONDS}s"
+          fi
 
-      # Removed PR comment step; summary is printed to logs 
+      - name: Comment on PR (simple)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('comment.md','utf8');
+            const issue_number = context.payload.pull_request.number;
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number,
+              body,
+            });
