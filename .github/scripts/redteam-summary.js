@@ -9,7 +9,7 @@ function getArg(flag, defVal) {
 }
 
 function esc(s) {
-  return (s || '').toString().replace(/\|/g, '\\|');
+  return (s || '').toString().replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
 }
 
 function pct(num, den) {
