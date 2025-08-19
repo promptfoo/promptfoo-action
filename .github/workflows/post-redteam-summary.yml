@@ -135,15 +135,41 @@ jobs:
           script: |
             const fs = require('fs');
             const body = fs.readFileSync('comment.md','utf8');
-            const fromEvent = context.payload.pull_request && context.payload.pull_request.number;
-            const fromInput = core.getInput('pr_number') || (context.payload.inputs && context.payload.inputs.pr_number);
-            const issue_number = Number(fromEvent || fromInput);
-            if (!issue_number) {
-              core.setFailed('No PR number found. Provide pr_number when using workflow_dispatch.');
+            // 1) PR from event
+            let prNumber = context.payload.pull_request && context.payload.pull_request.number;
+            // 2) Input override
+            if (!prNumber) {
+              const fromInput = core.getInput('pr_number') || (context.payload.inputs && context.payload.inputs.pr_number);
+              if (fromInput) prNumber = Number(fromInput);
+            }
+            // 3) Look up PRs associated with this commit
+            if (!prNumber) {
+              const prsForCommit = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
+              prNumber = prsForCommit.data.find(p => p.state === 'open')?.number || prsForCommit.data[0]?.number;
+            }
+            // 4) Fallback: open PRs for this branch
+            if (!prNumber) {
+              const branch = (context.ref || '').replace('refs/heads/', '');
+              if (branch) {
+                const prsForBranch = await github.rest.pulls.list({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  head: `${context.repo.owner}:${branch}`,
+                  state: 'open',
+                });
+                prNumber = prsForBranch.data[0]?.number;
+              }
+            }
+            if (!prNumber) {
+              core.setFailed('No PR number found automatically. Provide pr_number when using workflow_dispatch.');
             } else {
               await github.rest.issues.createComment({
                 ...context.repo,
-                issue_number,
+                issue_number: prNumber,
                 body,
               });
             }
