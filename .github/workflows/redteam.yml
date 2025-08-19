@@ -1,0 +1,134 @@
+name: Promptfoo Redteam (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to comment on'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  redteam:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run Promptfoo redteam
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PROMPTFOO_API_KEY: ${{ secrets.PROMPTFOO_API_KEY }}
+        run: |
+          start=$(date +%s)
+          npx --yes promptfoo@latest redteam run \
+            -c 9d32de26-7926-44f1-af13-bd06cb86f691 \
+            -t 213c2235-865c-4aa4-90cc-a002256e0a94 \
+            -j 5 \
+            -o output.json --format json \
+            --share --no-table --no-progress-bar
+          end=$(date +%s)
+          echo "DURATION_SECONDS=$((end-start))" >> $GITHUB_ENV
+          test -f output.json || { echo 'output.json not found'; exit 1; }
+
+      - name: Build redteam summary (JS)
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const outPath = path.join(process.cwd(), 'output.json');
+          const out = JSON.parse(fs.readFileSync(outPath, 'utf8'));
+          const stats = out?.results?.stats || {};
+          const tests = out?.results?.tests || [];
+          const share = out?.shareableUrl;
+
+          const failures = tests.flatMap(t => (t.assertions || [])
+            .filter(a => a?.pass === false)
+            .map(a => ({ a, t }))
+          );
+
+          const inc = (obj, key) => { obj[key] = (obj[key] || 0) + 1; };
+          const byPlugin = {}, byStrategy = {}, byProvider = {};
+          for (const { a, t } of failures) {
+            const plugin = a?.metadata?.plugin || a?.plugin || 'unknown';
+            inc(byPlugin, plugin);
+            const strategy = a?.metadata?.strategy || a?.strategy || a?.name || 'unknown';
+            inc(byStrategy, strategy);
+            const provider = t?.provider || t?.model || t?.config?.provider || 'unknown';
+            inc(byProvider, provider);
+          }
+          const top = (obj, n=8) => Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,n);
+          const examples = failures.slice(0,3).map(({a,t}) => ({
+            plugin: a?.metadata?.plugin || a?.plugin || 'unknown',
+            strategy: a?.metadata?.strategy || a?.strategy || a?.name || 'unknown',
+            prompt: (t?.vars?.input || t?.input || t?.prompt || '').toString().slice(0,500),
+            reason: a?.reason || a?.message || a?.details || ''
+          }));
+
+          const lines = [];
+          lines.push('⚠️ LLM redteam results');
+          lines.push('');
+          lines.push('| Success | Failure |');
+          lines.push('|---------|---------|');
+          lines.push(`| ${stats.successes ?? 0} | ${stats.failures ?? 0} |`);
+          lines.push('');
+          if (process.env.DURATION_SECONDS) lines.push(`- Duration: ${process.env.DURATION_SECONDS}s`);
+          if (share) lines.push(`- Report: ${share}`);
+
+          const addTable = (title, rows) => {
+            if (!rows.length) return;
+            lines.push('');
+            lines.push(`#### ${title}`);
+            lines.push('');
+            lines.push('| Key | Failures |');
+            lines.push('|---|---|');
+            for (const [k,v] of rows) lines.push(`| ${k} | ${v} |`);
+          };
+
+          addTable('Plugin failures (top)', top(byPlugin));
+          addTable('Strategy failures (top)', top(byStrategy));
+          addTable('Provider/model failures (top)', top(byProvider));
+
+          if (examples.length) {
+            lines.push('');
+            lines.push('#### Examples');
+            for (const e of examples) {
+              lines.push(`- ${e.plugin} / ${e.strategy}: ${e.reason || 'failed'}`);
+              lines.push('');
+              lines.push('  ```');
+              lines.push(e.prompt);
+              lines.push('  ```');
+            }
+          }
+
+          fs.writeFileSync('comment.md', lines.join('\n'));
+          console.log('Wrote comment.md');
+          EOF
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('comment.md','utf8');
+            const issue_number = Number(core.getInput('pr_number') || (context.payload.inputs && context.payload.inputs.pr_number));
+            if (!issue_number) {
+              core.setFailed('pr_number input is required');
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number,
+                body,
+              });
+            }
+          result-encoding: string 
