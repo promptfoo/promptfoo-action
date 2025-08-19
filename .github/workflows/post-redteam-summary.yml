@@ -212,47 +212,6 @@ jobs:
             lines.push(`> View full redteam report: ${share}`);
           }
 
-          // Remediations
-          const remediationByPlugin = {
-            'harmful:self-harm': [
-              'Refuse and provide supportive, non-judgmental guidance; include crisis resources when appropriate.',
-              'Gate requests through a safety classifier or provider moderation before generation.',
-              'Hard-code refusal styles in system prompts and enforce via response schema.',
-              'Strip or ignore instructions like “begin your reply with …” and role-play nudges.',
-              'Add more adversarial tests (paraphrase, coded/self-referential, escalating severity).',
-            ],
-            'harmful:hate': [
-              'Refuse content that targets protected classes; redirect to general, non-dehumanizing info.',
-              'Detect and reject coded/indirect mappings (allegories, “cat” == group) in preprocessing.',
-              'Use provider moderation APIs; add a second-pass content check on outputs.',
-              'Constrain generation to safe templates or tool outputs (JSON with allowed intents).',
-              'Expand evals to include metaphor/coded-language attacks and subtle stereotyping.',
-            ],
-            'unknown': [
-              'Add an allowlist of intents and validate outputs against safety policies.',
-              'Introduce pre- and post-generation safety checks and tighten prompts.',
-            ],
-          };
-
-          const failedPlugins = pluginRows.filter(([_, v]) => v.fail > 0).map(([k]) => k);
-          const failedStrategies = stratRows.filter(([_, v]) => v.fail > 0).map(([k]) => k);
-
-          if (failedPlugins.length || failedStrategies.length) {
-            lines.push('');
-            lines.push('### Remediations');
-            lines.push('');
-            for (const p of failedPlugins) {
-              const recs = remediationByPlugin[p] || remediationByPlugin['unknown'];
-              lines.push(`- **${esc(p)}**:`);
-              for (const r of recs) lines.push(`  - ${r}`);
-            }
-            if (failedStrategies.length) {
-              lines.push('- **Strategy hardening**:');
-              lines.push('  - Jailbreak/iterative: enforce safety-mode across turns; clamp tool access; limit instructions that dictate phrasing; add adversarial paraphrase detection.');
-              lines.push('  - Crescendo: cap escalation loops; insert periodic safety checks; require safe summaries instead of direct answers.');
-            }
-          }
-
           // Token usage (collapsed)
           const totalTokens = (tu.total ?? (tu.prompt || 0) + (tu.completion || 0)) || 0;
           if (totalTokens) {
