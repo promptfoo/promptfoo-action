@@ -206,12 +206,6 @@ jobs:
             }
           }
 
-          // Link to full report (no examples)
-          if (share) {
-            lines.push('');
-            lines.push(`> View full redteam report: ${share}`);
-          }
-
           // Token usage (collapsed)
           const totalTokens = (tu.total ?? (tu.prompt || 0) + (tu.completion || 0)) || 0;
           if (totalTokens) {

@@ -39,7 +39,7 @@ jobs:
             -c 9d32de26-7926-44f1-af13-bd06cb86f691 \
             -t 213c2235-865c-4aa4-90cc-a002256e0a94 \
             -j 5 \
-            -o output.json
+            -o output.json || true
           end=$(date +%s)
           echo "DURATION_SECONDS=$((end-start))" >> $GITHUB_ENV
           test -f output.json || { echo 'output.json not found'; exit 1; }
@@ -48,93 +48,102 @@ jobs:
         run: |
           node - <<'EOF'
           const fs = require('fs');
-          const path = require('path');
-          const outPath = path.join(process.cwd(), 'output.json');
-          const out = JSON.parse(fs.readFileSync(outPath, 'utf8'));
-          const stats = out?.results?.stats || {};
-          const tests = out?.results?.tests || [];
-          const share = out?.shareableUrl;
-
-          const failures = tests.flatMap(t => (t.assertions || [])
-            .filter(a => a?.pass === false)
-            .map(a => ({ a, t }))
-          );
-
-          const inc = (obj, key) => { obj[key] = (obj[key] || 0) + 1; };
-          const byPlugin = {}, byStrategy = {}, byProvider = {};
-          for (const { a, t } of failures) {
-            const plugin = a?.metadata?.plugin || a?.plugin || 'unknown';
-            inc(byPlugin, plugin);
-            const strategy = a?.metadata?.strategy || a?.strategy || a?.name || 'unknown';
-            inc(byStrategy, strategy);
-            const provider = t?.provider || t?.model || t?.config?.provider || 'unknown';
-            inc(byProvider, provider);
+          const esc = (s) => (s || '').toString().replace(/\|/g, '\\|');
+          const pct = (num, den) => (den ? `${((num / den) * 100).toFixed(1)}%` : '—');
+          const out = JSON.parse(fs.readFileSync('output.json', 'utf8'));
+          const resultsRoot = out?.results || {};
+          const tests = resultsRoot?.results || resultsRoot?.tests || [];
+          const runStats = resultsRoot?.stats || {};
+          const tu = runStats?.tokenUsage || {};
+          const evalId = out?.evalId || '';
+          const ts = resultsRoot?.timestamp || '';
+          let share = out?.shareableUrl || '';
+          if (!share && evalId) {
+            const host = (process.env.PROMPTFOO_REMOTE_APP_BASE_URL || process.env.PROMPTFOO_APP_HOST || 'https://www.promptfoo.app').replace(/\/$/, '');
+            // redteam report path
+            share = `${host}/redteam/report/${encodeURIComponent(evalId)}`;
           }
-          const top = (obj, n=8) => Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,n);
-          const examples = failures.slice(0,3).map(({a,t}) => ({
-            plugin: a?.metadata?.plugin || a?.plugin || 'unknown',
-            strategy: a?.metadata?.strategy || a?.strategy || a?.name || 'unknown',
-            prompt: (t?.vars?.input || t?.input || t?.prompt || '').toString().slice(0,500),
-            reason: a?.reason || a?.message || a?.details || ''
-          }));
+
+          const isPass = (t) => (typeof t?.success === 'boolean' ? t.success : t?.gradingResult?.pass === true);
+          const getPlugin = (t) => t?.metadata?.pluginId || t?.testCase?.metadata?.pluginId || t?.gradingResult?.componentResults?.[0]?.metadata?.pluginId || 'unknown';
+          const getStrategy = (t) => t?.metadata?.strategyId || t?.testCase?.metadata?.strategyId || t?.gradingResult?.componentResults?.[0]?.metadata?.strategyId || 'basic';
+          const getProvider = (t) => t?.provider?.label || t?.provider?.id || t?.testCase?.provider?.label || t?.testCase?.provider?.id || 'unknown';
+
+          const overall = { total: tests.length, pass: 0, fail: 0 };
+          const agg = () => ({ total: 0, pass: 0, fail: 0 });
+          const byPlugin = new Map();
+          const byStrategy = new Map();
+          const byProvider = new Map();
+
+          for (const t of tests) {
+            const passed = isPass(t) === true;
+            overall.total += 1;
+            if (passed) overall.pass += 1; else overall.fail += 1;
+            const plugin = getPlugin(t);
+            const strategy = getStrategy(t);
+            const provider = getProvider(t);
+            const bump = (m, k) => { if (!m.has(k)) m.set(k, agg()); const a = m.get(k); a.total += 1; if (passed) a.pass += 1; else a.fail += 1; };
+            bump(byPlugin, plugin);
+            bump(byStrategy, strategy);
+            bump(byProvider, provider);
+          }
+
+          const topN = (map, n = 10) => Array.from(map.entries()).sort((a,b) => b[1].fail - a[1].fail || (a[1].pass/(a[1].total||1)) - (b[1].pass/(b[1].total||1))).slice(0,n);
 
           const lines = [];
-          lines.push('⚠️ LLM redteam results');
+          lines.push('### ⚠️ LLM redteam summary');
           lines.push('');
-          lines.push('| Success | Failure |');
-          lines.push('|---------|---------|');
-          lines.push(`| ${stats.successes ?? 0} | ${stats.failures ?? 0} |`);
-          lines.push('');
-          if (process.env.DURATION_SECONDS) lines.push(`- Duration: ${process.env.DURATION_SECONDS}s`);
-          if (share) lines.push(`- Report: ${share}`);
+          lines.push(`- **Eval**: ${esc(evalId)}  `);
+          lines.push(`- **Timestamp**: ${esc(ts)}  `);
+          lines.push(`- **Total tests**: ${overall.total}  `);
+          lines.push(`- **Passed**: ${overall.pass}  `);
+          lines.push(`- **Failed**: ${overall.fail}  `);
+          lines.push(`- **Pass rate**: ${pct(overall.pass, overall.total)}`);
+          if (process.env.DURATION_SECONDS) lines.push(`- **Duration**: ${process.env.DURATION_SECONDS}s`);
+          if (share) lines.push(`- **Report**: ${share}`);
 
-          const addTable = (title, rows) => {
+          lines.push('');
+          lines.push('| Total | Passed | Failed | Pass rate |');
+          lines.push('|------:|------:|-------:|:---------:|');
+          lines.push(`| ${overall.total} | ${overall.pass} | ${overall.fail} | ${pct(overall.pass, overall.total)} |`);
+
+          const section = (title, rows) => {
             if (!rows.length) return;
             lines.push('');
-            lines.push(`#### ${title}`);
+            lines.push(`### ${title}`);
             lines.push('');
-            lines.push('| Key | Failures |');
-            lines.push('|---|---|');
-            for (const [k,v] of rows) lines.push(`| ${k} | ${v} |`);
+            lines.push('| ' + title.split(' ')[0] + ' | Pass | Fail | Pass rate |');
+            lines.push('|---|---:|---:|:--:|');
+            for (const [k, v] of rows) lines.push(`| ${esc(k)} | ${v.pass} | ${v.fail} | ${pct(v.pass, v.total)} |`);
           };
 
-          addTable('Plugin failures (top)', top(byPlugin));
-          addTable('Strategy failures (top)', top(byStrategy));
-          addTable('Provider/model failures (top)', top(byProvider));
+          section('Plugin performance', topN(byPlugin, 20));
+          section('Strategy performance', topN(byStrategy, 10));
+          section('Provider/model performance', topN(byProvider, 10));
 
-          if (examples.length) {
+          const tuTotal = (tu.total ?? (tu.prompt || 0) + (tu.completion || 0)) || 0;
+          if (tuTotal) {
             lines.push('');
-            lines.push('#### Examples');
-            for (const e of examples) {
-              lines.push(`- ${e.plugin} / ${e.strategy}: ${e.reason || 'failed'}`);
-              lines.push('');
-              lines.push('  ```');
-              lines.push(e.prompt);
-              lines.push('  ```');
-            }
+            lines.push('<details>');
+            lines.push('<summary><strong>Token usage</strong> (click to expand)</summary>');
+            lines.push('');
+            lines.push(`- Total tokens: ${tuTotal}`);
+            if (typeof tu.prompt === 'number') lines.push(`- Prompt tokens: ${tu.prompt}`);
+            if (typeof tu.completion === 'number') lines.push(`- Completion tokens: ${tu.completion}`);
+            if (typeof tu.numRequests === 'number') lines.push(`- Requests: ${tu.numRequests}`);
+            if (tu.assertions) lines.push(`\n- Assertions tokens: total=${tu.assertions.total ?? 0}, prompt=${tu.assertions.prompt ?? 0}, completion=${tu.assertions.completion ?? 0}`);
+            lines.push('</details>');
           }
 
-          fs.writeFileSync('comment.md', lines.join('\n'));
-          console.log('Wrote comment.md');
+          const md = lines.join('\n');
+          fs.writeFileSync('comment.md', md);
+          console.log(md);
           EOF
 
-      - name: Comment on PR
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const fs = require('fs');
-            const body = fs.readFileSync('comment.md','utf8');
-            const fromEvent = context.payload.pull_request && context.payload.pull_request.number;
-            const fromInput = core.getInput('pr_number') || (context.payload.inputs && context.payload.inputs.pr_number);
-            const issue_number = Number(fromEvent || fromInput);
-            if (!issue_number) {
-              core.setFailed('No PR number found. Provide pr_number when using workflow_dispatch.');
-            } else {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number,
-                body,
-              });
-            }
-          result-encoding: string 
+      - name: Print summary file
+        run: |
+          echo "----- BEGIN SUMMARY -----"
+          cat comment.md
+          echo "------ END SUMMARY ------"
+
+      # Removed PR comment step; summary is printed to logs 
