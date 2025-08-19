@@ -1,0 +1,150 @@
+name: Post Redteam Summary (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to comment on (optional when triggered by PR)'
+        required: false
+        type: string
+      json_url:
+        description: 'URL to output.json (optional)'
+        required: false
+        type: string
+      json_path:
+        description: 'Path in repo to output.json (optional; used if json_url is empty)'
+        required: false
+        type: string
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'output.json'
+  push:
+    paths:
+      - 'output.json'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  post-summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve output.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="${{ github.event.inputs.json_url }}"
+          PATH_IN_REPO="${{ github.event.inputs.json_path }}"
+          if [ -n "${URL}" ]; then
+            echo "Downloading output.json from URL"
+            curl -L --fail "$URL" -o output.json
+          elif [ -n "${PATH_IN_REPO}" ]; then
+            echo "Copying output.json from repo path: ${PATH_IN_REPO}"
+            cp "${PATH_IN_REPO}" output.json
+          else
+            echo "No json_url or json_path provided. Looking for output.json at repo root..."
+            if [ -f output.json ]; then
+              echo "Found output.json at repo root"
+            else
+              echo "output.json not found. Provide json_url or json_path." >&2
+              exit 1
+            fi
+          fi
+          test -s output.json || { echo 'output.json is empty or missing'; exit 1; }
+
+      - name: Build redteam summary (JS)
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const out = JSON.parse(fs.readFileSync('output.json','utf8'));
+          const stats = out?.results?.stats || {};
+          const tests = out?.results?.tests || [];
+          const share = out?.shareableUrl;
+
+          const failures = tests.flatMap(t => (t.assertions || [])
+            .filter(a => a?.pass === false)
+            .map(a => ({ a, t }))
+          );
+
+          const inc = (obj, key) => { obj[key] = (obj[key] || 0) + 1; };
+          const byPlugin = {}, byStrategy = {}, byProvider = {};
+          for (const { a, t } of failures) {
+            const plugin = a?.metadata?.plugin || a?.plugin || 'unknown';
+            inc(byPlugin, plugin);
+            const strategy = a?.metadata?.strategy || a?.strategy || a?.name || 'unknown';
+            inc(byStrategy, strategy);
+            const provider = t?.provider || t?.model || t?.config?.provider || 'unknown';
+            inc(byProvider, provider);
+          }
+          const top = (obj, n=8) => Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,n);
+          const examples = failures.slice(0,3).map(({a,t}) => ({
+            plugin: a?.metadata?.plugin || a?.plugin || 'unknown',
+            strategy: a?.metadata?.strategy || a?.strategy || a?.name || 'unknown',
+            prompt: (t?.vars?.input || t?.input || t?.prompt || '').toString().slice(0,500),
+            reason: a?.reason || a?.message || a?.details || ''
+          }));
+
+          const lines = [];
+          lines.push('⚠️ LLM redteam results');
+          lines.push('');
+          lines.push('| Success | Failure |');
+          lines.push('|---------|---------|');
+          lines.push(`| ${stats.successes ?? 0} | ${stats.failures ?? 0} |`);
+          lines.push('');
+          if (share) lines.push(`- Report: ${share}`);
+
+          const addTable = (title, rows) => {
+            if (!rows.length) return;
+            lines.push('');
+            lines.push(`#### ${title}`);
+            lines.push('');
+            lines.push('| Key | Failures |');
+            lines.push('|---|---|');
+            for (const [k,v] of rows) lines.push(`| ${k} | ${v} |`);
+          };
+
+          addTable('Plugin failures (top)', top(byPlugin));
+          addTable('Strategy failures (top)', top(byStrategy));
+          addTable('Provider/model failures (top)', top(byProvider));
+
+          if (examples.length) {
+            lines.push('');
+            lines.push('#### Examples');
+            for (const e of examples) {
+              lines.push(`- ${e.plugin} / ${e.strategy}: ${e.reason || 'failed'}`);
+              lines.push('');
+              lines.push('  ```');
+              lines.push(e.prompt);
+              lines.push('  ```');
+            }
+          }
+
+          fs.writeFileSync('comment.md', lines.join('\n'));
+          console.log('Wrote comment.md');
+          EOF
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('comment.md','utf8');
+            const fromEvent = context.payload.pull_request && context.payload.pull_request.number;
+            const fromInput = core.getInput('pr_number') || (context.payload.inputs && context.payload.inputs.pr_number);
+            const issue_number = Number(fromEvent || fromInput);
+            if (!issue_number) {
+              core.setFailed('No PR number found. Provide pr_number when using workflow_dispatch.');
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number,
+                body,
+              });
+            }
+          result-encoding: string 
