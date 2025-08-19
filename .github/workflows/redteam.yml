@@ -4,9 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to comment on'
-        required: true
+        description: 'PR number to comment on (optional when triggered by PR)'
+        required: false
         type: string
+  pull_request:
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -121,9 +123,11 @@ jobs:
           script: |
             const fs = require('fs');
             const body = fs.readFileSync('comment.md','utf8');
-            const issue_number = Number(core.getInput('pr_number') || (context.payload.inputs && context.payload.inputs.pr_number));
+            const fromEvent = context.payload.pull_request && context.payload.pull_request.number;
+            const fromInput = core.getInput('pr_number') || (context.payload.inputs && context.payload.inputs.pr_number);
+            const issue_number = Number(fromEvent || fromInput);
             if (!issue_number) {
-              core.setFailed('pr_number input is required');
+              core.setFailed('No PR number found. Provide pr_number when using workflow_dispatch.');
             } else {
               await github.rest.issues.createComment({
                 ...context.repo,
