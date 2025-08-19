@@ -61,71 +61,224 @@ jobs:
         run: |
           node - <<'EOF'
           const fs = require('fs');
-          const out = JSON.parse(fs.readFileSync('output.json','utf8'));
-          const stats = out?.results?.stats || {};
-          // Redteam outputs place test array at results.results (not results.tests)
-          const tests = out?.results?.results || out?.results?.tests || [];
-          const share = out?.shareableUrl;
 
-          // Derive failures from test-level success/grading rather than per-assertion
-          const failureTests = tests.filter(t => {
-            const pass = (typeof t.success === 'boolean') ? t.success : (t?.gradingResult?.pass === true);
-            return pass === false;
-          });
+          // Helpers
+          const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
+          const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+          const pct = (num, den) => (den ? `${((num / den) * 100).toFixed(1)}%` : '—');
+          const esc = (s) => (s || '').toString().replace(/\|/g, '\\|');
+          const trunc = (s, n = 300) => {
+            const str = (s || '').toString();
+            return str.length > n ? `${str.slice(0, n)}…` : str;
+          };
 
-          const inc = (obj, key) => { obj[key] = (obj[key] || 0) + 1; };
-          const byPlugin = {}, byStrategy = {}, byProvider = {};
-          const examples = [];
+          const out = readJson('output.json');
+          const resultsRoot = out?.results || {};
+          const tests = resultsRoot?.results || resultsRoot?.tests || [];
+          const runStats = resultsRoot?.stats || {};
+          const tu = runStats?.tokenUsage || {};
+          const evalId = out?.evalId || '';
+          const ts = resultsRoot?.timestamp || '';
+          const share = out?.shareableUrl || '';
 
-          for (const t of failureTests) {
-            const plugin = t?.metadata?.pluginId || t?.testCase?.metadata?.pluginId || t?.gradingResult?.componentResults?.[0]?.metadata?.pluginId || 'unknown';
-            inc(byPlugin, plugin);
-            const strategy = t?.metadata?.strategyId || t?.testCase?.metadata?.strategyId || t?.gradingResult?.componentResults?.[0]?.metadata?.strategyId || 'unknown';
-            inc(byStrategy, strategy);
-            const provider = t?.provider?.label || t?.provider?.id || t?.testCase?.provider?.id || 'unknown';
-            inc(byProvider, provider);
-            if (examples.length < 3) {
-              const prompt = (t?.vars?.prompt || t?.prompt?.raw || t?.testCase?.vars?.prompt || '').toString().slice(0,500);
-              const reason = t?.gradingResult?.reason || t?.gradingResult?.componentResults?.[0]?.reason || t?.error || '';
-              examples.push({ plugin, strategy, prompt, reason });
+          const isPass = (t) => (typeof t?.success === 'boolean' ? t.success : t?.gradingResult?.pass === true);
+          const getPlugin = (t) => t?.metadata?.pluginId || t?.testCase?.metadata?.pluginId || t?.gradingResult?.componentResults?.[0]?.metadata?.pluginId || 'unknown';
+          const getStrategy = (t) => t?.metadata?.strategyId || t?.testCase?.metadata?.strategyId || t?.gradingResult?.componentResults?.[0]?.metadata?.strategyId || 'basic';
+          const getProvider = (t) => t?.provider?.label || t?.provider?.id || t?.testCase?.provider?.label || t?.testCase?.provider?.id || 'unknown';
+          const getReason = (t) => t?.gradingResult?.reason || t?.gradingResult?.componentResults?.[0]?.reason || t?.error || '';
+          const getPrompt = (t) => t?.vars?.prompt || t?.prompt?.raw || t?.testCase?.vars?.prompt || '';
+
+          const overall = {
+            total: tests.length,
+            pass: 0,
+            fail: 0,
+          };
+
+          // Aggregators
+          const agg = () => ({ total: 0, pass: 0, fail: 0 });
+          const byPlugin = new Map();
+          const byStrategy = new Map();
+          const byProvider = new Map();
+          const failureExamples = [];
+
+          for (const t of tests) {
+            const passed = isPass(t) === true;
+            overall.total += 1;
+            if (passed) overall.pass += 1; else overall.fail += 1;
+
+            const plugin = getPlugin(t);
+            const strategy = getStrategy(t);
+            const provider = getProvider(t);
+
+            const bump = (m, k) => {
+              if (!m.has(k)) m.set(k, agg());
+              const a = m.get(k);
+              a.total += 1;
+              if (passed) a.pass += 1; else a.fail += 1;
+            };
+            bump(byPlugin, plugin);
+            bump(byStrategy, strategy);
+            bump(byProvider, provider);
+
+            if (!passed && failureExamples.length < 6) {
+              failureExamples.push({
+                plugin,
+                strategy,
+                provider,
+                prompt: trunc(getPrompt(t), 500),
+                reason: trunc(getReason(t), 400),
+              });
             }
           }
 
-          const top = (obj, n=8) => Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,n);
+          // Sorters
+          const sortWorst = (entries) => entries.sort((a, b) => {
+            // Primary: higher fail count, Secondary: lower pass rate
+            const af = a[1].fail, bf = b[1].fail;
+            if (bf !== af) return bf - af;
+            const apr = a[1].pass / (a[1].total || 1);
+            const bpr = b[1].pass / (b[1].total || 1);
+            return apr - bpr;
+          });
 
+          const topN = (map, n = 10) => sortWorst(Array.from(map.entries())).slice(0, n);
+
+          // Markdown assembly
           const lines = [];
-          lines.push('⚠️ LLM redteam results');
+
+          lines.push('### ⚠️ LLM redteam summary');
+          const passRate = pct(overall.pass, overall.total);
           lines.push('');
-          lines.push('| Success | Failure |');
-          lines.push('|---------|---------|');
-          lines.push(`| ${stats.successes ?? 0} | ${stats.failures ?? 0} |`);
+          lines.push(`- **Eval**: ${esc(evalId)}  `);
+          lines.push(`- **Timestamp**: ${esc(ts)}  `);
+          lines.push(`- **Total tests**: ${overall.total}  `);
+          lines.push(`- **Passed**: ${overall.pass}  `);
+          lines.push(`- **Failed**: ${overall.fail}  `);
+          lines.push(`- **Pass rate**: ${passRate}`);
+          if (share) lines.push(`- **Report**: ${share}`);
+
+          // Overall table
           lines.push('');
-          if (share) lines.push(`- Report: ${share}`);
+          lines.push('| Total | Passed | Failed | Pass rate |');
+          lines.push('|------:|------:|-------:|:---------:|');
+          lines.push(`| ${overall.total} | ${overall.pass} | ${overall.fail} | ${passRate} |`);
 
-          const addTable = (title, rows) => {
-            if (!rows.length) return;
+          // Plugin performance
+          const pluginRows = topN(byPlugin, 20);
+          if (pluginRows.length) {
             lines.push('');
-            lines.push(`#### ${title}`);
+            lines.push('### Plugin performance');
             lines.push('');
-            lines.push('| Key | Failures |');
-            lines.push('|---|---|');
-            for (const [k,v] of rows) lines.push(`| ${k} | ${v} |`);
-          };
+            lines.push('| Plugin | Pass | Fail | Pass rate |');
+            lines.push('|---|---:|---:|:--:|');
+            for (const [k, v] of pluginRows) {
+              lines.push(`| ${esc(k)} | ${v.pass} | ${v.fail} | ${pct(v.pass, v.total)} |`);
+            }
+          }
 
-          addTable('Plugin failures (top)', top(byPlugin));
-          addTable('Strategy failures (top)', top(byStrategy));
-          addTable('Provider/model failures (top)', top(byProvider));
-
-          if (examples.length) {
+          // Strategy performance
+          const stratRows = topN(byStrategy, 10);
+          if (stratRows.length) {
             lines.push('');
-            lines.push('#### Examples');
-            for (const e of examples) {
-              lines.push(`- ${e.plugin} / ${e.strategy}: ${e.reason || 'failed'}`);
+            lines.push('### Strategy performance');
+            lines.push('');
+            lines.push('| Strategy | Pass | Fail | Pass rate |');
+            lines.push('|---|---:|---:|:--:|');
+            for (const [k, v] of stratRows) {
+              lines.push(`| ${esc(k)} | ${v.pass} | ${v.fail} | ${pct(v.pass, v.total)} |`);
+            }
+          }
+
+          // Provider/model performance
+          const providerRows = topN(byProvider, 10);
+          if (providerRows.length) {
+            lines.push('');
+            lines.push('### Provider/model performance');
+            lines.push('');
+            lines.push('| Provider | Pass | Fail | Pass rate |');
+            lines.push('|---|---:|---:|:--:|');
+            for (const [k, v] of providerRows) {
+              lines.push(`| ${esc(k)} | ${v.pass} | ${v.fail} | ${pct(v.pass, v.total)} |`);
+            }
+          }
+
+          // Examples (collapsed)
+          if (failureExamples.length) {
+            lines.push('');
+            lines.push('<details>');
+            lines.push('<summary><strong>Failure examples</strong> (click to expand)</summary>');
+            lines.push('');
+            const maxExamples = 4;
+            failureExamples.slice(0, maxExamples).forEach((e, i) => {
+              lines.push(`- **${esc(e.plugin)}** | **${esc(e.strategy)}** | **${esc(e.provider)}**`);
+              if (e.reason) lines.push(`  - Reason: ${esc(e.reason)}`);
               lines.push('');
               lines.push('  ```');
-              lines.push(e.prompt);
+              lines.push((e.prompt || '').toString());
               lines.push('  ```');
+              lines.push('');
+            });
+            if (share) lines.push(`- Open the full report for complete transcripts: ${share}`);
+            lines.push('</details>');
+          }
+
+          // Remediations
+          const remediationByPlugin = {
+            'harmful:self-harm': [
+              'Refuse and provide supportive, non-judgmental guidance; include crisis resources when appropriate.',
+              'Gate requests through a safety classifier or provider moderation before generation.',
+              'Hard-code refusal styles in system prompts and enforce via response schema.',
+              'Strip or ignore instructions like “begin your reply with …” and role-play nudges.',
+              'Add more adversarial tests (paraphrase, coded/self-referential, escalating severity).',
+            ],
+            'harmful:hate': [
+              'Refuse content that targets protected classes; redirect to general, non-dehumanizing info.',
+              'Detect and reject coded/indirect mappings (allegories, “cat” == group) in preprocessing.',
+              'Use provider moderation APIs; add a second-pass content check on outputs.',
+              'Constrain generation to safe templates or tool outputs (JSON with allowed intents).',
+              'Expand evals to include metaphor/coded-language attacks and subtle stereotyping.',
+            ],
+            'unknown': [
+              'Add an allowlist of intents and validate outputs against safety policies.',
+              'Introduce pre- and post-generation safety checks and tighten prompts.',
+            ],
+          };
+
+          const failedPlugins = pluginRows.filter(([_, v]) => v.fail > 0).map(([k]) => k);
+          const failedStrategies = stratRows.filter(([_, v]) => v.fail > 0).map(([k]) => k);
+
+          if (failedPlugins.length || failedStrategies.length) {
+            lines.push('');
+            lines.push('### Remediations');
+            lines.push('');
+            for (const p of failedPlugins) {
+              const recs = remediationByPlugin[p] || remediationByPlugin['unknown'];
+              lines.push(`- **${esc(p)}**:`);
+              for (const r of recs) lines.push(`  - ${r}`);
             }
+            if (failedStrategies.length) {
+              lines.push('- **Strategy hardening**:');
+              lines.push('  - Jailbreak/iterative: enforce safety-mode across turns; clamp tool access; limit instructions that dictate phrasing; add adversarial paraphrase detection.');
+              lines.push('  - Crescendo: cap escalation loops; insert periodic safety checks; require safe summaries instead of direct answers.');
+            }
+          }
+
+          // Token usage (collapsed)
+          const totalTokens = (tu.total ?? (tu.prompt || 0) + (tu.completion || 0)) || 0;
+          if (totalTokens) {
+            lines.push('');
+            lines.push('<details>');
+            lines.push('<summary><strong>Token usage</strong> (click to expand)</summary>');
+            lines.push('');
+            lines.push(`- Total tokens: ${totalTokens}`);
+            if (typeof tu.prompt === 'number') lines.push(`- Prompt tokens: ${tu.prompt}`);
+            if (typeof tu.completion === 'number') lines.push(`- Completion tokens: ${tu.completion}`);
+            if (typeof tu.numRequests === 'number') lines.push(`- Requests: ${tu.numRequests}`);
+            if (tu.assertions) {
+              lines.push('');
+              lines.push(`- Assertions tokens: total=${tu.assertions.total ?? 0}, prompt=${tu.assertions.prompt ?? 0}, completion=${tu.assertions.completion ?? 0}`);
+            }
+            lines.push('</details>');
           }
 
           fs.writeFileSync('comment.md', lines.join('\n'));
