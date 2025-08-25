@@ -38,7 +38,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.2",
-    "@swc/core": "^1.13.3",
+    "@swc/core": "^1.13.4",
     "@swc/jest": "^0.2.39",
     "@types/cache-manager": "^4.0.6",
     "@types/jest": "^30.0.0",
@@ -47,7 +47,7 @@
     "@vercel/ncc": "^0.38.3",
     "jest": "^30.0.5",
     "js-yaml": "^4.1.0",
-    "promptfoo": "^0.117.8",
+    "promptfoo": "^0.117.9",
     "ts-jest": "^29.4.1",
     "typescript": "^5.9.2"
   }
