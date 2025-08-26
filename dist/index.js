@@ -59,8 +59,8 @@ const fs = __importStar(__nccwpck_require__(9896));
 const glob = __importStar(__nccwpck_require__(1363));
 const path = __importStar(__nccwpck_require__(6928));
 const simple_git_1 = __nccwpck_require__(9065);
-const errors_1 = __nccwpck_require__(4651);
 const config_1 = __nccwpck_require__(7230);
+const errors_1 = __nccwpck_require__(4651);
 const gitInterface = (0, simple_git_1.simpleGit)();
 /**
  * Validates git refs to prevent command injection attacks.
@@ -596,8 +596,8 @@ exports.extractFileDependencies = extractFileDependencies;
 const core = __importStar(__nccwpck_require__(7484));
 const fs = __importStar(__nccwpck_require__(9896));
 const glob = __importStar(__nccwpck_require__(1363));
-const path = __importStar(__nccwpck_require__(6928));
 const yaml = __importStar(__nccwpck_require__(4281));
+const path = __importStar(__nccwpck_require__(6928));
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.

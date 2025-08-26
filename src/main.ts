@@ -7,12 +7,12 @@ import * as glob from 'glob';
 import * as path from 'path';
 import type { OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
+import { extractFileDependencies } from './utils/config';
 import {
   ErrorCodes,
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
-import { extractFileDependencies } from './utils/config';
 
 const gitInterface = simpleGit();
 
