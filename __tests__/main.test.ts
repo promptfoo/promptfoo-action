@@ -22,7 +22,16 @@ type MockOctokit = {
 
 // Create mock functions before importing the module that uses them
 const mockGitInterface = {
-  fetch: jest.fn((_args: string[]) => Promise.resolve()),
+  fetch: jest.fn((options: string[]) => {
+    // Call the underlying `fetch` when we have an invalid ref-name, for accurate errors
+    if (options[2].match(/\s/)) {
+      const { simpleGit } =
+        jest.requireActual<typeof import('simple-git')>('simple-git');
+      const actualGitInterface = simpleGit();
+      return actualGitInterface.fetch(options);
+    }
+    return Promise.resolve();
+  }),
   revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
   diff: jest.fn(() =>
     Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
@@ -820,25 +829,6 @@ describe('GitHub Action Main', () => {
       );
     });
 
-    test('should reject git refs with special characters', async () => {
-      Object.defineProperty(mockGithub.context, 'payload', {
-        value: {
-          pull_request: {
-            number: 123,
-            base: { ref: 'main' },
-            head: { ref: 'feature$evil' },
-          },
-        },
-        configurable: true,
-      });
-
-      await run();
-
-      expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('refs cannot contain special character "$"'),
-      );
-    });
-
     test('should reject git refs with spaces', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
@@ -854,7 +844,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('refs cannot contain whitespace characters'),
+        expect.stringContaining("fatal: invalid refspec 'feature branch"),
       );
     });
 
