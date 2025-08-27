@@ -296,12 +296,12 @@ export async function run(): Promise<void> {
       validateGitRef(baseRef);
       validateGitRef(headRef);
 
-      await exec.exec('git', ['fetch', '--', 'origin', baseRef]);
+      await gitInterface.fetch(['--', 'origin', baseRef]);
       const baseFetchHead = (
         await gitInterface.revparse(['FETCH_HEAD'])
       ).trim();
 
-      await exec.exec('git', ['fetch', '--', 'origin', headRef]);
+      await gitInterface.fetch(['--', 'origin', headRef]);
       const headFetchHead = (
         await gitInterface.revparse(['FETCH_HEAD'])
       ).trim();

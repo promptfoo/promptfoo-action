@@ -285,9 +285,9 @@ function run() {
                 // Validate baseRef and headRef to prevent command injection
                 validateGitRef(baseRef);
                 validateGitRef(headRef);
-                yield exec.exec('git', ['fetch', '--', 'origin', baseRef]);
+                yield gitInterface.fetch(['--', 'origin', baseRef]);
                 const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
-                yield exec.exec('git', ['fetch', '--', 'origin', headRef]);
+                yield gitInterface.fetch(['--', 'origin', headRef]);
                 const headFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
                 changedFiles = yield gitInterface.diff([
                     '--name-only',

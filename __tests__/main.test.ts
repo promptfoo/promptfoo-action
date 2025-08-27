@@ -22,6 +22,7 @@ type MockOctokit = {
 
 // Create mock functions before importing the module that uses them
 const mockGitInterface = {
+  fetch: jest.fn((_args: string[]) => Promise.resolve()),
   revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
   diff: jest.fn(() =>
     Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
@@ -170,14 +171,12 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Verify git operations - now with -- separator for security
-      expect(mockExec.exec).toHaveBeenCalledWith('git', [
-        'fetch',
+      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
         '--',
         'origin',
         'main',
       ]);
-      expect(mockExec.exec).toHaveBeenCalledWith('git', [
-        'fetch',
+      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
         '--',
         'origin',
         'feature-branch',
@@ -559,8 +558,8 @@ describe('GitHub Action Main', () => {
     test('should not include flags when both are false', async () => {
       await run();
 
-      expect(mockExec.exec).toHaveBeenCalledTimes(3); // 2 git fetches + 1 promptfoo
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      expect(mockExec.exec).toHaveBeenCalledTimes(1);
+      const promptfooCall = mockExec.exec.mock.calls[0];
       expect(promptfooCall[0]).toBe('npx promptfoo@latest');
 
       const args = promptfooCall[1] as string[];
@@ -579,7 +578,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--no-table');
       expect(args).not.toContain('--no-progress-bar');
@@ -593,7 +592,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
@@ -608,7 +607,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
@@ -641,7 +640,7 @@ describe('GitHub Action Main', () => {
         expect.any(Object),
       );
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--prompts');
     });
@@ -667,7 +666,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Should run promptfoo without --prompts argument
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--prompts');
     });
@@ -708,7 +707,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--share');
 
@@ -723,7 +722,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--share');
     });
@@ -735,7 +734,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--share');
       expect(mockCore.info).toHaveBeenCalledWith(
@@ -750,7 +749,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--share');
 
@@ -762,7 +761,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--share');
 
@@ -780,7 +779,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
 
       // Should have these flags
@@ -874,14 +873,12 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Should proceed with git fetch using -- separator
-      expect(mockExec.exec).toHaveBeenCalledWith('git', [
-        'fetch',
+      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
         '--',
         'origin',
         'main',
       ]);
-      expect(mockExec.exec).toHaveBeenCalledWith('git', [
-        'fetch',
+      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
         '--',
         'origin',
         'feature/JIRA-123_update-deps',
