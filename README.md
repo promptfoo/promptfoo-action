@@ -97,7 +97,7 @@ jobs:
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          config: 'prompts/promptfooconfig.yaml'
+          config: 'promptfooconfig.yaml'
           cache-path: '.promptfoo-cache'
 ```
 
@@ -136,7 +136,7 @@ jobs:
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          config: 'prompts/promptfooconfig.yaml'
+          config: 'promptfooconfig.yaml'
 ```
 
 When triggered manually:
@@ -155,7 +155,7 @@ You can also specify files and base directly as action inputs:
   uses: promptfoo/promptfoo-action@main
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
-    config: 'prompts/promptfooconfig.yaml'
+    config: 'promptfooconfig.yaml'
     workflow-files: |
       prompts/prompt1.txt
       prompts/prompt2.txt
@@ -191,7 +191,7 @@ jobs:
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          config: 'prompts/promptfooconfig.yaml'
+          config: 'promptfooconfig.yaml'
 ```
 
 ## Tips
@@ -225,7 +225,7 @@ jobs:
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          config: 'prompts/promptfooconfig.yaml'
+          config: 'promptfooconfig.yaml'
           env-files: '.env,.env.test.local' # Load multiple .env files
 ```
 
@@ -291,7 +291,7 @@ If you need to run evaluations regardless of file changes, use the `force-run` o
   uses: promptfoo/promptfoo-action@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
-    config: 'prompts/promptfooconfig.yaml'
+    config: 'promptfooconfig.yaml'
     force-run: true
 ```
 
@@ -352,7 +352,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          config: 'prompts/promptfooconfig.yaml'
+          config: 'promptfooconfig.yaml'
           cache-path: '.promptfoo-cache'  # Local cache directory
 ```
 
@@ -399,7 +399,7 @@ The action provides cache statistics as outputs:
   uses: promptfoo/promptfoo-action@main
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
-    config: 'prompts/promptfooconfig.yaml'
+    config: 'promptfooconfig.yaml'
     cache-path: '.promptfoo-cache'
 
 - name: Display cache metrics
@@ -447,7 +447,7 @@ To enable sharing with authentication:
     PROMPTFOO_API_KEY: ${{ secrets.PROMPTFOO_API_KEY }}
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
-    config: 'prompts/promptfooconfig.yaml'
+    config: 'promptfooconfig.yaml'
 ```
 
 To explicitly disable sharing:
@@ -457,7 +457,7 @@ To explicitly disable sharing:
   uses: promptfoo/promptfoo-action@main
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
-    config: 'prompts/promptfooconfig.yaml'
+    config: 'promptfooconfig.yaml'
     no-share: true
 ```
 

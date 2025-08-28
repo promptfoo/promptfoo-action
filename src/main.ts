@@ -7,13 +7,13 @@ import * as glob from 'glob';
 import * as path from 'path';
 import type { OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
-import { extractFileDependencies } from './utils/config';
 import {
   cleanupOldCache,
   createCacheManifest,
   logCacheMetrics,
   setupCacheEnvironment,
 } from './utils/cache';
+import { extractFileDependencies } from './utils/config';
 import {
   ErrorCodes,
   formatErrorMessage,
