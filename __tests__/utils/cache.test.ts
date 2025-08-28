@@ -11,25 +11,35 @@ import {
 } from '../../src/utils/cache';
 
 // Mock dependencies
-jest.mock('@actions/core');
-jest.mock('fs', () => ({
-  ...(jest.requireActual('fs') as Record<string, unknown>),
-  existsSync: jest.fn(),
-  mkdirSync: jest.fn(),
-  readdirSync: jest.fn(),
-  statSync: jest.fn(),
-  unlinkSync: jest.fn(),
-  rmdirSync: jest.fn(),
-  writeFileSync: jest.fn(),
-  promises: {
-    access: jest.fn(),
-    readFile: jest.fn(),
-    writeFile: jest.fn(),
-  },
+jest.mock('@actions/core', () => ({
+  info: jest.fn(),
+  debug: jest.fn(),
+  warning: jest.fn(),
+  error: jest.fn(),
+  setFailed: jest.fn(),
 }));
+jest.mock('fs', () => {
+  const realFs = jest.requireActual('fs') as typeof import('fs');
+  return {
+    ...realFs,
+    existsSync: jest.fn(),
+    mkdirSync: jest.fn(),
+    readdirSync: jest.fn(),
+    statSync: jest.fn(),
+    unlinkSync: jest.fn(),
+    rmdirSync: jest.fn(),
+    writeFileSync: jest.fn(),
+    promises: {
+      ...realFs.promises,
+      access: jest.fn(),
+      readFile: jest.fn(),
+      writeFile: jest.fn(),
+    },
+  };
+});
 
 const mockCore = core as jest.Mocked<typeof core>;
-const mockFs = fs as any; // Complex mock types, using any for test simplicity
+const mockFs = fs as jest.Mocked<typeof fs>;
 
 describe('Cache Utilities', () => {
   beforeEach(() => {
@@ -87,6 +97,13 @@ describe('Cache Utilities', () => {
       expect(process.env.PROMPTFOO_CACHE_TTL).toBe('86400');
       expect(process.env.PROMPTFOO_CACHE_MAX_SIZE).toBe('52428800');
       expect(process.env.PROMPTFOO_CACHE_MAX_FILE_COUNT).toBe('5000');
+      expect(mockFs.mkdirSync).toHaveBeenCalledWith(
+        expect.stringContaining('.promptfoo/cache'),
+        { recursive: true },
+      );
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        expect.stringContaining('Created default cache directory'),
+      );
     });
 
     it('should use provided cache path', () => {
@@ -138,17 +155,14 @@ describe('Cache Utilities', () => {
   describe('generateCacheKey', () => {
     // Mock Date to have consistent output
     const mockDate = new Date('2025-03-15');
-    const originalDate = Date;
 
     beforeAll(() => {
-      global.Date = jest.fn(() => mockDate) as unknown as DateConstructor;
-      global.Date.UTC = originalDate.UTC;
-      global.Date.parse = originalDate.parse;
-      global.Date.now = originalDate.now;
+      jest.useFakeTimers();
+      jest.setSystemTime(mockDate);
     });
 
     afterAll(() => {
-      global.Date = originalDate;
+      jest.useRealTimers();
     });
 
     it('should generate cache key with config and prompt files', () => {

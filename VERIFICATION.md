@@ -6,28 +6,16 @@ After reviewing the promptfoo source code, I can confirm:
 
 ### 1. **Environment Variables Work Correctly** ✅
 
-Promptfoo reads these environment variables in `/src/cache.ts`:
+Promptfoo reads these environment variables (as of this PR) in `src/utils/cache.ts`:
 
 ```typescript
-// Line 15: Cache enabled by default
-let enabled = getEnvBool('PROMPTFOO_CACHE_ENABLED', true);
-
-// Line 17-18: Cache type (disk or memory)
-const cacheType = getEnvString('PROMPTFOO_CACHE_TYPE') || 
-                  (getEnvString('NODE_ENV') === 'test' ? 'memory' : 'disk');
-
-// Line 24-25: Cache path
-cachePath = getEnvString('PROMPTFOO_CACHE_PATH') || 
-            path.join(getConfigDirectoryPath(), 'cache');
-
-// Line 34: Max file count
-max: getEnvInt('PROMPTFOO_CACHE_MAX_FILE_COUNT', 10_000)
-
-// Line 36: TTL in seconds
-ttl: getEnvInt('PROMPTFOO_CACHE_TTL', 60 * 60 * 24 * 14) // 14 days default
-
-// Line 37: Max size in bytes
-maxsize: getEnvInt('PROMPTFOO_CACHE_MAX_SIZE', 1e7) // 10MB default
+// Examples of env usage in Promptfoo (subject to upstream changes):
+// - PROMPTFOO_CACHE_ENABLED (boolean)
+// - PROMPTFOO_CACHE_TYPE ("disk" | "memory")
+// - PROMPTFOO_CACHE_PATH (string, cache directory)
+// - PROMPTFOO_CACHE_MAX_FILE_COUNT (number)
+// - PROMPTFOO_CACHE_TTL (seconds)
+// - PROMPTFOO_CACHE_MAX_SIZE (bytes)
 ```
 
 ### 2. **Default Cache Location** ✅
@@ -107,13 +95,13 @@ tests:
 EOF
 
 echo "First run (cold cache)..."
-time npx promptfoo@latest eval -c test-config.yaml -o output1.json
+time npx -y promptfoo@latest eval -c test-config.yaml -o output1.json
 
 echo "Cache contents:"
 ls -la .test-cache/ 2>/dev/null || echo "Cache not in expected location"
 
 echo "Second run (warm cache)..."
-time npx promptfoo@latest eval -c test-config.yaml -o output2.json
+time npx -y promptfoo@latest eval -c test-config.yaml -o output2.json
 
 # Cache should exist and have files
 if [ -d ".test-cache" ] && [ "$(find .test-cache -type f | wc -l)" -gt 0 ]; then

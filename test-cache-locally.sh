@@ -79,8 +79,8 @@ if [ -d ".promptfoo-cache" ]; then
 else
     # Check default location
     if [ -d "$HOME/.promptfoo/cache" ]; then
-        CACHE_SIZE=$(du -sh $HOME/.promptfoo/cache 2>/dev/null | cut -f1)
-        CACHE_FILES=$(find $HOME/.promptfoo/cache -type f 2>/dev/null | wc -l | tr -d ' ')
+        CACHE_SIZE=$(du -sh "$HOME/.promptfoo/cache" 2>/dev/null | cut -f1)
+        CACHE_FILES=$(find "$HOME/.promptfoo/cache" -type f 2>/dev/null | wc -l | tr -d ' ')
         echo -e "${YELLOW}ℹ Cache created in default location: ${CACHE_SIZE} in ${CACHE_FILES} files${NC}"
     else
         echo -e "${YELLOW}⚠ Warning: Cache directory not found${NC}"
@@ -102,7 +102,8 @@ DURATION2=$((END_TIME - START_TIME))
 echo -e "${GREEN}✓ Second run completed in ${DURATION2} seconds${NC}"
 
 # Compare durations
-if [ $DURATION2 -lt $DURATION1 ]; then
+if [ "$DURATION2" -lt "$DURATION1" ]; then
+    if [ "$DURATION2" -lt 1 ]; then DURATION2=1; fi
     SPEEDUP=$((DURATION1 * 100 / DURATION2 - 100))
     echo -e "${GREEN}✓ Cache is working! Second run was ${SPEEDUP}% faster${NC}"
 else
@@ -119,16 +120,16 @@ fi
 
 if [ -d "$HOME/.promptfoo/cache" ]; then
     echo "Default cache (~/.promptfoo/cache):"
-    du -sh $HOME/.promptfoo/cache 2>/dev/null || echo "Unable to get size"
-    echo "Files: $(find $HOME/.promptfoo/cache -type f 2>/dev/null | wc -l | tr -d ' ')"
+    du -sh "$HOME/.promptfoo/cache" 2>/dev/null || echo "Unable to get size"
+    echo "Files: $(find "$HOME/.promptfoo/cache" -type f 2>/dev/null | wc -l | tr -d ' ')"
 fi
 
 # Compare outputs
 echo -e "\n${YELLOW}Comparing outputs...${NC}"
 if [ -f output1.json ] && [ -f output2.json ]; then
     # Extract just the results for comparison (ignore timestamps)
-    RESULTS1=$(cat output1.json | jq '.results.results[].response.output' 2>/dev/null | sort)
-    RESULTS2=$(cat output2.json | jq '.results.results[].response.output' 2>/dev/null | sort)
+    RESULTS1=$(jq -r '.results.results[].response.output' output1.json 2>/dev/null | sort)
+    RESULTS2=$(jq -r '.results.results[].response.output' output2.json 2>/dev/null | sort)
     
     if [ "$RESULTS1" = "$RESULTS2" ]; then
         echo -e "${GREEN}✓ Results are identical (cache working correctly)${NC}"

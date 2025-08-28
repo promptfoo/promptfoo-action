@@ -59,65 +59,25 @@ const fs = __importStar(__nccwpck_require__(9896));
 const glob = __importStar(__nccwpck_require__(1363));
 const path = __importStar(__nccwpck_require__(6928));
 const simple_git_1 = __nccwpck_require__(9065);
-const cache_1 = __nccwpck_require__(5480);
 const config_1 = __nccwpck_require__(7230);
+const cache_1 = __nccwpck_require__(5480);
 const errors_1 = __nccwpck_require__(4651);
 const gitInterface = (0, simple_git_1.simpleGit)();
 /**
- * Validates git refs to prevent command injection attacks.
- * This is a critical security function that must be called before using any
- * user-provided input in git commands.
+ * Validates git refs to prevent option injection attacks.
+ *
+ * As branch names like `$(true)` are valid, this does **NOT** protect against
+ * shell injection attacks.
  *
  * Security considerations:
  * - Refs starting with "--" could be interpreted as command options
- * - Spaces could allow command chaining
- * - Special characters could enable various injection attacks
  * - Even with validation, we use "--" separator in git commands for defense in depth
+ * - We always use simple-git to avoid shell-injection attacks
  */
 function validateGitRef(ref) {
-    // Strict validation: only allow safe characters for git refs
-    const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
     // Security check: prevent option injection
     if (ref.startsWith('--') || ref.startsWith('-')) {
-        throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should not start with dashes to prevent command injection');
-    }
-    // Security check: prevent command chaining
-    if (ref.includes(' ') ||
-        ref.includes('\t') ||
-        ref.includes('\n') ||
-        ref.includes('\r')) {
-        throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot contain whitespace characters`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should not contain spaces or other whitespace');
-    }
-    // Security check: prevent special shell characters
-    const dangerousChars = [
-        '$',
-        '`',
-        '\\',
-        '!',
-        '&',
-        '|',
-        ';',
-        '(',
-        ')',
-        '<',
-        '>',
-        '"',
-        "'",
-        '*',
-        '?',
-        '[',
-        ']',
-        '{',
-        '}',
-    ];
-    for (const char of dangerousChars) {
-        if (ref.includes(char)) {
-            throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot contain special character "${char}"`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should only contain alphanumerics, underscores, hyphens, slashes, and dots');
-        }
-    }
-    // Final check: ensure ref matches allowed pattern
-    if (!gitRefRegex.test(ref)) {
-        throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Please use a valid git reference format');
+        throw new errors_1.PromptfooActionError(`Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`, errors_1.ErrorCodes.INVALID_GIT_REF, 'Git refs should not start with dashes to prevent option injection');
     }
 }
 function run() {
@@ -171,9 +131,7 @@ function run() {
                 required: true,
             });
             const cachePath = core.getInput('cache-path', { required: false });
-            const version = core.getInput('promptfoo-version', {
-                required: false,
-            });
+            const version = core.getInput('promptfoo-version', { required: false }) || 'latest';
             const workingDirectory = path.join(process.cwd(), core.getInput('working-directory', { required: false }));
             const noShare = core.getBooleanInput('no-share', {
                 required: false,
@@ -283,12 +241,12 @@ function run() {
                 if (!baseRef || !headRef) {
                     throw new Error('Unable to determine base or head references from pull request');
                 }
-                // Validate baseRef and headRef to prevent command injection
+                // Validate baseRef and headRef to prevent option injection
                 validateGitRef(baseRef);
                 validateGitRef(headRef);
-                yield exec.exec('git', ['fetch', '--', 'origin', baseRef]);
+                yield gitInterface.fetch(['--', 'origin', baseRef]);
                 const baseFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
-                yield exec.exec('git', ['fetch', '--', 'origin', headRef]);
+                yield gitInterface.fetch(['--', 'origin', headRef]);
                 const headFetchHead = (yield gitInterface.revparse(['FETCH_HEAD'])).trim();
                 changedFiles = yield gitInterface.diff([
                     '--name-only',
@@ -313,7 +271,7 @@ function run() {
                 else {
                     // Option 2: Compare against base (default to previous commit)
                     try {
-                        // Validate compareBase to prevent command injection
+                        // Validate compareBase to prevent option injection
                         validateGitRef(compareBase);
                         changedFiles = yield gitInterface.diff([
                             '--name-only',
@@ -477,6 +435,9 @@ function run() {
                 // Wrap the error with more context
                 errorToThrow = new errors_1.PromptfooActionError(`Promptfoo evaluation failed: ${error instanceof Error ? error.message : String(error)}`, errors_1.ErrorCodes.PROMPTFOO_EXECUTION_FAILED, 'Check that your promptfoo configuration is valid and all required API keys are set');
             }
+            if (errorToThrow) {
+                throw errorToThrow;
+            }
             // Read output file
             let output;
             try {
@@ -512,7 +473,6 @@ function run() {
             }
             else if (!isPullRequest) {
                 // For non-PR workflows, output results to workflow summary
-                const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
                 const summary = core.summary
                     .addHeading('Promptfoo Evaluation Results')
                     .addTable([

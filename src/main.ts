@@ -14,7 +14,6 @@ import {
   logCacheMetrics,
   setupCacheEnvironment,
 } from './utils/cache';
-import { extractFileDependencies } from './utils/config';
 import {
   ErrorCodes,
   formatErrorMessage,
@@ -94,9 +93,8 @@ export async function run(): Promise<void> {
       required: true,
     });
     const cachePath: string = core.getInput('cache-path', { required: false });
-    const version: string = core.getInput('promptfoo-version', {
-      required: false,
-    });
+    const version: string =
+      core.getInput('promptfoo-version', { required: false }) || 'latest';
     const workingDirectory: string = path.join(
       process.cwd(),
       core.getInput('working-directory', { required: false }),
@@ -510,6 +508,10 @@ export async function run(): Promise<void> {
       );
     }
 
+    if (errorToThrow) {
+      throw errorToThrow;
+    }
+
     // Read output file
     let output: OutputFile;
     try {
@@ -554,9 +556,6 @@ export async function run(): Promise<void> {
       });
     } else if (!isPullRequest) {
       // For non-PR workflows, output results to workflow summary
-      const output = JSON.parse(
-        fs.readFileSync(outputFile, 'utf8'),
-      ) as OutputFile;
 
       const summary = core.summary
         .addHeading('Promptfoo Evaluation Results')
