@@ -22,6 +22,16 @@ type MockOctokit = {
 
 // Create mock functions before importing the module that uses them
 const mockGitInterface = {
+  fetch: jest.fn((options: string[]) => {
+    // Call the underlying `fetch` when we have an invalid ref-name, for accurate errors
+    if (options[2].match(/\s/)) {
+      const { simpleGit } =
+        jest.requireActual<typeof import('simple-git')>('simple-git');
+      const actualGitInterface = simpleGit();
+      return actualGitInterface.fetch(options);
+    }
+    return Promise.resolve();
+  }),
   revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
   diff: jest.fn(() =>
     Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
@@ -170,14 +180,12 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Verify git operations - now with -- separator for security
-      expect(mockExec.exec).toHaveBeenCalledWith('git', [
-        'fetch',
+      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
         '--',
         'origin',
         'main',
       ]);
-      expect(mockExec.exec).toHaveBeenCalledWith('git', [
-        'fetch',
+      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
         '--',
         'origin',
         'feature-branch',
@@ -559,8 +567,8 @@ describe('GitHub Action Main', () => {
     test('should not include flags when both are false', async () => {
       await run();
 
-      expect(mockExec.exec).toHaveBeenCalledTimes(3); // 2 git fetches + 1 promptfoo
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      expect(mockExec.exec).toHaveBeenCalledTimes(1);
+      const promptfooCall = mockExec.exec.mock.calls[0];
       expect(promptfooCall[0]).toBe('npx promptfoo@latest');
 
       const args = promptfooCall[1] as string[];
@@ -579,7 +587,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--no-table');
       expect(args).not.toContain('--no-progress-bar');
@@ -593,7 +601,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
@@ -608,7 +616,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
@@ -641,7 +649,7 @@ describe('GitHub Action Main', () => {
         expect.any(Object),
       );
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--prompts');
     });
@@ -667,7 +675,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Should run promptfoo without --prompts argument
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--prompts');
     });
@@ -708,7 +716,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--share');
 
@@ -723,7 +731,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--share');
     });
@@ -735,7 +743,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--share');
       expect(mockCore.info).toHaveBeenCalledWith(
@@ -750,7 +758,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--share');
 
@@ -762,7 +770,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--share');
 
@@ -780,7 +788,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[2];
+      const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
 
       // Should have these flags
@@ -821,25 +829,6 @@ describe('GitHub Action Main', () => {
       );
     });
 
-    test('should reject git refs with special characters', async () => {
-      Object.defineProperty(mockGithub.context, 'payload', {
-        value: {
-          pull_request: {
-            number: 123,
-            base: { ref: 'main' },
-            head: { ref: 'feature$evil' },
-          },
-        },
-        configurable: true,
-      });
-
-      await run();
-
-      expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('refs cannot contain special character "$"'),
-      );
-    });
-
     test('should reject git refs with spaces', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
@@ -855,7 +844,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('refs cannot contain whitespace characters'),
+        expect.stringContaining("fatal: invalid refspec 'feature branch"),
       );
     });
 
@@ -874,14 +863,12 @@ describe('GitHub Action Main', () => {
       await run();
 
       // Should proceed with git fetch using -- separator
-      expect(mockExec.exec).toHaveBeenCalledWith('git', [
-        'fetch',
+      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
         '--',
         'origin',
         'main',
       ]);
-      expect(mockExec.exec).toHaveBeenCalledWith('git', [
-        'fetch',
+      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
         '--',
         'origin',
         'feature/JIRA-123_update-deps',

@@ -256,7 +256,7 @@ providers:
     });
 
     mockFs.statSync.mockImplementation(
-      (path) =>
+      (_path) =>
         ({
           isDirectory: () => true,
         }) as any,
