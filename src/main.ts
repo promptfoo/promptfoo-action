@@ -17,81 +17,23 @@ import {
 const gitInterface = simpleGit();
 
 /**
- * Validates git refs to prevent command injection attacks.
- * This is a critical security function that must be called before using any
- * user-provided input in git commands.
+ * Validates git refs to prevent option injection attacks.
+ *
+ * As branch names like `$(true)` are valid, this does **NOT** protect against
+ * shell injection attacks.
  *
  * Security considerations:
  * - Refs starting with "--" could be interpreted as command options
- * - Spaces could allow command chaining
- * - Special characters could enable various injection attacks
  * - Even with validation, we use "--" separator in git commands for defense in depth
+ * - We always use simple-git to avoid shell-injection attacks
  */
 function validateGitRef(ref: string): void {
-  // Strict validation: only allow safe characters for git refs
-  const gitRefRegex = /^[\w\-/.]+$/; // Allow alphanumerics, underscores, hyphens, slashes, and dots
-
   // Security check: prevent option injection
   if (ref.startsWith('--') || ref.startsWith('-')) {
     throw new PromptfooActionError(
       `Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`,
       ErrorCodes.INVALID_GIT_REF,
-      'Git refs should not start with dashes to prevent command injection',
-    );
-  }
-
-  // Security check: prevent command chaining
-  if (
-    ref.includes(' ') ||
-    ref.includes('\t') ||
-    ref.includes('\n') ||
-    ref.includes('\r')
-  ) {
-    throw new PromptfooActionError(
-      `Invalid Git ref "${ref}": refs cannot contain whitespace characters`,
-      ErrorCodes.INVALID_GIT_REF,
-      'Git refs should not contain spaces or other whitespace',
-    );
-  }
-
-  // Security check: prevent special shell characters
-  const dangerousChars = [
-    '$',
-    '`',
-    '\\',
-    '!',
-    '&',
-    '|',
-    ';',
-    '(',
-    ')',
-    '<',
-    '>',
-    '"',
-    "'",
-    '*',
-    '?',
-    '[',
-    ']',
-    '{',
-    '}',
-  ];
-  for (const char of dangerousChars) {
-    if (ref.includes(char)) {
-      throw new PromptfooActionError(
-        `Invalid Git ref "${ref}": refs cannot contain special character "${char}"`,
-        ErrorCodes.INVALID_GIT_REF,
-        'Git refs should only contain alphanumerics, underscores, hyphens, slashes, and dots',
-      );
-    }
-  }
-
-  // Final check: ensure ref matches allowed pattern
-  if (!gitRefRegex.test(ref)) {
-    throw new PromptfooActionError(
-      `Invalid Git ref "${ref}": refs can only contain letters, numbers, underscores, hyphens, slashes, and dots`,
-      ErrorCodes.INVALID_GIT_REF,
-      'Please use a valid git reference format',
+      'Git refs should not start with dashes to prevent option injection',
     );
   }
 }
@@ -292,16 +234,16 @@ export async function run(): Promise<void> {
         );
       }
 
-      // Validate baseRef and headRef to prevent command injection
+      // Validate baseRef and headRef to prevent option injection
       validateGitRef(baseRef);
       validateGitRef(headRef);
 
-      await exec.exec('git', ['fetch', '--', 'origin', baseRef]);
+      await gitInterface.fetch(['--', 'origin', baseRef]);
       const baseFetchHead = (
         await gitInterface.revparse(['FETCH_HEAD'])
       ).trim();
 
-      await exec.exec('git', ['fetch', '--', 'origin', headRef]);
+      await gitInterface.fetch(['--', 'origin', headRef]);
       const headFetchHead = (
         await gitInterface.revparse(['FETCH_HEAD'])
       ).trim();
@@ -331,7 +273,7 @@ export async function run(): Promise<void> {
       } else {
         // Option 2: Compare against base (default to previous commit)
         try {
-          // Validate compareBase to prevent command injection
+          // Validate compareBase to prevent option injection
           validateGitRef(compareBase);
 
           changedFiles = await gitInterface.diff([
