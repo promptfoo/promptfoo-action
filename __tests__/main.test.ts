@@ -544,12 +544,12 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // Should still create comment
-      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalled();
+      // Should fail fast and not create comment
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
 
-      // But should fail the action
+      // Should fail the action
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('Error: Promptfoo evaluation failed'),
+        expect.stringContaining('Promptfoo evaluation failed'),
       );
     });
 

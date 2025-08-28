@@ -39,7 +39,10 @@ jest.mock('fs', () => {
 });
 
 const mockCore = core as jest.Mocked<typeof core>;
-const mockFs = fs as jest.Mocked<typeof fs>;
+const mockFs = fs as jest.Mocked<typeof fs> & {
+  readdirSync: jest.MockedFunction<any>;
+  statSync: jest.MockedFunction<any>;
+};
 
 describe('Cache Utilities', () => {
   beforeEach(() => {
