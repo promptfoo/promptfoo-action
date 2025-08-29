@@ -59,6 +59,7 @@ const fs = __importStar(__nccwpck_require__(9896));
 const glob = __importStar(__nccwpck_require__(1363));
 const path = __importStar(__nccwpck_require__(6928));
 const simple_git_1 = __nccwpck_require__(9065);
+const cache_1 = __nccwpck_require__(5480);
 const config_1 = __nccwpck_require__(7230);
 const errors_1 = __nccwpck_require__(4651);
 const gitInterface = (0, simple_git_1.simpleGit)();
@@ -130,9 +131,7 @@ function run() {
                 required: true,
             });
             const cachePath = core.getInput('cache-path', { required: false });
-            const version = core.getInput('promptfoo-version', {
-                required: false,
-            });
+            const version = core.getInput('promptfoo-version', { required: false }) || 'latest';
             const workingDirectory = path.join(process.cwd(), core.getInput('working-directory', { required: false }));
             const noShare = core.getBooleanInput('no-share', {
                 required: false,
@@ -377,6 +376,24 @@ function run() {
             if (changedFilesList.length === 0) {
                 core.info(`Processing all matching prompt files: ${promptFiles.join(', ')}`);
             }
+            // Set up caching environment for optimal performance
+            core.startGroup('Setting up cache');
+            (0, cache_1.setupCacheEnvironment)(cachePath);
+            // Clean up old cache entries in CI to prevent unbounded growth
+            if (process.env.CI === 'true') {
+                const cleanedCount = yield (0, cache_1.cleanupOldCache)(process.env.PROMPTFOO_CACHE_PATH ||
+                    cachePath ||
+                    path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache'), 7 * 24 * 60 * 60);
+                if (cleanedCount > 0) {
+                    core.info(`Cleaned ${cleanedCount} old cache entries`);
+                }
+            }
+            // Log initial cache metrics
+            const cacheDir = process.env.PROMPTFOO_CACHE_PATH ||
+                cachePath ||
+                path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache');
+            yield (0, cache_1.logCacheMetrics)(cacheDir);
+            core.endGroup();
             const outputFile = path.join(workingDirectory, 'output.json');
             let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
             if (!useConfigPrompts && promptFiles.length > 0) {
@@ -403,9 +420,10 @@ function run() {
             if (noProgressBar) {
                 promptfooArgs.push('--no-progress-bar');
             }
-            const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
+            // Build environment with process.env which now includes cache settings from setupCacheEnvironment()
+            const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
                 ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
-                : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {})), (mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {})), (groqApiKey ? { GROQ_API_KEY: groqApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
+                : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {})), (mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {})), (groqApiKey ? { GROQ_API_KEY: groqApiKey } : {}));
             let errorToThrow;
             try {
                 yield exec.exec(`npx promptfoo@${version}`, promptfooArgs, {
@@ -417,6 +435,9 @@ function run() {
                 // Wrap the error with more context
                 errorToThrow = new errors_1.PromptfooActionError(`Promptfoo evaluation failed: ${error instanceof Error ? error.message : String(error)}`, errors_1.ErrorCodes.PROMPTFOO_EXECUTION_FAILED, 'Check that your promptfoo configuration is valid and all required API keys are set');
             }
+            if (errorToThrow) {
+                throw errorToThrow;
+            }
             // Read output file
             let output;
             try {
@@ -426,6 +447,11 @@ function run() {
             catch (error) {
                 throw new errors_1.PromptfooActionError(`Failed to read or parse output file: ${error instanceof Error ? error.message : String(error)}`, errors_1.ErrorCodes.INVALID_OUTPUT_FILE, 'This usually happens when promptfoo fails to generate valid output. Check the logs above for more details');
             }
+            // Log final cache metrics and create manifest
+            core.startGroup('Cache metrics after evaluation');
+            yield (0, cache_1.logCacheMetrics)(cacheDir);
+            yield (0, cache_1.createCacheManifest)(cacheDir);
+            core.endGroup();
             // Comment on PR or output results
             if (isPullRequest && pullRequestNumber && !disableComment) {
                 const octokit = github.getOctokit(githubToken);
@@ -447,7 +473,6 @@ function run() {
             }
             else if (!isPullRequest) {
                 // For non-PR workflows, output results to workflow summary
-                const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
                 const summary = core.summary
                     .addHeading('Promptfoo Evaluation Results')
                     .addTable([
@@ -508,6 +533,302 @@ function handleError(error) {
 }
 if (require.main === require.cache[eval('__filename')]) {
     run();
+}
+
+
+/***/ }),
+
+/***/ 5480:
+/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+
+"use strict";
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getDefaultCacheConfig = getDefaultCacheConfig;
+exports.setupCacheEnvironment = setupCacheEnvironment;
+exports.generateCacheKey = generateCacheKey;
+exports.getCacheStats = getCacheStats;
+exports.logCacheMetrics = logCacheMetrics;
+exports.cleanupOldCache = cleanupOldCache;
+exports.createCacheManifest = createCacheManifest;
+const core = __importStar(__nccwpck_require__(7484));
+const crypto = __importStar(__nccwpck_require__(6982));
+const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
+/**
+ * Get default cache configuration optimized for GitHub Actions
+ */
+function getDefaultCacheConfig() {
+    return {
+        enabled: true,
+        path: process.env.PROMPTFOO_CACHE_PATH ||
+            path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache'),
+        ttl: parseInt(process.env.PROMPTFOO_CACHE_TTL || '86400', 10), // 1 day default for CI
+        maxSize: parseInt(process.env.PROMPTFOO_CACHE_MAX_SIZE || '52428800', 10), // 50MB for CI
+        maxFiles: parseInt(process.env.PROMPTFOO_CACHE_MAX_FILE_COUNT || '5000', 10),
+    };
+}
+/**
+ * Set up promptfoo cache environment variables for optimal GitHub Actions performance
+ */
+function setupCacheEnvironment(cachePath) {
+    const config = getDefaultCacheConfig();
+    // Always enable caching in CI for better performance
+    process.env.PROMPTFOO_CACHE_ENABLED = 'true';
+    process.env.PROMPTFOO_CACHE_TYPE = 'disk'; // Use disk cache for persistence across steps
+    if (cachePath) {
+        // Use provided cache path
+        const absolutePath = path.isAbsolute(cachePath)
+            ? cachePath
+            : path.join(process.cwd(), cachePath);
+        process.env.PROMPTFOO_CACHE_PATH = absolutePath;
+        // Ensure cache directory exists
+        if (!fs.existsSync(absolutePath)) {
+            fs.mkdirSync(absolutePath, { recursive: true });
+            core.debug(`Created cache directory at: ${absolutePath}`);
+        }
+    }
+    else {
+        // Use default cache path
+        process.env.PROMPTFOO_CACHE_PATH = config.path;
+        // Ensure default cache directory exists
+        if (!fs.existsSync(config.path)) {
+            fs.mkdirSync(config.path, { recursive: true });
+            core.debug(`Created default cache directory at: ${config.path}`);
+        }
+    }
+    // Set cache TTL and size limits optimized for CI
+    process.env.PROMPTFOO_CACHE_TTL = config.ttl.toString();
+    process.env.PROMPTFOO_CACHE_MAX_SIZE = config.maxSize.toString();
+    process.env.PROMPTFOO_CACHE_MAX_FILE_COUNT = config.maxFiles.toString();
+    core.info('Cache environment configured:');
+    core.info(`  Path: ${process.env.PROMPTFOO_CACHE_PATH}`);
+    core.info(`  TTL: ${config.ttl}s (${config.ttl / 3600} hours)`);
+    core.info(`  Max Size: ${config.maxSize / 1048576}MB`);
+    core.info(`  Max Files: ${config.maxFiles}`);
+}
+/**
+ * Generate a cache key for the current evaluation context
+ * This helps with GitHub Actions cache@v4 integration
+ */
+function generateCacheKey(configPath, promptFiles, additionalFactors) {
+    const factors = [
+        configPath,
+        ...promptFiles.sort(),
+        ...(additionalFactors || []),
+    ];
+    // Create a hash of all factors for a stable cache key
+    const hash = crypto
+        .createHash('sha256')
+        .update(factors.join('|'))
+        .digest('hex')
+        .substring(0, 16);
+    // Include OS and date for cache freshness
+    const os = process.platform;
+    const week = getWeekNumber(new Date());
+    return `promptfoo-${os}-${week}-${hash}`;
+}
+/**
+ * Get week number for cache rotation
+ */
+function getWeekNumber(date) {
+    const firstDayOfYear = new Date(date.getFullYear(), 0, 1);
+    const pastDaysOfYear = (date.getTime() - firstDayOfYear.getTime()) / 86400000;
+    const weekNumber = Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+    return `${date.getFullYear()}-W${weekNumber.toString().padStart(2, '0')}`;
+}
+/**
+ * Get cache statistics for monitoring
+ */
+function getCacheStats(cachePath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (!fs.existsSync(cachePath)) {
+            return {
+                exists: false,
+                sizeBytes: 0,
+                fileCount: 0,
+            };
+        }
+        let totalSize = 0;
+        let fileCount = 0;
+        let oldestTime;
+        let newestTime;
+        function walkDir(dir) {
+            const files = fs.readdirSync(dir);
+            for (const file of files) {
+                const filePath = path.join(dir, file);
+                const stat = fs.statSync(filePath);
+                if (stat.isDirectory()) {
+                    walkDir(filePath);
+                }
+                else {
+                    totalSize += stat.size;
+                    fileCount++;
+                    const mtime = stat.mtime.getTime();
+                    if (!oldestTime || mtime < oldestTime)
+                        oldestTime = mtime;
+                    if (!newestTime || mtime > newestTime)
+                        newestTime = mtime;
+                }
+            }
+        }
+        walkDir(cachePath);
+        return {
+            exists: true,
+            sizeBytes: totalSize,
+            fileCount,
+            oldestFile: oldestTime ? new Date(oldestTime) : undefined,
+            newestFile: newestTime ? new Date(newestTime) : undefined,
+        };
+    });
+}
+/**
+ * Log cache performance metrics
+ */
+function logCacheMetrics(cachePath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        try {
+            const stats = yield getCacheStats(cachePath);
+            if (stats.exists) {
+                core.info('Cache Statistics:');
+                core.info(`  Size: ${(stats.sizeBytes / 1048576).toFixed(2)}MB`);
+                core.info(`  Files: ${stats.fileCount}`);
+                if (stats.oldestFile) {
+                    core.info(`  Oldest: ${stats.oldestFile.toISOString()}`);
+                }
+                if (stats.newestFile) {
+                    core.info(`  Newest: ${stats.newestFile.toISOString()}`);
+                }
+                // Set outputs for workflow usage
+                core.setOutput('cache-size-mb', (stats.sizeBytes / 1048576).toFixed(2));
+                core.setOutput('cache-file-count', stats.fileCount.toString());
+            }
+            else {
+                core.info('Cache directory does not exist yet');
+            }
+        }
+        catch (error) {
+            core.warning(`Failed to get cache metrics: ${error}`);
+        }
+    });
+}
+/**
+ * Clean up old cache entries to prevent unbounded growth
+ */
+function cleanupOldCache(cachePath_1) {
+    return __awaiter(this, arguments, void 0, function* (cachePath, maxAgeSeconds = 604800) {
+        if (!fs.existsSync(cachePath)) {
+            return 0;
+        }
+        const now = Date.now();
+        const maxAgeMs = maxAgeSeconds * 1000;
+        let deletedCount = 0;
+        function cleanDir(dir) {
+            const files = fs.readdirSync(dir);
+            for (const file of files) {
+                const filePath = path.join(dir, file);
+                const stat = fs.statSync(filePath);
+                if (stat.isDirectory()) {
+                    cleanDir(filePath);
+                    // Remove empty directories
+                    if (fs.readdirSync(filePath).length === 0) {
+                        fs.rmdirSync(filePath);
+                        deletedCount++;
+                    }
+                }
+                else {
+                    const age = now - stat.mtime.getTime();
+                    if (age > maxAgeMs) {
+                        fs.unlinkSync(filePath);
+                        deletedCount++;
+                        core.debug(`Deleted old cache file: ${filePath}`);
+                    }
+                }
+            }
+        }
+        try {
+            cleanDir(cachePath);
+            if (deletedCount > 0) {
+                core.info(`Cleaned up ${deletedCount} old cache entries`);
+            }
+        }
+        catch (error) {
+            core.warning(`Cache cleanup failed: ${error}`);
+        }
+        return deletedCount;
+    });
+}
+/**
+ * Optimize cache for GitHub Actions by creating a cache manifest
+ */
+function createCacheManifest(cachePath, outputPath) {
+    return __awaiter(this, void 0, void 0, function* () {
+        const manifestPath = outputPath || path.join(cachePath, '.cache-manifest.json');
+        const stats = yield getCacheStats(cachePath);
+        const manifest = {
+            version: '1.0.0',
+            created: new Date().toISOString(),
+            stats,
+            environment: {
+                os: process.platform,
+                node: process.version,
+                ci: process.env.CI === 'true',
+                github_action: process.env.GITHUB_ACTION,
+                github_run_id: process.env.GITHUB_RUN_ID,
+                github_sha: process.env.GITHUB_SHA,
+            },
+            config: {
+                path: cachePath,
+                ttl: process.env.PROMPTFOO_CACHE_TTL,
+                maxSize: process.env.PROMPTFOO_CACHE_MAX_SIZE,
+                maxFiles: process.env.PROMPTFOO_CACHE_MAX_FILE_COUNT,
+            },
+        };
+        fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+        core.debug(`Cache manifest created at: ${manifestPath}`);
+    });
 }
 
 

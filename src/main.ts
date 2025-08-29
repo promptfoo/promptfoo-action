@@ -7,6 +7,12 @@ import * as glob from 'glob';
 import * as path from 'path';
 import type { OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
+import {
+  cleanupOldCache,
+  createCacheManifest,
+  logCacheMetrics,
+  setupCacheEnvironment,
+} from './utils/cache';
 import { extractFileDependencies } from './utils/config';
 import {
   ErrorCodes,
@@ -87,9 +93,8 @@ export async function run(): Promise<void> {
       required: true,
     });
     const cachePath: string = core.getInput('cache-path', { required: false });
-    const version: string = core.getInput('promptfoo-version', {
-      required: false,
-    });
+    const version: string =
+      core.getInput('promptfoo-version', { required: false }) || 'latest';
     const workingDirectory: string = path.join(
       process.cwd(),
       core.getInput('working-directory', { required: false }),
@@ -415,6 +420,31 @@ export async function run(): Promise<void> {
       );
     }
 
+    // Set up caching environment for optimal performance
+    core.startGroup('Setting up cache');
+    setupCacheEnvironment(cachePath);
+
+    // Clean up old cache entries in CI to prevent unbounded growth
+    if (process.env.CI === 'true') {
+      const cleanedCount = await cleanupOldCache(
+        process.env.PROMPTFOO_CACHE_PATH ||
+          cachePath ||
+          path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache'),
+        7 * 24 * 60 * 60, // 7 days
+      );
+      if (cleanedCount > 0) {
+        core.info(`Cleaned ${cleanedCount} old cache entries`);
+      }
+    }
+
+    // Log initial cache metrics
+    const cacheDir =
+      process.env.PROMPTFOO_CACHE_PATH ||
+      cachePath ||
+      path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache');
+    await logCacheMetrics(cacheDir);
+    core.endGroup();
+
     const outputFile = path.join(workingDirectory, 'output.json');
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
     if (!useConfigPrompts && promptFiles.length > 0) {
@@ -445,8 +475,9 @@ export async function run(): Promise<void> {
       promptfooArgs.push('--no-progress-bar');
     }
 
+    // Build environment with process.env which now includes cache settings from setupCacheEnvironment()
     const env = {
-      ...process.env,
+      ...process.env, // This now includes all PROMPTFOO_CACHE_* variables set by setupCacheEnvironment()
       ...(openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {}),
       ...(azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {}),
       ...(anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {}),
@@ -461,7 +492,6 @@ export async function run(): Promise<void> {
       ...(cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {}),
       ...(mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {}),
       ...(groqApiKey ? { GROQ_API_KEY: groqApiKey } : {}),
-      ...(cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}),
     };
     let errorToThrow: Error | undefined;
     try {
@@ -478,6 +508,10 @@ export async function run(): Promise<void> {
       );
     }
 
+    if (errorToThrow) {
+      throw errorToThrow;
+    }
+
     // Read output file
     let output: OutputFile;
     try {
@@ -490,6 +524,12 @@ export async function run(): Promise<void> {
         'This usually happens when promptfoo fails to generate valid output. Check the logs above for more details',
       );
     }
+
+    // Log final cache metrics and create manifest
+    core.startGroup('Cache metrics after evaluation');
+    await logCacheMetrics(cacheDir);
+    await createCacheManifest(cacheDir);
+    core.endGroup();
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
@@ -516,9 +556,6 @@ export async function run(): Promise<void> {
       });
     } else if (!isPullRequest) {
       // For non-PR workflows, output results to workflow summary
-      const output = JSON.parse(
-        fs.readFileSync(outputFile, 'utf8'),
-      ) as OutputFile;
 
       const summary = core.summary
         .addHeading('Promptfoo Evaluation Results')
