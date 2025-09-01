@@ -4255,12 +4255,12 @@ function run() {
             core.setSecret(azureOpenaiApiKey);
             const env = Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (azureOpenaiApiKey ? { AZURE_OPENAI_API_KEY: azureOpenaiApiKey } : {})), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
             core.info('Running promptfoo...');
-            const { outputFile, summary } = yield (0, shared_1.runPromptfoo)(promptFile, env, 1, [
-                '--filter-providers',
-                provider,
+            const args = [
+                ...(provider !== 'all' ? ['--filter-providers', provider] : []),
                 '--tests',
                 inputFile,
-            ]);
+            ];
+            const { outputFile, summary } = yield (0, shared_1.runPromptfoo)(promptFile, env, 1, args);
             core.info(summary);
             core.setOutput('output-path', outputFile);
         }

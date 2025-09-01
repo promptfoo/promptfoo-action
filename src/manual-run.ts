@@ -26,12 +26,12 @@ export async function run(): Promise<void> {
     };
 
     core.info('Running promptfoo...');
-    const {outputFile, summary} = await runPromptfoo(promptFile, env, 1, [
-      '--filter-providers',
-      provider,
+    const args = [
+      ...(provider !== 'all' ? ['--filter-providers', provider] : []),
       '--tests',
       inputFile,
-    ]);
+    ];
+    const {outputFile, summary} = await runPromptfoo(promptFile, env, 1, args);
     core.info(summary);
     core.setOutput('output-path', outputFile);
   } catch (error) {
