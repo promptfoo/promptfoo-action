@@ -1,0 +1,21 @@
+name: 'Promptfoo Manual Run'
+description: 'Run promptfoo evaluation on a specific prompt file.'
+inputs:
+  prompt-file:
+    description: 'The prompt file to evaluate.'
+    required: true
+  openai-api-key:
+    description: 'OpenAI API key.'
+    required: false
+  azure-openai-api-key:
+    description: 'Azure OpenAI API key.'
+    required: false
+  cache-path:
+    description: 'Path to the promptfoo cache.'
+    required: false
+outputs:
+  output-path:
+    description: 'The path to the promptfoo output file.'
+runs:
+  using: 'node16'
+  main: 'dist/manual-run/index.js'

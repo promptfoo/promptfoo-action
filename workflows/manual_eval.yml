@@ -1,0 +1,65 @@
+name: 'Manual Promptfoo Evaluation'
+
+on:
+  workflow_dispatch:
+    inputs:
+      prompt-config:
+        description: 'Select the prompt configuration file to run'
+        required: true
+        type: choice
+        options:
+          - kahoot-text-extraction-no-questions.yaml
+          - kahoot-text-extraction.yaml
+          - kahoot-text-lesson.yaml
+          - kahoot-text-micro.yaml
+          - kahoot-text-simulation.yaml
+          - kahoot-text-solver.yaml
+          - kahoot-text-standard-chain.yaml
+          - kahoot-text-standard-extract-quiz-questions.yaml
+          - kahoot-text-standard-question-generation-step.yaml
+          - kahoot-text-standard-question-specialization-step.yaml
+          - kahoot-text-standard.yaml
+          - kahoot-text-testprep.yaml
+          - kahoot-text-vocabReview.yaml
+          - kahoot-text-workshop.yaml
+
+jobs:
+  run-promptfoo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Checkout repository'
+        uses: actions/checkout@v4
+
+      - name: Set up promptfoo cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/promptfoo
+          key: ${{ runner.os }}-promptfoo-v1
+          restore-keys: |
+            ${{ runner.os }}-promptfoo-
+
+      - uses: actions/cache@v4
+        id: node_modules-cache
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node_modules-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node_modules-
+
+      - run: npm install
+        if: steps.node_modules-cache.outputs.cache-hit != 'true'
+
+      - name: 'Run Promptfoo Manual Action'
+        id: promptfoo
+        uses: ./
+        with:
+          action: 'manual-run'
+          prompt-file: ${{ github.event.inputs.prompt-config }}
+          azure-openai-api-key: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          cache-path: ~/.cache/promptfoo
+
+      - name: 'Upload Promptfoo Output'
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-output
+          path: ${{ steps.promptfoo.outputs.output-path }}

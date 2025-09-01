@@ -1,4 +1,4 @@
-import {run, handleError} from '../src/main';
+import {run, handleError} from '../src/pr-comment';
 import * as core from '@actions/core';
 import {expect, test} from '@jest/globals';
 

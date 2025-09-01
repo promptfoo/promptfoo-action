@@ -1,0 +1,59 @@
+name: 'Prompt Evaluation'
+
+on:
+  pull_request:
+    paths:
+      - 'prompts-output/**'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      # This permission is used to post comments on Pull Requests
+      contents: read
+      pull-requests: write
+    steps:
+      # This cache is optional, but you'll save money and time by setting it up!
+      - name: Set up promptfoo cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/promptfoo
+          key: ${{ runner.os }}-promptfoo-v1
+          restore-keys: |
+            ${{ runner.os }}-promptfoo-
+
+      - name: Set up repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Create/restore node_modules folder cache
+      - uses: actions/cache@v4
+        id: node_modules-cache
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node_modules-${{ hashFiles('yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-node_modules-
+
+      # Install dependencies (if no node_modules cache hit)
+      - run: yarn install --frozen-lockfile
+        if: |
+          steps.node_modules-cache.outputs.cache-hit != 'true'
+
+      # This step will actually run the before/after evaluation
+      - name: Run promptfoo evaluation
+        uses: mobitroll/promptfoo-action/pr-comment@main
+        env:
+          PROMPTFOO_PASS_RATE_THRESHOLD: 90
+        with:
+          openai-api-key: 'not-used'
+          azure-openai-api-key: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          prompts: 'prompts-output/**/*.json'
+          cache-path: ~/.cache/promptfoo
+      - name: Archive results
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-results
+          path: promptfoo-output-*.json
