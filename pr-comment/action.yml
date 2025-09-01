@@ -2,7 +2,7 @@ name: 'Promptfoo PR Comment'
 description: 'Automatically run a before/after comparison of edited prompts and posts the result to your Pull Request.'
 runs:
   using: 'node16'
-  main: 'dist/pr-comment/index.js'
+  main: '../dist/pr-comment/index.js'
 inputs:
   github-token:
     description: 'Github Token, used to add comments to the PR'

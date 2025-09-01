@@ -18,4 +18,4 @@ outputs:
     description: 'The path to the promptfoo output file.'
 runs:
   using: 'node16'
-  main: 'dist/manual-run/index.js'
+  main: '../dist/manual-run/index.js'
