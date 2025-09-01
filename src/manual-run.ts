@@ -1,9 +1,11 @@
 import * as core from '@actions/core';
-import {runPromptfoo} from './shared';
+import {findPromptFile, runPromptfoo} from './shared';
 
 export async function run(): Promise<void> {
   try {
-    const promptFile = core.getInput('prompt-file', {required: true});
+    const promptName = core.getInput('prompt-file', {required: true});
+    const promptFile = findPromptFile(promptName);
+    const provider = core.getInput('provider', {required: true});
     const openaiApiKey: string = core.getInput('openai-api-key', {
       required: false,
     });
@@ -23,7 +25,10 @@ export async function run(): Promise<void> {
     };
 
     core.info('Running promptfoo...');
-    const {outputFile, summary} = await runPromptfoo(promptFile, env, 1);
+    const {outputFile, summary} = await runPromptfoo(promptFile, env, 1, [
+      '--filter-providers',
+      provider,
+    ]);
     core.info(summary);
     core.setOutput('output-path', outputFile);
   } catch (error) {

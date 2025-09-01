@@ -1,6 +1,9 @@
 name: 'Promptfoo Manual Run'
 description: 'Run promptfoo evaluation on a specific prompt file.'
 inputs:
+  provider:
+    description: 'The provider to use for the evaluation.'
+    required: true
   prompt-file:
     description: 'The prompt file to evaluate.'
     required: true

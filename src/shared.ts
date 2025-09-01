@@ -40,6 +40,16 @@ ${JSON.stringify(result.vars)}
   return text;
 }
 
+export function findPromptFile(promptFile: string): string {
+  const jsonFiles = glob.sync(`prompts-output/**/*.json`);
+  for (const jsonFile of jsonFiles) {
+    if (path.basename(jsonFile).includes(promptFile)) {
+      return jsonFile;
+    }
+  }
+  throw new Error(`Prompt file not found: ${promptFile}`);
+}
+
 function findConfigFileFromPromptFile(promptFile: string): string | undefined {
   // Look for all yarm files and look for promptFile in them
   const yamlFiles = glob.sync('*.yaml');
@@ -56,6 +66,7 @@ export async function runPromptfoo(
   promptFile: string,
   env: {[key: string]: string},
   promptFileId: number,
+  additionalParameters?: string[],
 ): Promise<{outputFile: string; summary: string}> {
   const configFile = findConfigFileFromPromptFile(promptFile);
   if (!configFile) {
@@ -77,6 +88,7 @@ export async function runPromptfoo(
     promptFile,
     '-o',
     outputFile,
+    ...(additionalParameters || []),
   ];
   await exec.exec('npx promptfoo', promptfooArgs, {env});
   const output: IPromptFooOutput = JSON.parse(
