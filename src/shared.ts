@@ -2,6 +2,7 @@ import * as exec from '@actions/exec';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import * as core from '@actions/core';
 
 export interface IPromptFooOutput {
   results: {
@@ -90,7 +91,17 @@ export async function runPromptfoo(
     outputFile,
     ...(additionalParameters || []),
   ];
-  await exec.exec('npx promptfoo', promptfooArgs, {env});
+  core.info(
+    `[action] Running promptfoo with args: ${JSON.stringify(promptfooArgs)}`,
+  );
+  try {
+    const exitCode = await exec.exec('npx promptfoo', promptfooArgs, {env});
+    core.info(
+      `[action] Finished running promptfoo with exit code: ${exitCode}`,
+    );
+  } catch (error: unknown) {
+    core.error(`[action] Error running promptfoo: ${error}`);
+  }
   const output: IPromptFooOutput = JSON.parse(
     fs.readFileSync(outputFile, 'utf8'),
   );

@@ -16854,6 +16854,7 @@ const exec = __importStar(__nccwpck_require__(1514));
 const path = __importStar(__nccwpck_require__(1017));
 const fs = __importStar(__nccwpck_require__(7147));
 const glob = __importStar(__nccwpck_require__(3277));
+const core = __importStar(__nccwpck_require__(2186));
 function displayResultSummary(output) {
     let text = '';
     for (const result of output.results.results) {
@@ -16918,7 +16919,14 @@ function runPromptfoo(promptFile, env, promptFileId, additionalParameters) {
             outputFile,
             ...(additionalParameters || []),
         ];
-        yield exec.exec('npx promptfoo', promptfooArgs, { env });
+        core.info(`[action] Running promptfoo with args: ${JSON.stringify(promptfooArgs)}`);
+        try {
+            const exitCode = yield exec.exec('npx promptfoo', promptfooArgs, { env });
+            core.info(`[action] Finished running promptfoo with exit code: ${exitCode}`);
+        }
+        catch (error) {
+            core.error(`[action] Error running promptfoo: ${error}`);
+        }
         const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
         const summary = `# ${promptFile}
 
