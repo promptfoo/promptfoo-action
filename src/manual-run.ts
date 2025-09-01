@@ -22,7 +22,9 @@ export async function run(): Promise<void> {
       ...(cachePath ? {PROMPTFOO_CACHE_PATH: cachePath} : {}),
     };
 
-    const {outputFile} = await runPromptfoo(promptFile, env, 1);
+    core.info('Running promptfoo...');
+    const {outputFile, summary} = await runPromptfoo(promptFile, env, 1);
+    core.info(summary);
     core.setOutput('output-path', outputFile);
   } catch (error) {
     if (error instanceof Error) {
