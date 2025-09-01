@@ -4240,7 +4240,9 @@ const shared_1 = __nccwpck_require__(3826);
 function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
-            const promptFile = core.getInput('prompt-file', { required: true });
+            const promptName = core.getInput('prompt-file', { required: true });
+            const promptFile = (0, shared_1.findPromptFile)(promptName);
+            const provider = core.getInput('provider', { required: true });
             const openaiApiKey = core.getInput('openai-api-key', {
                 required: false,
             });
@@ -4252,7 +4254,10 @@ function run() {
             core.setSecret(azureOpenaiApiKey);
             const env = Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (azureOpenaiApiKey ? { AZURE_OPENAI_API_KEY: azureOpenaiApiKey } : {})), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (cachePath ? { PROMPTFOO_CACHE_PATH: cachePath } : {}));
             core.info('Running promptfoo...');
-            const { outputFile, summary } = yield (0, shared_1.runPromptfoo)(promptFile, env, 1);
+            const { outputFile, summary } = yield (0, shared_1.runPromptfoo)(promptFile, env, 1, [
+                '--filter-providers',
+                provider,
+            ]);
             core.info(summary);
             core.setOutput('output-path', outputFile);
         }
@@ -4316,7 +4321,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.runPromptfoo = exports.displayResultSummary = void 0;
+exports.runPromptfoo = exports.findPromptFile = exports.displayResultSummary = void 0;
 const exec = __importStar(__nccwpck_require__(1514));
 const path = __importStar(__nccwpck_require__(1017));
 const fs = __importStar(__nccwpck_require__(7147));
@@ -4344,6 +4349,16 @@ ${JSON.stringify(result.vars)}
     return text;
 }
 exports.displayResultSummary = displayResultSummary;
+function findPromptFile(promptFile) {
+    const jsonFiles = glob.sync(`prompts-output/**/*.json`);
+    for (const jsonFile of jsonFiles) {
+        if (path.basename(jsonFile).includes(promptFile)) {
+            return jsonFile;
+        }
+    }
+    throw new Error(`Prompt file not found: ${promptFile}`);
+}
+exports.findPromptFile = findPromptFile;
 function findConfigFileFromPromptFile(promptFile) {
     // Look for all yarm files and look for promptFile in them
     const yamlFiles = glob.sync('*.yaml');
@@ -4355,7 +4370,7 @@ function findConfigFileFromPromptFile(promptFile) {
     }
     return undefined;
 }
-function runPromptfoo(promptFile, env, promptFileId) {
+function runPromptfoo(promptFile, env, promptFileId, additionalParameters) {
     return __awaiter(this, void 0, void 0, function* () {
         const configFile = findConfigFileFromPromptFile(promptFile);
         if (!configFile) {
@@ -4373,6 +4388,7 @@ function runPromptfoo(promptFile, env, promptFileId) {
             promptFile,
             '-o',
             outputFile,
+            ...(additionalParameters || []),
         ];
         yield exec.exec('npx promptfoo', promptfooArgs, { env });
         const output = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
