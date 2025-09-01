@@ -4241,6 +4241,7 @@ function run() {
     return __awaiter(this, void 0, void 0, function* () {
         try {
             const promptName = core.getInput('prompt-file', { required: true });
+            const inputFile = core.getInput('input-file', { required: true });
             const promptFile = (0, shared_1.findPromptFile)(promptName);
             const provider = core.getInput('provider', { required: true });
             const openaiApiKey = core.getInput('openai-api-key', {
@@ -4257,6 +4258,8 @@ function run() {
             const { outputFile, summary } = yield (0, shared_1.runPromptfoo)(promptFile, env, 1, [
                 '--filter-providers',
                 provider,
+                '--tests',
+                inputFile,
             ]);
             core.info(summary);
             core.setOutput('output-path', outputFile);

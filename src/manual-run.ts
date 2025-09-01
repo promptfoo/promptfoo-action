@@ -4,6 +4,7 @@ import {findPromptFile, runPromptfoo} from './shared';
 export async function run(): Promise<void> {
   try {
     const promptName = core.getInput('prompt-file', {required: true});
+    const inputFile = core.getInput('input-file', {required: true});
     const promptFile = findPromptFile(promptName);
     const provider = core.getInput('provider', {required: true});
     const openaiApiKey: string = core.getInput('openai-api-key', {
@@ -28,6 +29,8 @@ export async function run(): Promise<void> {
     const {outputFile, summary} = await runPromptfoo(promptFile, env, 1, [
       '--filter-providers',
       provider,
+      '--tests',
+      inputFile,
     ]);
     core.info(summary);
     core.setOutput('output-path', outputFile);
