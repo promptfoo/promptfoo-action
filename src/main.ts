@@ -172,7 +172,11 @@ export async function run(): Promise<void> {
         if (fs.existsSync(envFilePath)) {
           core.info(`Loading environment variables from ${envFilePath}`);
           // Use override: true to allow later files to override earlier ones
-          const result = dotenv.config({ path: envFilePath, override: true });
+          const result = dotenv.config({
+            path: envFilePath,
+            override: true,
+            quiet: true,
+          });
           if (result.error) {
             throw new PromptfooActionError(
               `Failed to load ${envFilePath}: ${result.error.message}`,
