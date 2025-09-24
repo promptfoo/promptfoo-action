@@ -1,0 +1,54 @@
+name: dependabot-post-update
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - package.json
+      - package-lock.json
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dependabot-post-update-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  rebuild-and-commit:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout dependabot branch
+        uses: actions/checkout@v4
+        with:
+          # Ensure we operate on the PR head branch
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          persist-credentials: true
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies (no scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Rebuild dist artifacts
+        run: npm run package
+
+      - name: Commit generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dist/ || true
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore(dist): rebuild for dependabot update"
+            git push
+          fi
+
