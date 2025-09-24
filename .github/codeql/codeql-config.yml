@@ -1,0 +1,4 @@
+name: codeql-config
+paths-ignore:
+  - .github/workflows/dependabot-post-update.yml
+
