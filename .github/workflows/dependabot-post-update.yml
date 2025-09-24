@@ -20,16 +20,16 @@ jobs:
     if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout dependabot branch
-        uses: actions/checkout@v4
+      - name: Checkout merged PR commit (safe)
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
         with:
-          # Ensure we operate on the PR head branch
-          ref: ${{ github.event.pull_request.head.ref }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          persist-credentials: true
+          # Use the auto-generated merge commit for this PR from the base repo
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Use Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.x'
           cache: 'npm'
@@ -37,8 +37,23 @@ jobs:
       - name: Install dependencies (no scripts)
         run: npm ci --ignore-scripts
 
-      - name: Rebuild dist artifacts
+      - name: Build dist artifacts
         run: npm run package
+
+      - name: Prepare git auth and switch to PR head branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BRANCH="${{ github.event.pull_request.head.ref }}"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git fetch origin "$BRANCH"
+          git checkout -B "$BRANCH" "origin/$BRANCH"
+
+      - name: Rebuild on head branch (ensure consistency)
+        run: |
+          npm ci --ignore-scripts
+          npm run package
 
       - name: Commit generated files
         run: |
@@ -49,6 +64,5 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "chore(dist): rebuild for dependabot update"
-            git push
+            git push origin "HEAD:$BRANCH"
           fi
-
