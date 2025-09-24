@@ -28,7 +28,6 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20.x'
-          cache: 'npm'
 
       - name: Install dependencies (no scripts)
         run: npm ci --ignore-scripts
@@ -51,11 +50,15 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR head branch (no build)
-        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          persist-credentials: false
+      - name: Prepare workspace
+        run: |
+          set -euo pipefail
+          git init .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://github.com/${{ github.repository }}.git"
+          git fetch --depth=1 origin "${{ github.event.pull_request.head.ref }}"
+          git checkout -B "${{ github.event.pull_request.head.ref }}" FETCH_HEAD
 
       - name: Download dist artifact
         uses: actions/download-artifact@v4
@@ -67,8 +70,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          set -euo pipefail
           git add dist/ || true
           if git diff --cached --quiet; then
             echo "No changes to commit"
@@ -76,4 +78,4 @@ jobs:
           fi
           git commit -m "chore(dist): rebuild for dependabot update"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          git push
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
