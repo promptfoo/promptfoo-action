@@ -50,32 +50,40 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - name: Prepare workspace
-        run: |
-          set -euo pipefail
-          git init .
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add origin "https://github.com/${{ github.repository }}.git"
-          git fetch --depth=1 origin "${{ github.event.pull_request.head.ref }}"
-          git checkout -B "${{ github.event.pull_request.head.ref }}" FETCH_HEAD
-
       - name: Download dist artifact
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
-
-      - name: Commit generated files
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          git add dist/ || true
-          if git diff --cached --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-          git commit -m "chore(dist): rebuild for dependabot update"
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+      - name: Commit generated files via API
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = context.payload.pull_request.head.ref;
+            const distDir = path.join(process.cwd(), 'dist');
+            const files = fs.readdirSync(distDir);
+            for (const file of files) {
+              const repoPath = `dist/${file}`;
+              const content = fs.readFileSync(path.join(distDir, file), { encoding: 'base64' });
+              let sha = undefined;
+              try {
+                const { data } = await github.rest.repos.getContent({ owner, repo, path: repoPath, ref: branch });
+                if (!Array.isArray(data)) sha = data.sha;
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+              await github.rest.repos.createOrUpdateFileContents({
+                owner,
+                repo,
+                path: repoPath,
+                message: 'chore(dist): rebuild for dependabot update',
+                content,
+                branch,
+                sha,
+              });
+            }
