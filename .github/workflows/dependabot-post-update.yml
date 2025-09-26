@@ -1,0 +1,89 @@
+name: dependabot-post-update
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - package.json
+      - package-lock.json
+
+concurrency:
+  group: dependabot-post-update-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  build-dist:
+    if: github.actor == 'dependabot[bot]'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout merged PR commit (safe)
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
+          persist-credentials: false
+
+      - name: Use Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20.x'
+
+      - name: Install dependencies (no scripts)
+        run: npm ci --ignore-scripts
+
+      - name: Build dist artifacts
+        run: npm run package
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: ignore
+
+  commit-dist:
+    if: github.actor == 'dependabot[bot]'
+    needs: build-dist
+    permissions:
+      contents: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Commit generated files via API
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const branch = context.payload.pull_request.head.ref;
+            const distDir = path.join(process.cwd(), 'dist');
+            const files = fs.readdirSync(distDir);
+            for (const file of files) {
+              const repoPath = `dist/${file}`;
+              const content = fs.readFileSync(path.join(distDir, file), { encoding: 'base64' });
+              let sha = undefined;
+              try {
+                const { data } = await github.rest.repos.getContent({ owner, repo, path: repoPath, ref: branch });
+                if (!Array.isArray(data)) sha = data.sha;
+              } catch (e) {
+                if (e.status !== 404) throw e;
+              }
+              await github.rest.repos.createOrUpdateFileContents({
+                owner,
+                repo,
+                path: repoPath,
+                message: 'chore(dist): rebuild for dependabot update',
+                content,
+                branch,
+                sha,
+              });
+            }
