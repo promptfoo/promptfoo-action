@@ -440,6 +440,7 @@ describe('GitHub Action Main', () => {
           'cache-path': '',
           'no-table': 'false',
           'no-progress-bar': 'false',
+          'no-cache': 'false',
           'disable-comment': 'false',
           'workflow-files': 'action-input-file.txt',
           'workflow-base': 'action-base',
@@ -482,6 +483,7 @@ describe('GitHub Action Main', () => {
           'cache-path': '',
           'no-table': 'false',
           'no-progress-bar': 'false',
+          'no-cache': 'false',
           'disable-comment': 'false',
           'workflow-files': '', // Empty
           'workflow-base': 'feature-branch',
@@ -564,7 +566,7 @@ describe('GitHub Action Main', () => {
       expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
     });
 
-    test('should not include flags when both are false', async () => {
+    test('should not include any flags when all are false', async () => {
       await run();
 
       expect(mockExec.exec).toHaveBeenCalledTimes(1);
@@ -577,6 +579,7 @@ describe('GitHub Action Main', () => {
       expect(args).toContain('promptfooconfig.yaml');
       expect(args).not.toContain('--no-table');
       expect(args).not.toContain('--no-progress-bar');
+      expect(args).not.toContain('--no-cache');
     });
 
     test('should include --no-table flag when no-table is true', async () => {
@@ -591,6 +594,7 @@ describe('GitHub Action Main', () => {
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--no-table');
       expect(args).not.toContain('--no-progress-bar');
+      expect(args).not.toContain('--no-cache');
     });
 
     test('should include --no-progress-bar flag when no-progress-bar is true', async () => {
@@ -605,9 +609,25 @@ describe('GitHub Action Main', () => {
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
+      expect(args).not.toContain('--no-cache');
     });
 
-    test('should include both flags when both are true', async () => {
+    test('should include --no-cache flag when no-cache is true', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'no-cache') return true;
+        return false;
+      });
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--no-table');
+      expect(args).not.toContain('--no-progress-bar');
+      expect(args).toContain('--no-cache');
+    });
+
+    test('should include --no-table and --no-progress-bar flags when both are true', async () => {
       mockCore.getBooleanInput.mockImplementation((name: string) => {
         if (name === 'no-table') return true;
         if (name === 'no-progress-bar') return true;
@@ -620,6 +640,56 @@ describe('GitHub Action Main', () => {
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
+      expect(args).not.toContain('--no-cache');
+    });
+
+    test('should include --no-table and --no-cache flags when both are true', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'no-table') return true;
+        if (name === 'no-cache') return true;
+        return false;
+      });
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).toContain('--no-table');
+      expect(args).not.toContain('--no-progress-bar');
+      expect(args).toContain('--no-cache');
+    });
+
+    test('should include --no-progress-bar and --no-cache flags when both are true', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'no-progress-bar') return true;
+        if (name === 'no-cache') return true;
+        return false;
+      });
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--no-table');
+      expect(args).toContain('--no-progress-bar');
+      expect(args).toContain('--no-cache');
+    });
+
+    test('should include --no-table, --no-progress-bar, and --no-cache flags when all are true', async () => {
+      mockCore.getBooleanInput.mockImplementation((name: string) => {
+        if (name === 'no-table') return true;
+        if (name === 'no-progress-bar') return true;
+        if (name === 'no-cache') return true;
+        return false;
+      });
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).toContain('--no-table');
+      expect(args).toContain('--no-progress-bar');
+      expect(args).toContain('--no-cache');
     });
 
     test('should run evaluation when prompts is not provided', async () => {
@@ -781,6 +851,7 @@ describe('GitHub Action Main', () => {
       mockCore.getBooleanInput.mockImplementation((name: string) => {
         if (name === 'no-table') return true;
         if (name === 'no-progress-bar') return true;
+        if (name === 'no-cache') return true;
         if (name === 'no-share') return true;
         if (name === 'use-config-prompts') return true;
         return false;
@@ -794,6 +865,7 @@ describe('GitHub Action Main', () => {
       // Should have these flags
       expect(args).toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
+      expect(args).toContain('--no-cache');
 
       // Should NOT have these
       expect(args).not.toContain('--share');

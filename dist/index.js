@@ -156,6 +156,9 @@ function run() {
             const noProgressBar = core.getBooleanInput('no-progress-bar', {
                 required: false,
             });
+            const noCache = core.getBooleanInput('no-cache', {
+                required: false,
+            });
             const disableComment = core.getBooleanInput('disable-comment', {
                 required: false,
             });
@@ -423,6 +426,9 @@ function run() {
             }
             if (noProgressBar) {
                 promptfooArgs.push('--no-progress-bar');
+            }
+            if (noCache) {
+                promptfooArgs.push('--no-cache');
             }
             // Build environment with process.env which now includes cache settings from setupCacheEnvironment()
             const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
