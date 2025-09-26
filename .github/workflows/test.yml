@@ -12,7 +12,7 @@ jobs:
   build: # make sure build/ci work properly
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5.0.0
       - run: npm ci
       - run: npm run all
   style-check:
@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v5.0.0
       - name: Use Node 20.x
         uses: actions/setup-node@v5.0.0
         with:
@@ -35,7 +35,7 @@ jobs:
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5.0.0
       - uses: ./
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
