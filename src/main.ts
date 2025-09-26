@@ -125,6 +125,9 @@ export async function run(): Promise<void> {
     const noProgressBar: boolean = core.getBooleanInput('no-progress-bar', {
       required: false,
     });
+    const noCache: boolean = core.getBooleanInput('no-cache', {
+      required: false,
+    });
     const disableComment: boolean = core.getBooleanInput('disable-comment', {
       required: false,
     });
@@ -477,6 +480,9 @@ export async function run(): Promise<void> {
     }
     if (noProgressBar) {
       promptfooArgs.push('--no-progress-bar');
+    }
+    if (noCache) {
+      promptfooArgs.push('--no-cache');
     }
 
     // Build environment with process.env which now includes cache settings from setupCacheEnvironment()

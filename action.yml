@@ -109,6 +109,10 @@ inputs:
     description: 'Run promptfoo with --no-progress-bar flag to keep output minimal'
     required: false
     default: 'false'
+  no-cache:
+    description: 'Run promptfoo with --no-cache flag to do not read or write results to disk cache'
+    required: false
+    default: 'false'
   disable-comment:
     description: 'Disable posting comments to the PR'
     required: false

@@ -36,6 +36,7 @@ The action can be configured using the following inputs:
 | `max-concurrency`    | Maximum number of concurrent API calls. Defaults to `4`. Useful for rate limiting.                                                                         | No       |
 | `no-table`           | Run promptfoo with `--no-table` flag to keep output minimal. Defaults to `false`                                                                          | No       |
 | `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
+| `no-cache`           | Run promptfoo with --no-cache flag to do not read or write results to disk cache. Defaults to `false`                                                     | No       |
 | `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
 | `force-run`          | Force evaluation to run even if no files changed. Defaults to `false`                                                                                      | No       |
 
