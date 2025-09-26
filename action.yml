@@ -110,7 +110,7 @@ inputs:
     required: false
     default: 'false'
   no-cache:
-    description: 'Run promptfoo with --no-cache flag to do not read or write results to disk cache'
+    description: 'Run promptfoo with --no-cache flag to avoid reading or writing results to the disk cache'
     required: false
     default: 'false'
   disable-comment:
