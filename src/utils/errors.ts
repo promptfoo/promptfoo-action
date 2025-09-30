@@ -19,6 +19,7 @@ export const ErrorCodes = {
   ENV_FILE_NOT_FOUND: 'ENV_FILE_NOT_FOUND',
   ENV_FILE_LOAD_ERROR: 'ENV_FILE_LOAD_ERROR',
   INVALID_CONFIGURATION: 'INVALID_CONFIGURATION',
+  AUTH_FAILED: 'AUTH_FAILED',
 } as const;
 
 export function formatErrorMessage(error: unknown): string {

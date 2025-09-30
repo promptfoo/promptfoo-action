@@ -439,6 +439,16 @@ For a complete example with all caching features, see [.github/workflows/example
 
 By default, results are shared online. Without `PROMPTFOO_API_KEY`, sharing is skipped and results only appear in logs.
 
+### Authentication Validation
+
+The action validates your `PROMPTFOO_API_KEY` **before** running the evaluation. This ensures:
+
+- **Fast failure**: Invalid credentials are detected immediately, saving CI time
+- **Clear error messages**: You'll know exactly what's wrong with your authentication
+- **Better security**: Authentication issues don't get buried in lengthy eval logs
+
+If authentication fails, the action will stop and provide a clear error message with instructions on how to fix it.
+
 To enable sharing with authentication:
 
 ```yaml
@@ -450,6 +460,8 @@ To enable sharing with authentication:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     config: 'promptfooconfig.yaml'
 ```
+
+Get your API key from [https://www.promptfoo.app/welcome](https://www.promptfoo.app/welcome).
 
 To explicitly disable sharing:
 

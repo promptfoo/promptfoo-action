@@ -7,6 +7,7 @@ import * as glob from 'glob';
 import * as path from 'path';
 import type { OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
+import { getApiHost, validatePromptfooApiKey } from './utils/auth';
 import {
   cleanupOldCache,
   createCacheManifest,
@@ -457,13 +458,22 @@ export async function run(): Promise<void> {
     if (!useConfigPrompts && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
-    // Check if sharing is enabled and authentication is available
+    // Check if sharing is enabled and validate authentication upfront
     if (!noShare) {
-      const hasPromptfooApiKey = process.env.PROMPTFOO_API_KEY || false;
-      const hasRemoteConfig =
-        process.env.PROMPTFOO_REMOTE_API_BASE_URL || false;
+      const promptfooApiKey = process.env.PROMPTFOO_API_KEY;
+      const hasRemoteConfig = process.env.PROMPTFOO_REMOTE_API_BASE_URL;
 
-      if (hasPromptfooApiKey || hasRemoteConfig) {
+      if (promptfooApiKey) {
+        // Validate API key before running eval to fail fast
+        core.info('Validating Promptfoo API key...');
+        await validatePromptfooApiKey(promptfooApiKey, getApiHost());
+        promptfooArgs.push('--share');
+      } else if (hasRemoteConfig) {
+        // For self-hosted instances with custom API URLs, skip validation
+        // as they may use different authentication mechanisms
+        core.info(
+          'Using custom PROMPTFOO_REMOTE_API_BASE_URL. Skipping API key validation.',
+        );
         promptfooArgs.push('--share');
       } else {
         core.info(
