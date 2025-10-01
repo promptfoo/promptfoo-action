@@ -43,7 +43,13 @@ jest.mock('simple-git', () => ({
   simpleGit: jest.fn(() => mockGitInterface),
 }));
 
+// Mock auth utilities
+jest.mock('../src/utils/auth');
+
 import { handleError, run } from '../src/main';
+import * as auth from '../src/utils/auth';
+
+const mockAuth = auth as jest.Mocked<typeof auth>;
 
 // Mock all dependencies
 jest.mock('@actions/core');
@@ -784,8 +790,19 @@ describe('GitHub Action Main', () => {
     test('should include --share flag when no-share is false and auth is present', async () => {
       process.env.PROMPTFOO_API_KEY = 'test-api-key';
 
+      // Mock successful validation
+      mockAuth.validatePromptfooApiKey.mockResolvedValue({
+        user: { id: '1', name: 'Test', email: 'test@example.com' },
+        organization: { id: '1', name: 'Test Org' },
+      });
+      mockAuth.getApiHost.mockReturnValue('https://api.promptfoo.app');
+
       await run();
 
+      expect(mockAuth.validatePromptfooApiKey).toHaveBeenCalledWith(
+        'test-api-key',
+        'https://api.promptfoo.app',
+      );
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--share');
@@ -826,6 +843,13 @@ describe('GitHub Action Main', () => {
     test('should include --share when PROMPTFOO_API_KEY is set', async () => {
       process.env.PROMPTFOO_API_KEY = 'test-api-key';
 
+      // Mock successful validation
+      mockAuth.validatePromptfooApiKey.mockResolvedValue({
+        user: { id: '1', name: 'Test', email: 'test@example.com' },
+        organization: { id: '1', name: 'Test Org' },
+      });
+      mockAuth.getApiHost.mockReturnValue('https://api.promptfoo.app');
+
       await run();
 
       const promptfooCall = mockExec.exec.mock.calls[0];
@@ -845,6 +869,42 @@ describe('GitHub Action Main', () => {
       expect(args).toContain('--share');
 
       delete process.env.PROMPTFOO_REMOTE_API_BASE_URL;
+    });
+
+    test('should fail early when API key validation fails', async () => {
+      process.env.PROMPTFOO_API_KEY = 'invalid-api-key';
+
+      const { PromptfooActionError, ErrorCodes } = await import(
+        '../src/utils/errors'
+      );
+
+      // Mock failed validation
+      mockAuth.validatePromptfooApiKey.mockRejectedValue(
+        new PromptfooActionError(
+          'Invalid PROMPTFOO_API_KEY: Authentication failed with status 401',
+          ErrorCodes.AUTH_FAILED,
+          'Ensure PROMPTFOO_API_KEY is set correctly',
+        ),
+      );
+      mockAuth.getApiHost.mockReturnValue('https://api.promptfoo.app');
+
+      await run();
+
+      // Should have attempted to validate
+      expect(mockAuth.validatePromptfooApiKey).toHaveBeenCalledWith(
+        'invalid-api-key',
+        'https://api.promptfoo.app',
+      );
+
+      // Should not have run promptfoo eval
+      expect(mockExec.exec).not.toHaveBeenCalled();
+
+      // Should have failed the action
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid PROMPTFOO_API_KEY'),
+      );
+
+      delete process.env.PROMPTFOO_API_KEY;
     });
 
     test('should handle all flags together correctly', async () => {
