@@ -55,8 +55,16 @@ jobs:
         with:
           name: dist
           path: dist
+      - name: Checkout repository
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          persist-credentials: false
       - name: Commit generated files via API
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: ./.github/scripts/commit-dist-changes.js
+          script: |
+            const commitDistChanges = require('./.github/scripts/commit-dist-changes.js');
+            await commitDistChanges({ github, context });
