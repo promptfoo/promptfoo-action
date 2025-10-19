@@ -1059,3 +1059,202 @@ describe('disable-comment feature', () => {
     expect(readmeContent).toContain('Disable posting comments to the PR');
   });
 });
+
+describe('API key environment variable fallback', () => {
+  beforeEach(() => {
+    // Clear all environment variables before each test
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.AZURE_OPENAI_API_KEY;
+    delete process.env.HF_API_TOKEN;
+  });
+
+  test('should use env var when action input not provided', async () => {
+    process.env.OPENAI_API_KEY = 'env-openai-key';
+    process.env.ANTHROPIC_API_KEY = 'env-anthropic-key';
+
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'openai-api-key': '', // Not provided
+        'anthropic-api-key': '', // Not provided
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    const envPassedToExec = mockExec.exec.mock.calls[0][2] as {
+      env: Record<string, string>;
+    };
+    expect(envPassedToExec.env.OPENAI_API_KEY).toBe('env-openai-key');
+    expect(envPassedToExec.env.ANTHROPIC_API_KEY).toBe('env-anthropic-key');
+  });
+
+  test('should prefer action input over env var', async () => {
+    process.env.OPENAI_API_KEY = 'env-openai-key';
+    process.env.ANTHROPIC_API_KEY = 'env-anthropic-key';
+
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'openai-api-key': 'input-openai-key', // Provided via input
+        'anthropic-api-key': 'input-anthropic-key', // Provided via input
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    const envPassedToExec = mockExec.exec.mock.calls[0][2] as {
+      env: Record<string, string>;
+    };
+    expect(envPassedToExec.env.OPENAI_API_KEY).toBe('input-openai-key');
+    expect(envPassedToExec.env.ANTHROPIC_API_KEY).toBe('input-anthropic-key');
+  });
+
+  test('should work for all API key providers', async () => {
+    process.env.OPENAI_API_KEY = 'openai-env';
+    process.env.AZURE_OPENAI_API_KEY = 'azure-env';
+    process.env.ANTHROPIC_API_KEY = 'anthropic-env';
+    process.env.HF_API_TOKEN = 'hf-env';
+    process.env.AWS_ACCESS_KEY_ID = 'aws-key-id-env';
+    process.env.AWS_SECRET_ACCESS_KEY = 'aws-secret-env';
+    process.env.REPLICATE_API_KEY = 'replicate-env';
+    process.env.PALM_API_KEY = 'palm-env';
+    process.env.VERTEX_API_KEY = 'vertex-env';
+    process.env.COHERE_API_KEY = 'cohere-env';
+    process.env.MISTRAL_API_KEY = 'mistral-env';
+    process.env.GROQ_API_KEY = 'groq-env';
+
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    const envPassedToExec = mockExec.exec.mock.calls[0][2] as {
+      env: Record<string, string>;
+    };
+    expect(envPassedToExec.env.OPENAI_API_KEY).toBe('openai-env');
+    expect(envPassedToExec.env.AZURE_OPENAI_API_KEY).toBe('azure-env');
+    expect(envPassedToExec.env.ANTHROPIC_API_KEY).toBe('anthropic-env');
+    expect(envPassedToExec.env.HF_API_TOKEN).toBe('hf-env');
+    expect(envPassedToExec.env.AWS_ACCESS_KEY_ID).toBe('aws-key-id-env');
+    expect(envPassedToExec.env.AWS_SECRET_ACCESS_KEY).toBe('aws-secret-env');
+    expect(envPassedToExec.env.REPLICATE_API_KEY).toBe('replicate-env');
+    expect(envPassedToExec.env.PALM_API_KEY).toBe('palm-env');
+    expect(envPassedToExec.env.VERTEX_API_KEY).toBe('vertex-env');
+    expect(envPassedToExec.env.COHERE_API_KEY).toBe('cohere-env');
+    expect(envPassedToExec.env.MISTRAL_API_KEY).toBe('mistral-env');
+    expect(envPassedToExec.env.GROQ_API_KEY).toBe('groq-env');
+  });
+
+  test('should mix inputs and env vars correctly', async () => {
+    process.env.OPENAI_API_KEY = 'openai-env';
+    process.env.ANTHROPIC_API_KEY = 'anthropic-env';
+
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'openai-api-key': 'openai-input', // Override with input
+        // anthropic-api-key not provided, should use env
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    const envPassedToExec = mockExec.exec.mock.calls[0][2] as {
+      env: Record<string, string>;
+    };
+    expect(envPassedToExec.env.OPENAI_API_KEY).toBe('openai-input'); // Input wins
+    expect(envPassedToExec.env.ANTHROPIC_API_KEY).toBe('anthropic-env'); // Env fallback
+  });
+});
+
+describe('environment variable documentation', () => {
+  test('README.md should document environment variable fallback', async () => {
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const readmePath = path.join(__dirname, '..', 'README.md');
+    const readmeContent = realFs.readFileSync(readmePath, 'utf8');
+
+    // Check that environment variable section exists
+    expect(readmeContent).toContain('### Environment Variables');
+    expect(readmeContent).toContain(
+      'All environment variables from your workflow are passed through to promptfoo',
+    );
+    expect(readmeContent).toContain('Option 1: Action Inputs');
+    expect(readmeContent).toContain('Option 2: Environment Variables');
+
+    // Check that precedence is documented
+    expect(readmeContent).toContain('Precedence');
+    expect(readmeContent).toContain('Action inputs override environment variables');
+
+    // Check that environment variable mapping table exists
+    expect(readmeContent).toContain('Supported API Key Mappings');
+    expect(readmeContent).toContain('OPENAI_API_KEY');
+    expect(readmeContent).toContain('AZURE_OPENAI_API_KEY');
+    expect(readmeContent).toContain('ANTHROPIC_API_KEY');
+    expect(readmeContent).toContain('HF_API_TOKEN');
+  });
+
+  test('action.yml should mention environment variable fallback in descriptions', async () => {
+    const yaml = require('js-yaml');
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const actionYmlPath = path.join(__dirname, '..', 'action.yml');
+    const actionYml = realFs.readFileSync(actionYmlPath, 'utf8');
+    const action = yaml.load(actionYml);
+
+    // Check that API key descriptions mention env var fallback
+    expect(action.inputs['openai-api-key'].description).toContain(
+      'OPENAI_API_KEY environment variable',
+    );
+    expect(action.inputs['azure-api-key'].description).toContain(
+      'AZURE_OPENAI_API_KEY environment variable',
+    );
+    expect(action.inputs['anthropic-api-key'].description).toContain(
+      'ANTHROPIC_API_KEY environment variable',
+    );
+    expect(action.inputs['huggingface-api-key'].description).toContain(
+      'HF_API_TOKEN environment variable',
+    );
+    expect(action.inputs['aws-access-key-id'].description).toContain(
+      'AWS_ACCESS_KEY_ID environment variable',
+    );
+    expect(action.inputs['aws-secret-access-key'].description).toContain(
+      'AWS_SECRET_ACCESS_KEY environment variable',
+    );
+  });
+
+  test('main.ts should have comments explaining fallback behavior', async () => {
+    const path = require('path');
+    const realFs = jest.requireActual('fs') as typeof fs;
+
+    const mainPath = path.join(__dirname, '..', 'src', 'main.ts');
+    const mainContent = realFs.readFileSync(mainPath, 'utf8');
+
+    // Check that code has explanatory comments
+    expect(mainContent).toContain(
+      'Environment variables from workflow context (process.env) are used as fallback',
+    );
+    expect(mainContent).toContain(
+      'Action inputs (if provided) take precedence and override environment variables',
+    );
+  });
+});

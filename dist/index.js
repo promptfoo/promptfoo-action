@@ -440,7 +440,9 @@ function run() {
             if (noCache) {
                 promptfooArgs.push('--no-cache');
             }
-            // Build environment with process.env which now includes cache settings from setupCacheEnvironment()
+            // Build environment for promptfoo execution
+            // Environment variables from workflow context (process.env) are used as fallback for API keys.
+            // Action inputs (if provided) take precedence and override environment variables.
             const env = Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({}, process.env), (openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {})), (azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {})), (anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {})), (huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {})), (awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {})), (awsSecretAccessKey
                 ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey }
                 : {})), (replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {})), (palmApiKey ? { PALM_API_KEY: palmApiKey } : {})), (vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {})), (cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {})), (mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {})), (groqApiKey ? { GROQ_API_KEY: groqApiKey } : {}));

@@ -34,40 +34,40 @@ inputs:
     description: 'Path to cache directory'
     required: false
   openai-api-key:
-    description: 'OpenAI API Key'
+    description: 'OpenAI API Key. Falls back to OPENAI_API_KEY environment variable if not provided.'
     required: false
   azure-api-key:
-    description: 'Azure API key'
+    description: 'Azure API key. Falls back to AZURE_OPENAI_API_KEY environment variable if not provided.'
     required: false
   anthropic-api-key:
-    description: 'Anthropic API key'
+    description: 'Anthropic API key. Falls back to ANTHROPIC_API_KEY environment variable if not provided.'
     required: false
   huggingface-api-key:
-    description: 'Huggingface API key'
+    description: 'Hugging Face API key. Falls back to HF_API_TOKEN environment variable if not provided.'
     required: false
   aws-access-key-id:
-    description: 'AWS Access Key ID'
+    description: 'AWS Access Key ID. Falls back to AWS_ACCESS_KEY_ID environment variable if not provided.'
     required: false
   aws-secret-access-key:
-    description: 'AWS Secret Access Key'
+    description: 'AWS Secret Access Key. Falls back to AWS_SECRET_ACCESS_KEY environment variable if not provided.'
     required: false
   replicate-api-key:
-    description: 'Replicate API key'
+    description: 'Replicate API key. Falls back to REPLICATE_API_KEY environment variable if not provided.'
     required: false
   palm-api-key:
-    description: 'Palm API key'
+    description: 'Palm API key. Falls back to PALM_API_KEY environment variable if not provided.'
     required: false
   vertex-api-key:
-    description: 'Google vertex API key'
+    description: 'Google Vertex API key. Falls back to VERTEX_API_KEY environment variable if not provided.'
     required: false
   cohere-api-key:
-    description: 'Cohere API key'
+    description: 'Cohere API key. Falls back to COHERE_API_KEY environment variable if not provided.'
     required: false
   mistral-api-key:
-    description: 'Mistral API key'
+    description: 'Mistral API key. Falls back to MISTRAL_API_KEY environment variable if not provided.'
     required: false
   groq-api-key:
-    description: 'Groq API key'
+    description: 'Groq API key. Falls back to GROQ_API_KEY environment variable if not provided.'
     required: false
   promptfoo-version:
     description: 'Version of promptfoo to use'
