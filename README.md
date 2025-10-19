@@ -14,8 +14,10 @@ The provided link opens the promptfoo web viewer, which allows you to interactiv
 
 This action supports multiple GitHub event types:
 - **Pull Request** (`pull_request`, `pull_request_target`) - Compares changes between base and head branches
-- **Push** (`push`) - Compares changes between commits
-- **Manual Trigger** (`workflow_dispatch`) - Allows manual evaluation with custom inputs
+- **Push** (`push`) - Compares changes between commits *(requires v1.1.0+)*
+- **Manual Trigger** (`workflow_dispatch`) - Allows manual evaluation with custom inputs *(requires v1.1.0+)*
+
+> **Note:** Version v1.0.0 only supports `pull_request` events. To use `push` or `workflow_dispatch` events, please use `@v1` (which now points to v1.1.0+) or explicitly use `@v1.1.0`.
 
 ## Configuration
 
@@ -94,7 +96,7 @@ jobs:
             ${{ runner.os }}-promptfoo-
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@main
+        uses: promptfoo/promptfoo-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -222,7 +224,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@main
+        uses: promptfoo/promptfoo-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -349,7 +351,7 @@ jobs:
             ${{ runner.os }}-promptfoo-
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@main
+        uses: promptfoo/promptfoo-action@v1
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
@@ -397,7 +399,7 @@ The action provides cache statistics as outputs:
 ```yaml
 - name: Run evaluation
   id: eval
-  uses: promptfoo/promptfoo-action@main
+  uses: promptfoo/promptfoo-action@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     config: 'promptfooconfig.yaml'
@@ -424,7 +426,7 @@ If caching isn't working as expected:
 
 1. **Enable debug mode** to see cache hits/misses:
    ```yaml
-   - uses: promptfoo/promptfoo-action@main
+   - uses: promptfoo/promptfoo-action@v1
      with:
        debug: true
    ```
@@ -453,7 +455,7 @@ To enable sharing with authentication:
 
 ```yaml
 - name: Run promptfoo evaluation
-  uses: promptfoo/promptfoo-action@main
+  uses: promptfoo/promptfoo-action@v1
   env:
     PROMPTFOO_API_KEY: ${{ secrets.PROMPTFOO_API_KEY }}
   with:
@@ -467,7 +469,7 @@ To explicitly disable sharing:
 
 ```yaml
 - name: Run promptfoo evaluation
-  uses: promptfoo/promptfoo-action@main
+  uses: promptfoo/promptfoo-action@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     config: 'promptfooconfig.yaml'
