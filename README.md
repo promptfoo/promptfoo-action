@@ -61,85 +61,20 @@ The following API key parameters are supported:
 
 ### Environment Variables
 
-**All environment variables from your workflow are passed through to promptfoo.**
-
-Use cases:
-- Set API keys at job or workflow level
-- Configure promptfoo (`PROMPTFOO_CACHE_*`, `PROMPTFOO_API_KEY`, etc.)
-- Pass custom variables to prompts or providers
-- Share configuration across reusable workflows
-
-**Example:**
-
-```yaml
-env:
-  # API keys
-  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-  # Promptfoo configuration
-  PROMPTFOO_CACHE_ENABLED: 'true'
-  PROMPTFOO_API_KEY: ${{ secrets.PROMPTFOO_API_KEY }}
-
-  # Custom variables for your prompts
-  CUSTOM_SYSTEM_PROMPT: 'You are a helpful assistant'
-
-steps:
-  - name: Run promptfoo evaluation
-    uses: promptfoo/promptfoo-action@v1
-    with:
-      github-token: ${{ secrets.GITHUB_TOKEN }}
-      config: 'promptfooconfig.yaml'
-      # All environment variables above are automatically available
-```
-
-#### API Keys
-
-**Option 1: Action Inputs**
-
-```yaml
-- name: Run promptfoo evaluation
-  uses: promptfoo/promptfoo-action@v1
-  with:
-    github-token: ${{ secrets.GITHUB_TOKEN }}
-    config: 'promptfooconfig.yaml'
-    openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-    anthropic-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
-```
-
-**Option 2: Environment Variables**
+All workflow environment variables are passed through to promptfoo. You can set API keys at the job/workflow level instead of as action inputs:
 
 ```yaml
 env:
   OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
 steps:
-  - name: Run promptfoo evaluation
-    uses: promptfoo/promptfoo-action@v1
+  - uses: promptfoo/promptfoo-action@v1
     with:
       github-token: ${{ secrets.GITHUB_TOKEN }}
       config: 'promptfooconfig.yaml'
 ```
 
-**Precedence:** Action inputs override environment variables.
-
-#### Supported API Key Mappings
-
-| Action Input              | Environment Variable       | Provider       |
-|---------------------------|----------------------------|----------------|
-| `openai-api-key`          | `OPENAI_API_KEY`           | OpenAI         |
-| `azure-api-key`           | `AZURE_OPENAI_API_KEY`     | Azure OpenAI   |
-| `anthropic-api-key`       | `ANTHROPIC_API_KEY`        | Anthropic      |
-| `huggingface-api-key`     | `HF_API_TOKEN`             | Hugging Face   |
-| `aws-access-key-id`       | `AWS_ACCESS_KEY_ID`        | AWS            |
-| `aws-secret-access-key`   | `AWS_SECRET_ACCESS_KEY`    | AWS            |
-| `replicate-api-key`       | `REPLICATE_API_KEY`        | Replicate      |
-| `palm-api-key`            | `PALM_API_KEY`             | Palm           |
-| `vertex-api-key`          | `VERTEX_API_KEY`           | Google Vertex  |
-| `cohere-api-key`          | `COHERE_API_KEY`           | Cohere         |
-| `mistral-api-key`         | `MISTRAL_API_KEY`          | Mistral        |
-| `groq-api-key`            | `GROQ_API_KEY`             | Groq           |
+Action inputs take precedence over environment variables. See action.yml for the complete mapping of input parameters to environment variables.
 
 ## Usage Examples
 

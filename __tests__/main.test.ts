@@ -1195,21 +1195,9 @@ describe('environment variable documentation', () => {
     // Check that environment variable section exists
     expect(readmeContent).toContain('### Environment Variables');
     expect(readmeContent).toContain(
-      'All environment variables from your workflow are passed through to promptfoo',
+      'All workflow environment variables are passed through to promptfoo',
     );
-    expect(readmeContent).toContain('Option 1: Action Inputs');
-    expect(readmeContent).toContain('Option 2: Environment Variables');
-
-    // Check that precedence is documented
-    expect(readmeContent).toContain('Precedence');
-    expect(readmeContent).toContain('Action inputs override environment variables');
-
-    // Check that environment variable mapping table exists
-    expect(readmeContent).toContain('Supported API Key Mappings');
-    expect(readmeContent).toContain('OPENAI_API_KEY');
-    expect(readmeContent).toContain('AZURE_OPENAI_API_KEY');
-    expect(readmeContent).toContain('ANTHROPIC_API_KEY');
-    expect(readmeContent).toContain('HF_API_TOKEN');
+    expect(readmeContent).toContain('Action inputs take precedence');
   });
 
   test('action.yml should mention environment variable fallback in descriptions', async () => {
