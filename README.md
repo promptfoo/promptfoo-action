@@ -496,3 +496,34 @@ To explicitly disable sharing:
 ## Minimal Output
 
 To reduce console output in CI, set `no-table: true` and `no-progress-bar: true` in your action configuration.
+
+## Persisting Results as Artifacts
+
+The action writes evaluation results to `output.json` in the working directory. You can upload this as a GitHub Action artifact to preserve results beyond the 2-week shareable URL expiration:
+
+```yaml
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run promptfoo evaluation
+        uses: promptfoo/promptfoo-action@v1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: 'promptfooconfig.yaml'
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()  # Upload even if evaluation fails
+        with:
+          name: promptfoo-results
+          path: output.json
+          retention-days: 90
+```
+
+Artifacts are retained for up to 90 days and can be downloaded from the GitHub Actions UI or via the GitHub API.
