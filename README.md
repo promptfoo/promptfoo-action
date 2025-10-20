@@ -59,6 +59,23 @@ The following API key parameters are supported:
 | `mistral-api-key`       | The API key for Mistral. Used to authenticate requests to the Mistral API.           |
 | `groq-api-key`          | The API key for Groq. Used to authenticate requests to the Groq API.                 |
 
+### Environment Variables
+
+All workflow environment variables are passed through to promptfoo. You can set API keys at the job/workflow level instead of as action inputs:
+
+```yaml
+env:
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+steps:
+  - uses: promptfoo/promptfoo-action@v1
+    with:
+      github-token: ${{ secrets.GITHUB_TOKEN }}
+      config: 'promptfooconfig.yaml'
+```
+
+Action inputs take precedence over environment variables. See action.yml for the complete mapping of input parameters to environment variables.
+
 ## Usage Examples
 
 ### Pull Request Evaluation

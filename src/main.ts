@@ -495,9 +495,12 @@ export async function run(): Promise<void> {
       promptfooArgs.push('--no-cache');
     }
 
-    // Build environment with process.env which now includes cache settings from setupCacheEnvironment()
+    // Build environment for promptfoo execution
+    // Environment variables from workflow context (process.env) are used as fallback for API keys.
+    // Action inputs (if provided) take precedence and override environment variables.
     const env = {
-      ...process.env, // This now includes all PROMPTFOO_CACHE_* variables set by setupCacheEnvironment()
+      ...process.env, // Includes cache settings and environment variable fallbacks
+      // Override with action inputs if provided (takes precedence over env vars)
       ...(openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {}),
       ...(azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {}),
       ...(anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {}),
