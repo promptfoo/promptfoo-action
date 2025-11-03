@@ -1,70 +1,53 @@
 name: dependabot-post-update
 
 on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
+  pull_request:
+    types: [opened, synchronize]
     paths:
       - package.json
       - package-lock.json
 
 concurrency:
   group: dependabot-post-update-${{ github.event.pull_request.number }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  build-dist:
+  rebuild-dist:
     if: github.actor == 'dependabot[bot]'
     permissions:
-      contents: read
+      contents: write
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout merged PR commit (safe)
+      - name: Checkout PR branch
         uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # v4
         with:
-          ref: refs/pull/${{ github.event.pull_request.number }}/merge
-          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Use Node.js
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v4
         with:
           node-version: '20.x'
 
-      - name: Install dependencies (no scripts)
-        run: npm ci --ignore-scripts
+      - name: Install dependencies
+        run: npm ci
 
       - name: Build dist artifacts
-        run: npm run build && npm run package
+        run: |
+          npm run build
+          npm run package
 
-      - name: Upload dist artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: ignore
-
-  commit-dist:
-    if: github.actor == 'dependabot[bot]'
-    needs: build-dist
-    permissions:
-      contents: write
-      pull-requests: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download dist artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: dist
-          path: dist
-      - name: Checkout repository
-        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          persist-credentials: false
-      - name: Commit generated files via API
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const commitDistChanges = require('./.github/scripts/commit-dist-changes.js');
-            await commitDistChanges({ github, context });
+      - name: Check for changes and commit
+        run: |
+          if [ -n "$(git status --porcelain dist/)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add dist/
+            git commit -m "chore(dist): rebuild after dependency update"
+            git push
+            echo "Dist files rebuilt and committed"
+          else
+            echo "No changes to dist files"
+          fi
