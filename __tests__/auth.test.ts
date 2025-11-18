@@ -48,7 +48,7 @@ describe('auth utilities', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => mockResponse,
-      } as any);
+      } as Response);
 
       const result = await validatePromptfooApiKey(mockApiKey, mockApiHost);
 
@@ -74,7 +74,7 @@ describe('auth utilities', () => {
         status: 401,
         statusText: 'Unauthorized',
         text: async () => 'Invalid credentials',
-      } as any);
+      } as Response);
 
       await expect(
         validatePromptfooApiKey(mockApiKey, mockApiHost),
@@ -94,7 +94,7 @@ describe('auth utilities', () => {
         status: 403,
         statusText: 'Forbidden',
         text: async () => 'Access denied',
-      } as any);
+      } as Response);
 
       await expect(
         validatePromptfooApiKey(mockApiKey, mockApiHost),
@@ -114,7 +114,7 @@ describe('auth utilities', () => {
         status: 500,
         statusText: 'Internal Server Error',
         text: async () => 'Server error',
-      } as any);
+      } as Response);
 
       await expect(
         validatePromptfooApiKey(mockApiKey, mockApiHost),
@@ -164,7 +164,7 @@ describe('auth utilities', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({ invalid: 'data' }),
-      } as any);
+      } as Response);
 
       await expect(
         validatePromptfooApiKey(mockApiKey, mockApiHost),
@@ -194,7 +194,7 @@ describe('auth utilities', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => mockResponse,
-      } as any);
+      } as Response);
 
       await validatePromptfooApiKey(mockApiKey);
 
