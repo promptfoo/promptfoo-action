@@ -1,4 +1,4 @@
-name: dependabot-post-update
+name: dependency-update-post-update
 
 on:
   pull_request:
@@ -8,12 +8,12 @@ on:
       - package-lock.json
 
 concurrency:
-  group: dependabot-post-update-${{ github.event.pull_request.number }}
+  group: dependency-update-post-update-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   rebuild-dist:
-    if: github.actor == 'dependabot[bot]'
+    if: github.actor == 'dependabot[bot]' || github.actor == 'renovate[bot]'
     permissions:
       contents: write
       pull-requests: write
@@ -45,7 +45,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add dist/
-            git commit -m "chore(dist): rebuild after dependency update"
+            git commit -m "chore: rebuild dist after dependency update"
             git push
             echo "Dist files rebuilt and committed"
           else
