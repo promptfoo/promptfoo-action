@@ -1,11 +1,10 @@
 import * as core from '@actions/core';
-import fetch from 'node-fetch';
 import { getApiHost, validatePromptfooApiKey } from '../src/utils/auth';
 import { ErrorCodes, PromptfooActionError } from '../src/utils/errors';
 
-// Mock node-fetch
-jest.mock('node-fetch');
-const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
+// Mock global fetch
+const mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+global.fetch = mockFetch;
 
 // Mock @actions/core
 jest.mock('@actions/core');
@@ -49,7 +48,7 @@ describe('auth utilities', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => mockResponse,
-      } as any);
+      } as Response);
 
       const result = await validatePromptfooApiKey(mockApiKey, mockApiHost);
 
@@ -75,7 +74,7 @@ describe('auth utilities', () => {
         status: 401,
         statusText: 'Unauthorized',
         text: async () => 'Invalid credentials',
-      } as any);
+      } as Response);
 
       await expect(
         validatePromptfooApiKey(mockApiKey, mockApiHost),
@@ -95,7 +94,7 @@ describe('auth utilities', () => {
         status: 403,
         statusText: 'Forbidden',
         text: async () => 'Access denied',
-      } as any);
+      } as Response);
 
       await expect(
         validatePromptfooApiKey(mockApiKey, mockApiHost),
@@ -115,7 +114,7 @@ describe('auth utilities', () => {
         status: 500,
         statusText: 'Internal Server Error',
         text: async () => 'Server error',
-      } as any);
+      } as Response);
 
       await expect(
         validatePromptfooApiKey(mockApiKey, mockApiHost),
@@ -165,7 +164,7 @@ describe('auth utilities', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => ({ invalid: 'data' }),
-      } as any);
+      } as Response);
 
       await expect(
         validatePromptfooApiKey(mockApiKey, mockApiHost),
@@ -195,7 +194,7 @@ describe('auth utilities', () => {
       mockFetch.mockResolvedValue({
         ok: true,
         json: async () => mockResponse,
-      } as any);
+      } as Response);
 
       await validatePromptfooApiKey(mockApiKey);
 

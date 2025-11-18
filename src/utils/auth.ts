@@ -1,5 +1,4 @@
 import * as core from '@actions/core';
-import fetch from 'node-fetch';
 import { ErrorCodes, PromptfooActionError } from './errors';
 
 const DEFAULT_CLOUD_API_HOST = 'https://api.promptfoo.app';
