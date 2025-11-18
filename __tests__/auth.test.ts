@@ -1,11 +1,10 @@
 import * as core from '@actions/core';
-import fetch from 'node-fetch';
 import { getApiHost, validatePromptfooApiKey } from '../src/utils/auth';
 import { ErrorCodes, PromptfooActionError } from '../src/utils/errors';
 
-// Mock node-fetch
-jest.mock('node-fetch');
-const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
+// Mock global fetch
+const mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+global.fetch = mockFetch;
 
 // Mock @actions/core
 jest.mock('@actions/core');
