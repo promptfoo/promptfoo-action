@@ -1,8 +1,7 @@
 {
   "packages": {
     ".": {
-      "release-type": "node",
-      "package-name": "promptfoo-action"
+      "release-type": "node"
     }
   }
 }
