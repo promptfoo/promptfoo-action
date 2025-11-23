@@ -1,11 +1,6 @@
 # Changelog
 
-## [2.0.0](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.1.0...promptfoo-action-v2.0.0) (2025-11-23)
-
-
-### ⚠ BREAKING CHANGES
-
-* This action now requires environments that support Node.js 20
+## [1.2.0](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.1.0...promptfoo-action-v1.2.0) (2025-11-23)
 
 ### Features
 
