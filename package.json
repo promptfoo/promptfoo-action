@@ -5,6 +5,7 @@
   "author": "Ian Webster",
   "license": "MIT",
   "main": "lib/main.js",
+  "packageManager": "npm@11.6.4",
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
