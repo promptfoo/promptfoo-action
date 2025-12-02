@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.1
-      - run: corepack enable
+      - run: npm install -g npm@11.6.4
       - run: npm ci
       - run: npm run all
   style-check:
@@ -26,8 +26,8 @@ jobs:
         uses: actions/setup-node@v6.0.0
         with:
           node-version: '24.x'
-      - name: Enable Corepack
-        run: corepack enable
+      - name: Install npm 11.6.4
+        run: npm install -g npm@11.6.4
       - name: Install Dependencies
         run: npm ci
       - name: Run Biome Check
