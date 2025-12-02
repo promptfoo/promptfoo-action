@@ -5,6 +5,7 @@
   "author": "Ian Webster",
   "license": "MIT",
   "main": "lib/main.js",
+  "packageManager": "npm@11.6.4",
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
@@ -49,5 +50,9 @@
     "promptfoo": "0.119.13",
     "ts-jest": "^29.4.5",
     "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=11.6.4"
   }
 }
