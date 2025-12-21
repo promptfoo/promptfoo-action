@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.1](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.2.0...promptfoo-action-v1.2.1) (2025-12-21)
+
+
+### Bug Fixes
+
+* **deps:** update dependency @actions/core to v2 ([#776](https://github.com/promptfoo/promptfoo-action/issues/776)) ([332ba8b](https://github.com/promptfoo/promptfoo-action/commit/332ba8b9b8595d257a8447895bd7826bcd62328b))
+* **deps:** update dependency @actions/exec to v2 ([#777](https://github.com/promptfoo/promptfoo-action/issues/777)) ([7fc2c02](https://github.com/promptfoo/promptfoo-action/commit/7fc2c026fbf896cf717fc3af997c7ac40e3e05fa))
+
 ## [1.2.0](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.1.0...promptfoo-action-v1.2.0) (2025-11-23)
 
 ### Features
