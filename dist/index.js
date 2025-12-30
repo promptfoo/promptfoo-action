@@ -48,6 +48,9 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 exports.handleError = handleError;
@@ -57,6 +60,7 @@ const github = __importStar(__nccwpck_require__(3228));
 const dotenv = __importStar(__nccwpck_require__(8889));
 const fs = __importStar(__nccwpck_require__(9896));
 const glob = __importStar(__nccwpck_require__(1363));
+const js_yaml_1 = __importDefault(__nccwpck_require__(4281));
 const path = __importStar(__nccwpck_require__(6928));
 const simple_git_1 = __nccwpck_require__(9065);
 const auth_1 = __nccwpck_require__(6690);
@@ -415,31 +419,36 @@ function run() {
                     // Validate API key before running eval to fail fast
                     core.info('Validating Promptfoo API key...');
                     yield (0, auth_1.validatePromptfooApiKey)(promptfooApiKey, (0, auth_1.getApiHost)());
-                    // Persist API key to promptfoo config file so cloudConfig.isEnabled() returns true
+                    // Persist API key to promptfoo config file so cloudConfig.isEnabled() returns true.
                     // This is necessary because promptfoo's CloudConfig class only reads from the config file,
                     // not from PROMPTFOO_API_KEY environment variable directly.
                     // See: https://github.com/promptfoo/promptfoo-action/issues/786
                     //
                     // We write directly to the config file instead of using `promptfoo auth login -k`
                     // to avoid exposing the API key in process listings (security best practice).
+                    //
+                    // TODO: This workaround can be removed once promptfoo fixes cloudConfig to check
+                    // the PROMPTFOO_API_KEY environment variable (similar to codeScan/util/auth.ts).
                     core.info('Persisting Promptfoo Cloud authentication...');
                     try {
                         const apiHost = (0, auth_1.getApiHost)();
-                        const configDir = process.env.PROMPTFOO_CONFIG_DIR ||
+                        const promptfooConfigDir = process.env.PROMPTFOO_CONFIG_DIR ||
                             path.join(process.env.HOME || '/tmp', '.promptfoo');
-                        const configPath = path.join(configDir, 'promptfoo.yaml');
+                        const promptfooConfigPath = path.join(promptfooConfigDir, 'promptfoo.yaml');
                         // Create config directory if it doesn't exist
-                        if (!fs.existsSync(configDir)) {
-                            fs.mkdirSync(configDir, { recursive: true });
+                        if (!fs.existsSync(promptfooConfigDir)) {
+                            fs.mkdirSync(promptfooConfigDir, { recursive: true });
                         }
-                        // Write minimal cloud config in YAML format
+                        // Write cloud config using js-yaml for proper escaping
                         // This mirrors what `promptfoo auth login` does internally
-                        const cloudConfig = `cloud:
-  apiKey: "${promptfooApiKey}"
-  apiHost: "${apiHost}"
-  appUrl: "https://www.promptfoo.app"
-`;
-                        fs.writeFileSync(configPath, cloudConfig, 'utf8');
+                        const cloudConfigData = {
+                            cloud: {
+                                apiKey: promptfooApiKey,
+                                apiHost: apiHost,
+                                appUrl: 'https://www.promptfoo.app',
+                            },
+                        };
+                        fs.writeFileSync(promptfooConfigPath, js_yaml_1.default.dump(cloudConfigData), 'utf8');
                         core.info('✓ Successfully configured Promptfoo Cloud authentication');
                     }
                     catch (authError) {
