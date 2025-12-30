@@ -817,15 +817,9 @@ describe('GitHub Action Main', () => {
         'https://api.promptfoo.app',
       );
 
-      // When API key is present, there are 2 calls:
-      // Call 0: auth login (to persist API key to config file)
-      // Call 1: eval (with --share flag)
-      expect(mockExec.exec).toHaveBeenCalledTimes(2);
-      const authCall = mockExec.exec.mock.calls[0];
-      expect(authCall[1]).toContain('auth');
-      expect(authCall[1]).toContain('login');
-
-      const evalCall = mockExec.exec.mock.calls[1];
+      // Auth is now persisted via file write (not exec), so only 1 exec call (eval)
+      expect(mockExec.exec).toHaveBeenCalledTimes(1);
+      const evalCall = mockExec.exec.mock.calls[0];
       const evalArgs = evalCall[1] as string[];
       expect(evalArgs).toContain('--share');
     });
@@ -872,11 +866,9 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // When API key is present, there are 2 calls:
-      // Call 0: auth login (to persist API key)
-      // Call 1: eval (with --share flag)
-      expect(mockExec.exec).toHaveBeenCalledTimes(2);
-      const evalCall = mockExec.exec.mock.calls[1];
+      // Auth is persisted via file write (not exec), so only 1 exec call (eval)
+      expect(mockExec.exec).toHaveBeenCalledTimes(1);
+      const evalCall = mockExec.exec.mock.calls[0];
       const evalArgs = evalCall[1] as string[];
       expect(evalArgs).toContain('--share');
     });

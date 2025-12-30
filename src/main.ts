@@ -472,19 +472,31 @@ export async function run(): Promise<void> {
         // This is necessary because promptfoo's CloudConfig class only reads from the config file,
         // not from PROMPTFOO_API_KEY environment variable directly.
         // See: https://github.com/promptfoo/promptfoo-action/issues/786
-        core.info('Authenticating with Promptfoo Cloud...');
+        //
+        // We write directly to the config file instead of using `promptfoo auth login -k`
+        // to avoid exposing the API key in process listings (security best practice).
+        core.info('Persisting Promptfoo Cloud authentication...');
         try {
-          // Pass full environment to support proxy settings, custom config dirs, etc.
-          await exec.exec(
-            `npx promptfoo@${version}`,
-            ['auth', 'login', '-k', promptfooApiKey, '--host', getApiHost()],
-            {
-              env: { ...process.env } as Record<string, string>,
-              cwd: workingDirectory,
-              silent: true,
-            },
-          );
-          core.info('✓ Successfully authenticated with Promptfoo Cloud');
+          const apiHost = getApiHost();
+          const configDir =
+            process.env.PROMPTFOO_CONFIG_DIR ||
+            path.join(process.env.HOME || '/tmp', '.promptfoo');
+          const configPath = path.join(configDir, 'promptfoo.yaml');
+
+          // Create config directory if it doesn't exist
+          if (!fs.existsSync(configDir)) {
+            fs.mkdirSync(configDir, { recursive: true });
+          }
+
+          // Write minimal cloud config in YAML format
+          // This mirrors what `promptfoo auth login` does internally
+          const cloudConfig = `cloud:
+  apiKey: "${promptfooApiKey}"
+  apiHost: "${apiHost}"
+  appUrl: "https://www.promptfoo.app"
+`;
+          fs.writeFileSync(configPath, cloudConfig, 'utf8');
+          core.info('✓ Successfully configured Promptfoo Cloud authentication');
         } catch (authError) {
           core.warning(
             `Failed to persist authentication: ${authError instanceof Error ? authError.message : String(authError)}. ` +
