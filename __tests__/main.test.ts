@@ -817,7 +817,7 @@ describe('GitHub Action Main', () => {
         'https://api.promptfoo.app',
       );
 
-      // Auth is now persisted via file write (not exec), so only 1 exec call (eval)
+      // Only 1 exec call (eval) - promptfoo now reads PROMPTFOO_API_KEY env var directly
       expect(mockExec.exec).toHaveBeenCalledTimes(1);
       const evalCall = mockExec.exec.mock.calls[0];
       const evalArgs = evalCall[1] as string[];
@@ -866,7 +866,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // Auth is persisted via file write (not exec), so only 1 exec call (eval)
+      // Only 1 exec call (eval) - promptfoo now reads PROMPTFOO_API_KEY env var directly
       expect(mockExec.exec).toHaveBeenCalledTimes(1);
       const evalCall = mockExec.exec.mock.calls[0];
       const evalArgs = evalCall[1] as string[];
@@ -880,7 +880,7 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // Only 1 call (eval) since no API key means no auth login step
+      // Only 1 exec call (eval) - self-hosted uses env var for API URL
       expect(mockExec.exec).toHaveBeenCalledTimes(1);
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
