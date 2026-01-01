@@ -415,6 +415,7 @@ function run() {
                     // Validate API key before running eval to fail fast
                     core.info('Validating Promptfoo API key...');
                     yield (0, auth_1.validatePromptfooApiKey)(promptfooApiKey, (0, auth_1.getApiHost)());
+                    core.info('✓ Promptfoo API key validated');
                     promptfooArgs.push('--share');
                 }
                 else if (hasRemoteConfig) {
@@ -454,19 +455,24 @@ function run() {
                 });
             }
             catch (error) {
-                // Wrap the error with more context
+                // Capture the error but don't throw yet - we want to post PR comments first
+                // This allows showing test results even when some tests fail
+                // See: https://github.com/promptfoo/promptfoo-action/issues/786
                 errorToThrow = new errors_1.PromptfooActionError(`Promptfoo evaluation failed: ${error instanceof Error ? error.message : String(error)}`, errors_1.ErrorCodes.PROMPTFOO_EXECUTION_FAILED, 'Check that your promptfoo configuration is valid and all required API keys are set');
             }
-            if (errorToThrow) {
-                throw errorToThrow;
-            }
-            // Read output file
+            // Read output file - promptfoo writes output.json even when tests fail
+            // We try to read it so we can post PR comments with the results
             let output;
             try {
                 const outputContent = fs.readFileSync(outputFile, 'utf8');
                 output = JSON.parse(outputContent);
             }
             catch (error) {
+                // If we can't read output and we already have an error, throw the original error
+                // If we can't read output but eval succeeded, throw the output read error
+                if (errorToThrow) {
+                    throw errorToThrow;
+                }
                 throw new errors_1.PromptfooActionError(`Failed to read or parse output file: ${error instanceof Error ? error.message : String(error)}`, errors_1.ErrorCodes.INVALID_OUTPUT_FILE, 'This usually happens when promptfoo fails to generate valid output. Check the logs above for more details');
             }
             // Log final cache metrics and create manifest

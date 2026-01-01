@@ -467,6 +467,7 @@ export async function run(): Promise<void> {
         // Validate API key before running eval to fail fast
         core.info('Validating Promptfoo API key...');
         await validatePromptfooApiKey(promptfooApiKey, getApiHost());
+        core.info('✓ Promptfoo API key validated');
         promptfooArgs.push('--share');
       } else if (hasRemoteConfig) {
         // For self-hosted instances with custom API URLs, skip validation
@@ -523,7 +524,9 @@ export async function run(): Promise<void> {
         cwd: workingDirectory,
       });
     } catch (error) {
-      // Wrap the error with more context
+      // Capture the error but don't throw yet - we want to post PR comments first
+      // This allows showing test results even when some tests fail
+      // See: https://github.com/promptfoo/promptfoo-action/issues/786
       errorToThrow = new PromptfooActionError(
         `Promptfoo evaluation failed: ${error instanceof Error ? error.message : String(error)}`,
         ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
@@ -531,16 +534,18 @@ export async function run(): Promise<void> {
       );
     }
 
-    if (errorToThrow) {
-      throw errorToThrow;
-    }
-
-    // Read output file
+    // Read output file - promptfoo writes output.json even when tests fail
+    // We try to read it so we can post PR comments with the results
     let output: OutputFile;
     try {
       const outputContent = fs.readFileSync(outputFile, 'utf8');
       output = JSON.parse(outputContent) as OutputFile;
     } catch (error) {
+      // If we can't read output and we already have an error, throw the original error
+      // If we can't read output but eval succeeded, throw the output read error
+      if (errorToThrow) {
+        throw errorToThrow;
+      }
       throw new PromptfooActionError(
         `Failed to read or parse output file: ${error instanceof Error ? error.message : String(error)}`,
         ErrorCodes.INVALID_OUTPUT_FILE,

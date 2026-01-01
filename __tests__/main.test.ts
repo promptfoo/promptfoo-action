@@ -179,6 +179,9 @@ describe('GitHub Action Main', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    // Clean up any PROMPTFOO env vars that tests might have set
+    delete process.env.PROMPTFOO_API_KEY;
+    delete process.env.PROMPTFOO_REMOTE_API_BASE_URL;
   });
 
   describe('run function', () => {
@@ -543,19 +546,29 @@ describe('GitHub Action Main', () => {
     });
 
     test('should handle promptfoo execution failure', async () => {
-      mockExec.exec.mockImplementation((command: string) => {
-        if (command.includes('promptfoo')) {
-          throw new Error('Promptfoo evaluation failed');
-        }
-        return Promise.resolve(0);
-      });
+      mockExec.exec.mockImplementation(
+        (command: string, args?: readonly string[]) => {
+          // The 'eval' is in the args array, not the command string
+          if (command.includes('promptfoo') && args?.includes('eval')) {
+            throw new Error('Promptfoo evaluation failed');
+          }
+          return Promise.resolve(0);
+        },
+      );
 
       await run();
 
-      // Should fail fast and not create comment
-      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      // PR comment SHOULD be created even when tests fail
+      // This is the intended behavior per issue #786 - we want to show test results
+      // in PR comments regardless of pass/fail status
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith({
+        owner: 'test-owner',
+        repo: 'test-repo',
+        issue_number: 123,
+        body: expect.stringContaining('LLM prompt was modified'),
+      });
 
-      // Should fail the action
+      // Should still fail the action after posting the comment
       expect(mockCore.setFailed).toHaveBeenCalledWith(
         expect.stringContaining('Promptfoo evaluation failed'),
       );
@@ -803,11 +816,12 @@ describe('GitHub Action Main', () => {
         'test-api-key',
         'https://api.promptfoo.app',
       );
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).toContain('--share');
 
-      delete process.env.PROMPTFOO_API_KEY;
+      // Only 1 exec call (eval) - promptfoo now reads PROMPTFOO_API_KEY env var directly
+      expect(mockExec.exec).toHaveBeenCalledTimes(1);
+      const evalCall = mockExec.exec.mock.calls[0];
+      const evalArgs = evalCall[1] as string[];
+      expect(evalArgs).toContain('--share');
     });
 
     test('should not include --share flag when no-share is true', async () => {
@@ -852,23 +866,25 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).toContain('--share');
-
-      delete process.env.PROMPTFOO_API_KEY;
+      // Only 1 exec call (eval) - promptfoo now reads PROMPTFOO_API_KEY env var directly
+      expect(mockExec.exec).toHaveBeenCalledTimes(1);
+      const evalCall = mockExec.exec.mock.calls[0];
+      const evalArgs = evalCall[1] as string[];
+      expect(evalArgs).toContain('--share');
     });
 
     test('should include --share when PROMPTFOO_REMOTE_API_BASE_URL is set', async () => {
+      // Ensure no API key is set (only REMOTE_API_BASE_URL)
+      delete process.env.PROMPTFOO_API_KEY;
       process.env.PROMPTFOO_REMOTE_API_BASE_URL = 'https://example.com';
 
       await run();
 
+      // Only 1 exec call (eval) - self-hosted uses env var for API URL
+      expect(mockExec.exec).toHaveBeenCalledTimes(1);
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--share');
-
-      delete process.env.PROMPTFOO_REMOTE_API_BASE_URL;
     });
 
     test('should fail early when API key validation fails', async () => {
