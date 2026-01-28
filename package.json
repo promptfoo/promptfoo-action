@@ -32,7 +32,7 @@
     "@actions/core": "^2.0.0",
     "@actions/exec": "^2.0.0",
     "@actions/github": "^8.0.1",
-    "@actions/io": "^2.0.0",
+    "@actions/io": "^3.0.0",
     "dotenv": "^17.2.3",
     "glob": "^13.0.0",
     "simple-git": "^3.30.0"
