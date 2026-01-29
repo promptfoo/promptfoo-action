@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as github from '@actions/github';
@@ -14,6 +15,9 @@ import {
   test,
   vi,
 } from 'vitest';
+
+// ESM-compatible __dirname
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Get actual fs module for tests that need to read real files
 const actualFs = await vi.importActual<typeof import('fs')>('fs');
