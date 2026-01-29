@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.3.13/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.3.12/schema.json",
   "files": {
     "maxSize": 2097152,
     "ignoreUnknown": true,
@@ -9,16 +9,12 @@
       "__tests__/**/*.ts",
       "*.js",
       "*.ts"
-    ],
-    "experimentalScannerIgnores": [
-      "node_modules",
-      "dist/**",
-      "build",
-      "coverage",
-      "lib/**",
-      ".next",
-      "*.min.js"
     ]
+  },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
   },
   "linter": {
     "enabled": true,
@@ -39,7 +35,7 @@
         "useNodejsImportProtocol": "off"
       },
       "suspicious": {
-        "noExplicitAny": "off"
+        "noExplicitAny": "error"
       }
     }
   },
@@ -59,10 +55,5 @@
       "jsxQuoteStyle": "double",
       "arrowParentheses": "always"
     }
-  },
-  "vcs": {
-    "enabled": true,
-    "clientKind": "git",
-    "useIgnoreFile": true
   }
 }

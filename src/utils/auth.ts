@@ -1,5 +1,5 @@
 import * as core from '@actions/core';
-import { ErrorCodes, PromptfooActionError } from './errors';
+import { ErrorCodes, PromptfooActionError } from './errors.js';
 
 const DEFAULT_CLOUD_API_HOST = 'https://api.promptfoo.app';
 

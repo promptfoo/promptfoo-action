@@ -48,15 +48,18 @@ vi.mock('fs', async () => {
   };
 });
 
-const mockCore = core as { info: Mock; debug: Mock };
+const mockCore = core as {
+  info: Mock<(message: string) => void>;
+  debug: Mock<(message: string) => void>;
+};
 const mockFs = fs as unknown as {
-  existsSync: Mock;
-  mkdirSync: Mock;
-  readdirSync: Mock;
-  statSync: Mock;
-  unlinkSync: Mock;
-  rmdirSync: Mock;
-  writeFileSync: Mock;
+  existsSync: Mock<(path: string) => boolean>;
+  mkdirSync: Mock<(path: string, options?: unknown) => void>;
+  readdirSync: Mock<(path: string) => string[]>;
+  statSync: Mock<(path: string) => { mtime: Date; size: number }>;
+  unlinkSync: Mock<(path: string) => void>;
+  rmdirSync: Mock<(path: string) => void>;
+  writeFileSync: Mock<(path: string, data: string) => void>;
 };
 
 describe('Cache Utilities', () => {

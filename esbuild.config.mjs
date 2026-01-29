@@ -7,22 +7,28 @@ await esbuild.build({
   entryPoints: ['./src/main.ts'],
   bundle: true,
   platform: 'node',
-  target: 'node20',
+  target: 'node24',
   outfile: './dist/index.js',
-  format: 'cjs',
+  format: 'esm',
   sourcemap: true,
   minify: false,
-  // Handle ESM-only packages by bundling them
+  // Handle ESM packages
   mainFields: ['module', 'main'],
   // Generate license file
   legalComments: 'external',
   logLevel: 'info',
+  banner: {
+    js: "import { createRequire } from 'module';const require = createRequire(import.meta.url);",
+  },
 });
 
-// Rename the legal comments file to match ncc's output
+// Rename the legal comments file
 const legalFile = './dist/index.js.LEGAL.txt';
 if (fs.existsSync(legalFile)) {
   fs.renameSync(legalFile, './dist/licenses.txt');
 }
+
+// Create package.json to mark dist as ESM
+fs.writeFileSync('./dist/package.json', JSON.stringify({ type: 'module' }, null, 2));
 
 console.log('Build complete!');

@@ -1,8 +1,8 @@
 import * as core from '@actions/core';
 import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getApiHost, validatePromptfooApiKey } from '../src/utils/auth';
-import { ErrorCodes, PromptfooActionError } from '../src/utils/errors';
+import { getApiHost, validatePromptfooApiKey } from '../src/utils/auth.js';
+import { ErrorCodes, PromptfooActionError } from '../src/utils/errors.js';
 
 // Mock global fetch
 const mockFetch = vi.fn() as Mock<typeof fetch>;

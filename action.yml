@@ -1,7 +1,7 @@
 name: 'Test LLM outputs'
 description: 'Run promptfoo evaluations on your prompts. Works with pull requests, pushes, and manual triggers (workflow_dispatch).'
 runs:
-  using: 'node20'
+  using: 'node24'
   main: 'dist/index.js'
 # For workflow_dispatch events, you can use the following inputs in your workflow:
 # - inputs.files: Newline-separated list of files to evaluate (optional)
