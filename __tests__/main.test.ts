@@ -267,6 +267,60 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should handle empty prompts input', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: '', // Empty prompts
+          'working-directory': '',
+          'cache-path': '',
+          'promptfoo-version': 'latest',
+          'env-files': '',
+        };
+        return inputs[name] || '';
+      });
+
+      // Empty prompts should still work - it uses config file prompts
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      // Should still proceed with evaluation using config file
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo@latest'),
+        expect.arrayContaining(['eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should handle whitespace-only prompts input', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          'github-token': 'mock-github-token',
+          config: 'promptfooconfig.yaml',
+          prompts: '   \t\n  ', // Whitespace only
+          'working-directory': '',
+          'cache-path': '',
+          'promptfoo-version': 'latest',
+          'env-files': '',
+        };
+        return inputs[name] || '';
+      });
+
+      // Whitespace prompts should be treated as empty
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      // Should still proceed with evaluation using config file
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        expect.stringContaining('npx promptfoo@latest'),
+        expect.arrayContaining(['eval']),
+        expect.any(Object),
+      );
+    });
+
     test('should handle API keys correctly', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
