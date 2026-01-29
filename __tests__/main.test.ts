@@ -22,7 +22,7 @@ const actualFs = await vi.importActual<typeof import('fs')>('fs');
 type MockOctokit = {
   rest: {
     issues: {
-      createComment: Mock;
+      createComment: Mock<() => Promise<unknown>>;
     };
   };
 };
@@ -53,7 +53,7 @@ vi.mock('simple-git', () => ({
 }));
 
 // Mock auth utilities
-vi.mock('../src/utils/auth');
+vi.mock('../src/utils/auth.js');
 
 import { handleError, run } from '../src/main.js';
 import * as auth from '../src/utils/auth.js';

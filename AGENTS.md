@@ -96,7 +96,7 @@ The action is tested end-to-end on every PR using `test-prompts/`:
 5. Verifies action can execute, parse configs, and post results
 
 **Test Files:**
-- `test-prompts/promptfooconfig.yaml` - Minimal config (gpt-4o-mini, 1 test)
+- `test-prompts/promptfooconfig.yaml` - Minimal config (echo provider, 1 test)
 - `test-prompts/test-prompt.txt` - Simple prompt with variable
 - `test-prompts/README.md` - Documentation
 
@@ -478,10 +478,10 @@ git add lib/
 
 ## Additional Resources
 
-- **Promptfoo Documentation:** https://www.promptfoo.dev/docs/
-- **GitHub Actions Toolkit:** https://github.com/actions/toolkit
-- **Vitest Documentation:** https://vitest.dev/
-- **Biome Documentation:** https://biomejs.dev/
+- [Promptfoo Documentation](https://www.promptfoo.dev/docs/)
+- [GitHub Actions Toolkit](https://github.com/actions/toolkit)
+- [Vitest Documentation](https://vitest.dev/)
+- [Biome Documentation](https://biomejs.dev/)
 
 ## Debugging Tips
 
