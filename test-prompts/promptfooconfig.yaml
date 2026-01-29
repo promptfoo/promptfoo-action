@@ -1,0 +1,17 @@
+# Test configuration for E2E testing of promptfoo-action
+# This is a minimal config to verify the action can run successfully
+
+prompts:
+  - 'test-prompt.txt'
+
+providers:
+  - id: openai:gpt-4o-mini
+    config:
+      temperature: 0
+
+tests:
+  - vars:
+      topic: testing
+    assert:
+      - type: contains
+        value: 'test'

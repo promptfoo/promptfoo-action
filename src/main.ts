@@ -7,19 +7,19 @@ import * as glob from 'glob';
 import * as path from 'path';
 import type { OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
-import { getApiHost, validatePromptfooApiKey } from './utils/auth';
+import { getApiHost, validatePromptfooApiKey } from './utils/auth.js';
 import {
   cleanupOldCache,
   createCacheManifest,
   logCacheMetrics,
   setupCacheEnvironment,
-} from './utils/cache';
-import { extractFileDependencies } from './utils/config';
+} from './utils/cache.js';
+import { extractFileDependencies } from './utils/config.js';
 import {
   ErrorCodes,
   formatErrorMessage,
   PromptfooActionError,
-} from './utils/errors';
+} from './utils/errors.js';
 
 const gitInterface = simpleGit();
 
@@ -661,6 +661,8 @@ export function handleError(error: Error): void {
   core.setFailed(formatErrorMessage(error));
 }
 
-if (require.main === module) {
+// ESM equivalent of: if (require.main === module)
+// Check if this file is being run directly (not imported)
+if (import.meta.url === `file://${process.argv[1]}`) {
   run();
 }

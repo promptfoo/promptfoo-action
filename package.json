@@ -4,6 +4,7 @@
   "description": "GitHub Action for evaluating LLM outputs with promptfoo",
   "author": "Ian Webster",
   "license": "MIT",
+  "type": "module",
   "main": "lib/main.js",
   "packageManager": "npm@11.8.0",
   "scripts": {

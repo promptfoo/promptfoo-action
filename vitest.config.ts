@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
+    clearMocks: true,
     include: ['__tests__/**/*.test.ts'],
     exclude: ['node_modules', 'promptfoo'],
     coverage: {

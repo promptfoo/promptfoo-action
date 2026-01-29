@@ -55,8 +55,8 @@ vi.mock('simple-git', () => ({
 // Mock auth utilities
 vi.mock('../src/utils/auth');
 
-import { handleError, run } from '../src/main';
-import * as auth from '../src/utils/auth';
+import { handleError, run } from '../src/main.js';
+import * as auth from '../src/utils/auth.js';
 
 const mockAuth = auth as {
   validatePromptfooApiKey: MockedFunction<typeof auth.validatePromptfooApiKey>;

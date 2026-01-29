@@ -1,8 +1,6 @@
 name: 'build-test'
 on:
   pull_request:
-    paths:
-      - 'prompts/**'
 
 permissions:
   contents: read
@@ -22,7 +20,7 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v6
-      - name: Use Node 20.x
+      - name: Use Node 24.x
         uses: actions/setup-node@v6
         with:
           node-version: '24.x'
@@ -32,14 +30,19 @@ jobs:
         run: npm ci
       - name: Run Biome Check
         run: npm run biome:check
-  test: # make sure the action works on a clean machine without building
+  test-e2e: # End-to-end test: Run the action on test fixtures
+    name: E2E Test (Action Execution)
     permissions:
       contents: read
       pull-requests: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: ./
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+
+      - name: Run action from PR (uses dist/index.js)
+        id: promptfoo-test
+        uses: ./
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
