@@ -1,17 +1,16 @@
 # Test configuration for E2E testing of promptfoo-action
 # This is a minimal config to verify the action can run successfully
+# Uses echo provider to avoid requiring real API keys in CI
 
 prompts:
   - 'test-prompt.txt'
 
 providers:
-  - id: openai:gpt-4o-mini
-    config:
-      temperature: 0
+  - id: echo
 
 tests:
   - vars:
       topic: testing
     assert:
       - type: contains
-        value: 'test'
+        value: 'testing'

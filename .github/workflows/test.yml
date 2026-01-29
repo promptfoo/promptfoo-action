@@ -11,7 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - run: npm install -g npm@11.6.4
+      - name: Use Node 24.x
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.x'
       - run: npm ci
       - run: npm run all
   style-check:
@@ -24,8 +27,6 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: '24.x'
-      - name: Install npm 11.6.4
-        run: npm install -g npm@11.6.4
       - name: Install Dependencies
         run: npm ci
       - name: Run Biome Check
@@ -44,7 +45,6 @@ jobs:
         id: promptfoo-test
         uses: ./
         with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           prompts: |
             test-prompts/*.{json,txt}
