@@ -44,7 +44,6 @@
     "@swc/core": "^1.15.1",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.10.1",
-    "@vercel/ncc": "^0.38.4",
     "@vitest/coverage-v8": "^4.0.18",
     "esbuild": "^0.27.2",
     "js-yaml": "^4.1.1",

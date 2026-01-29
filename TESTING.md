@@ -62,8 +62,8 @@ npm run all
 **What it tests:**
 - ✅ TypeScript compiles without errors
 - ✅ Code passes Biome linting/formatting
-- ✅ Bundle is created successfully with ncc
-- ✅ All 89 unit tests pass
+- ✅ Bundle is created successfully with esbuild
+- ✅ All 83 unit tests pass
 - ✅ Code coverage is adequate
 
 **When to run:** Before every commit
@@ -369,16 +369,15 @@ grep -r "from '\\./" src/ | grep -v "\.js'"
 # Check dist/index.js starts with ESM import
 head -2 dist/index.js
 
-# Should show: import './sourcemap-register.cjs';
+# Should show: import { createRequire } from 'module';const require = createRequire(import.meta.url);
 ```
 
-**Note about `sourcemap-register.cjs`:**
-- This is a CommonJS file created by ncc (the bundler)
-- It's needed for source map support in the bundle
-- ESM can import CJS (but not vice versa), so this is fine
-- It's loaded before the main bundle executes
-- Your action code is still pure ESM (all in `dist/index.js`)
-- **This is normal and expected** - don't try to convert it to .js
+**Note about the esbuild bundle:**
+- esbuild creates a single ESM bundle with all dependencies included
+- The banner adds `createRequire` for compatibility with CommonJS dependencies
+- Your action code is pure ESM (all in `dist/index.js`)
+- Sourcemaps are in `dist/index.js.map`
+- Licenses are in `dist/licenses.txt`
 
 ## Common Questions
 
@@ -400,14 +399,14 @@ The file is valid YAML (verified with `npx js-yaml action.yml`). VSCode may show
 npx js-yaml action.yml > /dev/null && echo "✅ Valid"
 ```
 
-### Why is there a `.cjs` file in `dist/`?
+### What files are in `dist/`?
 
-`dist/sourcemap-register.cjs` is created by ncc (the bundler) for source map support. This is normal:
+The `dist/` directory contains the bundled action created by esbuild:
 
-- Your action code is ESM (`dist/index.js` uses `import`/`export`)
-- ESM can import CommonJS (allowed)
-- The `.cjs` file loads before your bundle executes
-- **Do not convert it to `.js`** - it must be CommonJS
+- **`index.js`** - The main ESM bundle with all dependencies
+- **`index.js.map`** - Source map for debugging
+- **`licenses.txt`** - Third-party license information
+- **`package.json`** - Marks the directory as ESM (`{"type": "module"}`)
 
 ## Troubleshooting
 

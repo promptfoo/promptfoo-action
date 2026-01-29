@@ -22,10 +22,13 @@ await esbuild.build({
   },
 });
 
-// Rename the legal comments file to match ncc's output
+// Rename the legal comments file
 const legalFile = './dist/index.js.LEGAL.txt';
 if (fs.existsSync(legalFile)) {
   fs.renameSync(legalFile, './dist/licenses.txt');
 }
+
+// Create package.json to mark dist as ESM
+fs.writeFileSync('./dist/package.json', JSON.stringify({ type: 'module' }, null, 2));
 
 console.log('Build complete!');

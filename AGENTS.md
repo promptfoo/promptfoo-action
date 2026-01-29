@@ -60,7 +60,7 @@ This project was migrated from CommonJS to ESM in January 2026 to support:
 
 - `npm run build` - Compile TypeScript to JavaScript (outputs to `lib/`)
 - `npm run build:watch` - Watch mode for TypeScript compilation
-- `npm run package` - Bundle the action with @vercel/ncc (outputs to `dist/`)
+- `npm run package` - Bundle the action with esbuild (outputs to `dist/`)
 - `npm run all` - Full build pipeline: build → lint → package → test
 
 ### Code Quality
@@ -146,7 +146,7 @@ See [TESTING.md](./TESTING.md) for complete testing guide.
 - **Dependencies:** External (uses `import` statements referencing `node_modules`)
 - **Purpose:** Local development, testing, intermediate build step
 - **Git Status:** ❌ **IGNORED** (not committed)
-- **Used by:** Tests, ncc bundler
+- **Used by:** Tests, esbuild bundler
 
 Example `lib/main.js`:
 ```javascript
@@ -156,9 +156,9 @@ import * as exec from '@actions/exec';
 ```
 
 #### `dist/` Directory (Production Bundle)
-- **Created by:** `npm run package` (runs `ncc build`)
-- **Contents:** Single bundled `index.js` file (~1.8MB)
-- **Size:** 1.8MB (all dependencies included)
+- **Created by:** `npm run package` (runs `esbuild`)
+- **Contents:** Single bundled `index.js` file (~1.4MB)
+- **Size:** 1.4MB (all dependencies included)
 - **Dependencies:** Bundled (self-contained, no external imports)
 - **Purpose:** GitHub Actions runtime (what actually executes)
 - **Git Status:** ✅ **COMMITTED** (required for action to work)
@@ -166,8 +166,8 @@ import * as exec from '@actions/exec';
 
 Example `dist/index.js`:
 ```javascript
-/******/ var __webpack_modules__ = ({
-// All dependencies are webpack-bundled here
+import { createRequire } from 'module';const require = createRequire(import.meta.url);
+// All dependencies are esbuild-bundled here
 ```
 
 #### Build Pipeline Flow
@@ -179,7 +179,7 @@ Source Code (src/*.ts)
         ↓
 Compiled Code (lib/*.js) ← Tests run against this
         ↓
-    npm run package (ncc)
+    npm run package (esbuild)
         ↓
 Bundled Action (dist/index.js) ← GitHub Actions runs this
 ```
@@ -237,7 +237,7 @@ Bundled Action (dist/index.js) ← GitHub Actions runs this
 ### TypeScript Configuration
 
 - **Module System:** ES2022 modules (ESM)
-- **Module Resolution:** Bundler mode (for ncc compatibility)
+- **Module Resolution:** Bundler mode (for esbuild compatibility)
 - **Target:** ES2022
 - **Strict Mode:** Enabled - avoid `any` types
 - **Source:** `/src/`
