@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -14,9 +15,13 @@ export default defineConfig({
       exclude: ['src/**/*.d.ts', 'src/**/__tests__/**', 'src/**/index.ts'],
     },
     alias: {
-      '@actions/core': './__mocks__/@actions/core.ts',
-      '@actions/exec': './__mocks__/@actions/exec.ts',
-      '@actions/github': './__mocks__/@actions/github.ts',
+      // Use path.resolve for robust alias resolution regardless of cwd
+      '@actions/core': path.resolve(__dirname, '__mocks__/@actions/core.ts'),
+      '@actions/exec': path.resolve(__dirname, '__mocks__/@actions/exec.ts'),
+      '@actions/github': path.resolve(
+        __dirname,
+        '__mocks__/@actions/github.ts',
+      ),
     },
   },
 });
