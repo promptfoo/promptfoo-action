@@ -1,36 +1,47 @@
-import { beforeEach, describe, expect, jest, test } from '@jest/globals';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import type { Mock } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { extractFileDependencies } from '../../src/utils/config';
 
-jest.mock('fs', () => ({
-  ...(jest.requireActual('fs') as any),
-  readFileSync: jest.fn(),
-  existsSync: jest.fn(),
-  statSync: jest.fn(),
-  promises: {
-    access: jest.fn(),
-    writeFile: jest.fn(),
-    mkdir: jest.fn(),
-  },
-}));
-jest.mock('glob');
+vi.mock('fs', async () => {
+  const realFs = await vi.importActual<typeof import('fs')>('fs');
+  return {
+    ...realFs,
+    readFileSync: vi.fn(),
+    existsSync: vi.fn(),
+    statSync: vi.fn(),
+    promises: {
+      access: vi.fn(),
+      writeFile: vi.fn(),
+      mkdir: vi.fn(),
+    },
+  };
+});
+vi.mock('glob');
 
 describe('extractFileDependencies', () => {
-  const mockFs = fs as jest.Mocked<typeof fs>;
-  const mockGlob = glob as jest.Mocked<typeof glob>;
+  const mockFs = fs as unknown as {
+    readFileSync: Mock;
+    existsSync: Mock;
+    statSync: Mock;
+  };
+  const mockGlob = glob as unknown as {
+    hasMagic: Mock;
+    sync: Mock;
+  };
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    jest.spyOn(process, 'cwd').mockReturnValue('/test/working');
+    vi.clearAllMocks();
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/working');
     // Default mock implementations
     mockGlob.hasMagic.mockReturnValue(false);
-    (mockGlob.sync as any).mockReturnValue([]);
+    mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
-    mockFs.statSync.mockReturnValue({ isDirectory: () => false } as any);
+    mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
 
-  test('should extract file:// providers', () => {
+  it('should extract file:// providers', () => {
     const configContent = `
 providers:
   - file://custom_provider.py
@@ -48,7 +59,7 @@ providers:
     expect(deps).toContain('../config/another_provider.js');
   });
 
-  test('should extract prompt files', () => {
+  it('should extract prompt files', () => {
     const configContent = `
 prompts:
   - file://prompts/prompt1.txt
@@ -64,7 +75,7 @@ prompts:
     expect(deps).toContain('../config/prompts/prompt2.txt');
   });
 
-  test('should extract test variable files', () => {
+  it('should extract test variable files', () => {
     const configContent = `
 tests:
   - vars:
@@ -82,7 +93,7 @@ tests:
     expect(deps).toContain('../config/data/examples.json');
   });
 
-  test('should extract assert files', () => {
+  it('should extract assert files', () => {
     const configContent = `
 tests:
   - assert:
@@ -101,7 +112,7 @@ tests:
     expect(deps).toContain('../config/validators/custom.js');
   });
 
-  test('should extract defaultTest files', () => {
+  it('should extract defaultTest files', () => {
     const configContent = `
 defaultTest:
   vars:
@@ -119,7 +130,7 @@ defaultTest:
     expect(deps).toContain('../config/expected/default.txt');
   });
 
-  test('should handle empty config', () => {
+  it('should handle empty config', () => {
     mockFs.readFileSync.mockReturnValue('');
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
@@ -127,7 +138,7 @@ defaultTest:
     expect(deps).toHaveLength(0);
   });
 
-  test('should handle invalid YAML gracefully', () => {
+  it('should handle invalid YAML gracefully', () => {
     mockFs.readFileSync.mockReturnValue('invalid: yaml: content:');
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
@@ -135,7 +146,7 @@ defaultTest:
     expect(deps).toHaveLength(0);
   });
 
-  test('should handle file read errors gracefully', () => {
+  it('should handle file read errors gracefully', () => {
     mockFs.readFileSync.mockImplementation(() => {
       throw new Error('File not found');
     });
@@ -145,7 +156,7 @@ defaultTest:
     expect(deps).toHaveLength(0);
   });
 
-  test('should extract all file types from complex config', () => {
+  it('should extract all file types from complex config', () => {
     const configContent = `
 providers:
   - file://providers/custom.py
@@ -186,7 +197,7 @@ tests:
     expect(deps).toContain('../config/validators/custom.js');
   });
 
-  test('should return relative paths from current working directory', () => {
+  it('should return relative paths from current working directory', () => {
     const configContent = `
 providers:
   - file://provider.py
@@ -202,7 +213,7 @@ providers:
     expect(deps).toContain('../config/provider.py');
   });
 
-  test('should handle glob patterns in file:// URLs', () => {
+  it('should handle glob patterns in file:// URLs', () => {
     const configContent = `
 providers:
   - file://providers/*.py
@@ -211,10 +222,10 @@ providers:
     mockFs.readFileSync.mockReturnValue(configContent);
 
     mockGlob.hasMagic.mockImplementation(
-      (path) => path.includes('*') || path.includes('**'),
+      (path: string) => path.includes('*') || path.includes('**'),
     );
 
-    (mockGlob.sync as any).mockImplementation((pattern: any) => {
+    mockGlob.sync.mockImplementation((pattern: string) => {
       const patternStr = String(pattern);
       if (patternStr.includes('providers/*.py')) {
         return [
@@ -242,7 +253,7 @@ providers:
     expect(deps).toContain('../config/custom');
   });
 
-  test('should handle directory paths in file:// URLs', () => {
+  it('should handle directory paths in file:// URLs', () => {
     const configContent = `
 providers:
   - file://providers/
@@ -250,16 +261,16 @@ providers:
 `;
     mockFs.readFileSync.mockReturnValue(configContent);
 
-    mockFs.existsSync.mockImplementation((path: any) => {
+    mockFs.existsSync.mockImplementation((path: unknown) => {
       const pathStr = String(path);
       return pathStr.includes('providers') || pathStr.includes('lib');
     });
 
     mockFs.statSync.mockImplementation(
-      (_path) =>
+      () =>
         ({
           isDirectory: () => true,
-        }) as any,
+        }) as fs.Stats,
     );
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
@@ -268,7 +279,7 @@ providers:
     expect(deps).toContain('../config/lib');
   });
 
-  test('should handle wildcards in test vars and asserts', () => {
+  it('should handle wildcards in test vars and asserts', () => {
     const configContent = `
 tests:
   - vars:
@@ -279,9 +290,9 @@ tests:
 `;
     mockFs.readFileSync.mockReturnValue(configContent);
 
-    mockGlob.hasMagic.mockImplementation((path) => path.includes('*'));
+    mockGlob.hasMagic.mockImplementation((path: string) => path.includes('*'));
 
-    (mockGlob.sync as any).mockImplementation((pattern: any) => {
+    mockGlob.sync.mockImplementation((pattern: string) => {
       const patternStr = String(pattern);
       if (patternStr.includes('test-data/*.json')) {
         return ['/test/config/test-data/data1.json'];

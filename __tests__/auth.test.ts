@@ -1,18 +1,20 @@
 import * as core from '@actions/core';
+import type { Mock } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getApiHost, validatePromptfooApiKey } from '../src/utils/auth';
 import { ErrorCodes, PromptfooActionError } from '../src/utils/errors';
 
 // Mock global fetch
-const mockFetch = jest.fn() as jest.MockedFunction<typeof fetch>;
+const mockFetch = vi.fn() as Mock<typeof fetch>;
 global.fetch = mockFetch;
 
 // Mock @actions/core
-jest.mock('@actions/core');
-const mockCore = core as jest.Mocked<typeof core>;
+vi.mock('@actions/core');
+const mockCore = core as { info: Mock };
 
 describe('auth utilities', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     // Reset environment variables
     delete process.env.PROMPTFOO_REMOTE_API_BASE_URL;
   });

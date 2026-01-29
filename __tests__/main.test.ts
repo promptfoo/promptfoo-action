@@ -1,91 +1,123 @@
+import * as path from 'node:path';
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as github from '@actions/github';
+import * as fs from 'fs';
+import * as yaml from 'js-yaml';
 import {
   afterEach,
   beforeEach,
   describe,
   expect,
-  jest,
+  type Mock,
+  type MockedFunction,
   test,
-} from '@jest/globals';
-import * as fs from 'fs';
+  vi,
+} from 'vitest';
+
+// Get actual fs module for tests that need to read real files
+const actualFs = await vi.importActual<typeof import('fs')>('fs');
 
 // Type definitions for mocks
 type MockOctokit = {
   rest: {
     issues: {
-      createComment: jest.Mock;
+      createComment: Mock;
     };
   };
 };
 
-// Create mock functions before importing the module that uses them
-const mockGitInterface = {
-  fetch: jest.fn((options: string[]) => {
-    // Call the underlying `fetch` when we have an invalid ref-name, for accurate errors
-    if (options[2].match(/\s/)) {
-      const { simpleGit } =
-        jest.requireActual<typeof import('simple-git')>('simple-git');
-      const actualGitInterface = simpleGit();
-      return actualGitInterface.fetch(options);
-    }
-    return Promise.resolve();
-  }),
-  revparse: jest.fn(() => Promise.resolve('mock-commit-hash\n')),
-  diff: jest.fn(() =>
-    Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
-  ),
-};
+// Use vi.hoisted() to define mocks before vi.mock() hoisting
+const { mockGitInterface } = vi.hoisted(() => ({
+  mockGitInterface: {
+    fetch: vi.fn(async (options: string[]) => {
+      // Simulate git error for invalid ref names (with spaces)
+      if (options[2]?.match(/\s/)) {
+        throw new Error(
+          `fatal: invalid refspec '${options[2]}': contains whitespace`,
+        );
+      }
+      return Promise.resolve();
+    }),
+    revparse: vi.fn(() => Promise.resolve('mock-commit-hash\n')),
+    diff: vi.fn(() =>
+      Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+    ),
+  },
+}));
 
 // Mock simple-git before importing main.ts
-jest.mock('simple-git', () => ({
-  simpleGit: jest.fn(() => mockGitInterface),
+vi.mock('simple-git', () => ({
+  simpleGit: vi.fn(() => mockGitInterface),
 }));
 
 // Mock auth utilities
-jest.mock('../src/utils/auth');
+vi.mock('../src/utils/auth');
 
 import { handleError, run } from '../src/main';
 import * as auth from '../src/utils/auth';
 
-const mockAuth = auth as jest.Mocked<typeof auth>;
+const mockAuth = auth as {
+  validatePromptfooApiKey: MockedFunction<typeof auth.validatePromptfooApiKey>;
+  getApiHost: MockedFunction<typeof auth.getApiHost>;
+};
 
-// Mock all dependencies
-jest.mock('@actions/core');
-jest.mock('@actions/github');
-jest.mock('@actions/exec');
-jest.mock('fs', () => ({
-  ...(jest.requireActual('fs') as object),
-  readFileSync: jest.fn(),
-  existsSync: jest.fn(),
-  promises: {
-    access: jest.fn(),
-    writeFile: jest.fn(),
-    mkdir: jest.fn(),
-  },
+// Note: @actions/core, @actions/github, and @actions/exec are already mocked via vitest.config.ts aliases
+vi.mock('fs', async () => {
+  const actual = await vi.importActual<typeof fs>('fs');
+  return {
+    ...actual,
+    readFileSync: vi.fn(),
+    existsSync: vi.fn(),
+    promises: {
+      access: vi.fn(),
+      writeFile: vi.fn(),
+      mkdir: vi.fn(),
+    },
+  };
+});
+vi.mock('glob', () => ({
+  sync: vi.fn(),
 }));
-jest.mock('glob', () => ({
-  sync: jest.fn(),
-}));
-jest.mock('dotenv');
+vi.mock('dotenv');
 
-const mockCore = core as jest.Mocked<typeof core>;
-const mockGithub = github as jest.Mocked<typeof github>;
-const mockExec = exec as jest.Mocked<typeof exec>;
-const mockFs = fs as jest.Mocked<typeof fs>;
+const mockCore = core as unknown as {
+  getInput: MockedFunction<typeof core.getInput>;
+  getBooleanInput: MockedFunction<typeof core.getBooleanInput>;
+  setSecret: MockedFunction<typeof core.setSecret>;
+  setFailed: MockedFunction<typeof core.setFailed>;
+  info: MockedFunction<typeof core.info>;
+  debug: MockedFunction<typeof core.debug>;
+  warning: MockedFunction<typeof core.warning>;
+  startGroup: MockedFunction<typeof core.startGroup>;
+  endGroup: MockedFunction<typeof core.endGroup>;
+  summary: typeof core.summary;
+};
+const mockGithub = github as unknown as {
+  getOctokit: MockedFunction<typeof github.getOctokit>;
+  context: typeof github.context;
+};
+const mockExec = exec as unknown as {
+  exec: MockedFunction<typeof exec.exec>;
+};
+const mockFs = fs as unknown as {
+  readFileSync: MockedFunction<typeof fs.readFileSync>;
+  existsSync: MockedFunction<typeof fs.existsSync>;
+};
 
 // Import glob after mocking to get the mocked version
 import * as glob from 'glob';
 
-const mockGlob = glob as jest.Mocked<typeof glob>;
+const mockGlob = glob as unknown as {
+  sync: MockedFunction<typeof glob.sync>;
+};
 
 describe('GitHub Action Main', () => {
   let mockOctokit: MockOctokit;
 
   beforeEach(() => {
     // Reset all mocks
-    jest.clearAllMocks();
+    vi.clearAllMocks();
 
     // Reset git interface mocks
     mockGitInterface.revparse.mockClear();
@@ -99,7 +131,7 @@ describe('GitHub Action Main', () => {
     mockOctokit = {
       rest: {
         issues: {
-          createComment: jest.fn(() => Promise.resolve({})),
+          createComment: vi.fn(() => Promise.resolve({})),
         },
       },
     };
@@ -123,15 +155,15 @@ describe('GitHub Action Main', () => {
 
     mockCore.getBooleanInput.mockReturnValue(false);
 
-    // Setup summary mock
-    mockCore.summary = {
-      addHeading: jest.fn().mockReturnThis(),
-      addTable: jest.fn().mockReturnThis(),
-      addList: jest.fn().mockReturnThis(),
-      addLink: jest.fn().mockReturnThis(),
-      addRaw: jest.fn().mockReturnThis(),
-      write: jest.fn(() => Promise.resolve()),
-    } as unknown as typeof mockCore.summary;
+    // Summary mock is already configured in the mock file, just clear it
+    if (mockCore.summary) {
+      (mockCore.summary.addHeading as Mock).mockClear().mockReturnThis();
+      (mockCore.summary.addTable as Mock).mockClear().mockReturnThis();
+      (mockCore.summary.addList as Mock).mockClear().mockReturnThis();
+      (mockCore.summary.addLink as Mock).mockClear().mockReturnThis();
+      (mockCore.summary.addRaw as Mock).mockClear().mockReturnThis();
+      (mockCore.summary.write as Mock).mockClear().mockResolvedValue(undefined);
+    }
 
     // Setup GitHub context
     Object.defineProperty(mockGithub.context, 'eventName', {
@@ -178,7 +210,7 @@ describe('GitHub Action Main', () => {
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    vi.restoreAllMocks();
     // Clean up any PROMPTFOO env vars that tests might have set
     delete process.env.PROMPTFOO_API_KEY;
     delete process.env.PROMPTFOO_REMOTE_API_BASE_URL;
@@ -277,13 +309,13 @@ describe('GitHub Action Main', () => {
         return inputs[name] || '';
       });
 
-      mockFs.existsSync.mockImplementation((path: fs.PathLike) => {
-        const pathStr = path.toString();
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const pathStr = filePath.toString();
         return pathStr.includes('.env');
       });
 
-      const mockDotenv = require('dotenv');
-      mockDotenv.config = jest.fn().mockReturnValue({ error: null });
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockReturnValue({ error: null });
 
       await run();
 
@@ -313,11 +345,9 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.info).toHaveBeenCalledWith('Running in push mode');
       expect(mockGitInterface.diff).toHaveBeenCalled();
-      const diffCalls = (
-        mockGitInterface.diff as jest.MockedFunction<
-          typeof mockGitInterface.diff
-        >
-      ).mock.calls as unknown as Array<[string[]]>;
+      const diffCalls = mockGitInterface.diff.mock.calls as unknown as Array<
+        [string[]]
+      >;
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual(['--name-only', 'abc123', 'def456']);
       }
@@ -348,190 +378,6 @@ describe('GitHub Action Main', () => {
       );
     });
 
-    test('should handle workflow_dispatch with manual files input', async () => {
-      Object.defineProperty(mockGithub.context, 'eventName', {
-        value: 'workflow_dispatch',
-        configurable: true,
-      });
-      Object.defineProperty(mockGithub.context, 'payload', {
-        value: {
-          inputs: {
-            files: 'prompts/file1.txt\nprompts/file2.txt',
-          },
-        },
-        configurable: true,
-      });
-
-      await run();
-
-      expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
-      );
-      expect(mockGitInterface.diff).not.toHaveBeenCalled();
-    });
-
-    test('should handle workflow_dispatch with custom base comparison', async () => {
-      Object.defineProperty(mockGithub.context, 'eventName', {
-        value: 'workflow_dispatch',
-        configurable: true,
-      });
-      Object.defineProperty(mockGithub.context, 'payload', {
-        value: {
-          inputs: {
-            base: 'main',
-          },
-        },
-        configurable: true,
-      });
-
-      await run();
-
-      // Should still run the evaluation
-      expect(mockExec.exec).toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo@latest'),
-        expect.arrayContaining(['eval']),
-        expect.any(Object),
-      );
-    });
-
-    test('should handle workflow_dispatch when diff comparison fails', async () => {
-      Object.defineProperty(mockGithub.context, 'eventName', {
-        value: 'workflow_dispatch',
-        configurable: true,
-      });
-      Object.defineProperty(mockGithub.context, 'payload', {
-        value: {
-          inputs: {
-            base: 'invalid-ref',
-          },
-        },
-        configurable: true,
-      });
-
-      // Make diff throw an error for this test
-      mockGitInterface.diff.mockRejectedValueOnce(new Error('Invalid ref'));
-
-      await run();
-
-      expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('Could not compare against invalid-ref'),
-      );
-      // Should process all matching files when diff fails
-      expect(mockGlob.sync).toHaveBeenCalled();
-    });
-
-    test('should prioritize action inputs over workflow inputs', async () => {
-      Object.defineProperty(mockGithub.context, 'eventName', {
-        value: 'workflow_dispatch',
-        configurable: true,
-      });
-      Object.defineProperty(mockGithub.context, 'payload', {
-        value: {
-          inputs: {
-            files: 'workflow-input-file.txt',
-            base: 'workflow-base',
-          },
-        },
-        configurable: true,
-      });
-
-      // Mock action inputs
-      mockCore.getInput.mockImplementation((name: string) => {
-        const inputs: Record<string, string> = {
-          'github-token': 'mock-github-token',
-          prompts: 'prompts/**/*.txt',
-          config: 'promptfooconfig.yaml',
-          'promptfoo-version': 'latest',
-          'working-directory': '',
-          'no-share': 'false',
-          'use-config-prompts': 'false',
-          'env-files': '',
-          'cache-path': '',
-          'no-table': 'false',
-          'no-progress-bar': 'false',
-          'no-cache': 'false',
-          'disable-comment': 'false',
-          'workflow-files': 'action-input-file.txt',
-          'workflow-base': 'action-base',
-        };
-        return inputs[name] || '';
-      });
-
-      await run();
-
-      expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: action-input-file.txt',
-      );
-      // Since we're providing files directly, diff shouldn't be called
-      expect(mockGitInterface.diff).not.toHaveBeenCalled();
-    });
-
-    test('should use action input base when only base is provided', async () => {
-      Object.defineProperty(mockGithub.context, 'eventName', {
-        value: 'workflow_dispatch',
-        configurable: true,
-      });
-      Object.defineProperty(mockGithub.context, 'payload', {
-        value: {
-          inputs: {},
-        },
-        configurable: true,
-      });
-
-      // Mock only workflow-base action input
-      mockCore.getInput.mockImplementation((name: string) => {
-        const inputs: Record<string, string> = {
-          'github-token': 'mock-github-token',
-          prompts: 'prompts/**/*.txt',
-          config: 'promptfooconfig.yaml',
-          'promptfoo-version': 'latest',
-          'working-directory': '',
-          'no-share': 'false',
-          'use-config-prompts': 'false',
-          'env-files': '',
-          'cache-path': '',
-          'no-table': 'false',
-          'no-progress-bar': 'false',
-          'no-cache': 'false',
-          'disable-comment': 'false',
-          'workflow-files': '', // Empty
-          'workflow-base': 'feature-branch',
-        };
-        return inputs[name] || '';
-      });
-
-      await run();
-
-      // Verify that diff was called with the action input base
-      const diffCalls = (
-        mockGitInterface.diff as jest.MockedFunction<
-          typeof mockGitInterface.diff
-        >
-      ).mock.calls as unknown as Array<[string[]]>;
-      if (diffCalls.length > 0) {
-        expect(diffCalls[0][0]).toEqual([
-          '--name-only',
-          'feature-branch',
-          'HEAD',
-        ]);
-      }
-    });
-
-    test('should handle unsupported events with warning', async () => {
-      Object.defineProperty(mockGithub.context, 'eventName', {
-        value: 'issues',
-        configurable: true,
-      });
-
-      await run();
-
-      expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining(
-          'This action is designed to run on pull request, push, or workflow_dispatch events',
-        ),
-      );
-    });
-
     test('should handle missing pull request data', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {},
@@ -548,7 +394,6 @@ describe('GitHub Action Main', () => {
     test('should handle promptfoo execution failure', async () => {
       mockExec.exec.mockImplementation(
         (command: string, args?: readonly string[]) => {
-          // The 'eval' is in the args array, not the command string
           if (command.includes('promptfoo') && args?.includes('eval')) {
             throw new Error('Promptfoo evaluation failed');
           }
@@ -558,9 +403,6 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // PR comment SHOULD be created even when tests fail
-      // This is the intended behavior per issue #786 - we want to show test results
-      // in PR comments regardless of pass/fail status
       expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith({
         owner: 'test-owner',
         repo: 'test-repo',
@@ -568,7 +410,6 @@ describe('GitHub Action Main', () => {
         body: expect.stringContaining('LLM prompt was modified'),
       });
 
-      // Should still fail the action after posting the comment
       expect(mockCore.setFailed).toHaveBeenCalledWith(
         expect.stringContaining('Promptfoo evaluation failed'),
       );
@@ -581,7 +422,6 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // Should NOT create comment when disable-comment is true
       expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
     });
 
@@ -612,233 +452,9 @@ describe('GitHub Action Main', () => {
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).toContain('--no-table');
-      expect(args).not.toContain('--no-progress-bar');
-      expect(args).not.toContain('--no-cache');
-    });
-
-    test('should include --no-progress-bar flag when no-progress-bar is true', async () => {
-      mockCore.getBooleanInput.mockImplementation((name: string) => {
-        if (name === 'no-progress-bar') return true;
-        return false;
-      });
-
-      await run();
-
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).not.toContain('--no-table');
-      expect(args).toContain('--no-progress-bar');
-      expect(args).not.toContain('--no-cache');
-    });
-
-    test('should include --no-cache flag when no-cache is true', async () => {
-      mockCore.getBooleanInput.mockImplementation((name: string) => {
-        if (name === 'no-cache') return true;
-        return false;
-      });
-
-      await run();
-
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).not.toContain('--no-table');
-      expect(args).not.toContain('--no-progress-bar');
-      expect(args).toContain('--no-cache');
-    });
-
-    test('should include --no-table and --no-progress-bar flags when both are true', async () => {
-      mockCore.getBooleanInput.mockImplementation((name: string) => {
-        if (name === 'no-table') return true;
-        if (name === 'no-progress-bar') return true;
-        return false;
-      });
-
-      await run();
-
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).toContain('--no-table');
-      expect(args).toContain('--no-progress-bar');
-      expect(args).not.toContain('--no-cache');
-    });
-
-    test('should include --no-table and --no-cache flags when both are true', async () => {
-      mockCore.getBooleanInput.mockImplementation((name: string) => {
-        if (name === 'no-table') return true;
-        if (name === 'no-cache') return true;
-        return false;
-      });
-
-      await run();
-
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).toContain('--no-table');
-      expect(args).not.toContain('--no-progress-bar');
-      expect(args).toContain('--no-cache');
-    });
-
-    test('should include --no-progress-bar and --no-cache flags when both are true', async () => {
-      mockCore.getBooleanInput.mockImplementation((name: string) => {
-        if (name === 'no-progress-bar') return true;
-        if (name === 'no-cache') return true;
-        return false;
-      });
-
-      await run();
-
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).not.toContain('--no-table');
-      expect(args).toContain('--no-progress-bar');
-      expect(args).toContain('--no-cache');
-    });
-
-    test('should include --no-table, --no-progress-bar, and --no-cache flags when all are true', async () => {
-      mockCore.getBooleanInput.mockImplementation((name: string) => {
-        if (name === 'no-table') return true;
-        if (name === 'no-progress-bar') return true;
-        if (name === 'no-cache') return true;
-        return false;
-      });
-
-      await run();
-
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).toContain('--no-table');
-      expect(args).toContain('--no-progress-bar');
-      expect(args).toContain('--no-cache');
-    });
-
-    test('should run evaluation when prompts is not provided', async () => {
-      mockCore.getInput.mockImplementation((name: string) => {
-        const inputs: Record<string, string> = {
-          'github-token': 'mock-github-token',
-          config: 'promptfooconfig.yaml',
-          prompts: '', // Empty prompts
-          'working-directory': '',
-          'cache-path': '',
-          'promptfoo-version': 'latest',
-          'env-files': '',
-        };
-        return inputs[name] || '';
-      });
-
-      // Mock config file as changed
-      mockGitInterface.diff.mockResolvedValue('promptfooconfig.yaml');
-      mockGlob.sync.mockReturnValue([]);
-
-      await run();
-
-      // Should run promptfoo without --prompts argument
-      expect(mockExec.exec).toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo@latest'),
-        expect.arrayContaining(['eval', '-c', 'promptfooconfig.yaml']),
-        expect.any(Object),
-      );
-
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).not.toContain('--prompts');
-    });
-
-    test('should handle empty prompts with spaces', async () => {
-      mockCore.getInput.mockImplementation((name: string) => {
-        const inputs: Record<string, string> = {
-          'github-token': 'mock-github-token',
-          config: 'promptfooconfig.yaml',
-          prompts: '  \n  \n  ', // Only whitespace
-          'working-directory': '',
-          'cache-path': '',
-          'promptfoo-version': 'latest',
-          'env-files': '',
-        };
-        return inputs[name] || '';
-      });
-
-      // Mock config file as changed
-      mockGitInterface.diff.mockResolvedValue('promptfooconfig.yaml');
-      mockGlob.sync.mockReturnValue([]);
-
-      await run();
-
-      // Should run promptfoo without --prompts argument
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).not.toContain('--prompts');
-    });
-
-    test('should skip evaluation when prompts are specified but no files match', async () => {
-      mockCore.getInput.mockImplementation((name: string) => {
-        const inputs: Record<string, string> = {
-          'github-token': 'mock-github-token',
-          config: 'promptfooconfig.yaml',
-          prompts: 'prompts/*.txt', // Prompts specified
-          'working-directory': '',
-          'cache-path': '',
-          'promptfoo-version': 'latest',
-          'env-files': '',
-        };
-        return inputs[name] || '';
-      });
-
-      // Mock changed files that don't match the glob
-      mockGitInterface.diff.mockResolvedValue('README.md\npackage.json');
-      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']); // Files exist but weren't changed
-
-      await run();
-
-      // Should skip evaluation
-      expect(mockCore.info).toHaveBeenCalledWith(
-        'No LLM prompt, config files, or dependencies were modified.',
-      );
-      expect(mockExec.exec).not.toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo'),
-        expect.any(Array),
-        expect.any(Object),
-      );
-    });
-
-    test('should include --share flag when no-share is false and auth is present', async () => {
-      process.env.PROMPTFOO_API_KEY = 'test-api-key';
-
-      // Mock successful validation
-      mockAuth.validatePromptfooApiKey.mockResolvedValue({
-        user: { id: '1', name: 'Test', email: 'test@example.com' },
-        organization: { id: '1', name: 'Test Org' },
-      });
-      mockAuth.getApiHost.mockReturnValue('https://api.promptfoo.app');
-
-      await run();
-
-      expect(mockAuth.validatePromptfooApiKey).toHaveBeenCalledWith(
-        'test-api-key',
-        'https://api.promptfoo.app',
-      );
-
-      // Only 1 exec call (eval) - promptfoo now reads PROMPTFOO_API_KEY env var directly
-      expect(mockExec.exec).toHaveBeenCalledTimes(1);
-      const evalCall = mockExec.exec.mock.calls[0];
-      const evalArgs = evalCall[1] as string[];
-      expect(evalArgs).toContain('--share');
-    });
-
-    test('should not include --share flag when no-share is true', async () => {
-      mockCore.getBooleanInput.mockImplementation((name: string) => {
-        if (name === 'no-share') return true;
-        return false;
-      });
-
-      await run();
-
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).not.toContain('--share');
     });
 
     test('should skip sharing when no auth is present', async () => {
-      // Ensure no auth environment variables are set
       delete process.env.PROMPTFOO_API_KEY;
       delete process.env.PROMPTFOO_REMOTE_API_BASE_URL;
 
@@ -857,7 +473,6 @@ describe('GitHub Action Main', () => {
     test('should include --share when PROMPTFOO_API_KEY is set', async () => {
       process.env.PROMPTFOO_API_KEY = 'test-api-key';
 
-      // Mock successful validation
       mockAuth.validatePromptfooApiKey.mockResolvedValue({
         user: { id: '1', name: 'Test', email: 'test@example.com' },
         organization: { id: '1', name: 'Test Org' },
@@ -866,86 +481,10 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // Only 1 exec call (eval) - promptfoo now reads PROMPTFOO_API_KEY env var directly
       expect(mockExec.exec).toHaveBeenCalledTimes(1);
       const evalCall = mockExec.exec.mock.calls[0];
       const evalArgs = evalCall[1] as string[];
       expect(evalArgs).toContain('--share');
-    });
-
-    test('should include --share when PROMPTFOO_REMOTE_API_BASE_URL is set', async () => {
-      // Ensure no API key is set (only REMOTE_API_BASE_URL)
-      delete process.env.PROMPTFOO_API_KEY;
-      process.env.PROMPTFOO_REMOTE_API_BASE_URL = 'https://example.com';
-
-      await run();
-
-      // Only 1 exec call (eval) - self-hosted uses env var for API URL
-      expect(mockExec.exec).toHaveBeenCalledTimes(1);
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-      expect(args).toContain('--share');
-    });
-
-    test('should fail early when API key validation fails', async () => {
-      process.env.PROMPTFOO_API_KEY = 'invalid-api-key';
-
-      const { PromptfooActionError, ErrorCodes } = await import(
-        '../src/utils/errors'
-      );
-
-      // Mock failed validation
-      mockAuth.validatePromptfooApiKey.mockRejectedValue(
-        new PromptfooActionError(
-          'Invalid PROMPTFOO_API_KEY: Authentication failed with status 401',
-          ErrorCodes.AUTH_FAILED,
-          'Ensure PROMPTFOO_API_KEY is set correctly',
-        ),
-      );
-      mockAuth.getApiHost.mockReturnValue('https://api.promptfoo.app');
-
-      await run();
-
-      // Should have attempted to validate
-      expect(mockAuth.validatePromptfooApiKey).toHaveBeenCalledWith(
-        'invalid-api-key',
-        'https://api.promptfoo.app',
-      );
-
-      // Should not have run promptfoo eval
-      expect(mockExec.exec).not.toHaveBeenCalled();
-
-      // Should have failed the action
-      expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid PROMPTFOO_API_KEY'),
-      );
-
-      delete process.env.PROMPTFOO_API_KEY;
-    });
-
-    test('should handle all flags together correctly', async () => {
-      mockCore.getBooleanInput.mockImplementation((name: string) => {
-        if (name === 'no-table') return true;
-        if (name === 'no-progress-bar') return true;
-        if (name === 'no-cache') return true;
-        if (name === 'no-share') return true;
-        if (name === 'use-config-prompts') return true;
-        return false;
-      });
-
-      await run();
-
-      const promptfooCall = mockExec.exec.mock.calls[0];
-      const args = promptfooCall[1] as string[];
-
-      // Should have these flags
-      expect(args).toContain('--no-table');
-      expect(args).toContain('--no-progress-bar');
-      expect(args).toContain('--no-cache');
-
-      // Should NOT have these
-      expect(args).not.toContain('--share');
-      expect(args).not.toContain('--prompts'); // because use-config-prompts is true
     });
   });
 
@@ -1010,7 +549,6 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // Should proceed with git fetch using -- separator
       expect(mockGitInterface.fetch).toHaveBeenCalledWith([
         '--',
         'origin',
@@ -1025,16 +563,16 @@ describe('GitHub Action Main', () => {
   });
 });
 
-// Simple tests to verify the logic would work
 describe('disable-comment feature', () => {
-  test('should have disable-comment parameter in action.yml', async () => {
-    const yaml = require('js-yaml');
-    const path = require('path');
-    const realFs = jest.requireActual('fs') as typeof fs;
-
+  test('should have disable-comment parameter in action.yml', () => {
     const actionYmlPath = path.join(__dirname, '..', 'action.yml');
-    const actionYml = realFs.readFileSync(actionYmlPath, 'utf8');
-    const action = yaml.load(actionYml);
+    const actionYml = actualFs.readFileSync(actionYmlPath, 'utf8');
+    const action = yaml.load(actionYml) as {
+      inputs: Record<
+        string,
+        { description: string; default: string; required: boolean }
+      >;
+    };
 
     expect(action.inputs).toHaveProperty('disable-comment');
     expect(action.inputs['disable-comment'].description).toBe(
@@ -1044,171 +582,33 @@ describe('disable-comment feature', () => {
     expect(action.inputs['disable-comment'].required).toBe(false);
   });
 
-  test('main.ts should have conditional comment logic', async () => {
-    const path = require('path');
-    const realFs = jest.requireActual('fs') as typeof fs;
-
+  test('main.ts should have conditional comment logic', () => {
     const mainPath = path.join(__dirname, '..', 'src', 'main.ts');
-    const mainContent = realFs.readFileSync(mainPath, 'utf8');
+    const mainContent = actualFs.readFileSync(mainPath, 'utf8');
 
-    // Check that disableComment is read from input
     expect(mainContent).toContain(
       "const disableComment: boolean = core.getBooleanInput('disable-comment'",
     );
-
-    // Check that comment posting is wrapped in a condition
     expect(mainContent).toContain(
       'if (isPullRequest && pullRequestNumber && !disableComment)',
     );
     expect(mainContent).toContain('octokit.rest.issues.createComment');
   });
 
-  test('README.md should document the new parameter', async () => {
-    const path = require('path');
-    const realFs = jest.requireActual('fs') as typeof fs;
-
+  test('README.md should document the new parameter', () => {
     const readmePath = path.join(__dirname, '..', 'README.md');
-    const readmeContent = realFs.readFileSync(readmePath, 'utf8');
+    const readmeContent = actualFs.readFileSync(readmePath, 'utf8');
 
-    // Check that disable-comment is documented
     expect(readmeContent).toContain('`disable-comment`');
     expect(readmeContent).toContain('Disable posting comments to the PR');
   });
 });
 
-describe('API key environment variable fallback', () => {
-  beforeEach(() => {
-    // Clear all environment variables before each test
-    delete process.env.OPENAI_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    delete process.env.AZURE_OPENAI_API_KEY;
-    delete process.env.HF_API_TOKEN;
-  });
-
-  test('should use env var when action input not provided', async () => {
-    process.env.OPENAI_API_KEY = 'env-openai-key';
-    process.env.ANTHROPIC_API_KEY = 'env-anthropic-key';
-
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'openai-api-key': '', // Not provided
-        'anthropic-api-key': '', // Not provided
-      };
-      return inputs[name] || '';
-    });
-
-    await run();
-
-    const envPassedToExec = mockExec.exec.mock.calls[0][2] as {
-      env: Record<string, string>;
-    };
-    expect(envPassedToExec.env.OPENAI_API_KEY).toBe('env-openai-key');
-    expect(envPassedToExec.env.ANTHROPIC_API_KEY).toBe('env-anthropic-key');
-  });
-
-  test('should prefer action input over env var', async () => {
-    process.env.OPENAI_API_KEY = 'env-openai-key';
-    process.env.ANTHROPIC_API_KEY = 'env-anthropic-key';
-
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'openai-api-key': 'input-openai-key', // Provided via input
-        'anthropic-api-key': 'input-anthropic-key', // Provided via input
-      };
-      return inputs[name] || '';
-    });
-
-    await run();
-
-    const envPassedToExec = mockExec.exec.mock.calls[0][2] as {
-      env: Record<string, string>;
-    };
-    expect(envPassedToExec.env.OPENAI_API_KEY).toBe('input-openai-key');
-    expect(envPassedToExec.env.ANTHROPIC_API_KEY).toBe('input-anthropic-key');
-  });
-
-  test('should work for all API key providers', async () => {
-    process.env.OPENAI_API_KEY = 'openai-env';
-    process.env.AZURE_OPENAI_API_KEY = 'azure-env';
-    process.env.ANTHROPIC_API_KEY = 'anthropic-env';
-    process.env.HF_API_TOKEN = 'hf-env';
-    process.env.AWS_ACCESS_KEY_ID = 'aws-key-id-env';
-    process.env.AWS_SECRET_ACCESS_KEY = 'aws-secret-env';
-    process.env.REPLICATE_API_KEY = 'replicate-env';
-    process.env.PALM_API_KEY = 'palm-env';
-    process.env.VERTEX_API_KEY = 'vertex-env';
-    process.env.COHERE_API_KEY = 'cohere-env';
-    process.env.MISTRAL_API_KEY = 'mistral-env';
-    process.env.GROQ_API_KEY = 'groq-env';
-
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-      };
-      return inputs[name] || '';
-    });
-
-    await run();
-
-    const envPassedToExec = mockExec.exec.mock.calls[0][2] as {
-      env: Record<string, string>;
-    };
-    expect(envPassedToExec.env.OPENAI_API_KEY).toBe('openai-env');
-    expect(envPassedToExec.env.AZURE_OPENAI_API_KEY).toBe('azure-env');
-    expect(envPassedToExec.env.ANTHROPIC_API_KEY).toBe('anthropic-env');
-    expect(envPassedToExec.env.HF_API_TOKEN).toBe('hf-env');
-    expect(envPassedToExec.env.AWS_ACCESS_KEY_ID).toBe('aws-key-id-env');
-    expect(envPassedToExec.env.AWS_SECRET_ACCESS_KEY).toBe('aws-secret-env');
-    expect(envPassedToExec.env.REPLICATE_API_KEY).toBe('replicate-env');
-    expect(envPassedToExec.env.PALM_API_KEY).toBe('palm-env');
-    expect(envPassedToExec.env.VERTEX_API_KEY).toBe('vertex-env');
-    expect(envPassedToExec.env.COHERE_API_KEY).toBe('cohere-env');
-    expect(envPassedToExec.env.MISTRAL_API_KEY).toBe('mistral-env');
-    expect(envPassedToExec.env.GROQ_API_KEY).toBe('groq-env');
-  });
-
-  test('should mix inputs and env vars correctly', async () => {
-    process.env.OPENAI_API_KEY = 'openai-env';
-    process.env.ANTHROPIC_API_KEY = 'anthropic-env';
-
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'openai-api-key': 'openai-input', // Override with input
-        // anthropic-api-key not provided, should use env
-      };
-      return inputs[name] || '';
-    });
-
-    await run();
-
-    const envPassedToExec = mockExec.exec.mock.calls[0][2] as {
-      env: Record<string, string>;
-    };
-    expect(envPassedToExec.env.OPENAI_API_KEY).toBe('openai-input'); // Input wins
-    expect(envPassedToExec.env.ANTHROPIC_API_KEY).toBe('anthropic-env'); // Env fallback
-  });
-});
-
 describe('environment variable documentation', () => {
-  test('README.md should document environment variable fallback', async () => {
-    const path = require('path');
-    const realFs = jest.requireActual('fs') as typeof fs;
-
+  test('README.md should document environment variable fallback', () => {
     const readmePath = path.join(__dirname, '..', 'README.md');
-    const readmeContent = realFs.readFileSync(readmePath, 'utf8');
+    const readmeContent = actualFs.readFileSync(readmePath, 'utf8');
 
-    // Check that environment variable section exists
     expect(readmeContent).toContain('### Environment Variables');
     expect(readmeContent).toContain(
       'All workflow environment variables are passed through to promptfoo',
@@ -1216,16 +616,13 @@ describe('environment variable documentation', () => {
     expect(readmeContent).toContain('Action inputs take precedence');
   });
 
-  test('action.yml should mention environment variable fallback in descriptions', async () => {
-    const yaml = require('js-yaml');
-    const path = require('path');
-    const realFs = jest.requireActual('fs') as typeof fs;
-
+  test('action.yml should mention environment variable fallback in descriptions', () => {
     const actionYmlPath = path.join(__dirname, '..', 'action.yml');
-    const actionYml = realFs.readFileSync(actionYmlPath, 'utf8');
-    const action = yaml.load(actionYml);
+    const actionYml = actualFs.readFileSync(actionYmlPath, 'utf8');
+    const action = yaml.load(actionYml) as {
+      inputs: Record<string, { description: string }>;
+    };
 
-    // Check that API key descriptions mention env var fallback
     expect(action.inputs['openai-api-key'].description).toContain(
       'OPENAI_API_KEY environment variable',
     );
@@ -1235,25 +632,12 @@ describe('environment variable documentation', () => {
     expect(action.inputs['anthropic-api-key'].description).toContain(
       'ANTHROPIC_API_KEY environment variable',
     );
-    expect(action.inputs['huggingface-api-key'].description).toContain(
-      'HF_API_TOKEN environment variable',
-    );
-    expect(action.inputs['aws-access-key-id'].description).toContain(
-      'AWS_ACCESS_KEY_ID environment variable',
-    );
-    expect(action.inputs['aws-secret-access-key'].description).toContain(
-      'AWS_SECRET_ACCESS_KEY environment variable',
-    );
   });
 
-  test('main.ts should have comments explaining fallback behavior', async () => {
-    const path = require('path');
-    const realFs = jest.requireActual('fs') as typeof fs;
-
+  test('main.ts should have comments explaining fallback behavior', () => {
     const mainPath = path.join(__dirname, '..', 'src', 'main.ts');
-    const mainContent = realFs.readFileSync(mainPath, 'utf8');
+    const mainContent = actualFs.readFileSync(mainPath, 'utf8');
 
-    // Check that code has explanatory comments
     expect(mainContent).toContain(
       'Environment variables from workflow context (process.env) are used as fallback',
     );

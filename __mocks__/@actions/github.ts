@@ -1,4 +1,6 @@
 // Manual mock for @actions/github (has ESM-only dependencies)
+import { vi } from 'vitest';
+
 export const context = {
   eventName: 'pull_request',
   payload: {
@@ -15,10 +17,10 @@ export const context = {
   sha: '',
 };
 
-export const getOctokit = jest.fn(() => ({
+export const getOctokit = vi.fn(() => ({
   rest: {
     issues: {
-      createComment: jest.fn(() => Promise.resolve({})),
+      createComment: vi.fn(() => Promise.resolve({})),
     },
   },
 }));
