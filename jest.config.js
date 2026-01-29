@@ -17,4 +17,9 @@ module.exports = {
   ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html'],
+  // Map ESM-only packages to manual mocks
+  moduleNameMapper: {
+    '^@actions/exec$': '<rootDir>/__mocks__/@actions/exec.ts',
+    '^@actions/github$': '<rootDir>/__mocks__/@actions/github.ts',
+  },
 };
