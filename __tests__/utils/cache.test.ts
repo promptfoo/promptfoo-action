@@ -1,6 +1,16 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { Mock } from 'vitest';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import {
   cleanupOldCache,
   createCacheManifest,
@@ -11,42 +21,47 @@ import {
 } from '../../src/utils/cache';
 
 // Mock dependencies
-jest.mock('@actions/core', () => ({
-  info: jest.fn(),
-  debug: jest.fn(),
-  warning: jest.fn(),
-  error: jest.fn(),
-  setFailed: jest.fn(),
+vi.mock('@actions/core', () => ({
+  info: vi.fn(),
+  debug: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
+  setFailed: vi.fn(),
 }));
-jest.mock('fs', () => {
-  const realFs = jest.requireActual('fs') as typeof import('fs');
+vi.mock('fs', async () => {
+  const realFs = await vi.importActual<typeof import('fs')>('fs');
   return {
     ...realFs,
-    existsSync: jest.fn(),
-    mkdirSync: jest.fn(),
-    readdirSync: jest.fn(),
-    statSync: jest.fn(),
-    unlinkSync: jest.fn(),
-    rmdirSync: jest.fn(),
-    writeFileSync: jest.fn(),
+    existsSync: vi.fn(),
+    mkdirSync: vi.fn(),
+    readdirSync: vi.fn(),
+    statSync: vi.fn(),
+    unlinkSync: vi.fn(),
+    rmdirSync: vi.fn(),
+    writeFileSync: vi.fn(),
     promises: {
       ...realFs.promises,
-      access: jest.fn(),
-      readFile: jest.fn(),
-      writeFile: jest.fn(),
+      access: vi.fn(),
+      readFile: vi.fn(),
+      writeFile: vi.fn(),
     },
   };
 });
 
-const mockCore = core as jest.Mocked<typeof core>;
-const mockFs = fs as jest.Mocked<typeof fs> & {
-  readdirSync: jest.MockedFunction<any>;
-  statSync: jest.MockedFunction<any>;
+const mockCore = core as { info: Mock; debug: Mock };
+const mockFs = fs as unknown as {
+  existsSync: Mock;
+  mkdirSync: Mock;
+  readdirSync: Mock;
+  statSync: Mock;
+  unlinkSync: Mock;
+  rmdirSync: Mock;
+  writeFileSync: Mock;
 };
 
 describe('Cache Utilities', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     // Clear environment variables
     delete process.env.PROMPTFOO_CACHE_PATH;
     delete process.env.PROMPTFOO_CACHE_TTL;
@@ -160,12 +175,12 @@ describe('Cache Utilities', () => {
     const mockDate = new Date('2025-03-15');
 
     beforeAll(() => {
-      jest.useFakeTimers();
-      jest.setSystemTime(mockDate);
+      vi.useFakeTimers();
+      vi.setSystemTime(mockDate);
     });
 
     afterAll(() => {
-      jest.useRealTimers();
+      vi.useRealTimers();
     });
 
     it('should generate cache key with config and prompt files', () => {
@@ -221,14 +236,14 @@ describe('Cache Utilities', () => {
 
     it('should calculate cache statistics', async () => {
       mockFs.existsSync.mockReturnValue(true);
-      mockFs.readdirSync.mockImplementation((dir: any) => {
+      mockFs.readdirSync.mockImplementation((dir: unknown) => {
         const dirStr = String(dir);
         if (dirStr.endsWith('subdir')) {
           return []; // Empty subdirectory to stop recursion
         }
         return ['file1.json', 'file2.json', 'subdir'];
       });
-      mockFs.statSync.mockImplementation((filePath: any) => {
+      mockFs.statSync.mockImplementation((filePath: unknown) => {
         const filePathStr = String(filePath);
         if (filePathStr.endsWith('subdir')) {
           return {
@@ -271,7 +286,7 @@ describe('Cache Utilities', () => {
 
       mockFs.existsSync.mockReturnValue(true);
       mockFs.readdirSync.mockReturnValue(['old.json', 'new.json']);
-      mockFs.statSync.mockImplementation((filePath: any) => {
+      mockFs.statSync.mockImplementation((filePath: unknown) => {
         const filePathStr = String(filePath);
         if (filePathStr.endsWith('old.json')) {
           return {
@@ -307,9 +322,9 @@ describe('Cache Utilities', () => {
         .mockReturnValueOnce(['old.json']) // Subdirectory with old file
         .mockReturnValueOnce([]); // Empty after file deletion
 
-      mockFs.statSync.mockImplementation((filePath: any) => {
+      mockFs.statSync.mockImplementation((filePath: unknown) => {
         const filePathStr = String(filePath);
-        if (filePathStr.includes('subdir') && !filePath.includes('.json')) {
+        if (filePathStr.includes('subdir') && !filePathStr.includes('.json')) {
           return {
             isDirectory: () => true,
             mtime: oldDate,
