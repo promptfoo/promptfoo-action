@@ -113,101 +113,111 @@ const mockGlob = glob as unknown as {
   sync: MockedFunction<typeof glob.sync>;
 };
 
+/**
+ * Helper function to setup common mocks used across test suites.
+ * Reduces duplication between 'GitHub Action Main' and 'API key environment variable fallback' describe blocks.
+ */
+function setupCommonMocks(): MockOctokit {
+  // Reset all mocks
+  vi.clearAllMocks();
+
+  // Reset git interface mocks
+  mockGitInterface.revparse.mockClear();
+  mockGitInterface.diff.mockClear();
+  mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
+  mockGitInterface.diff.mockResolvedValue(
+    'prompts/prompt1.txt\npromptfooconfig.yaml',
+  );
+
+  // Setup octokit mock
+  const mockOctokit: MockOctokit = {
+    rest: {
+      issues: {
+        createComment: vi.fn(() => Promise.resolve({})),
+      },
+    },
+  };
+  mockGithub.getOctokit.mockReturnValue(
+    mockOctokit as unknown as ReturnType<typeof github.getOctokit>,
+  );
+
+  // Setup default input mocks
+  mockCore.getInput.mockImplementation((name: string) => {
+    const inputs: Record<string, string> = {
+      'github-token': 'mock-github-token',
+      config: 'promptfooconfig.yaml',
+      prompts: 'prompts/*.txt',
+      'working-directory': '',
+      'cache-path': '',
+      'promptfoo-version': 'latest',
+      'env-files': '',
+    };
+    return inputs[name] || '';
+  });
+
+  mockCore.getBooleanInput.mockReturnValue(false);
+
+  // Summary mock is already configured in the mock file, just clear it
+  if (mockCore.summary) {
+    (mockCore.summary.addHeading as Mock).mockClear().mockReturnThis();
+    (mockCore.summary.addTable as Mock).mockClear().mockReturnThis();
+    (mockCore.summary.addList as Mock).mockClear().mockReturnThis();
+    (mockCore.summary.addLink as Mock).mockClear().mockReturnThis();
+    (mockCore.summary.addRaw as Mock).mockClear().mockReturnThis();
+    (mockCore.summary.write as Mock).mockClear().mockResolvedValue(undefined);
+  }
+
+  // Setup GitHub context
+  Object.defineProperty(mockGithub.context, 'eventName', {
+    value: 'pull_request',
+    configurable: true,
+  });
+  Object.defineProperty(mockGithub.context, 'payload', {
+    value: {
+      pull_request: {
+        number: 123,
+        base: { ref: 'main' },
+        head: { ref: 'feature-branch' },
+      },
+    },
+    configurable: true,
+  });
+  Object.defineProperty(mockGithub.context, 'repo', {
+    value: {
+      owner: 'test-owner',
+      repo: 'test-repo',
+    },
+    configurable: true,
+  });
+
+  // Setup file system mocks
+  mockFs.readFileSync.mockReturnValue(
+    JSON.stringify({
+      results: {
+        stats: {
+          successes: 10,
+          failures: 2,
+        },
+      },
+      shareableUrl: 'https://example.com/results',
+    }),
+  );
+  mockFs.existsSync.mockReturnValue(false);
+
+  // Setup exec mock
+  mockExec.exec.mockResolvedValue(0);
+
+  // Setup glob mock - return files that will match changed files
+  mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+  return mockOctokit;
+}
+
 describe('GitHub Action Main', () => {
   let mockOctokit: MockOctokit;
 
   beforeEach(() => {
-    // Reset all mocks
-    vi.clearAllMocks();
-
-    // Reset git interface mocks
-    mockGitInterface.revparse.mockClear();
-    mockGitInterface.diff.mockClear();
-    mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
-    mockGitInterface.diff.mockResolvedValue(
-      'prompts/prompt1.txt\npromptfooconfig.yaml',
-    );
-
-    // Setup octokit mock
-    mockOctokit = {
-      rest: {
-        issues: {
-          createComment: vi.fn(() => Promise.resolve({})),
-        },
-      },
-    };
-    mockGithub.getOctokit.mockReturnValue(
-      mockOctokit as unknown as ReturnType<typeof github.getOctokit>,
-    );
-
-    // Setup default input mocks
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-      };
-      return inputs[name] || '';
-    });
-
-    mockCore.getBooleanInput.mockReturnValue(false);
-
-    // Summary mock is already configured in the mock file, just clear it
-    if (mockCore.summary) {
-      (mockCore.summary.addHeading as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.addTable as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.addList as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.addLink as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.addRaw as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.write as Mock).mockClear().mockResolvedValue(undefined);
-    }
-
-    // Setup GitHub context
-    Object.defineProperty(mockGithub.context, 'eventName', {
-      value: 'pull_request',
-      configurable: true,
-    });
-    Object.defineProperty(mockGithub.context, 'payload', {
-      value: {
-        pull_request: {
-          number: 123,
-          base: { ref: 'main' },
-          head: { ref: 'feature-branch' },
-        },
-      },
-      configurable: true,
-    });
-    Object.defineProperty(mockGithub.context, 'repo', {
-      value: {
-        owner: 'test-owner',
-        repo: 'test-repo',
-      },
-      configurable: true,
-    });
-
-    // Setup file system mocks
-    mockFs.readFileSync.mockReturnValue(
-      JSON.stringify({
-        results: {
-          stats: {
-            successes: 10,
-            failures: 2,
-          },
-        },
-        shareableUrl: 'https://example.com/results',
-      }),
-    );
-    mockFs.existsSync.mockReturnValue(false);
-
-    // Setup exec mock
-    mockExec.exec.mockResolvedValue(0);
-
-    // Setup glob mock - return files that will match changed files
-    mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+    mockOctokit = setupCommonMocks();
   });
 
   afterEach(() => {
@@ -901,11 +911,11 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // Assert that the action failed due to git error (testing the error flow, not exact message)
+      // Assert that the action failed with the deterministic error from our mock
       expect(mockCore.setFailed).toHaveBeenCalled();
       const failedCall = mockCore.setFailed.mock.calls[0][0];
       expect(typeof failedCall).toBe('string');
-      expect(failedCall).toMatch(/Error|failed|invalid/i);
+      expect(failedCall).toContain('Git fetch failed for invalid ref');
     });
 
     test('should accept valid git refs', async () => {
@@ -939,84 +949,9 @@ describe('GitHub Action Main', () => {
 
 describe('API key environment variable fallback', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    setupCommonMocks();
 
-    // Reset git interface mocks
-    mockGitInterface.revparse.mockClear();
-    mockGitInterface.diff.mockClear();
-    mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
-    mockGitInterface.diff.mockResolvedValue(
-      'prompts/prompt1.txt\npromptfooconfig.yaml',
-    );
-
-    // Setup octokit mock
-    const mockOctokit = {
-      rest: {
-        issues: {
-          createComment: vi.fn(() => Promise.resolve({})),
-        },
-      },
-    };
-    mockGithub.getOctokit.mockReturnValue(
-      mockOctokit as unknown as ReturnType<typeof github.getOctokit>,
-    );
-
-    mockCore.getBooleanInput.mockReturnValue(false);
-
-    // Summary mock
-    if (mockCore.summary) {
-      (mockCore.summary.addHeading as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.addTable as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.addList as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.addLink as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.addRaw as Mock).mockClear().mockReturnThis();
-      (mockCore.summary.write as Mock).mockClear().mockResolvedValue(undefined);
-    }
-
-    // Setup GitHub context
-    Object.defineProperty(mockGithub.context, 'eventName', {
-      value: 'pull_request',
-      configurable: true,
-    });
-    Object.defineProperty(mockGithub.context, 'payload', {
-      value: {
-        pull_request: {
-          number: 123,
-          base: { ref: 'main' },
-          head: { ref: 'feature-branch' },
-        },
-      },
-      configurable: true,
-    });
-    Object.defineProperty(mockGithub.context, 'repo', {
-      value: {
-        owner: 'test-owner',
-        repo: 'test-repo',
-      },
-      configurable: true,
-    });
-
-    // Setup file system mocks
-    mockFs.readFileSync.mockReturnValue(
-      JSON.stringify({
-        results: {
-          stats: {
-            successes: 10,
-            failures: 2,
-          },
-        },
-        shareableUrl: 'https://example.com/results',
-      }),
-    );
-    mockFs.existsSync.mockReturnValue(false);
-
-    // Setup exec mock
-    mockExec.exec.mockResolvedValue(0);
-
-    // Setup glob mock
-    mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
-
-    // Clear all environment variables before each test
+    // Clear all provider-specific environment variables before each test
     delete process.env.OPENAI_API_KEY;
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.AZURE_OPENAI_API_KEY;
