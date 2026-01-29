@@ -27056,7 +27056,7 @@ minimatch.unescape = unescape;
 // node_modules/glob/dist/esm/glob.js
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
-// node_modules/path-scurry/node_modules/lru-cache/dist/esm/index.js
+// node_modules/lru-cache/dist/esm/index.js
 var defaultPerf = typeof performance === "object" && performance && typeof performance.now === "function" ? performance : Date;
 var warned = /* @__PURE__ */ new Set();
 var PROCESS = typeof process === "object" && !!process ? process : {};
@@ -28100,6 +28100,7 @@ var LRUCache = class _LRUCache {
     const cb = (v2, updateCache = false) => {
       const { aborted } = ac.signal;
       const ignoreAbort = options.ignoreFetchAbort && v2 !== void 0;
+      const proceed = options.ignoreFetchAbort || !!(options.allowStaleOnFetchAbort && v2 !== void 0);
       if (options.status) {
         if (aborted && !updateCache) {
           options.status.fetchAborted = true;
@@ -28111,7 +28112,7 @@ var LRUCache = class _LRUCache {
         }
       }
       if (aborted && !ignoreAbort && !updateCache) {
-        return fetchFail(ac.signal.reason);
+        return fetchFail(ac.signal.reason, proceed);
       }
       const bf2 = p;
       const vl = this.#valList[index];
@@ -28135,16 +28136,16 @@ var LRUCache = class _LRUCache {
         options.status.fetchRejected = true;
         options.status.fetchError = er;
       }
-      return fetchFail(er);
+      return fetchFail(er, false);
     };
-    const fetchFail = (er) => {
+    const fetchFail = (er, proceed) => {
       const { aborted } = ac.signal;
       const allowStaleAborted = aborted && options.allowStaleOnFetchAbort;
       const allowStale = allowStaleAborted || options.allowStaleOnFetchRejection;
       const noDelete = allowStale || options.noDeleteOnFetchRejection;
       const bf2 = p;
       if (this.#valList[index] === p) {
-        const del = !noDelete || bf2.__staleWhileFetching === void 0;
+        const del = !noDelete || !proceed && bf2.__staleWhileFetching === void 0;
         if (del) {
           this.#delete(k, "fetch");
         } else if (!allowStaleAborted) {
