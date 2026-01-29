@@ -9,13 +9,14 @@
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
+    "typecheck": "tsc --noEmit",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
     "lint:fix": "biome lint --write .",
     "biome": "biome check --write .",
     "biome:check": "biome check .",
-    "package": "ncc build --source-map --license licenses.txt",
+    "package": "npm run typecheck && node esbuild.config.mjs",
     "test": "jest --coverage",
     "all": "npm run build && npm run biome:check && npm run package && npm test"
   },
@@ -30,7 +31,7 @@
   ],
   "dependencies": {
     "@actions/core": "^2.0.0",
-    "@actions/exec": "^2.0.0",
+    "@actions/exec": "^3.0.0",
     "@actions/github": "^8.0.1",
     "@actions/io": "^3.0.0",
     "dotenv": "^17.2.3",
@@ -45,6 +46,7 @@
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.10.1",
     "@vercel/ncc": "^0.38.4",
+    "esbuild": "^0.27.2",
     "jest": "^30.2.0",
     "js-yaml": "^4.1.1",
     "promptfoo": "0.120.19",
