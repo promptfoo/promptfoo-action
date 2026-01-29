@@ -1,0 +1,16 @@
+# Test configuration for E2E testing of promptfoo-action
+# This is a minimal config to verify the action can run successfully
+# Uses echo provider to avoid requiring real API keys in CI
+
+prompts:
+  - 'test-prompt.txt'
+
+providers:
+  - id: echo
+
+tests:
+  - vars:
+      topic: testing
+    assert:
+      - type: contains
+        value: 'testing'

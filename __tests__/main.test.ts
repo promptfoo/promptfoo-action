@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as github from '@actions/github';
@@ -15,6 +16,9 @@ import {
   vi,
 } from 'vitest';
 
+// ESM-compatible __dirname
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 // Get actual fs module for tests that need to read real files
 const actualFs = await vi.importActual<typeof import('fs')>('fs');
 
@@ -22,7 +26,7 @@ const actualFs = await vi.importActual<typeof import('fs')>('fs');
 type MockOctokit = {
   rest: {
     issues: {
-      createComment: Mock;
+      createComment: Mock<() => Promise<unknown>>;
     };
   };
 };
@@ -53,10 +57,10 @@ vi.mock('simple-git', () => ({
 }));
 
 // Mock auth utilities
-vi.mock('../src/utils/auth');
+vi.mock('../src/utils/auth.js');
 
-import { handleError, run } from '../src/main';
-import * as auth from '../src/utils/auth';
+import { handleError, run } from '../src/main.js';
+import * as auth from '../src/utils/auth.js';
 
 const mockAuth = auth as {
   validatePromptfooApiKey: MockedFunction<typeof auth.validatePromptfooApiKey>;
