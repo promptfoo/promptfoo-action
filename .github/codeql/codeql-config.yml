@@ -1,4 +1,6 @@
 name: codeql-config
 paths-ignore:
   - .github/workflows/dependabot-post-update.yml
+  - dist/**  # Exclude bundled code from analysis (third-party dependencies)
+  - lib/**   # Exclude compiled output (analyzed at source level)
 
