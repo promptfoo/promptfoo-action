@@ -1,12 +1,21 @@
 name: codeql-config
+
+# Only analyze source code, not bundled dist
 paths-ignore:
   - .github/workflows/dependabot-post-update.yml
-  - dist
-  - lib
+  - dist/**
+  - lib/**
+  - node_modules/**
 paths:
-  - src
+  - src/**
+
+# Exclude the file-system-race query which flags bundled @actions/core
 query-filters:
   - exclude:
       id:
         - js/file-system-race
+
+# Use security-and-quality suite but apply filters
+queries:
+  - uses: security-and-quality
 
