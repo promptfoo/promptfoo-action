@@ -18517,9 +18517,9 @@ var require_undici = __commonJS({
   }
 });
 
-// node_modules/@actions/http-client/lib/proxy.js
+// node_modules/@actions/github/node_modules/@actions/http-client/lib/proxy.js
 var require_proxy = __commonJS({
-  "node_modules/@actions/http-client/lib/proxy.js"(exports2) {
+  "node_modules/@actions/github/node_modules/@actions/http-client/lib/proxy.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.getProxyUrl = getProxyUrl2;
@@ -18598,9 +18598,9 @@ var require_proxy = __commonJS({
   }
 });
 
-// node_modules/@actions/http-client/lib/index.js
+// node_modules/@actions/github/node_modules/@actions/http-client/lib/index.js
 var require_lib = __commonJS({
-  "node_modules/@actions/http-client/lib/index.js"(exports2) {
+  "node_modules/@actions/github/node_modules/@actions/http-client/lib/index.js"(exports2) {
     "use strict";
     var __createBinding = exports2 && exports2.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
@@ -20756,7 +20756,7 @@ function prepareKeyValueMessage(key, value) {
 // node_modules/@actions/core/lib/core.js
 var os5 = __toESM(require("os"), 1);
 
-// node_modules/@actions/core/node_modules/@actions/http-client/lib/index.js
+// node_modules/@actions/http-client/lib/index.js
 var tunnel = __toESM(require_tunnel2(), 1);
 var import_undici = __toESM(require_undici(), 1);
 var HttpCodes;
@@ -21987,7 +21987,7 @@ function getApiBaseUrl() {
   return process.env["GITHUB_API_URL"] || "https://api.github.com";
 }
 
-// node_modules/@actions/github/node_modules/universal-user-agent/index.js
+// node_modules/universal-user-agent/index.js
 function getUserAgent() {
   if (typeof navigator === "object" && "userAgent" in navigator) {
     return navigator.userAgent;
@@ -21998,7 +21998,7 @@ function getUserAgent() {
   return "<environment undetectable>";
 }
 
-// node_modules/@actions/github/node_modules/before-after-hook/lib/register.js
+// node_modules/before-after-hook/lib/register.js
 function register(state, name, method, options) {
   if (typeof method !== "function") {
     throw new Error("method for before hook must be a function");
@@ -22021,7 +22021,7 @@ function register(state, name, method, options) {
   });
 }
 
-// node_modules/@actions/github/node_modules/before-after-hook/lib/add.js
+// node_modules/before-after-hook/lib/add.js
 function addHook(state, kind, name, hook2) {
   const orig = hook2;
   if (!state.registry[name]) {
@@ -22056,7 +22056,7 @@ function addHook(state, kind, name, hook2) {
   });
 }
 
-// node_modules/@actions/github/node_modules/before-after-hook/lib/remove.js
+// node_modules/before-after-hook/lib/remove.js
 function removeHook(state, name, method) {
   if (!state.registry[name]) {
     return;
@@ -22070,7 +22070,7 @@ function removeHook(state, name, method) {
   state.registry[name].splice(index, 1);
 }
 
-// node_modules/@actions/github/node_modules/before-after-hook/index.js
+// node_modules/before-after-hook/index.js
 var bind = Function.bind;
 var bindable = bind.bind(bind);
 function bindApi(hook2, state, name) {
@@ -22104,7 +22104,7 @@ function Collection() {
 }
 var before_after_hook_default = { Singular, Collection };
 
-// node_modules/@actions/github/node_modules/@octokit/endpoint/dist-bundle/index.js
+// node_modules/@octokit/endpoint/dist-bundle/index.js
 var VERSION = "0.0.0-development";
 var userAgent = `octokit-endpoint.js/${VERSION} ${getUserAgent()}`;
 var DEFAULTS = {
@@ -22417,10 +22417,10 @@ function withDefaults(oldDefaults, newDefaults) {
 }
 var endpoint = withDefaults(null, DEFAULTS);
 
-// node_modules/@actions/github/node_modules/@octokit/request/dist-bundle/index.js
+// node_modules/@octokit/request/dist-bundle/index.js
 var import_fast_content_type_parse = __toESM(require_fast_content_type_parse(), 1);
 
-// node_modules/@actions/github/node_modules/@octokit/request-error/dist-src/index.js
+// node_modules/@octokit/request-error/dist-src/index.js
 var RequestError = class extends Error {
   name;
   /**
@@ -22459,7 +22459,7 @@ var RequestError = class extends Error {
   }
 };
 
-// node_modules/@actions/github/node_modules/@octokit/request/dist-bundle/index.js
+// node_modules/@octokit/request/dist-bundle/index.js
 var VERSION2 = "10.0.7";
 var defaults_default = {
   headers: {
@@ -22637,7 +22637,7 @@ function withDefaults2(oldEndpoint, newDefaults) {
 }
 var request = withDefaults2(endpoint, defaults_default);
 
-// node_modules/@actions/github/node_modules/@octokit/graphql/dist-bundle/index.js
+// node_modules/@octokit/graphql/dist-bundle/index.js
 var VERSION3 = "0.0.0-development";
 function _buildMessageForResponseErrors(data) {
   return `Request failed due to following response errors:
@@ -22744,7 +22744,7 @@ function withCustomRequest(customRequest) {
   });
 }
 
-// node_modules/@actions/github/node_modules/@octokit/auth-token/dist-bundle/index.js
+// node_modules/@octokit/auth-token/dist-bundle/index.js
 var b64url = "(?:[a-zA-Z0-9_-]+)";
 var sep2 = "\\.";
 var jwtRE = new RegExp(`^${b64url}${sep2}${b64url}${sep2}${b64url}$`);
@@ -22789,10 +22789,10 @@ var createTokenAuth = function createTokenAuth2(token) {
   });
 };
 
-// node_modules/@actions/github/node_modules/@octokit/core/dist-src/version.js
+// node_modules/@octokit/core/dist-src/version.js
 var VERSION4 = "7.0.6";
 
-// node_modules/@actions/github/node_modules/@octokit/core/dist-src/index.js
+// node_modules/@octokit/core/dist-src/index.js
 var noop2 = () => {
 };
 var consoleWarn = console.warn.bind(console);
@@ -22926,10 +22926,10 @@ var Octokit = class {
   auth;
 };
 
-// node_modules/@actions/github/node_modules/@octokit/plugin-rest-endpoint-methods/dist-src/version.js
+// node_modules/@octokit/plugin-rest-endpoint-methods/dist-src/version.js
 var VERSION5 = "17.0.0";
 
-// node_modules/@actions/github/node_modules/@octokit/plugin-rest-endpoint-methods/dist-src/generated/endpoints.js
+// node_modules/@octokit/plugin-rest-endpoint-methods/dist-src/generated/endpoints.js
 var Endpoints = {
   actions: {
     addCustomLabelsToSelfHostedRunnerForOrg: [
@@ -25221,7 +25221,7 @@ var Endpoints = {
 };
 var endpoints_default = Endpoints;
 
-// node_modules/@actions/github/node_modules/@octokit/plugin-rest-endpoint-methods/dist-src/endpoints-to-methods.js
+// node_modules/@octokit/plugin-rest-endpoint-methods/dist-src/endpoints-to-methods.js
 var endpointMethodsMap = /* @__PURE__ */ new Map();
 for (const [scope, endpoints] of Object.entries(endpoints_default)) {
   for (const [methodName, endpoint2] of Object.entries(endpoints)) {
@@ -25344,7 +25344,7 @@ function decorate(octokit, scope, methodName, defaults3, decorations) {
   return Object.assign(withDecorations, requestWithDefaults);
 }
 
-// node_modules/@actions/github/node_modules/@octokit/plugin-rest-endpoint-methods/dist-src/index.js
+// node_modules/@octokit/plugin-rest-endpoint-methods/dist-src/index.js
 function restEndpointMethods(octokit) {
   const api = endpointsToMethods(octokit);
   return {
@@ -25361,7 +25361,7 @@ function legacyRestEndpointMethods(octokit) {
 }
 legacyRestEndpointMethods.VERSION = VERSION5;
 
-// node_modules/@actions/github/node_modules/@octokit/plugin-paginate-rest/dist-bundle/index.js
+// node_modules/@octokit/plugin-paginate-rest/dist-bundle/index.js
 var VERSION6 = "0.0.0-development";
 function normalizePaginatedListResponse(response) {
   if (!response.data) {
