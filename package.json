@@ -47,7 +47,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "esbuild": "^0.27.2",
     "js-yaml": "^4.1.1",
-    "promptfoo": "0.120.23",
+    "promptfoo": "0.120.24",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
