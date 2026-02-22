@@ -8,16 +8,14 @@
       "src/**/*.js",
       "__tests__/**/*.ts",
       "*.js",
-      "*.ts"
-    ],
-    "experimentalScannerIgnores": [
-      "node_modules",
-      "dist/**",
-      "build",
-      "coverage",
-      "lib/**",
-      ".next",
-      "*.min.js"
+      "*.ts",
+      "!!**/node_modules",
+      "!!**/dist",
+      "!!**/build",
+      "!!**/coverage",
+      "!!**/lib",
+      "!!**/.next",
+      "!!**/*.min.js"
     ]
   },
   "linter": {
