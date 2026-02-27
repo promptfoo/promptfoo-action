@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.2](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.2.1...promptfoo-action-v1.2.2) (2026-02-27)
+
+
+### Bug Fixes
+
+* **deps:** update dependency @actions/core to v3 ([#819](https://github.com/promptfoo/promptfoo-action/issues/819)) ([a52f2aa](https://github.com/promptfoo/promptfoo-action/commit/a52f2aa779a0d23718a9101c26bb08c8363a8570))
+* **deps:** update dependency @actions/exec to v3 ([#816](https://github.com/promptfoo/promptfoo-action/issues/816)) ([0eb09b7](https://github.com/promptfoo/promptfoo-action/commit/0eb09b7cca52ad059200768d5de2639dbbe56783))
+* **deps:** update dependency @actions/github to v8 ([#810](https://github.com/promptfoo/promptfoo-action/issues/810)) ([d6385a1](https://github.com/promptfoo/promptfoo-action/commit/d6385a1b459a7b99020a1ae448fc4e0f83c7db69))
+* **deps:** update dependency @actions/github to v9 ([#813](https://github.com/promptfoo/promptfoo-action/issues/813)) ([a1e3d22](https://github.com/promptfoo/promptfoo-action/commit/a1e3d22f4ca8cdef59bbc2ab04a323e939e56e16))
+* **deps:** update dependency @actions/io to v3 ([#815](https://github.com/promptfoo/promptfoo-action/issues/815)) ([d9ac7ae](https://github.com/promptfoo/promptfoo-action/commit/d9ac7aee7cb269ec46d167b380e0f9656bf895d1))
+
 ## [1.2.1](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.2.0...promptfoo-action-v1.2.1) (2026-01-08)
 
 
