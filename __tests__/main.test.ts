@@ -1128,6 +1128,446 @@ describe('disable-comment feature', () => {
   });
 });
 
+describe('repeat feature', () => {
+  beforeEach(() => {
+    setupCommonMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('should not include --repeat flag when repeat is 1 (default)', async () => {
+    await run();
+
+    const promptfooCall = mockExec.exec.mock.calls[0];
+    const args = promptfooCall[1] as string[];
+    expect(args).not.toContain('--repeat');
+  });
+
+  test('should not include --repeat flag when repeat is explicitly 1', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '1',
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    const promptfooCall = mockExec.exec.mock.calls[0];
+    const args = promptfooCall[1] as string[];
+    expect(args).not.toContain('--repeat');
+  });
+
+  test('should include --repeat flag when repeat > 1', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '3',
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    const promptfooCall = mockExec.exec.mock.calls[0];
+    const args = promptfooCall[1] as string[];
+    expect(args).toContain('--repeat');
+    expect(args[args.indexOf('--repeat') + 1]).toBe('3');
+  });
+
+  test('should fail when repeat is 0', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '0',
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('repeat must be a positive integer'),
+    );
+  });
+
+  test('should fail when repeat is negative', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '-1',
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('repeat must be a positive integer'),
+    );
+  });
+});
+
+describe('repeat-fail-on-threshold feature', () => {
+  beforeEach(() => {
+    setupCommonMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('should pass when all tests meet the per-test threshold', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '3',
+        'repeat-fail-on-threshold': '66',
+      };
+      return inputs[name] || '';
+    });
+
+    // 2 tests, each run 3 times, each passing 2/3 (66.7%)
+    // Note: with --repeat, each repeat gets a unique testIdx
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            { testIdx: 0, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 1, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 2, promptIdx: 0, success: false, description: 'Test A' },
+            { testIdx: 3, promptIdx: 0, success: true, description: 'Test B' },
+            { testIdx: 4, promptIdx: 0, success: false, description: 'Test B' },
+            { testIdx: 5, promptIdx: 0, success: true, description: 'Test B' },
+          ],
+          stats: { successes: 4, failures: 2 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).not.toHaveBeenCalled();
+  });
+
+  test('should fail when a test does not meet the per-test threshold', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '3',
+        'repeat-fail-on-threshold': '66',
+      };
+      return inputs[name] || '';
+    });
+
+    // Test A passes 2/3 (ok), Test B passes 1/3 (fails 66% threshold)
+    // Note: with --repeat, each repeat gets a unique testIdx
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            { testIdx: 0, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 1, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 2, promptIdx: 0, success: false, description: 'Test A' },
+            { testIdx: 3, promptIdx: 0, success: true, description: 'Test B' },
+            { testIdx: 4, promptIdx: 0, success: false, description: 'Test B' },
+            { testIdx: 5, promptIdx: 0, success: false, description: 'Test B' },
+          ],
+          stats: { successes: 3, failures: 3 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('1 test(s) failed the repeat threshold (66%)'),
+    );
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Test B: 1/3 passed (33%)'),
+    );
+  });
+
+  test('should handle multiple prompts per test correctly', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '2',
+        'repeat-fail-on-threshold': '50',
+      };
+      return inputs[name] || '';
+    });
+
+    // Test with prompt 0: 1/2 pass (50% - ok)
+    // Test with prompt 1: 0/2 pass (0% - fails)
+    // Uses vars to group since no description
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            { testIdx: 0, promptIdx: 0, success: true, vars: { q: 'hello' } },
+            { testIdx: 1, promptIdx: 0, success: false, vars: { q: 'hello' } },
+            { testIdx: 2, promptIdx: 1, success: false, vars: { q: 'hello' } },
+            { testIdx: 3, promptIdx: 1, success: false, vars: { q: 'hello' } },
+          ],
+          stats: { successes: 1, failures: 3 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('1 test(s) failed the repeat threshold (50%)'),
+    );
+  });
+
+  test('should fail when repeat-fail-on-threshold is invalid', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        'repeat-fail-on-threshold': '150',
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'repeat-fail-on-threshold must be a number between 0 and 100',
+      ),
+    );
+  });
+
+  test('should work independently from fail-on-threshold', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '3',
+        'fail-on-threshold': '10',
+        'repeat-fail-on-threshold': '66',
+      };
+      return inputs[name] || '';
+    });
+
+    // Overall: 5/6 = 83% (passes fail-on-threshold of 10%)
+    // Test A: 3/3 pass (100% - ok)
+    // Test B: 2/3 pass (66.7% - ok, >= 66%)
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            { testIdx: 0, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 1, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 2, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 3, promptIdx: 0, success: true, description: 'Test B' },
+            { testIdx: 4, promptIdx: 0, success: true, description: 'Test B' },
+            { testIdx: 5, promptIdx: 0, success: false, description: 'Test B' },
+          ],
+          stats: { successes: 5, failures: 1 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).not.toHaveBeenCalled();
+  });
+
+  test('should post PR comment before failing on repeat threshold', async () => {
+    const mockOctokit = setupCommonMocks();
+
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '3',
+        'repeat-fail-on-threshold': '66',
+      };
+      return inputs[name] || '';
+    });
+
+    // Test fails threshold — all 3 repeats fail
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            {
+              testIdx: 0,
+              promptIdx: 0,
+              success: false,
+              description: 'Failing test',
+            },
+            {
+              testIdx: 1,
+              promptIdx: 0,
+              success: false,
+              description: 'Failing test',
+            },
+            {
+              testIdx: 2,
+              promptIdx: 0,
+              success: false,
+              description: 'Failing test',
+            },
+          ],
+          stats: { successes: 0, failures: 3 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    // PR comment should still be posted
+    expect(mockOctokit.rest.issues.createComment).toHaveBeenCalled();
+    // And action should fail
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('failed the repeat threshold'),
+    );
+  });
+});
+
+describe('threshold suppresses exec error', () => {
+  beforeEach(() => {
+    setupCommonMocks();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('should not fail when thresholds are configured and pass despite exec error', async () => {
+    // Promptfoo exits non-zero when any test fails
+    mockExec.exec.mockImplementation(
+      (command: string, args?: readonly string[]) => {
+        if (command.includes('promptfoo') && args?.includes('eval')) {
+          throw new Error('exit code 100');
+        }
+        return Promise.resolve(0);
+      },
+    );
+
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        'fail-on-threshold': '80',
+      };
+      return inputs[name] || '';
+    });
+
+    // 9/10 passed = 90% > 80% threshold
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          stats: { successes: 9, failures: 1 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    // Should NOT fail — threshold is met
+    expect(mockCore.setFailed).not.toHaveBeenCalled();
+    expect(mockCore.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Promptfoo exited with a non-zero code (some tests failed), but all configured thresholds passed.',
+      ),
+    );
+  });
+
+  test('should still fail when no thresholds configured and exec fails', async () => {
+    mockExec.exec.mockImplementation(
+      (command: string, args?: readonly string[]) => {
+        if (command.includes('promptfoo') && args?.includes('eval')) {
+          throw new Error('exit code 100');
+        }
+        return Promise.resolve(0);
+      },
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Promptfoo evaluation failed'),
+    );
+  });
+});
+
 describe('environment variable documentation', () => {
   test('README.md should document environment variable fallback', () => {
     const readmePath = path.join(__dirname, '..', 'README.md');

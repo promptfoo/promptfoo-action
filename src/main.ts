@@ -5,7 +5,7 @@ import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import * as path from 'path';
-import type { OutputFile } from 'promptfoo';
+import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
 import { getApiHost, validatePromptfooApiKey } from './utils/auth';
 import {
@@ -141,6 +141,17 @@ export async function run(): Promise<void> {
     const forceRun: boolean = core.getBooleanInput('force-run', {
       required: false,
     });
+    const repeatInput: string = core.getInput('repeat', { required: false });
+    const repeat: number | undefined = repeatInput
+      ? parseInt(repeatInput, 10)
+      : undefined;
+    const repeatFailOnThresholdInput: string = core.getInput(
+      'repeat-fail-on-threshold',
+      { required: false },
+    );
+    const repeatFailOnThreshold: number | undefined = repeatFailOnThresholdInput
+      ? parseFloat(repeatFailOnThresholdInput)
+      : undefined;
 
     // Validate fail-on-threshold input
     if (
@@ -165,6 +176,29 @@ export async function run(): Promise<void> {
         'max-concurrency must be a positive integer',
         ErrorCodes.INVALID_CONFIGURATION,
         'Please provide a valid concurrency value, e.g., 10 for 10 concurrent requests',
+      );
+    }
+
+    // Validate repeat input
+    if (repeat !== undefined && (Number.isNaN(repeat) || repeat < 1)) {
+      throw new PromptfooActionError(
+        'repeat must be a positive integer',
+        ErrorCodes.INVALID_REPEAT,
+        'Please provide a valid repeat count, e.g., 3 to run each test 3 times',
+      );
+    }
+
+    // Validate repeat-fail-on-threshold input
+    if (
+      repeatFailOnThreshold !== undefined &&
+      (Number.isNaN(repeatFailOnThreshold) ||
+        repeatFailOnThreshold < 0 ||
+        repeatFailOnThreshold > 100)
+    ) {
+      throw new PromptfooActionError(
+        'repeat-fail-on-threshold must be a number between 0 and 100',
+        ErrorCodes.INVALID_REPEAT_THRESHOLD,
+        'Please provide a valid percentage value, e.g., 66 for 66% pass rate per test',
       );
     }
 
@@ -495,6 +529,15 @@ export async function run(): Promise<void> {
     if (noCache) {
       promptfooArgs.push('--no-cache');
     }
+    if (repeat !== undefined && repeat > 1) {
+      promptfooArgs.push('--repeat', repeat.toString());
+      core.info(`Running each test ${repeat} times (--repeat ${repeat})`);
+      if (repeatFailOnThreshold !== undefined) {
+        core.info(
+          `Per-test repeat threshold: ${repeatFailOnThreshold}% (each test must pass at least ${repeatFailOnThreshold}% of its ${repeat} runs)`,
+        );
+      }
+    }
 
     // Build environment for promptfoo execution
     // Environment variables from workflow context (process.env) are used as fallback for API keys.
@@ -643,10 +686,94 @@ export async function run(): Promise<void> {
           `Consider adjusting your prompts or lowering the threshold`,
         );
       }
+
+      core.info(
+        `Suite threshold passed: ${successRate.toFixed(2)}% >= ${failOnThreshold}%`,
+      );
     }
 
+    // Check per-test repeat threshold
+    if (repeatFailOnThreshold !== undefined) {
+      if (repeat === undefined || repeat <= 1) {
+        core.warning(
+          'repeat-fail-on-threshold is set but repeat is not > 1. ' +
+            'Each test has only 1 run, so the threshold is a simple pass/fail check.',
+        );
+      }
+
+      const results = ((output.results as { results?: unknown }).results ??
+        []) as EvaluateResult[];
+      if (results.length === 0) {
+        throw new PromptfooActionError(
+          'No test results found - cannot check per-test repeat threshold',
+          ErrorCodes.REPEAT_THRESHOLD_NOT_MET,
+          'Ensure your configuration includes valid tests to run',
+        );
+      }
+
+      // Group results by test identity to handle --repeat correctly.
+      // With --repeat N, each test runs N times with different testIdx values,
+      // so we group by (description, promptIdx) or (vars, promptIdx) to
+      // identify unique test cases across repeats.
+      const groups = new Map<
+        string,
+        { successes: number; total: number; description?: string }
+      >();
+      for (const result of results) {
+        const desc = result.description || result.testCase?.description;
+        const key = desc
+          ? `desc:${desc}:${result.promptIdx}`
+          : `vars:${JSON.stringify(result.vars || {})}:${result.promptIdx}`;
+        const group = groups.get(key) || {
+          successes: 0,
+          total: 0,
+          description: desc,
+        };
+        group.total++;
+        if (result.success) {
+          group.successes++;
+        }
+        groups.set(key, group);
+      }
+
+      const failedTests: string[] = [];
+      for (const [key, group] of groups) {
+        const passRate = (group.successes / group.total) * 100;
+        if (passRate < repeatFailOnThreshold) {
+          const label = group.description || `test ${key}`;
+          failedTests.push(
+            `${label}: ${group.successes}/${group.total} passed (${passRate.toFixed(0)}%)`,
+          );
+        }
+      }
+
+      if (failedTests.length > 0) {
+        throw new PromptfooActionError(
+          `${failedTests.length} test(s) failed the repeat threshold (${repeatFailOnThreshold}%):\n${failedTests.join('\n')}`,
+          ErrorCodes.REPEAT_THRESHOLD_NOT_MET,
+          'Consider adjusting your prompts or lowering the repeat-fail-on-threshold',
+        );
+      }
+
+      core.info(
+        `Per-test repeat threshold passed: all ${groups.size} test(s) met the ${repeatFailOnThreshold}% threshold`,
+      );
+    }
+
+    // If promptfoo exited non-zero but thresholds are configured and passed,
+    // the user opted into tolerating some test failures — don't fail the action.
+    // Promptfoo exits non-zero when any test fails, but that's expected when
+    // using thresholds to allow partial failures.
     if (errorToThrow) {
-      throw errorToThrow;
+      const hasThresholds =
+        failOnThreshold !== undefined || repeatFailOnThreshold !== undefined;
+      if (hasThresholds) {
+        core.info(
+          'Promptfoo exited with a non-zero code (some tests failed), but all configured thresholds passed.',
+        );
+      } else {
+        throw errorToThrow;
+      }
     }
   } catch (error) {
     if (error instanceof Error) {

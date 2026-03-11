@@ -125,6 +125,16 @@ inputs:
     description: 'Base ref to compare against in workflow_dispatch mode (e.g., main, HEAD~1). If not specified, falls back to workflow inputs or HEAD~1.'
     required: false
     default: ''
+  repeat:
+    description: 'Number of times to run each test. Useful for flaky LLM evals where a single run is noisy.'
+    required: false
+    default: '1'
+  repeat-fail-on-threshold:
+    description: >
+      Fail the action if any individual test passes less than this percentage (0-100) of its repeated runs.
+      Only meaningful when repeat > 1. Example: 66 means each test must pass at least 2 out of 3 runs.
+    required: false
+    default: ''
   force-run:
     description: 'Force evaluation to run even if no files changed'
     required: false
