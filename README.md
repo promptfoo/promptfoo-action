@@ -40,8 +40,8 @@ The action can be configured using the following inputs:
 | `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
 | `no-cache`           | Run promptfoo with `--no-cache` flag to avoid reading or writing results to the disk cache. Defaults to `false`                                             | No       |
 | `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
-| `repeat`             | Number of times to run each test. Useful for flaky LLM evals where a single run is noisy. Defaults to `1`                                                 | No       |
-| `repeat-fail-on-threshold` | Fail the action if any individual test passes less than this percentage (0-100) of its repeated runs. Only meaningful when `repeat > 1`. Example: `66` means each test must pass at least 2 out of 3 runs. | No       |
+| `repeat`             | Number of times to run each test (must be >= 2). Useful for non-deterministic LLM evals. Omit to run tests once.                                          | No       |
+| `repeat-min-pass`    | Minimum number of repeated runs each test must pass. Requires `repeat`. Must be <= `repeat`. Example: `2` with `repeat: 3` means each test must pass at least 2 of 3 runs. | No       |
 | `force-run`          | Force evaluation to run even if no files changed. Defaults to `false`                                                                                      | No       |
 
 The following API key parameters are supported:
@@ -319,7 +319,7 @@ If you need to run evaluations regardless of file changes, use the `force-run` o
 
 ### Handling flaky LLM evals with repeat
 
-LLM eval outputs are non-deterministic. Use `repeat` to run each test multiple times and `repeat-fail-on-threshold` to require a minimum per-test pass rate:
+LLM eval outputs are non-deterministic. Use `repeat` to run each test multiple times and `repeat-min-pass` to require a minimum number of passes per test:
 
 ```yaml
 - name: Run skill evals
@@ -329,12 +329,14 @@ LLM eval outputs are non-deterministic. Use `repeat` to run each test multiple t
     config: evals/skills.yaml
     use-config-prompts: 'true'
     repeat: 3
-    repeat-fail-on-threshold: 66
+    repeat-min-pass: 2
 ```
 
-This runs each test 3 times and requires each test to pass at least 2 out of 3 runs (66%). Tests that consistently fail will be flagged, while random grader variance is tolerated.
+This runs each test 3 times and requires each test to pass at least 2 of its 3 runs. Tests that consistently fail will be flagged, while random grader variance is tolerated.
 
-You can combine this with `fail-on-threshold` for a suite-level check — both thresholds are evaluated independently.
+You can combine this with `fail-on-threshold` for a suite-level check — both are evaluated independently.
+
+**Note:** The repeat check groups results by test description. For accurate results, give each test case a unique description in your promptfoo config.
 
 ## Caching for Better Performance
 

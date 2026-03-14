@@ -20,6 +20,15 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
+import {
+  parseOptionalPercentage,
+  parseOptionalPositiveInt,
+} from './utils/inputs';
+import {
+  evaluateRepeatThreshold,
+  formatRepeatCommentMarkdown,
+  formatRepeatFailureMessage,
+} from './utils/thresholds';
 
 const gitInterface = simpleGit();
 
@@ -108,18 +117,14 @@ export async function run(): Promise<void> {
       { required: false },
     );
     const envFiles: string = core.getInput('env-files', { required: false });
-    const failOnThresholdInput: string = core.getInput('fail-on-threshold', {
-      required: false,
-    });
-    const failOnThreshold: number | undefined = failOnThresholdInput
-      ? parseFloat(failOnThresholdInput)
-      : undefined;
-    const maxConcurrencyInput: string = core.getInput('max-concurrency', {
-      required: false,
-    });
-    const maxConcurrency: number | undefined = maxConcurrencyInput
-      ? parseInt(maxConcurrencyInput, 10)
-      : undefined;
+    const failOnThreshold = parseOptionalPercentage(
+      core.getInput('fail-on-threshold', { required: false }),
+      'fail-on-threshold',
+    );
+    const maxConcurrency = parseOptionalPositiveInt(
+      core.getInput('max-concurrency', { required: false }),
+      'max-concurrency',
+    );
     const noTable: boolean = core.getBooleanInput('no-table', {
       required: false,
     });
@@ -141,65 +146,38 @@ export async function run(): Promise<void> {
     const forceRun: boolean = core.getBooleanInput('force-run', {
       required: false,
     });
-    const repeatInput: string = core.getInput('repeat', { required: false });
-    const repeat: number | undefined = repeatInput
-      ? parseInt(repeatInput, 10)
-      : undefined;
-    const repeatFailOnThresholdInput: string = core.getInput(
-      'repeat-fail-on-threshold',
-      { required: false },
+    const repeat = parseOptionalPositiveInt(
+      core.getInput('repeat', { required: false }),
+      'repeat',
     );
-    const repeatFailOnThreshold: number | undefined = repeatFailOnThresholdInput
-      ? parseFloat(repeatFailOnThresholdInput)
-      : undefined;
+    const repeatMinPass = parseOptionalPositiveInt(
+      core.getInput('repeat-min-pass', { required: false }),
+      'repeat-min-pass',
+    );
 
-    // Validate fail-on-threshold input
-    if (
-      failOnThreshold !== undefined &&
-      (Number.isNaN(failOnThreshold) ||
-        failOnThreshold < 0 ||
-        failOnThreshold > 100)
-    ) {
+    // Cross-field validation for repeat inputs
+    if (repeat !== undefined && repeat < 2) {
       throw new PromptfooActionError(
-        'fail-on-threshold must be a number between 0 and 100',
-        ErrorCodes.INVALID_THRESHOLD,
-        'Please provide a valid percentage value, e.g., 80 for 80% success rate',
-      );
-    }
-
-    // Validate max-concurrency input
-    if (
-      maxConcurrency !== undefined &&
-      (Number.isNaN(maxConcurrency) || maxConcurrency < 1)
-    ) {
-      throw new PromptfooActionError(
-        'max-concurrency must be a positive integer',
+        'repeat must be at least 2 (omit it to run tests once)',
         ErrorCodes.INVALID_CONFIGURATION,
-        'Please provide a valid concurrency value, e.g., 10 for 10 concurrent requests',
+        'Provide a value like 3 to run each test 3 times',
       );
     }
-
-    // Validate repeat input
-    if (repeat !== undefined && (Number.isNaN(repeat) || repeat < 1)) {
-      throw new PromptfooActionError(
-        'repeat must be a positive integer',
-        ErrorCodes.INVALID_REPEAT,
-        'Please provide a valid repeat count, e.g., 3 to run each test 3 times',
-      );
-    }
-
-    // Validate repeat-fail-on-threshold input
-    if (
-      repeatFailOnThreshold !== undefined &&
-      (Number.isNaN(repeatFailOnThreshold) ||
-        repeatFailOnThreshold < 0 ||
-        repeatFailOnThreshold > 100)
-    ) {
-      throw new PromptfooActionError(
-        'repeat-fail-on-threshold must be a number between 0 and 100',
-        ErrorCodes.INVALID_REPEAT_THRESHOLD,
-        'Please provide a valid percentage value, e.g., 66 for 66% pass rate per test',
-      );
+    if (repeatMinPass !== undefined) {
+      if (repeat === undefined) {
+        throw new PromptfooActionError(
+          'repeat-min-pass requires repeat to be set (e.g., repeat: 3)',
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Set repeat to the number of times each test should run',
+        );
+      }
+      if (repeatMinPass > repeat) {
+        throw new PromptfooActionError(
+          `repeat-min-pass (${repeatMinPass}) cannot exceed repeat (${repeat})`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          `Set repeat-min-pass to at most ${repeat}`,
+        );
+      }
     }
 
     // Load .env files if specified
@@ -487,7 +465,12 @@ export async function run(): Promise<void> {
     await logCacheMetrics(cacheDir);
     core.endGroup();
 
-    const outputFile = path.join(workingDirectory, 'output.json');
+    // Use a unique output file path so stale results from a previous run
+    // cannot influence the current run's comments, thresholds, or pass/fail.
+    const outputFile = path.join(
+      workingDirectory,
+      `output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`,
+    );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
     if (!useConfigPrompts && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
@@ -529,12 +512,12 @@ export async function run(): Promise<void> {
     if (noCache) {
       promptfooArgs.push('--no-cache');
     }
-    if (repeat !== undefined && repeat > 1) {
+    if (repeat !== undefined) {
       promptfooArgs.push('--repeat', repeat.toString());
       core.info(`Running each test ${repeat} times (--repeat ${repeat})`);
-      if (repeatFailOnThreshold !== undefined) {
+      if (repeatMinPass !== undefined) {
         core.info(
-          `Per-test repeat threshold: ${repeatFailOnThreshold}% (each test must pass at least ${repeatFailOnThreshold}% of its ${repeat} runs)`,
+          `Per-test minimum: ${repeatMinPass} of ${repeat} runs must pass`,
         );
       }
     }
@@ -560,22 +543,16 @@ export async function run(): Promise<void> {
       ...(mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {}),
       ...(groqApiKey ? { GROQ_API_KEY: groqApiKey } : {}),
     };
-    let errorToThrow: Error | undefined;
-    try {
-      await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {
-        env,
-        cwd: workingDirectory,
-      });
-    } catch (error) {
-      // Capture the error but don't throw yet - we want to post PR comments first
-      // This allows showing test results even when some tests fail
-      // See: https://github.com/promptfoo/promptfoo-action/issues/786
-      errorToThrow = new PromptfooActionError(
-        `Promptfoo evaluation failed: ${error instanceof Error ? error.message : String(error)}`,
-        ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
-        'Check that your promptfoo configuration is valid and all required API keys are set',
-      );
-    }
+    // Use ignoreReturnCode so we can inspect the exit code and still read output.
+    // Promptfoo exits non-zero when any test fails — we want to post PR comments
+    // and evaluate thresholds before deciding whether to fail the action.
+    // See: https://github.com/promptfoo/promptfoo-action/issues/786
+    const exitCode = await exec.exec(
+      `npx promptfoo@${version}`,
+      promptfooArgs,
+      { env, cwd: workingDirectory, ignoreReturnCode: true },
+    );
+    const promptfooFailed = exitCode !== 0;
 
     // Read output file - promptfoo writes output.json even when tests fail
     // We try to read it so we can post PR comments with the results
@@ -584,10 +561,12 @@ export async function run(): Promise<void> {
       const outputContent = fs.readFileSync(outputFile, 'utf8');
       output = JSON.parse(outputContent) as OutputFile;
     } catch (error) {
-      // If we can't read output and we already have an error, throw the original error
-      // If we can't read output but eval succeeded, throw the output read error
-      if (errorToThrow) {
-        throw errorToThrow;
+      if (promptfooFailed) {
+        throw new PromptfooActionError(
+          `Promptfoo evaluation failed (exit code ${exitCode}) and no output was generated`,
+          ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+          'Check that your promptfoo configuration is valid and all required API keys are set',
+        );
       }
       throw new PromptfooActionError(
         `Failed to read or parse output file: ${error instanceof Error ? error.message : String(error)}`,
@@ -596,11 +575,40 @@ export async function run(): Promise<void> {
       );
     }
 
+    // Clean up the per-run output file
+    try {
+      fs.unlinkSync(outputFile);
+    } catch {
+      // best effort cleanup
+    }
+
     // Log final cache metrics and create manifest
     core.startGroup('Cache metrics after evaluation');
     await logCacheMetrics(cacheDir);
     await createCacheManifest(cacheDir);
     core.endGroup();
+
+    // Evaluate repeat threshold early so we can include results in PR comments
+    let repeatCheckResult:
+      | ReturnType<typeof evaluateRepeatThreshold>
+      | undefined;
+    if (repeatMinPass !== undefined) {
+      const results = ((output.results as { results?: unknown }).results ??
+        []) as EvaluateResult[];
+      if (results.length === 0) {
+        throw new PromptfooActionError(
+          'No test results found - cannot check per-test repeat threshold',
+          ErrorCodes.REPEAT_CHECK_FAILED,
+          'Ensure your configuration includes valid tests to run',
+        );
+      }
+      // repeat is guaranteed defined by cross-field validation above
+      repeatCheckResult = evaluateRepeatThreshold(
+        results,
+        repeatMinPass,
+        repeat!,
+      );
+    }
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
@@ -613,12 +621,14 @@ export async function run(): Promise<void> {
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
+      if (repeatCheckResult) {
+        body += formatRepeatCommentMarkdown(repeatCheckResult.summary);
+        body += '\n';
+      }
       if (output.shareableUrl) {
-        body = body.concat(
-          `**» [View eval results](${output.shareableUrl}) «**`,
-        );
+        body += `**» [View eval results](${output.shareableUrl}) «**`;
       } else {
-        body = body.concat('**» View eval results in CI console «**');
+        body += '**» View eval results in CI console «**';
       }
       await octokit.rest.issues.createComment({
         ...github.context.repo,
@@ -642,6 +652,11 @@ export async function run(): Promise<void> {
       if (promptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
         summary.addList(promptFiles);
+      }
+
+      if (repeatCheckResult) {
+        summary.addHeading('Repeat Check', 3);
+        summary.addRaw(formatRepeatCommentMarkdown(repeatCheckResult.summary));
       }
 
       if (output.shareableUrl) {
@@ -692,87 +707,36 @@ export async function run(): Promise<void> {
       );
     }
 
-    // Check per-test repeat threshold
-    if (repeatFailOnThreshold !== undefined) {
-      if (repeat === undefined || repeat <= 1) {
-        core.warning(
-          'repeat-fail-on-threshold is set but repeat is not > 1. ' +
-            'Each test has only 1 run, so the threshold is a simple pass/fail check.',
-        );
-      }
-
-      const results = ((output.results as { results?: unknown }).results ??
-        []) as EvaluateResult[];
-      if (results.length === 0) {
-        throw new PromptfooActionError(
-          'No test results found - cannot check per-test repeat threshold',
-          ErrorCodes.REPEAT_THRESHOLD_NOT_MET,
-          'Ensure your configuration includes valid tests to run',
-        );
-      }
-
-      // Group results by test identity to handle --repeat correctly.
-      // With --repeat N, each test runs N times with different testIdx values,
-      // so we group by (description, promptIdx) or (vars, promptIdx) to
-      // identify unique test cases across repeats.
-      const groups = new Map<
-        string,
-        { successes: number; total: number; description?: string }
-      >();
-      for (const result of results) {
-        const desc = result.description || result.testCase?.description;
-        const key = desc
-          ? `desc:${desc}:${result.promptIdx}`
-          : `vars:${JSON.stringify(result.vars || {})}:${result.promptIdx}`;
-        const group = groups.get(key) || {
-          successes: 0,
-          total: 0,
-          description: desc,
-        };
-        group.total++;
-        if (result.success) {
-          group.successes++;
-        }
-        groups.set(key, group);
-      }
-
-      const failedTests: string[] = [];
-      for (const [key, group] of groups) {
-        const passRate = (group.successes / group.total) * 100;
-        if (passRate < repeatFailOnThreshold) {
-          const label = group.description || `test ${key}`;
-          failedTests.push(
-            `${label}: ${group.successes}/${group.total} passed (${passRate.toFixed(0)}%)`,
-          );
-        }
-      }
-
-      if (failedTests.length > 0) {
-        throw new PromptfooActionError(
-          `${failedTests.length} test(s) failed the repeat threshold (${repeatFailOnThreshold}%):\n${failedTests.join('\n')}`,
-          ErrorCodes.REPEAT_THRESHOLD_NOT_MET,
-          'Consider adjusting your prompts or lowering the repeat-fail-on-threshold',
-        );
-      }
-
-      core.info(
-        `Per-test repeat threshold passed: all ${groups.size} test(s) met the ${repeatFailOnThreshold}% threshold`,
-      );
-    }
-
-    // If promptfoo exited non-zero but thresholds are configured and passed,
-    // the user opted into tolerating some test failures — don't fail the action.
-    // Promptfoo exits non-zero when any test fails, but that's expected when
-    // using thresholds to allow partial failures.
-    if (errorToThrow) {
-      const hasThresholds =
-        failOnThreshold !== undefined || repeatFailOnThreshold !== undefined;
-      if (hasThresholds) {
+    // Check per-test repeat threshold (already computed above for PR comments)
+    if (repeatCheckResult) {
+      if (repeatCheckResult.passed) {
         core.info(
-          'Promptfoo exited with a non-zero code (some tests failed), but all configured thresholds passed.',
+          `Repeat check passed: all ${repeatCheckResult.summary.totalGroups} test(s) met minimum (${repeatCheckResult.summary.minPass} of ${repeatCheckResult.summary.repeatCount})`,
         );
       } else {
-        throw errorToThrow;
+        throw new PromptfooActionError(
+          formatRepeatFailureMessage(repeatCheckResult.summary),
+          ErrorCodes.REPEAT_CHECK_FAILED,
+          'Consider adjusting your prompts or lowering repeat-min-pass',
+        );
+      }
+    }
+
+    // Handle promptfoo non-zero exit.
+    // When repeat-min-pass is configured, the user explicitly opts into tolerating
+    // some test failures — suppress the exec error if the repeat check passed.
+    // We do NOT suppress for fail-on-threshold alone to preserve backward compat.
+    if (promptfooFailed) {
+      if (repeatMinPass !== undefined && repeatCheckResult?.passed) {
+        core.info(
+          'Promptfoo exited non-zero (some tests failed), but all repeated tests met the minimum pass count.',
+        );
+      } else {
+        throw new PromptfooActionError(
+          `Promptfoo evaluation failed (exit code ${exitCode})`,
+          ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+          'Check that your promptfoo configuration is valid and all required API keys are set',
+        );
       }
     }
   } catch (error) {

@@ -70,6 +70,7 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    unlinkSync: vi.fn(),
     promises: {
       access: vi.fn(),
       writeFile: vi.fn(),
@@ -113,6 +114,16 @@ const mockGlob = glob as unknown as {
   sync: MockedFunction<typeof glob.sync>;
 };
 
+const DEFAULT_INPUTS: Record<string, string> = {
+  'github-token': 'mock-github-token',
+  config: 'promptfooconfig.yaml',
+  prompts: 'prompts/*.txt',
+  'working-directory': '',
+  'cache-path': '',
+  'promptfoo-version': 'latest',
+  'env-files': '',
+};
+
 /**
  * Helper function to setup common mocks used across test suites.
  * Reduces duplication between 'GitHub Action Main' and 'API key environment variable fallback' describe blocks.
@@ -142,18 +153,9 @@ function setupCommonMocks(): MockOctokit {
   );
 
   // Setup default input mocks
-  mockCore.getInput.mockImplementation((name: string) => {
-    const inputs: Record<string, string> = {
-      'github-token': 'mock-github-token',
-      config: 'promptfooconfig.yaml',
-      prompts: 'prompts/*.txt',
-      'working-directory': '',
-      'cache-path': '',
-      'promptfoo-version': 'latest',
-      'env-files': '',
-    };
-    return inputs[name] || '';
-  });
+  mockCore.getInput.mockImplementation(
+    (name: string) => DEFAULT_INPUTS[name] || '',
+  );
 
   mockCore.getBooleanInput.mockReturnValue(false);
 
@@ -638,15 +640,10 @@ describe('GitHub Action Main', () => {
       );
     });
 
-    test('should handle promptfoo execution failure', async () => {
-      mockExec.exec.mockImplementation(
-        (command: string, args?: readonly string[]) => {
-          if (command.includes('promptfoo') && args?.includes('eval')) {
-            throw new Error('Promptfoo evaluation failed');
-          }
-          return Promise.resolve(0);
-        },
-      );
+    test('should post PR comment even when promptfoo exits non-zero', async () => {
+      // Simulate promptfoo returning non-zero exit code (some tests failed)
+      // With ignoreReturnCode, exec returns the code instead of throwing
+      mockExec.exec.mockResolvedValue(1);
 
       await run();
 
@@ -1128,6 +1125,11 @@ describe('disable-comment feature', () => {
   });
 });
 
+function withInputs(overrides: Record<string, string>) {
+  const inputs = { ...DEFAULT_INPUTS, ...overrides };
+  mockCore.getInput.mockImplementation((name: string) => inputs[name] || '');
+}
+
 describe('repeat feature', () => {
   beforeEach(() => {
     setupCommonMocks();
@@ -1137,7 +1139,7 @@ describe('repeat feature', () => {
     vi.restoreAllMocks();
   });
 
-  test('should not include --repeat flag when repeat is 1 (default)', async () => {
+  test('should not include --repeat flag when repeat is omitted', async () => {
     await run();
 
     const promptfooCall = mockExec.exec.mock.calls[0];
@@ -1145,42 +1147,8 @@ describe('repeat feature', () => {
     expect(args).not.toContain('--repeat');
   });
 
-  test('should not include --repeat flag when repeat is explicitly 1', async () => {
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        repeat: '1',
-      };
-      return inputs[name] || '';
-    });
-
-    await run();
-
-    const promptfooCall = mockExec.exec.mock.calls[0];
-    const args = promptfooCall[1] as string[];
-    expect(args).not.toContain('--repeat');
-  });
-
-  test('should include --repeat flag when repeat > 1', async () => {
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        repeat: '3',
-      };
-      return inputs[name] || '';
-    });
+  test('should include --repeat flag when repeat is set', async () => {
+    withInputs({ repeat: '3' });
 
     await run();
 
@@ -1190,20 +1158,18 @@ describe('repeat feature', () => {
     expect(args[args.indexOf('--repeat') + 1]).toBe('3');
   });
 
+  test('should fail when repeat is 1', async () => {
+    withInputs({ repeat: '1' });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('repeat must be at least 2'),
+    );
+  });
+
   test('should fail when repeat is 0', async () => {
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        repeat: '0',
-      };
-      return inputs[name] || '';
-    });
+    withInputs({ repeat: '0' });
 
     await run();
 
@@ -1213,19 +1179,27 @@ describe('repeat feature', () => {
   });
 
   test('should fail when repeat is negative', async () => {
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        repeat: '-1',
-      };
-      return inputs[name] || '';
-    });
+    withInputs({ repeat: '-1' });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('repeat must be a positive integer'),
+    );
+  });
+
+  test('should fail when repeat is a float', async () => {
+    withInputs({ repeat: '2.5' });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('repeat must be a positive integer'),
+    );
+  });
+
+  test('should fail when repeat is non-numeric', async () => {
+    withInputs({ repeat: '3abc' });
 
     await run();
 
@@ -1235,7 +1209,7 @@ describe('repeat feature', () => {
   });
 });
 
-describe('repeat-fail-on-threshold feature', () => {
+describe('repeat-min-pass feature', () => {
   beforeEach(() => {
     setupCommonMocks();
   });
@@ -1244,24 +1218,10 @@ describe('repeat-fail-on-threshold feature', () => {
     vi.restoreAllMocks();
   });
 
-  test('should pass when all tests meet the per-test threshold', async () => {
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        repeat: '3',
-        'repeat-fail-on-threshold': '66',
-      };
-      return inputs[name] || '';
-    });
+  test('should pass when all tests meet the min pass count', async () => {
+    withInputs({ repeat: '3', 'repeat-min-pass': '2' });
 
-    // 2 tests, each run 3 times, each passing 2/3 (66.7%)
-    // Note: with --repeat, each repeat gets a unique testIdx
+    // 2 tests, each run 3 times, each passing 2/3
     mockFs.readFileSync.mockReturnValue(
       JSON.stringify({
         results: {
@@ -1284,24 +1244,10 @@ describe('repeat-fail-on-threshold feature', () => {
     expect(mockCore.setFailed).not.toHaveBeenCalled();
   });
 
-  test('should fail when a test does not meet the per-test threshold', async () => {
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        repeat: '3',
-        'repeat-fail-on-threshold': '66',
-      };
-      return inputs[name] || '';
-    });
+  test('should fail when a test does not meet the min pass count', async () => {
+    withInputs({ repeat: '3', 'repeat-min-pass': '2' });
 
-    // Test A passes 2/3 (ok), Test B passes 1/3 (fails 66% threshold)
-    // Note: with --repeat, each repeat gets a unique testIdx
+    // Test A passes 2/3 (ok), Test B passes 1/3 (fails)
     mockFs.readFileSync.mockReturnValue(
       JSON.stringify({
         results: {
@@ -1322,31 +1268,18 @@ describe('repeat-fail-on-threshold feature', () => {
     await run();
 
     expect(mockCore.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('1 test(s) failed the repeat threshold (66%)'),
+      expect.stringContaining('1 test(s) failed the repeat check'),
     );
     expect(mockCore.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('Test B: 1/3 passed (33%)'),
+      expect.stringContaining('Test B: passed 1/3 runs'),
     );
   });
 
   test('should handle multiple prompts per test correctly', async () => {
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        repeat: '2',
-        'repeat-fail-on-threshold': '50',
-      };
-      return inputs[name] || '';
-    });
+    withInputs({ repeat: '2', 'repeat-min-pass': '1' });
 
-    // Test with prompt 0: 1/2 pass (50% - ok)
-    // Test with prompt 1: 0/2 pass (0% - fails)
+    // Test with prompt 0: 1/2 pass (ok, >= 1)
+    // Test with prompt 1: 0/2 pass (fails, < 1)
     // Uses vars to group since no description
     mockFs.readFileSync.mockReturnValue(
       JSON.stringify({
@@ -1366,54 +1299,50 @@ describe('repeat-fail-on-threshold feature', () => {
     await run();
 
     expect(mockCore.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('1 test(s) failed the repeat threshold (50%)'),
+      expect.stringContaining('1 test(s) failed the repeat check'),
     );
   });
 
-  test('should fail when repeat-fail-on-threshold is invalid', async () => {
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        'repeat-fail-on-threshold': '150',
-      };
-      return inputs[name] || '';
-    });
+  test('should fail when repeat-min-pass is set without repeat', async () => {
+    withInputs({ 'repeat-min-pass': '2' });
 
     await run();
 
     expect(mockCore.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'repeat-fail-on-threshold must be a number between 0 and 100',
-      ),
+      expect.stringContaining('repeat-min-pass requires repeat to be set'),
+    );
+  });
+
+  test('should fail when repeat-min-pass exceeds repeat', async () => {
+    withInputs({ repeat: '3', 'repeat-min-pass': '4' });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('repeat-min-pass (4) cannot exceed repeat (3)'),
+    );
+  });
+
+  test('should fail when repeat-min-pass is non-numeric', async () => {
+    withInputs({ repeat: '3', 'repeat-min-pass': 'abc' });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('repeat-min-pass must be a positive integer'),
     );
   });
 
   test('should work independently from fail-on-threshold', async () => {
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        repeat: '3',
-        'fail-on-threshold': '10',
-        'repeat-fail-on-threshold': '66',
-      };
-      return inputs[name] || '';
+    withInputs({
+      repeat: '3',
+      'fail-on-threshold': '10',
+      'repeat-min-pass': '2',
     });
 
     // Overall: 5/6 = 83% (passes fail-on-threshold of 10%)
-    // Test A: 3/3 pass (100% - ok)
-    // Test B: 2/3 pass (66.7% - ok, >= 66%)
+    // Test A: 3/3 pass (ok)
+    // Test B: 2/3 pass (ok, >= 2)
     mockFs.readFileSync.mockReturnValue(
       JSON.stringify({
         results: {
@@ -1436,25 +1365,12 @@ describe('repeat-fail-on-threshold feature', () => {
     expect(mockCore.setFailed).not.toHaveBeenCalled();
   });
 
-  test('should post PR comment before failing on repeat threshold', async () => {
+  test('should post PR comment with repeat summary before failing', async () => {
     const mockOctokit = setupCommonMocks();
 
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        repeat: '3',
-        'repeat-fail-on-threshold': '66',
-      };
-      return inputs[name] || '';
-    });
+    withInputs({ repeat: '3', 'repeat-min-pass': '2' });
 
-    // Test fails threshold — all 3 repeats fail
+    // Test fails — all 3 repeats fail
     mockFs.readFileSync.mockReturnValue(
       JSON.stringify({
         results: {
@@ -1486,16 +1402,19 @@ describe('repeat-fail-on-threshold feature', () => {
 
     await run();
 
-    // PR comment should still be posted
+    // PR comment should still be posted with repeat summary
     expect(mockOctokit.rest.issues.createComment).toHaveBeenCalled();
+    const commentBody =
+      mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+    expect(commentBody).toContain('Repeat check');
     // And action should fail
     expect(mockCore.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('failed the repeat threshold'),
+      expect.stringContaining('failed the repeat check'),
     );
   });
 });
 
-describe('threshold suppresses exec error', () => {
+describe('exec error handling with repeat-min-pass', () => {
   beforeEach(() => {
     setupCommonMocks();
   });
@@ -1504,30 +1423,43 @@ describe('threshold suppresses exec error', () => {
     vi.restoreAllMocks();
   });
 
-  test('should not fail when thresholds are configured and pass despite exec error', async () => {
+  test('should suppress exec error when repeat-min-pass is configured and passes', async () => {
     // Promptfoo exits non-zero when any test fails
-    mockExec.exec.mockImplementation(
-      (command: string, args?: readonly string[]) => {
-        if (command.includes('promptfoo') && args?.includes('eval')) {
-          throw new Error('exit code 100');
-        }
-        return Promise.resolve(0);
-      },
+    mockExec.exec.mockResolvedValue(1);
+
+    withInputs({ repeat: '3', 'repeat-min-pass': '2' });
+
+    // All tests pass 2/3 — meets min pass
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            { testIdx: 0, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 1, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 2, promptIdx: 0, success: false, description: 'Test A' },
+          ],
+          stats: { successes: 2, failures: 1 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
     );
 
-    mockCore.getInput.mockImplementation((name: string) => {
-      const inputs: Record<string, string> = {
-        'github-token': 'mock-github-token',
-        config: 'promptfooconfig.yaml',
-        prompts: 'prompts/*.txt',
-        'working-directory': '',
-        'cache-path': '',
-        'promptfoo-version': 'latest',
-        'env-files': '',
-        'fail-on-threshold': '80',
-      };
-      return inputs[name] || '';
-    });
+    await run();
+
+    expect(mockCore.setFailed).not.toHaveBeenCalled();
+    expect(mockCore.info).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Promptfoo exited non-zero (some tests failed), but all repeated tests met the minimum pass count.',
+      ),
+    );
+  });
+
+  test('should NOT suppress exec error when only fail-on-threshold is configured', async () => {
+    // This preserves backward compatibility — fail-on-threshold alone
+    // does not suppress exec errors
+    mockExec.exec.mockResolvedValue(1);
+
+    withInputs({ 'fail-on-threshold': '80' });
 
     // 9/10 passed = 90% > 80% threshold
     mockFs.readFileSync.mockReturnValue(
@@ -1541,24 +1473,14 @@ describe('threshold suppresses exec error', () => {
 
     await run();
 
-    // Should NOT fail — threshold is met
-    expect(mockCore.setFailed).not.toHaveBeenCalled();
-    expect(mockCore.info).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'Promptfoo exited with a non-zero code (some tests failed), but all configured thresholds passed.',
-      ),
+    // Should STILL fail — fail-on-threshold does not suppress exec errors
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Promptfoo evaluation failed'),
     );
   });
 
-  test('should still fail when no thresholds configured and exec fails', async () => {
-    mockExec.exec.mockImplementation(
-      (command: string, args?: readonly string[]) => {
-        if (command.includes('promptfoo') && args?.includes('eval')) {
-          throw new Error('exit code 100');
-        }
-        return Promise.resolve(0);
-      },
-    );
+  test('should fail when no thresholds configured and exec fails', async () => {
+    mockExec.exec.mockResolvedValue(1);
 
     await run();
 

@@ -126,13 +126,14 @@ inputs:
     required: false
     default: ''
   repeat:
-    description: 'Number of times to run each test. Useful for flaky LLM evals where a single run is noisy.'
+    description: 'Number of times to run each test (must be >= 2). Useful for non-deterministic LLM evals where a single run is noisy.'
     required: false
-    default: '1'
-  repeat-fail-on-threshold:
+    default: ''
+  repeat-min-pass:
     description: >
-      Fail the action if any individual test passes less than this percentage (0-100) of its repeated runs.
-      Only meaningful when repeat > 1. Example: 66 means each test must pass at least 2 out of 3 runs.
+      Minimum number of repeated runs each test must pass. Requires repeat to be set.
+      Must be <= repeat. Example: with repeat=3 and repeat-min-pass=2, each test must
+      pass at least 2 of its 3 runs.
     required: false
     default: ''
   force-run:

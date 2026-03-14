@@ -654,6 +654,21 @@ var require_errors = __commonJS({
       }
       [kSecureProxyConnectionError] = true;
     };
+    var kMessageSizeExceededError = /* @__PURE__ */ Symbol.for("undici.error.UND_ERR_WS_MESSAGE_SIZE_EXCEEDED");
+    var MessageSizeExceededError = class extends UndiciError {
+      constructor(message) {
+        super(message);
+        this.name = "MessageSizeExceededError";
+        this.message = message || "Max decompressed message size exceeded";
+        this.code = "UND_ERR_WS_MESSAGE_SIZE_EXCEEDED";
+      }
+      static [Symbol.hasInstance](instance) {
+        return instance && instance[kMessageSizeExceededError] === true;
+      }
+      get [kMessageSizeExceededError]() {
+        return true;
+      }
+    };
     module2.exports = {
       AbortError,
       HTTPParserError,
@@ -677,7 +692,8 @@ var require_errors = __commonJS({
       ResponseExceededMaxSizeError,
       RequestRetryError,
       ResponseError,
-      SecureProxyConnectionError
+      SecureProxyConnectionError,
+      MessageSizeExceededError
     };
   }
 });
@@ -1687,6 +1703,9 @@ var require_request = __commonJS({
         if (upgrade && typeof upgrade !== "string") {
           throw new InvalidArgumentError("upgrade must be a string");
         }
+        if (upgrade && !isValidHeaderValue(upgrade)) {
+          throw new InvalidArgumentError("invalid upgrade header");
+        }
         if (headersTimeout != null && (!Number.isFinite(headersTimeout) || headersTimeout < 0)) {
           throw new InvalidArgumentError("invalid headersTimeout");
         }
@@ -1919,12 +1938,18 @@ var require_request = __commonJS({
       } else {
         val = `${val}`;
       }
-      if (request2.host === null && headerName === "host") {
+      if (headerName === "host") {
+        if (request2.host !== null) {
+          throw new InvalidArgumentError("duplicate host header");
+        }
         if (typeof val !== "string") {
           throw new InvalidArgumentError("invalid host header");
         }
         request2.host = val;
-      } else if (request2.contentLength === null && headerName === "content-length") {
+      } else if (headerName === "content-length") {
+        if (request2.contentLength !== null) {
+          throw new InvalidArgumentError("duplicate content-length header");
+        }
         request2.contentLength = parseInt(val, 10);
         if (!Number.isFinite(request2.contentLength)) {
           throw new InvalidArgumentError("invalid content-length header");
@@ -16696,13 +16721,17 @@ var require_util7 = __commonJS({
       return extensionList;
     }
     function isValidClientWindowBits(value) {
+      if (value.length === 0) {
+        return false;
+      }
       for (let i = 0; i < value.length; i++) {
         const byte = value.charCodeAt(i);
         if (byte < 48 || byte > 57) {
           return false;
         }
       }
-      return true;
+      const num = Number.parseInt(value, 10);
+      return num >= 8 && num <= 15;
     }
     var hasIntl = typeof process.versions.icu === "string";
     var fatalDecoder = hasIntl ? new TextDecoder("utf-8", { fatal: true }) : void 0;
@@ -17001,18 +17030,35 @@ var require_permessage_deflate = __commonJS({
     "use strict";
     var { createInflateRaw, Z_DEFAULT_WINDOWBITS } = require("node:zlib");
     var { isValidClientWindowBits } = require_util7();
+    var { MessageSizeExceededError } = require_errors();
     var tail = Buffer.from([0, 0, 255, 255]);
     var kBuffer = /* @__PURE__ */ Symbol("kBuffer");
     var kLength = /* @__PURE__ */ Symbol("kLength");
+    var kDefaultMaxDecompressedSize = 4 * 1024 * 1024;
     var PerMessageDeflate = class {
       /** @type {import('node:zlib').InflateRaw} */
       #inflate;
       #options = {};
-      constructor(extensions) {
+      /** @type {number} */
+      #maxDecompressedSize;
+      /** @type {boolean} */
+      #aborted = false;
+      /** @type {Function|null} */
+      #currentCallback = null;
+      /**
+       * @param {Map<string, string>} extensions
+       * @param {{ maxDecompressedMessageSize?: number }} [options]
+       */
+      constructor(extensions, options = {}) {
         this.#options.serverNoContextTakeover = extensions.has("server_no_context_takeover");
         this.#options.serverMaxWindowBits = extensions.get("server_max_window_bits");
+        this.#maxDecompressedSize = options.maxDecompressedMessageSize ?? kDefaultMaxDecompressedSize;
       }
       decompress(chunk, fin, callback) {
+        if (this.#aborted) {
+          callback(new MessageSizeExceededError());
+          return;
+        }
         if (!this.#inflate) {
           let windowBits = Z_DEFAULT_WINDOWBITS;
           if (this.#options.serverMaxWindowBits) {
@@ -17022,26 +17068,51 @@ var require_permessage_deflate = __commonJS({
             }
             windowBits = Number.parseInt(this.#options.serverMaxWindowBits);
           }
-          this.#inflate = createInflateRaw({ windowBits });
+          try {
+            this.#inflate = createInflateRaw({ windowBits });
+          } catch (err) {
+            callback(err);
+            return;
+          }
           this.#inflate[kBuffer] = [];
           this.#inflate[kLength] = 0;
           this.#inflate.on("data", (data) => {
-            this.#inflate[kBuffer].push(data);
+            if (this.#aborted) {
+              return;
+            }
             this.#inflate[kLength] += data.length;
+            if (this.#inflate[kLength] > this.#maxDecompressedSize) {
+              this.#aborted = true;
+              this.#inflate.removeAllListeners();
+              this.#inflate.destroy();
+              this.#inflate = null;
+              if (this.#currentCallback) {
+                const cb = this.#currentCallback;
+                this.#currentCallback = null;
+                cb(new MessageSizeExceededError());
+              }
+              return;
+            }
+            this.#inflate[kBuffer].push(data);
           });
           this.#inflate.on("error", (err) => {
             this.#inflate = null;
             callback(err);
           });
         }
+        this.#currentCallback = callback;
         this.#inflate.write(chunk);
         if (fin) {
           this.#inflate.write(tail);
         }
         this.#inflate.flush(() => {
+          if (this.#aborted || !this.#inflate) {
+            return;
+          }
           const full = Buffer.concat(this.#inflate[kBuffer], this.#inflate[kLength]);
           this.#inflate[kBuffer].length = 0;
           this.#inflate[kLength] = 0;
+          this.#currentCallback = null;
           callback(null, full);
         });
       }
@@ -17081,12 +17152,20 @@ var require_receiver = __commonJS({
       #fragments = [];
       /** @type {Map<string, PerMessageDeflate>} */
       #extensions;
-      constructor(ws2, extensions) {
+      /** @type {{ maxDecompressedMessageSize?: number }} */
+      #options;
+      /**
+       * @param {import('./websocket').WebSocket} ws
+       * @param {Map<string, string>|null} extensions
+       * @param {{ maxDecompressedMessageSize?: number }} [options]
+       */
+      constructor(ws2, extensions, options = {}) {
         super();
         this.ws = ws2;
         this.#extensions = extensions == null ? /* @__PURE__ */ new Map() : extensions;
+        this.#options = options;
         if (this.#extensions.has("permessage-deflate")) {
-          this.#extensions.set("permessage-deflate", new PerMessageDeflate(extensions));
+          this.#extensions.set("permessage-deflate", new PerMessageDeflate(extensions, options));
         }
       }
       /**
@@ -17184,12 +17263,12 @@ var require_receiver = __commonJS({
             }
             const buffer = this.consume(8);
             const upper = buffer.readUInt32BE(0);
-            if (upper > 2 ** 31 - 1) {
+            const lower = buffer.readUInt32BE(4);
+            if (upper !== 0 || lower > 2 ** 31 - 1) {
               failWebsocketConnection(this.ws, "Received payload length > 2^31 bytes.");
               return;
             }
-            const lower = buffer.readUInt32BE(4);
-            this.#info.payloadLength = (upper << 8) + lower;
+            this.#info.payloadLength = lower;
             this.#state = parserStates.READ_DATA;
           } else if (this.#state === parserStates.READ_DATA) {
             if (this.#byteOffset < this.#info.payloadLength) {
@@ -17211,7 +17290,7 @@ var require_receiver = __commonJS({
               } else {
                 this.#extensions.get("permessage-deflate").decompress(body, this.#info.fin, (error2, data) => {
                   if (error2) {
-                    closeWebSocketConnection(this.ws, 1007, error2.message, error2.message.length);
+                    failWebsocketConnection(this.ws, error2.message);
                     return;
                   }
                   this.#fragments.push(data);
@@ -17480,6 +17559,8 @@ var require_websocket = __commonJS({
       #extensions = "";
       /** @type {SendQueue} */
       #sendQueue;
+      /** @type {{ maxDecompressedMessageSize?: number }} */
+      #options;
       /**
        * @param {string} url
        * @param {string|string[]} protocols
@@ -17523,6 +17604,9 @@ var require_websocket = __commonJS({
           throw new DOMException("Invalid Sec-WebSocket-Protocol value", "SyntaxError");
         }
         this[kWebSocketURL] = new URL(urlRecord.href);
+        this.#options = {
+          maxDecompressedMessageSize: options.maxDecompressedMessageSize
+        };
         const client = environmentSettingsObject.settingsObject;
         this[kController] = establishWebSocketConnection(
           urlRecord,
@@ -17706,7 +17790,7 @@ var require_websocket = __commonJS({
        */
       #onConnectionEstablished(response, parsedExtensions) {
         this[kResponse] = response;
-        const parser4 = new ByteParser(this, parsedExtensions);
+        const parser4 = new ByteParser(this, parsedExtensions, this.#options);
         parser4.on("drain", onParserDrain);
         parser4.on("error", onParserError.bind(this));
         response.socket.ws = this;
@@ -17781,6 +17865,19 @@ var require_websocket = __commonJS({
       {
         key: "headers",
         converter: webidl.nullableConverter(webidl.converters.HeadersInit)
+      },
+      {
+        key: "maxDecompressedMessageSize",
+        converter: webidl.nullableConverter((V2) => {
+          V2 = webidl.converters["unsigned long long"](V2);
+          if (V2 <= 0) {
+            throw webidl.errors.exception({
+              header: "WebSocket constructor",
+              message: "maxDecompressedMessageSize must be greater than 0"
+            });
+          }
+          return V2;
+        })
       }
     ]);
     webidl.converters["DOMString or sequence<DOMString> or WebSocketInit"] = function(V2) {
@@ -33157,9 +33254,7 @@ var ErrorCodes = {
   ENV_FILE_LOAD_ERROR: "ENV_FILE_LOAD_ERROR",
   INVALID_CONFIGURATION: "INVALID_CONFIGURATION",
   AUTH_FAILED: "AUTH_FAILED",
-  INVALID_REPEAT: "INVALID_REPEAT",
-  INVALID_REPEAT_THRESHOLD: "INVALID_REPEAT_THRESHOLD",
-  REPEAT_THRESHOLD_NOT_MET: "REPEAT_THRESHOLD_NOT_MET"
+  REPEAT_CHECK_FAILED: "REPEAT_CHECK_FAILED"
 };
 function formatErrorMessage(error2) {
   if (error2 instanceof PromptfooActionError) {
@@ -36111,6 +36206,168 @@ function extractFileDependencies(configPath) {
   }
 }
 
+// src/utils/inputs.ts
+function parseStrictPositiveInt(value, name) {
+  const n7 = Number(value);
+  if (!Number.isInteger(n7) || n7 < 1 || String(n7) !== value) {
+    throw new PromptfooActionError(
+      `${name} must be a positive integer, got "${value}"`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Provide a whole number like 2 or 3, not "${value}"`
+    );
+  }
+  return n7;
+}
+function parseOptionalPositiveInt(raw, name) {
+  if (!raw) return void 0;
+  return parseStrictPositiveInt(raw, name);
+}
+function parseOptionalPercentage(raw, name) {
+  if (!raw) return void 0;
+  const n7 = Number(raw);
+  if (Number.isNaN(n7) || n7 < 0 || n7 > 100) {
+    throw new PromptfooActionError(
+      `${name} must be a number between 0 and 100, got "${raw}"`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Provide a percentage like 80, not "${raw}"`
+    );
+  }
+  return n7;
+}
+
+// src/utils/thresholds.ts
+function groupResultsByTest(results) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const result of results) {
+    const desc = result.description || result.testCase?.description;
+    let key;
+    let label;
+    if (desc) {
+      key = `desc:${desc}:${result.promptIdx}`;
+      label = desc;
+    } else {
+      const varsStr = JSON.stringify(result.vars || {});
+      key = `vars:${varsStr}:${result.promptIdx}`;
+      label = `test(${varsStr})`;
+    }
+    const group = groups.get(key) || { successes: 0, total: 0, label };
+    group.total++;
+    if (result.success) {
+      group.successes++;
+    }
+    groups.set(key, group);
+  }
+  return groups;
+}
+function validateGroups(groups, repeatCount) {
+  const errors = [];
+  for (const [, group] of groups) {
+    if (group.total > repeatCount) {
+      errors.push({
+        label: group.label,
+        actual: group.total,
+        expected: repeatCount,
+        kind: "ambiguous"
+      });
+    } else if (group.total < repeatCount) {
+      errors.push({
+        label: group.label,
+        actual: group.total,
+        expected: repeatCount,
+        kind: "partial"
+      });
+    }
+  }
+  return errors;
+}
+function evaluateRepeatThreshold(results, minPass, repeatCount) {
+  const groups = groupResultsByTest(results);
+  const groupingErrors = validateGroups(groups, repeatCount);
+  if (groupingErrors.length > 0) {
+    for (const ge2 of groupingErrors) {
+      const reason = ge2.kind === "ambiguous" ? "multiple tests may share the same description" : "some repeat runs may not have produced output";
+      warning(
+        `Test "${ge2.label}" has ${ge2.actual} results but expected ${ge2.expected} (${reason}).`
+      );
+    }
+    return {
+      passed: false,
+      summary: {
+        totalGroups: groups.size,
+        failures: [],
+        groupingErrors,
+        minPass,
+        repeatCount
+      }
+    };
+  }
+  const failures = [];
+  for (const [, group] of groups) {
+    if (group.successes < minPass) {
+      failures.push({
+        label: group.label,
+        passed: group.successes,
+        total: group.total
+      });
+    }
+  }
+  return {
+    passed: failures.length === 0,
+    summary: {
+      totalGroups: groups.size,
+      failures,
+      groupingErrors: [],
+      minPass,
+      repeatCount
+    }
+  };
+}
+function formatRepeatFailureMessage(summary2) {
+  if (summary2.groupingErrors.length > 0) {
+    const lines2 = [
+      `Repeat check failed: ${summary2.groupingErrors.length} test group(s) have unexpected result counts (expected ${summary2.repeatCount} each):`,
+      ...summary2.groupingErrors.map(
+        (ge2) => `  ${ge2.label}: ${ge2.actual} results (${ge2.kind === "ambiguous" ? "possible description collision" : "missing repeat runs"})`
+      )
+    ];
+    return lines2.join("\n");
+  }
+  const lines = [
+    `${summary2.failures.length} test(s) failed the repeat check (min ${summary2.minPass} of ${summary2.repeatCount} required):`,
+    ...summary2.failures.map(
+      (f) => `  ${f.label}: passed ${f.passed}/${f.total} runs`
+    )
+  ];
+  return lines.join("\n");
+}
+function formatRepeatCommentMarkdown(summary2) {
+  if (summary2.groupingErrors.length > 0) {
+    let md2 = `**Repeat check**: **failed** \u2014 ${summary2.groupingErrors.length} test group(s) have unexpected result counts
+
+`;
+    md2 += "> Ensure each test case has a unique description.\n";
+    for (const ge2 of summary2.groupingErrors) {
+      md2 += `> - ${ge2.label}: ${ge2.actual} results, expected ${ge2.expected}
+`;
+    }
+    return md2;
+  }
+  const passed = summary2.totalGroups - summary2.failures.length;
+  if (summary2.failures.length === 0) {
+    return `**Repeat check**: all ${summary2.totalGroups} test(s) passed (min ${summary2.minPass} of ${summary2.repeatCount} runs)
+`;
+  }
+  let md = `**Repeat check** (each test run ${summary2.repeatCount} times, min ${summary2.minPass} passes required): **${passed}/${summary2.totalGroups} tests passed**
+
+`;
+  md += "> Tests below minimum:\n";
+  for (const f of summary2.failures) {
+    md += `> - ${f.label}: ${f.passed}/${f.total}
+`;
+  }
+  return md;
+}
+
 // src/main.ts
 var gitInterface = simpleGit();
 function validateGitRef(ref) {
@@ -36182,14 +36439,14 @@ async function run() {
       { required: false }
     );
     const envFiles = getInput("env-files", { required: false });
-    const failOnThresholdInput = getInput("fail-on-threshold", {
-      required: false
-    });
-    const failOnThreshold = failOnThresholdInput ? parseFloat(failOnThresholdInput) : void 0;
-    const maxConcurrencyInput = getInput("max-concurrency", {
-      required: false
-    });
-    const maxConcurrency = maxConcurrencyInput ? parseInt(maxConcurrencyInput, 10) : void 0;
+    const failOnThreshold = parseOptionalPercentage(
+      getInput("fail-on-threshold", { required: false }),
+      "fail-on-threshold"
+    );
+    const maxConcurrency = parseOptionalPositiveInt(
+      getInput("max-concurrency", { required: false }),
+      "max-concurrency"
+    );
     const noTable = getBooleanInput("no-table", {
       required: false
     });
@@ -36211,40 +36468,36 @@ async function run() {
     const forceRun = getBooleanInput("force-run", {
       required: false
     });
-    const repeatInput = getInput("repeat", { required: false });
-    const repeat2 = repeatInput ? parseInt(repeatInput, 10) : void 0;
-    const repeatFailOnThresholdInput = getInput(
-      "repeat-fail-on-threshold",
-      { required: false }
+    const repeat2 = parseOptionalPositiveInt(
+      getInput("repeat", { required: false }),
+      "repeat"
     );
-    const repeatFailOnThreshold = repeatFailOnThresholdInput ? parseFloat(repeatFailOnThresholdInput) : void 0;
-    if (failOnThreshold !== void 0 && (Number.isNaN(failOnThreshold) || failOnThreshold < 0 || failOnThreshold > 100)) {
+    const repeatMinPass = parseOptionalPositiveInt(
+      getInput("repeat-min-pass", { required: false }),
+      "repeat-min-pass"
+    );
+    if (repeat2 !== void 0 && repeat2 < 2) {
       throw new PromptfooActionError(
-        "fail-on-threshold must be a number between 0 and 100",
-        ErrorCodes.INVALID_THRESHOLD,
-        "Please provide a valid percentage value, e.g., 80 for 80% success rate"
-      );
-    }
-    if (maxConcurrency !== void 0 && (Number.isNaN(maxConcurrency) || maxConcurrency < 1)) {
-      throw new PromptfooActionError(
-        "max-concurrency must be a positive integer",
+        "repeat must be at least 2 (omit it to run tests once)",
         ErrorCodes.INVALID_CONFIGURATION,
-        "Please provide a valid concurrency value, e.g., 10 for 10 concurrent requests"
+        "Provide a value like 3 to run each test 3 times"
       );
     }
-    if (repeat2 !== void 0 && (Number.isNaN(repeat2) || repeat2 < 1)) {
-      throw new PromptfooActionError(
-        "repeat must be a positive integer",
-        ErrorCodes.INVALID_REPEAT,
-        "Please provide a valid repeat count, e.g., 3 to run each test 3 times"
-      );
-    }
-    if (repeatFailOnThreshold !== void 0 && (Number.isNaN(repeatFailOnThreshold) || repeatFailOnThreshold < 0 || repeatFailOnThreshold > 100)) {
-      throw new PromptfooActionError(
-        "repeat-fail-on-threshold must be a number between 0 and 100",
-        ErrorCodes.INVALID_REPEAT_THRESHOLD,
-        "Please provide a valid percentage value, e.g., 66 for 66% pass rate per test"
-      );
+    if (repeatMinPass !== void 0) {
+      if (repeat2 === void 0) {
+        throw new PromptfooActionError(
+          "repeat-min-pass requires repeat to be set (e.g., repeat: 3)",
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Set repeat to the number of times each test should run"
+        );
+      }
+      if (repeatMinPass > repeat2) {
+        throw new PromptfooActionError(
+          `repeat-min-pass (${repeatMinPass}) cannot exceed repeat (${repeat2})`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          `Set repeat-min-pass to at most ${repeat2}`
+        );
+      }
     }
     if (envFiles) {
       const envFileList = envFiles.split(",").map((f) => f.trim());
@@ -36448,7 +36701,10 @@ async function run() {
     const cacheDir = process.env.PROMPTFOO_CACHE_PATH || cachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
     await logCacheMetrics(cacheDir);
     endGroup();
-    const outputFile = path6.join(workingDirectory, "output.json");
+    const outputFile = path6.join(
+      workingDirectory,
+      `output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`
+    );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
     if (!useConfigPrompts && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
@@ -36484,12 +36740,12 @@ async function run() {
     if (noCache) {
       promptfooArgs.push("--no-cache");
     }
-    if (repeat2 !== void 0 && repeat2 > 1) {
+    if (repeat2 !== void 0) {
       promptfooArgs.push("--repeat", repeat2.toString());
       info(`Running each test ${repeat2} times (--repeat ${repeat2})`);
-      if (repeatFailOnThreshold !== void 0) {
+      if (repeatMinPass !== void 0) {
         info(
-          `Per-test repeat threshold: ${repeatFailOnThreshold}% (each test must pass at least ${repeatFailOnThreshold}% of its ${repeat2} runs)`
+          `Per-test minimum: ${repeatMinPass} of ${repeat2} runs must pass`
         );
       }
     }
@@ -36510,26 +36766,23 @@ async function run() {
       ...mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {},
       ...groqApiKey ? { GROQ_API_KEY: groqApiKey } : {}
     };
-    let errorToThrow;
-    try {
-      await exec(`npx promptfoo@${version}`, promptfooArgs, {
-        env,
-        cwd: workingDirectory
-      });
-    } catch (error2) {
-      errorToThrow = new PromptfooActionError(
-        `Promptfoo evaluation failed: ${error2 instanceof Error ? error2.message : String(error2)}`,
-        ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
-        "Check that your promptfoo configuration is valid and all required API keys are set"
-      );
-    }
+    const exitCode = await exec(
+      `npx promptfoo@${version}`,
+      promptfooArgs,
+      { env, cwd: workingDirectory, ignoreReturnCode: true }
+    );
+    const promptfooFailed = exitCode !== 0;
     let output;
     try {
       const outputContent = fs6.readFileSync(outputFile, "utf8");
       output = JSON.parse(outputContent);
     } catch (error2) {
-      if (errorToThrow) {
-        throw errorToThrow;
+      if (promptfooFailed) {
+        throw new PromptfooActionError(
+          `Promptfoo evaluation failed (exit code ${exitCode}) and no output was generated`,
+          ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+          "Check that your promptfoo configuration is valid and all required API keys are set"
+        );
       }
       throw new PromptfooActionError(
         `Failed to read or parse output file: ${error2 instanceof Error ? error2.message : String(error2)}`,
@@ -36537,10 +36790,30 @@ async function run() {
         "This usually happens when promptfoo fails to generate valid output. Check the logs above for more details"
       );
     }
+    try {
+      fs6.unlinkSync(outputFile);
+    } catch {
+    }
     startGroup("Cache metrics after evaluation");
     await logCacheMetrics(cacheDir);
     await createCacheManifest(cacheDir);
     endGroup();
+    let repeatCheckResult;
+    if (repeatMinPass !== void 0) {
+      const results = output.results.results ?? [];
+      if (results.length === 0) {
+        throw new PromptfooActionError(
+          "No test results found - cannot check per-test repeat threshold",
+          ErrorCodes.REPEAT_CHECK_FAILED,
+          "Ensure your configuration includes valid tests to run"
+        );
+      }
+      repeatCheckResult = evaluateRepeatThreshold(
+        results,
+        repeatMinPass,
+        repeat2
+      );
+    }
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const octokit = getOctokit(githubToken);
       const modifiedFiles = promptFiles.join(", ");
@@ -36551,12 +36824,14 @@ async function run() {
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
+      if (repeatCheckResult) {
+        body += formatRepeatCommentMarkdown(repeatCheckResult.summary);
+        body += "\n";
+      }
       if (output.shareableUrl) {
-        body = body.concat(
-          `**\xBB [View eval results](${output.shareableUrl}) \xAB**`
-        );
+        body += `**\xBB [View eval results](${output.shareableUrl}) \xAB**`;
       } else {
-        body = body.concat("**\xBB View eval results in CI console \xAB**");
+        body += "**\xBB View eval results in CI console \xAB**";
       }
       await octokit.rest.issues.createComment({
         ...context2.repo,
@@ -36575,6 +36850,10 @@ async function run() {
       if (promptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
         summary2.addList(promptFiles);
+      }
+      if (repeatCheckResult) {
+        summary2.addHeading("Repeat Check", 3);
+        summary2.addRaw(formatRepeatCommentMarkdown(repeatCheckResult.summary));
       }
       if (output.shareableUrl) {
         summary2.addLink("View detailed results", output.shareableUrl);
@@ -36612,65 +36891,30 @@ async function run() {
         `Suite threshold passed: ${successRate.toFixed(2)}% >= ${failOnThreshold}%`
       );
     }
-    if (repeatFailOnThreshold !== void 0) {
-      if (repeat2 === void 0 || repeat2 <= 1) {
-        warning(
-          "repeat-fail-on-threshold is set but repeat is not > 1. Each test has only 1 run, so the threshold is a simple pass/fail check."
-        );
-      }
-      const results = output.results.results ?? [];
-      if (results.length === 0) {
-        throw new PromptfooActionError(
-          "No test results found - cannot check per-test repeat threshold",
-          ErrorCodes.REPEAT_THRESHOLD_NOT_MET,
-          "Ensure your configuration includes valid tests to run"
-        );
-      }
-      const groups = /* @__PURE__ */ new Map();
-      for (const result of results) {
-        const desc = result.description || result.testCase?.description;
-        const key = desc ? `desc:${desc}:${result.promptIdx}` : `vars:${JSON.stringify(result.vars || {})}:${result.promptIdx}`;
-        const group = groups.get(key) || {
-          successes: 0,
-          total: 0,
-          description: desc
-        };
-        group.total++;
-        if (result.success) {
-          group.successes++;
-        }
-        groups.set(key, group);
-      }
-      const failedTests = [];
-      for (const [key, group] of groups) {
-        const passRate = group.successes / group.total * 100;
-        if (passRate < repeatFailOnThreshold) {
-          const label = group.description || `test ${key}`;
-          failedTests.push(
-            `${label}: ${group.successes}/${group.total} passed (${passRate.toFixed(0)}%)`
-          );
-        }
-      }
-      if (failedTests.length > 0) {
-        throw new PromptfooActionError(
-          `${failedTests.length} test(s) failed the repeat threshold (${repeatFailOnThreshold}%):
-${failedTests.join("\n")}`,
-          ErrorCodes.REPEAT_THRESHOLD_NOT_MET,
-          "Consider adjusting your prompts or lowering the repeat-fail-on-threshold"
-        );
-      }
-      info(
-        `Per-test repeat threshold passed: all ${groups.size} test(s) met the ${repeatFailOnThreshold}% threshold`
-      );
-    }
-    if (errorToThrow) {
-      const hasThresholds = failOnThreshold !== void 0 || repeatFailOnThreshold !== void 0;
-      if (hasThresholds) {
+    if (repeatCheckResult) {
+      if (repeatCheckResult.passed) {
         info(
-          "Promptfoo exited with a non-zero code (some tests failed), but all configured thresholds passed."
+          `Repeat check passed: all ${repeatCheckResult.summary.totalGroups} test(s) met minimum (${repeatCheckResult.summary.minPass} of ${repeatCheckResult.summary.repeatCount})`
         );
       } else {
-        throw errorToThrow;
+        throw new PromptfooActionError(
+          formatRepeatFailureMessage(repeatCheckResult.summary),
+          ErrorCodes.REPEAT_CHECK_FAILED,
+          "Consider adjusting your prompts or lowering repeat-min-pass"
+        );
+      }
+    }
+    if (promptfooFailed) {
+      if (repeatMinPass !== void 0 && repeatCheckResult?.passed) {
+        info(
+          "Promptfoo exited non-zero (some tests failed), but all repeated tests met the minimum pass count."
+        );
+      } else {
+        throw new PromptfooActionError(
+          `Promptfoo evaluation failed (exit code ${exitCode})`,
+          ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+          "Check that your promptfoo configuration is valid and all required API keys are set"
+        );
       }
     }
   } catch (error2) {
