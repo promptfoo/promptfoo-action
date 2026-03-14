@@ -33156,7 +33156,10 @@ var ErrorCodes = {
   ENV_FILE_NOT_FOUND: "ENV_FILE_NOT_FOUND",
   ENV_FILE_LOAD_ERROR: "ENV_FILE_LOAD_ERROR",
   INVALID_CONFIGURATION: "INVALID_CONFIGURATION",
-  AUTH_FAILED: "AUTH_FAILED"
+  AUTH_FAILED: "AUTH_FAILED",
+  INVALID_REPEAT: "INVALID_REPEAT",
+  INVALID_REPEAT_THRESHOLD: "INVALID_REPEAT_THRESHOLD",
+  REPEAT_THRESHOLD_NOT_MET: "REPEAT_THRESHOLD_NOT_MET"
 };
 function formatErrorMessage(error2) {
   if (error2 instanceof PromptfooActionError) {
@@ -36208,6 +36211,13 @@ async function run() {
     const forceRun = getBooleanInput("force-run", {
       required: false
     });
+    const repeatInput = getInput("repeat", { required: false });
+    const repeat2 = repeatInput ? parseInt(repeatInput, 10) : void 0;
+    const repeatFailOnThresholdInput = getInput(
+      "repeat-fail-on-threshold",
+      { required: false }
+    );
+    const repeatFailOnThreshold = repeatFailOnThresholdInput ? parseFloat(repeatFailOnThresholdInput) : void 0;
     if (failOnThreshold !== void 0 && (Number.isNaN(failOnThreshold) || failOnThreshold < 0 || failOnThreshold > 100)) {
       throw new PromptfooActionError(
         "fail-on-threshold must be a number between 0 and 100",
@@ -36220,6 +36230,20 @@ async function run() {
         "max-concurrency must be a positive integer",
         ErrorCodes.INVALID_CONFIGURATION,
         "Please provide a valid concurrency value, e.g., 10 for 10 concurrent requests"
+      );
+    }
+    if (repeat2 !== void 0 && (Number.isNaN(repeat2) || repeat2 < 1)) {
+      throw new PromptfooActionError(
+        "repeat must be a positive integer",
+        ErrorCodes.INVALID_REPEAT,
+        "Please provide a valid repeat count, e.g., 3 to run each test 3 times"
+      );
+    }
+    if (repeatFailOnThreshold !== void 0 && (Number.isNaN(repeatFailOnThreshold) || repeatFailOnThreshold < 0 || repeatFailOnThreshold > 100)) {
+      throw new PromptfooActionError(
+        "repeat-fail-on-threshold must be a number between 0 and 100",
+        ErrorCodes.INVALID_REPEAT_THRESHOLD,
+        "Please provide a valid percentage value, e.g., 66 for 66% pass rate per test"
       );
     }
     if (envFiles) {
@@ -36460,6 +36484,15 @@ async function run() {
     if (noCache) {
       promptfooArgs.push("--no-cache");
     }
+    if (repeat2 !== void 0 && repeat2 > 1) {
+      promptfooArgs.push("--repeat", repeat2.toString());
+      info(`Running each test ${repeat2} times (--repeat ${repeat2})`);
+      if (repeatFailOnThreshold !== void 0) {
+        info(
+          `Per-test repeat threshold: ${repeatFailOnThreshold}% (each test must pass at least ${repeatFailOnThreshold}% of its ${repeat2} runs)`
+        );
+      }
+    }
     const env = {
       ...process.env,
       // Includes cache settings and environment variable fallbacks
@@ -36575,9 +36608,70 @@ async function run() {
           `Consider adjusting your prompts or lowering the threshold`
         );
       }
+      info(
+        `Suite threshold passed: ${successRate.toFixed(2)}% >= ${failOnThreshold}%`
+      );
+    }
+    if (repeatFailOnThreshold !== void 0) {
+      if (repeat2 === void 0 || repeat2 <= 1) {
+        warning(
+          "repeat-fail-on-threshold is set but repeat is not > 1. Each test has only 1 run, so the threshold is a simple pass/fail check."
+        );
+      }
+      const results = output.results.results ?? [];
+      if (results.length === 0) {
+        throw new PromptfooActionError(
+          "No test results found - cannot check per-test repeat threshold",
+          ErrorCodes.REPEAT_THRESHOLD_NOT_MET,
+          "Ensure your configuration includes valid tests to run"
+        );
+      }
+      const groups = /* @__PURE__ */ new Map();
+      for (const result of results) {
+        const desc = result.description || result.testCase?.description;
+        const key = desc ? `desc:${desc}:${result.promptIdx}` : `vars:${JSON.stringify(result.vars || {})}:${result.promptIdx}`;
+        const group = groups.get(key) || {
+          successes: 0,
+          total: 0,
+          description: desc
+        };
+        group.total++;
+        if (result.success) {
+          group.successes++;
+        }
+        groups.set(key, group);
+      }
+      const failedTests = [];
+      for (const [key, group] of groups) {
+        const passRate = group.successes / group.total * 100;
+        if (passRate < repeatFailOnThreshold) {
+          const label = group.description || `test ${key}`;
+          failedTests.push(
+            `${label}: ${group.successes}/${group.total} passed (${passRate.toFixed(0)}%)`
+          );
+        }
+      }
+      if (failedTests.length > 0) {
+        throw new PromptfooActionError(
+          `${failedTests.length} test(s) failed the repeat threshold (${repeatFailOnThreshold}%):
+${failedTests.join("\n")}`,
+          ErrorCodes.REPEAT_THRESHOLD_NOT_MET,
+          "Consider adjusting your prompts or lowering the repeat-fail-on-threshold"
+        );
+      }
+      info(
+        `Per-test repeat threshold passed: all ${groups.size} test(s) met the ${repeatFailOnThreshold}% threshold`
+      );
     }
     if (errorToThrow) {
-      throw errorToThrow;
+      const hasThresholds = failOnThreshold !== void 0 || repeatFailOnThreshold !== void 0;
+      if (hasThresholds) {
+        info(
+          "Promptfoo exited with a non-zero code (some tests failed), but all configured thresholds passed."
+        );
+      } else {
+        throw errorToThrow;
+      }
     }
   } catch (error2) {
     if (error2 instanceof Error) {
