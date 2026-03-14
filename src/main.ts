@@ -552,7 +552,31 @@ export async function run(): Promise<void> {
       promptfooArgs,
       { env, cwd: workingDirectory, ignoreReturnCode: true },
     );
-    const promptfooFailed = exitCode !== 0;
+
+    // Promptfoo uses specific exit codes:
+    //   0   = all tests passed
+    //   100 = some tests failed (configurable via PROMPTFOO_FAILED_TEST_EXIT_CODE)
+    //   1   = general error (config, runtime, API keys)
+    //   2   = deprecated flag
+    // We only suppress the failed-test exit code when repeat-min-pass passes.
+    // All other non-zero exits are always hard failures.
+    const failedTestExitCode =
+      Number.parseInt(
+        process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE || '100',
+        10,
+      ) || 100;
+    const isTestFailureExit = exitCode === failedTestExitCode;
+    const isHardFailure = exitCode !== 0 && !isTestFailureExit;
+
+    // Hard failures (config errors, runtime crashes) should fail immediately
+    // before we try to read output — there's nothing useful to report.
+    if (isHardFailure) {
+      throw new PromptfooActionError(
+        `Promptfoo exited with unexpected code ${exitCode}`,
+        ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+        'This indicates a configuration or runtime error, not just failed tests. Check the logs above for details.',
+      );
+    }
 
     // Read output file - promptfoo writes output.json even when tests fail
     // We try to read it so we can post PR comments with the results
@@ -561,9 +585,9 @@ export async function run(): Promise<void> {
       const outputContent = fs.readFileSync(outputFile, 'utf8');
       output = JSON.parse(outputContent) as OutputFile;
     } catch (error) {
-      if (promptfooFailed) {
+      if (isTestFailureExit) {
         throw new PromptfooActionError(
-          `Promptfoo evaluation failed (exit code ${exitCode}) and no output was generated`,
+          `Promptfoo tests failed (exit code ${exitCode}) but no output was generated`,
           ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
           'Check that your promptfoo configuration is valid and all required API keys are set',
         );
@@ -722,20 +746,20 @@ export async function run(): Promise<void> {
       }
     }
 
-    // Handle promptfoo non-zero exit.
+    // Handle the failed-test exit code.
     // When repeat-min-pass is configured, the user explicitly opts into tolerating
-    // some test failures — suppress the exec error if the repeat check passed.
+    // some test failures — suppress the test-failure exit if the repeat check passed.
     // We do NOT suppress for fail-on-threshold alone to preserve backward compat.
-    if (promptfooFailed) {
+    if (isTestFailureExit) {
       if (repeatMinPass !== undefined && repeatCheckResult?.passed) {
         core.info(
-          'Promptfoo exited non-zero (some tests failed), but all repeated tests met the minimum pass count.',
+          `Promptfoo exited with test-failure code ${exitCode}, but all repeated tests met the minimum pass count.`,
         );
       } else {
         throw new PromptfooActionError(
           `Promptfoo evaluation failed (exit code ${exitCode})`,
           ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
-          'Check that your promptfoo configuration is valid and all required API keys are set',
+          'Some tests failed. Check the eval results for details.',
         );
       }
     }

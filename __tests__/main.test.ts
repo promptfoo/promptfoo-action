@@ -640,10 +640,10 @@ describe('GitHub Action Main', () => {
       );
     });
 
-    test('should post PR comment even when promptfoo exits non-zero', async () => {
-      // Simulate promptfoo returning non-zero exit code (some tests failed)
+    test('should post PR comment even when promptfoo tests fail', async () => {
+      // Simulate promptfoo returning exit code 100 (tests failed)
       // With ignoreReturnCode, exec returns the code instead of throwing
-      mockExec.exec.mockResolvedValue(1);
+      mockExec.exec.mockResolvedValue(100);
 
       await run();
 
@@ -1423,9 +1423,9 @@ describe('exec error handling with repeat-min-pass', () => {
     vi.restoreAllMocks();
   });
 
-  test('should suppress exec error when repeat-min-pass is configured and passes', async () => {
-    // Promptfoo exits non-zero when any test fails
-    mockExec.exec.mockResolvedValue(1);
+  test('should suppress test-failure exit when repeat-min-pass passes', async () => {
+    // Promptfoo exits with code 100 when tests fail
+    mockExec.exec.mockResolvedValue(100);
 
     withInputs({ repeat: '3', 'repeat-min-pass': '2' });
 
@@ -1448,16 +1448,27 @@ describe('exec error handling with repeat-min-pass', () => {
 
     expect(mockCore.setFailed).not.toHaveBeenCalled();
     expect(mockCore.info).toHaveBeenCalledWith(
-      expect.stringContaining(
-        'Promptfoo exited non-zero (some tests failed), but all repeated tests met the minimum pass count.',
-      ),
+      expect.stringContaining('Promptfoo exited with test-failure code 100'),
+    );
+  });
+
+  test('should NOT suppress hard failure (exit code 1) even when repeat-min-pass is configured', async () => {
+    // Exit code 1 = config/runtime error, NOT a test failure
+    mockExec.exec.mockResolvedValue(1);
+
+    withInputs({ repeat: '3', 'repeat-min-pass': '2' });
+
+    await run();
+
+    // Should fail immediately — exit code 1 is never suppressed
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Promptfoo exited with unexpected code 1'),
     );
   });
 
   test('should NOT suppress exec error when only fail-on-threshold is configured', async () => {
-    // This preserves backward compatibility — fail-on-threshold alone
-    // does not suppress exec errors
-    mockExec.exec.mockResolvedValue(1);
+    // Test-failure exit code 100 — but fail-on-threshold alone does not suppress
+    mockExec.exec.mockResolvedValue(100);
 
     withInputs({ 'fail-on-threshold': '80' });
 
@@ -1479,13 +1490,23 @@ describe('exec error handling with repeat-min-pass', () => {
     );
   });
 
-  test('should fail when no thresholds configured and exec fails', async () => {
-    mockExec.exec.mockResolvedValue(1);
+  test('should fail on test-failure exit when no thresholds configured', async () => {
+    mockExec.exec.mockResolvedValue(100);
 
     await run();
 
     expect(mockCore.setFailed).toHaveBeenCalledWith(
       expect.stringContaining('Promptfoo evaluation failed'),
+    );
+  });
+
+  test('should fail immediately on hard failure (exit code 1)', async () => {
+    mockExec.exec.mockResolvedValue(1);
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('unexpected code 1'),
     );
   });
 });

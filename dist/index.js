@@ -36240,15 +36240,16 @@ function groupResultsByTest(results) {
   const groups = /* @__PURE__ */ new Map();
   for (const result of results) {
     const desc = result.description || result.testCase?.description;
+    const providerId = result.provider?.id || "";
     let key;
     let label;
     if (desc) {
-      key = `desc:${desc}:${result.promptIdx}`;
-      label = desc;
+      key = `desc:${desc}:${result.promptIdx}:${providerId}`;
+      label = providerId ? `${desc} [${providerId}]` : desc;
     } else {
       const varsStr = JSON.stringify(result.vars || {});
-      key = `vars:${varsStr}:${result.promptIdx}`;
-      label = `test(${varsStr})`;
+      key = `vars:${varsStr}:${result.promptIdx}:${providerId}`;
+      label = providerId ? `test(${varsStr}) [${providerId}]` : `test(${varsStr})`;
     }
     const group = groups.get(key) || { successes: 0, total: 0, label };
     group.total++;
@@ -36771,15 +36772,27 @@ async function run() {
       promptfooArgs,
       { env, cwd: workingDirectory, ignoreReturnCode: true }
     );
-    const promptfooFailed = exitCode !== 0;
+    const failedTestExitCode = Number.parseInt(
+      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE || "100",
+      10
+    ) || 100;
+    const isTestFailureExit = exitCode === failedTestExitCode;
+    const isHardFailure = exitCode !== 0 && !isTestFailureExit;
+    if (isHardFailure) {
+      throw new PromptfooActionError(
+        `Promptfoo exited with unexpected code ${exitCode}`,
+        ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+        "This indicates a configuration or runtime error, not just failed tests. Check the logs above for details."
+      );
+    }
     let output;
     try {
       const outputContent = fs6.readFileSync(outputFile, "utf8");
       output = JSON.parse(outputContent);
     } catch (error2) {
-      if (promptfooFailed) {
+      if (isTestFailureExit) {
         throw new PromptfooActionError(
-          `Promptfoo evaluation failed (exit code ${exitCode}) and no output was generated`,
+          `Promptfoo tests failed (exit code ${exitCode}) but no output was generated`,
           ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
           "Check that your promptfoo configuration is valid and all required API keys are set"
         );
@@ -36904,16 +36917,16 @@ async function run() {
         );
       }
     }
-    if (promptfooFailed) {
+    if (isTestFailureExit) {
       if (repeatMinPass !== void 0 && repeatCheckResult?.passed) {
         info(
-          "Promptfoo exited non-zero (some tests failed), but all repeated tests met the minimum pass count."
+          `Promptfoo exited with test-failure code ${exitCode}, but all repeated tests met the minimum pass count.`
         );
       } else {
         throw new PromptfooActionError(
           `Promptfoo evaluation failed (exit code ${exitCode})`,
           ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
-          "Check that your promptfoo configuration is valid and all required API keys are set"
+          "Some tests failed. Check the eval results for details."
         );
       }
     }

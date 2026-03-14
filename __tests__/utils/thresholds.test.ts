@@ -28,7 +28,7 @@ function makeResult(
 }
 
 describe('groupResultsByTest', () => {
-  test('groups by description + promptIdx', () => {
+  test('groups by description + promptIdx + provider', () => {
     const results = [
       makeResult({ promptIdx: 0, success: true, description: 'Test A' }),
       makeResult({ promptIdx: 0, success: false, description: 'Test A' }),
@@ -38,11 +38,11 @@ describe('groupResultsByTest', () => {
     const groups = groupResultsByTest(results);
     expect(groups.size).toBe(2);
 
-    const groupA = groups.get('desc:Test A:0');
-    expect(groupA).toEqual({ successes: 1, total: 2, label: 'Test A' });
+    const groupA = groups.get('desc:Test A:0:test');
+    expect(groupA).toEqual({ successes: 1, total: 2, label: 'Test A [test]' });
 
-    const groupB = groups.get('desc:Test B:0');
-    expect(groupB).toEqual({ successes: 1, total: 1, label: 'Test B' });
+    const groupB = groups.get('desc:Test B:0:test');
+    expect(groupB).toEqual({ successes: 1, total: 1, label: 'Test B [test]' });
   });
 
   test('falls back to vars + promptIdx when no description', () => {
@@ -62,11 +62,11 @@ describe('groupResultsByTest', () => {
     const groups = groupResultsByTest(results);
     expect(groups.size).toBe(1);
 
-    const key = 'vars:{"q":"hello"}:0';
+    const key = 'vars:{"q":"hello"}:0:test';
     expect(groups.get(key)).toEqual({
       successes: 1,
       total: 2,
-      label: 'test({"q":"hello"})',
+      label: 'test({"q":"hello"}) [test]',
     });
   });
 
@@ -78,6 +78,32 @@ describe('groupResultsByTest', () => {
 
     const groups = groupResultsByTest(results);
     expect(groups.size).toBe(2);
+  });
+
+  test('separates results by provider', () => {
+    const results = [
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'openai:gpt-4' },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: false,
+        description: 'Test A',
+        provider: { id: 'anthropic:claude' },
+      }),
+    ];
+
+    const groups = groupResultsByTest(results);
+    expect(groups.size).toBe(2);
+    expect(groups.get('desc:Test A:0:openai:gpt-4')?.label).toBe(
+      'Test A [openai:gpt-4]',
+    );
+    expect(groups.get('desc:Test A:0:anthropic:claude')?.label).toBe(
+      'Test A [anthropic:claude]',
+    );
   });
 });
 
@@ -145,7 +171,7 @@ describe('evaluateRepeatThreshold', () => {
     expect(passed).toBe(false);
     expect(summary.failures).toHaveLength(1);
     expect(summary.failures[0]).toEqual({
-      label: 'Test A',
+      label: 'Test A [test]',
       passed: 1,
       total: 3,
     });

@@ -34,15 +34,19 @@ export function groupResultsByTest(
   const groups = new Map<string, TestGroup>();
   for (const result of results) {
     const desc = result.description || result.testCase?.description;
+    // Include provider in the key so multi-provider evals don't collide
+    const providerId = result.provider?.id || '';
     let key: string;
     let label: string;
     if (desc) {
-      key = `desc:${desc}:${result.promptIdx}`;
-      label = desc;
+      key = `desc:${desc}:${result.promptIdx}:${providerId}`;
+      label = providerId ? `${desc} [${providerId}]` : desc;
     } else {
       const varsStr = JSON.stringify(result.vars || {});
-      key = `vars:${varsStr}:${result.promptIdx}`;
-      label = `test(${varsStr})`;
+      key = `vars:${varsStr}:${result.promptIdx}:${providerId}`;
+      label = providerId
+        ? `test(${varsStr}) [${providerId}]`
+        : `test(${varsStr})`;
     }
     const group = groups.get(key) || { successes: 0, total: 0, label };
     group.total++;
