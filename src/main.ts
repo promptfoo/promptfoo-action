@@ -692,8 +692,49 @@ export async function run(): Promise<void> {
       | ReturnType<typeof evaluateRepeatThreshold>
       | undefined;
     if (repeatMinPass !== undefined) {
-      const results = ((output.results as { results?: unknown }).results ??
-        []) as EvaluateResult[];
+      // Runtime validation: extract and validate output.results structure
+      const rawResults = (output.results as { results?: unknown }).results;
+
+      // Validate that results is an array
+      if (!Array.isArray(rawResults)) {
+        throw new PromptfooActionError(
+          `Invalid output format: expected output.results.results to be an array, got ${typeof rawResults}`,
+          ErrorCodes.REPEAT_CHECK_FAILED,
+          'The evaluation output may be malformed or truncated. Check promptfoo logs for errors.',
+        );
+      }
+
+      // Validate that each element has minimal EvaluateResult shape
+      for (let i = 0; i < rawResults.length; i++) {
+        const item = rawResults[i];
+        if (!item || typeof item !== 'object') {
+          throw new PromptfooActionError(
+            `Invalid result at index ${i}: expected object, got ${typeof item}`,
+            ErrorCodes.REPEAT_CHECK_FAILED,
+            'The evaluation output contains invalid result entries. Check promptfoo logs for errors.',
+          );
+        }
+        // Check for essential fields that EvaluateResult should have
+        const result = item as Record<string, unknown>;
+        if (typeof result.promptIdx !== 'number') {
+          throw new PromptfooActionError(
+            `Invalid result at index ${i}: missing or invalid 'promptIdx' field`,
+            ErrorCodes.REPEAT_CHECK_FAILED,
+            'The evaluation output contains malformed result entries. Check promptfoo logs for errors.',
+          );
+        }
+        if (typeof result.success !== 'boolean') {
+          throw new PromptfooActionError(
+            `Invalid result at index ${i}: missing or invalid 'success' field`,
+            ErrorCodes.REPEAT_CHECK_FAILED,
+            'The evaluation output contains malformed result entries. Check promptfoo logs for errors.',
+          );
+        }
+      }
+
+      // Safe to cast after validation
+      const results = rawResults as EvaluateResult[];
+
       if (results.length === 0) {
         throw new PromptfooActionError(
           'No test results found - cannot check per-test repeat threshold',
