@@ -31,23 +31,34 @@ export interface RepeatSummary {
 export function groupResultsByTest(
   results: EvaluateResult[],
 ): Map<string, TestGroup> {
+  // Detect multi-prompt configs so we can include promptIdx in labels
+  const hasMultiplePrompts = new Set(results.map((r) => r.promptIdx)).size > 1;
+
   const groups = new Map<string, TestGroup>();
   for (const result of results) {
     const desc = result.description || result.testCase?.description;
     // Include provider in the key so multi-provider evals don't collide
     const providerId = result.provider?.id || '';
     let key: string;
-    let label: string;
+    let baseLabel: string;
     if (desc) {
       key = `desc:${desc}:${result.promptIdx}:${providerId}`;
-      label = providerId ? `${desc} [${providerId}]` : desc;
+      baseLabel = desc;
     } else {
       const varsStr = JSON.stringify(result.vars || {});
       key = `vars:${varsStr}:${result.promptIdx}:${providerId}`;
-      label = providerId
-        ? `test(${varsStr}) [${providerId}]`
-        : `test(${varsStr})`;
+      baseLabel = `test(${varsStr})`;
     }
+    // Build a label that disambiguates across prompts and providers
+    const suffixes: string[] = [];
+    if (hasMultiplePrompts) {
+      suffixes.push(`prompt ${result.promptIdx}`);
+    }
+    if (providerId) {
+      suffixes.push(providerId);
+    }
+    const label =
+      suffixes.length > 0 ? `${baseLabel} [${suffixes.join(', ')}]` : baseLabel;
     const group = groups.get(key) || { successes: 0, total: 0, label };
     group.total++;
     if (result.success) {
@@ -160,8 +171,22 @@ export function formatRepeatFailureMessage(summary: RepeatSummary): string {
 
 export function formatRepeatCommentMarkdown(summary: RepeatSummary): string {
   if (summary.groupingErrors.length > 0) {
+    const hasAmbiguous = summary.groupingErrors.some(
+      (ge) => ge.kind === 'ambiguous',
+    );
+    const hasPartial = summary.groupingErrors.some(
+      (ge) => ge.kind === 'partial',
+    );
     let md = `**Repeat check**: **failed** — ${summary.groupingErrors.length} test group(s) have unexpected result counts\n\n`;
-    md += '> Ensure each test case has a unique description.\n';
+    if (hasAmbiguous && hasPartial) {
+      md +=
+        '> Some tests have duplicate descriptions and some repeat runs did not produce output.\n';
+    } else if (hasAmbiguous) {
+      md += '> Ensure each test case has a unique description.\n';
+    } else {
+      md +=
+        '> Some repeat runs did not produce output. Check for timeouts or errors in the eval logs.\n';
+    }
     for (const ge of summary.groupingErrors) {
       md += `> - ${ge.label}: ${ge.actual} results, expected ${ge.expected}\n`;
     }

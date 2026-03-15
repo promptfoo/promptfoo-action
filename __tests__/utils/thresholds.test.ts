@@ -105,6 +105,20 @@ describe('groupResultsByTest', () => {
       'Test A [anthropic:claude]',
     );
   });
+
+  test('includes promptIdx in labels for multi-prompt configs', () => {
+    const results = [
+      makeResult({ promptIdx: 0, success: true, description: 'Test A' }),
+      makeResult({ promptIdx: 1, success: false, description: 'Test A' }),
+    ];
+
+    const groups = groupResultsByTest(results);
+    expect(groups.size).toBe(2);
+    // Both labels should include prompt index since there are multiple prompts
+    for (const [, group] of groups) {
+      expect(group.label).toContain('prompt');
+    }
+  });
 });
 
 describe('validateGroups', () => {
@@ -305,5 +319,37 @@ describe('formatRepeatCommentMarkdown', () => {
     expect(md).toContain('failed');
     expect(md).toContain('unique description');
     expect(md).toContain('Test A: 4 results');
+  });
+
+  test('formats partial-group markdown with correct guidance', () => {
+    const md = formatRepeatCommentMarkdown({
+      totalGroups: 1,
+      failures: [],
+      groupingErrors: [
+        { label: 'Test A', actual: 2, expected: 3, kind: 'partial' },
+      ],
+      minPass: 2,
+      repeatCount: 3,
+    });
+
+    expect(md).toContain('failed');
+    expect(md).toContain('did not produce output');
+    expect(md).not.toContain('unique description');
+  });
+
+  test('formats mixed ambiguous+partial markdown', () => {
+    const md = formatRepeatCommentMarkdown({
+      totalGroups: 2,
+      failures: [],
+      groupingErrors: [
+        { label: 'Test A', actual: 4, expected: 3, kind: 'ambiguous' },
+        { label: 'Test B', actual: 2, expected: 3, kind: 'partial' },
+      ],
+      minPass: 2,
+      repeatCount: 3,
+    });
+
+    expect(md).toContain('duplicate descriptions');
+    expect(md).toContain('did not produce output');
   });
 });

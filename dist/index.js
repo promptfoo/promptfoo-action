@@ -36237,20 +36237,29 @@ function parseOptionalPercentage(raw, name) {
 
 // src/utils/thresholds.ts
 function groupResultsByTest(results) {
+  const hasMultiplePrompts = new Set(results.map((r) => r.promptIdx)).size > 1;
   const groups = /* @__PURE__ */ new Map();
   for (const result of results) {
     const desc = result.description || result.testCase?.description;
     const providerId = result.provider?.id || "";
     let key;
-    let label;
+    let baseLabel;
     if (desc) {
       key = `desc:${desc}:${result.promptIdx}:${providerId}`;
-      label = providerId ? `${desc} [${providerId}]` : desc;
+      baseLabel = desc;
     } else {
       const varsStr = JSON.stringify(result.vars || {});
       key = `vars:${varsStr}:${result.promptIdx}:${providerId}`;
-      label = providerId ? `test(${varsStr}) [${providerId}]` : `test(${varsStr})`;
+      baseLabel = `test(${varsStr})`;
     }
+    const suffixes = [];
+    if (hasMultiplePrompts) {
+      suffixes.push(`prompt ${result.promptIdx}`);
+    }
+    if (providerId) {
+      suffixes.push(providerId);
+    }
+    const label = suffixes.length > 0 ? `${baseLabel} [${suffixes.join(", ")}]` : baseLabel;
     const group = groups.get(key) || { successes: 0, total: 0, label };
     group.total++;
     if (result.success) {
@@ -36343,10 +36352,22 @@ function formatRepeatFailureMessage(summary2) {
 }
 function formatRepeatCommentMarkdown(summary2) {
   if (summary2.groupingErrors.length > 0) {
+    const hasAmbiguous = summary2.groupingErrors.some(
+      (ge2) => ge2.kind === "ambiguous"
+    );
+    const hasPartial = summary2.groupingErrors.some(
+      (ge2) => ge2.kind === "partial"
+    );
     let md2 = `**Repeat check**: **failed** \u2014 ${summary2.groupingErrors.length} test group(s) have unexpected result counts
 
 `;
-    md2 += "> Ensure each test case has a unique description.\n";
+    if (hasAmbiguous && hasPartial) {
+      md2 += "> Some tests have duplicate descriptions and some repeat runs did not produce output.\n";
+    } else if (hasAmbiguous) {
+      md2 += "> Ensure each test case has a unique description.\n";
+    } else {
+      md2 += "> Some repeat runs did not produce output. Check for timeouts or errors in the eval logs.\n";
+    }
     for (const ge2 of summary2.groupingErrors) {
       md2 += `> - ${ge2.label}: ${ge2.actual} results, expected ${ge2.expected}
 `;
@@ -36772,10 +36793,17 @@ async function run() {
       promptfooArgs,
       { env, cwd: workingDirectory, ignoreReturnCode: true }
     );
-    const failedTestExitCode = Number.parseInt(
+    const RESERVED_EXIT_CODES = /* @__PURE__ */ new Set([0, 1, 2, 130]);
+    const rawFailedTestExitCode = Number.parseInt(
       process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE || "100",
       10
-    ) || 100;
+    );
+    const failedTestExitCode = Number.isSafeInteger(rawFailedTestExitCode) && !RESERVED_EXIT_CODES.has(rawFailedTestExitCode) ? rawFailedTestExitCode : 100;
+    if (process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE && failedTestExitCode !== rawFailedTestExitCode) {
+      warning(
+        `PROMPTFOO_FAILED_TEST_EXIT_CODE=${process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE} overlaps with a reserved exit code. Using default (100).`
+      );
+    }
     const isTestFailureExit = exitCode === failedTestExitCode;
     const isHardFailure = exitCode !== 0 && !isTestFailureExit;
     if (isHardFailure) {

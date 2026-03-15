@@ -560,11 +560,25 @@ export async function run(): Promise<void> {
     //   2   = deprecated flag
     // We only suppress the failed-test exit code when repeat-min-pass passes.
     // All other non-zero exits are always hard failures.
+    // Reserved exit codes that always indicate hard failures, not test results.
+    const RESERVED_EXIT_CODES = new Set([0, 1, 2, 130]);
+    const rawFailedTestExitCode = Number.parseInt(
+      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE || '100',
+      10,
+    );
     const failedTestExitCode =
-      Number.parseInt(
-        process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE || '100',
-        10,
-      ) || 100;
+      Number.isSafeInteger(rawFailedTestExitCode) &&
+      !RESERVED_EXIT_CODES.has(rawFailedTestExitCode)
+        ? rawFailedTestExitCode
+        : 100;
+    if (
+      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE &&
+      failedTestExitCode !== rawFailedTestExitCode
+    ) {
+      core.warning(
+        `PROMPTFOO_FAILED_TEST_EXIT_CODE=${process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE} overlaps with a reserved exit code. Using default (100).`,
+      );
+    }
     const isTestFailureExit = exitCode === failedTestExitCode;
     const isHardFailure = exitCode !== 0 && !isTestFailureExit;
 

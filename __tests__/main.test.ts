@@ -1509,6 +1509,38 @@ describe('exec error handling with repeat-min-pass', () => {
       expect.stringContaining('unexpected code 1'),
     );
   });
+
+  test('should warn and fall back to 100 when PROMPTFOO_FAILED_TEST_EXIT_CODE is a reserved code', async () => {
+    process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = '1';
+    // Exit code 100 (the fallback) should be treated as test failure, not hard failure
+    mockExec.exec.mockResolvedValue(100);
+
+    withInputs({ repeat: '3', 'repeat-min-pass': '2' });
+
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            { testIdx: 0, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 1, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 2, promptIdx: 0, success: false, description: 'Test A' },
+          ],
+          stats: { successes: 2, failures: 1 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.warning).toHaveBeenCalledWith(
+      expect.stringContaining('overlaps with a reserved exit code'),
+    );
+    // Should still suppress since fallback 100 matches
+    expect(mockCore.setFailed).not.toHaveBeenCalled();
+
+    delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;
+  });
 });
 
 describe('environment variable documentation', () => {
