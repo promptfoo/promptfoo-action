@@ -5,6 +5,7 @@ export interface TestGroup {
   successes: number;
   total: number;
   label: string;
+  disambiguator?: string;
 }
 
 export interface TestFailure {
@@ -28,6 +29,125 @@ export interface RepeatSummary {
   repeatCount: number;
 }
 
+function normalizeValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeValue);
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entryValue]) => [key, normalizeValue(entryValue)]),
+    );
+  }
+
+  return value;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(normalizeValue(value));
+}
+
+function formatSingleLine(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function formatValueSummary(value: unknown, maxLength = 80): string {
+  const singleLine = formatSingleLine(stableStringify(value));
+  if (singleLine.length <= maxLength) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, maxLength - 3)}...`;
+}
+
+function getTestCaseIdentifier(result: EvaluateResult): string | undefined {
+  const testCase = result.testCase as
+    | {
+        id?: unknown;
+        metadata?: { testCaseId?: unknown };
+      }
+    | undefined;
+
+  if (typeof testCase?.id === 'string') {
+    return testCase.id;
+  }
+
+  if (typeof testCase?.metadata?.testCaseId === 'string') {
+    return testCase.metadata.testCaseId;
+  }
+
+  return undefined;
+}
+
+function buildGroupKey(result: EvaluateResult): string {
+  const providerId = result.provider?.id || '';
+  const fingerprint = stableStringify(
+    result.testCase || {
+      description: result.description,
+      vars: result.vars || {},
+    },
+  );
+
+  return `test:${fingerprint}:prompt:${result.promptIdx}:provider:${providerId}`;
+}
+
+function buildGroupLabel(
+  result: EvaluateResult,
+  hasMultiplePrompts: boolean,
+): { label: string; disambiguator?: string } {
+  const providerId = result.provider?.id || '';
+  const desc = result.description || result.testCase?.description;
+  const testCaseIdentifier = getTestCaseIdentifier(result);
+  const testCaseId = testCaseIdentifier
+    ? formatSingleLine(testCaseIdentifier)
+    : undefined;
+  const varsSummary = formatValueSummary(
+    result.vars || result.testCase?.vars || {},
+  );
+
+  const baseLabel = desc ? formatSingleLine(desc) : `test(${varsSummary})`;
+
+  const suffixes: string[] = [];
+  if (hasMultiplePrompts) {
+    suffixes.push(`prompt ${result.promptIdx}`);
+  }
+  if (providerId) {
+    suffixes.push(providerId);
+  }
+
+  const label =
+    suffixes.length > 0 ? `${baseLabel} [${suffixes.join(', ')}]` : baseLabel;
+
+  if (!desc) {
+    return { label };
+  }
+
+  if (testCaseId) {
+    return { label, disambiguator: `id=${testCaseId}` };
+  }
+
+  if (varsSummary !== '{}') {
+    return { label, disambiguator: `vars=${varsSummary}` };
+  }
+
+  return { label };
+}
+
+function disambiguateLabels(groups: Map<string, TestGroup>): void {
+  const labelCounts = new Map<string, number>();
+  for (const group of groups.values()) {
+    labelCounts.set(group.label, (labelCounts.get(group.label) || 0) + 1);
+  }
+
+  for (const group of groups.values()) {
+    if ((labelCounts.get(group.label) || 0) > 1 && group.disambiguator) {
+      group.label = `${group.label} (${group.disambiguator})`;
+    }
+  }
+}
+
 export function groupResultsByTest(
   results: EvaluateResult[],
 ): Map<string, TestGroup> {
@@ -36,36 +156,26 @@ export function groupResultsByTest(
 
   const groups = new Map<string, TestGroup>();
   for (const result of results) {
-    const desc = result.description || result.testCase?.description;
-    // Include provider in the key so multi-provider evals don't collide
-    const providerId = result.provider?.id || '';
-    let key: string;
-    let baseLabel: string;
-    if (desc) {
-      key = `desc:${desc}:${result.promptIdx}:${providerId}`;
-      baseLabel = desc;
-    } else {
-      const varsStr = JSON.stringify(result.vars || {});
-      key = `vars:${varsStr}:${result.promptIdx}:${providerId}`;
-      baseLabel = `test(${varsStr})`;
-    }
-    // Build a label that disambiguates across prompts and providers
-    const suffixes: string[] = [];
-    if (hasMultiplePrompts) {
-      suffixes.push(`prompt ${result.promptIdx}`);
-    }
-    if (providerId) {
-      suffixes.push(providerId);
-    }
-    const label =
-      suffixes.length > 0 ? `${baseLabel} [${suffixes.join(', ')}]` : baseLabel;
-    const group = groups.get(key) || { successes: 0, total: 0, label };
+    const key = buildGroupKey(result);
+    const { label, disambiguator } = buildGroupLabel(
+      result,
+      hasMultiplePrompts,
+    );
+    const group = groups.get(key) || {
+      successes: 0,
+      total: 0,
+      label,
+      ...(disambiguator ? { disambiguator } : {}),
+    };
     group.total++;
     if (result.success) {
       group.successes++;
     }
     groups.set(key, group);
   }
+
+  disambiguateLabels(groups);
+
   return groups;
 }
 

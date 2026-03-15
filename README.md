@@ -336,7 +336,7 @@ This runs each test 3 times and requires each test to pass at least 2 of its 3 r
 
 You can combine this with `fail-on-threshold` for a suite-level check — both are evaluated independently.
 
-**Note:** The repeat check groups results by test description, prompt, and provider. For accurate results, give each test case a unique description in your promptfoo config.
+**Note:** The repeat check groups results by the resolved test case, prompt, and provider. If you intentionally define exact duplicate tests, give them unique `id` or `description` values so the report can distinguish them cleanly.
 
 ## Caching for Better Performance
 

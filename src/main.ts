@@ -54,6 +54,63 @@ function validateGitRef(ref: string): void {
   }
 }
 
+const RESERVED_EXIT_CODES = new Set([0, 1, 2, 130]);
+
+function normalizeFailedTestExitCode(raw: string | undefined): {
+  value: number;
+  warning?: string;
+} {
+  const parsed = Number.parseInt(raw || '100', 10);
+  const isValid =
+    Number.isInteger(parsed) &&
+    parsed >= 3 &&
+    parsed <= 255 &&
+    !RESERVED_EXIT_CODES.has(parsed);
+
+  if (isValid) {
+    return { value: parsed };
+  }
+
+  if (!raw) {
+    return { value: 100 };
+  }
+
+  return {
+    value: 100,
+    warning: `PROMPTFOO_FAILED_TEST_EXIT_CODE=${raw} is reserved or invalid. Using default (100).`,
+  };
+}
+
+function parsePromptfooPassRateThreshold(
+  raw: string | undefined,
+  isConfigured: boolean,
+): number | undefined {
+  if (!isConfigured) {
+    return undefined;
+  }
+
+  const parsed = Number.parseFloat(raw || '');
+  if (Number.isNaN(parsed)) {
+    return 100;
+  }
+
+  return Number.isFinite(parsed) ? parsed : 100;
+}
+
+function calculateSuccessRate(stats: {
+  successes: number;
+  failures: number;
+  errors?: number;
+}): number | undefined {
+  const total = stats.successes + stats.failures + (stats.errors ?? 0);
+
+  if (total === 0) {
+    return undefined;
+  }
+
+  return (stats.successes / total) * 100;
+}
+
 export async function run(): Promise<void> {
   try {
     const openaiApiKey: string = core.getInput('openai-api-key', {
@@ -522,6 +579,22 @@ export async function run(): Promise<void> {
       }
     }
 
+    const normalizedFailedTestExitCode = normalizeFailedTestExitCode(
+      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE,
+    );
+    if (normalizedFailedTestExitCode.warning) {
+      core.warning(normalizedFailedTestExitCode.warning);
+    }
+    const failedTestExitCode = normalizedFailedTestExitCode.value;
+    const hasPromptfooPassRateThreshold = Object.prototype.hasOwnProperty.call(
+      process.env,
+      'PROMPTFOO_PASS_RATE_THRESHOLD',
+    );
+    const promptfooPassRateThreshold = parsePromptfooPassRateThreshold(
+      process.env.PROMPTFOO_PASS_RATE_THRESHOLD,
+      hasPromptfooPassRateThreshold,
+    );
+
     // Build environment for promptfoo execution
     // Environment variables from workflow context (process.env) are used as fallback for API keys.
     // Action inputs (if provided) take precedence and override environment variables.
@@ -542,6 +615,9 @@ export async function run(): Promise<void> {
       ...(cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {}),
       ...(mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {}),
       ...(groqApiKey ? { GROQ_API_KEY: groqApiKey } : {}),
+      ...(process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE
+        ? { PROMPTFOO_FAILED_TEST_EXIT_CODE: failedTestExitCode.toString() }
+        : {}),
     };
     // Use ignoreReturnCode so we can inspect the exit code and still read output.
     // Promptfoo exits non-zero when any test fails — we want to post PR comments
@@ -564,25 +640,6 @@ export async function run(): Promise<void> {
     //   - 0, 1, 2, 130 are reserved (success, general error, deprecated flag, SIGINT)
     //   - Values > 255 wrap at the OS boundary (e.g., 300 becomes 44), so they
     //     won't match what the process actually exits with
-    const RESERVED_EXIT_CODES = new Set([0, 1, 2, 130]);
-    const rawFailedTestExitCode = Number.parseInt(
-      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE || '100',
-      10,
-    );
-    const isValidExitCode =
-      Number.isInteger(rawFailedTestExitCode) &&
-      rawFailedTestExitCode >= 3 &&
-      rawFailedTestExitCode <= 255 &&
-      !RESERVED_EXIT_CODES.has(rawFailedTestExitCode);
-    const failedTestExitCode = isValidExitCode ? rawFailedTestExitCode : 100;
-    if (
-      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE &&
-      failedTestExitCode !== rawFailedTestExitCode
-    ) {
-      core.warning(
-        `PROMPTFOO_FAILED_TEST_EXIT_CODE=${process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE} overlaps with a reserved exit code. Using default (100).`,
-      );
-    }
     const isTestFailureExit = exitCode === failedTestExitCode;
     const isHardFailure = exitCode !== 0 && !isTestFailureExit;
 
@@ -652,6 +709,10 @@ export async function run(): Promise<void> {
       );
     }
 
+    const promptfooSuiteSuccessRate = calculateSuccessRate(
+      output.results.stats,
+    );
+
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const octokit = github.getOctokit(githubToken);
@@ -720,19 +781,15 @@ export async function run(): Promise<void> {
 
     // Check if we should fail based on threshold
     if (failOnThreshold !== undefined) {
-      const totalTests =
-        output.results.stats.successes + output.results.stats.failures;
+      const successRate = calculateSuccessRate(output.results.stats);
 
-      // If no tests were run, fail the threshold check
-      if (totalTests === 0) {
+      if (successRate === undefined) {
         throw new PromptfooActionError(
           `No tests were run - cannot calculate success rate`,
           ErrorCodes.THRESHOLD_NOT_MET,
           `Ensure your configuration includes valid tests to run`,
         );
       }
-
-      const successRate = (output.results.stats.successes / totalTests) * 100;
 
       if (successRate < failOnThreshold) {
         throw new PromptfooActionError(
@@ -746,6 +803,33 @@ export async function run(): Promise<void> {
 
       core.info(
         `Suite threshold passed: ${successRate.toFixed(2)}% >= ${failOnThreshold}%`,
+      );
+    }
+
+    // Preserve promptfoo's own explicit pass-rate threshold when repeat-based
+    // suppression is enabled in this action.
+    if (
+      promptfooPassRateThreshold !== undefined &&
+      promptfooSuiteSuccessRate !== undefined &&
+      promptfooSuiteSuccessRate < promptfooPassRateThreshold
+    ) {
+      throw new PromptfooActionError(
+        `Evaluation success rate (${promptfooSuiteSuccessRate.toFixed(
+          2,
+        )}%) is below PROMPTFOO_PASS_RATE_THRESHOLD (${promptfooPassRateThreshold}%)`,
+        ErrorCodes.THRESHOLD_NOT_MET,
+        'Consider adjusting your prompts or lowering PROMPTFOO_PASS_RATE_THRESHOLD',
+      );
+    }
+
+    if (
+      promptfooPassRateThreshold !== undefined &&
+      promptfooSuiteSuccessRate !== undefined
+    ) {
+      core.info(
+        `Promptfoo pass-rate threshold passed: ${promptfooSuiteSuccessRate.toFixed(
+          2,
+        )}% >= ${promptfooPassRateThreshold}%`,
       );
     }
 

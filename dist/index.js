@@ -36236,37 +36236,111 @@ function parseOptionalPercentage(raw, name) {
 }
 
 // src/utils/thresholds.ts
+function normalizeValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(normalizeValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).filter(([, entryValue]) => entryValue !== void 0).sort(([a], [b]) => a.localeCompare(b)).map(([key, entryValue]) => [key, normalizeValue(entryValue)])
+    );
+  }
+  return value;
+}
+function stableStringify(value) {
+  return JSON.stringify(normalizeValue(value));
+}
+function formatSingleLine(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+function formatValueSummary(value, maxLength = 80) {
+  const singleLine = formatSingleLine(stableStringify(value));
+  if (singleLine.length <= maxLength) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, maxLength - 3)}...`;
+}
+function getTestCaseIdentifier(result) {
+  const testCase = result.testCase;
+  if (typeof testCase?.id === "string") {
+    return testCase.id;
+  }
+  if (typeof testCase?.metadata?.testCaseId === "string") {
+    return testCase.metadata.testCaseId;
+  }
+  return void 0;
+}
+function buildGroupKey(result) {
+  const providerId = result.provider?.id || "";
+  const fingerprint = stableStringify(
+    result.testCase || {
+      description: result.description,
+      vars: result.vars || {}
+    }
+  );
+  return `test:${fingerprint}:prompt:${result.promptIdx}:provider:${providerId}`;
+}
+function buildGroupLabel(result, hasMultiplePrompts) {
+  const providerId = result.provider?.id || "";
+  const desc = result.description || result.testCase?.description;
+  const testCaseIdentifier = getTestCaseIdentifier(result);
+  const testCaseId = testCaseIdentifier ? formatSingleLine(testCaseIdentifier) : void 0;
+  const varsSummary = formatValueSummary(
+    result.vars || result.testCase?.vars || {}
+  );
+  const baseLabel = desc ? formatSingleLine(desc) : `test(${varsSummary})`;
+  const suffixes = [];
+  if (hasMultiplePrompts) {
+    suffixes.push(`prompt ${result.promptIdx}`);
+  }
+  if (providerId) {
+    suffixes.push(providerId);
+  }
+  const label = suffixes.length > 0 ? `${baseLabel} [${suffixes.join(", ")}]` : baseLabel;
+  if (!desc) {
+    return { label };
+  }
+  if (testCaseId) {
+    return { label, disambiguator: `id=${testCaseId}` };
+  }
+  if (varsSummary !== "{}") {
+    return { label, disambiguator: `vars=${varsSummary}` };
+  }
+  return { label };
+}
+function disambiguateLabels(groups) {
+  const labelCounts = /* @__PURE__ */ new Map();
+  for (const group of groups.values()) {
+    labelCounts.set(group.label, (labelCounts.get(group.label) || 0) + 1);
+  }
+  for (const group of groups.values()) {
+    if ((labelCounts.get(group.label) || 0) > 1 && group.disambiguator) {
+      group.label = `${group.label} (${group.disambiguator})`;
+    }
+  }
+}
 function groupResultsByTest(results) {
   const hasMultiplePrompts = new Set(results.map((r) => r.promptIdx)).size > 1;
   const groups = /* @__PURE__ */ new Map();
   for (const result of results) {
-    const desc = result.description || result.testCase?.description;
-    const providerId = result.provider?.id || "";
-    let key;
-    let baseLabel;
-    if (desc) {
-      key = `desc:${desc}:${result.promptIdx}:${providerId}`;
-      baseLabel = desc;
-    } else {
-      const varsStr = JSON.stringify(result.vars || {});
-      key = `vars:${varsStr}:${result.promptIdx}:${providerId}`;
-      baseLabel = `test(${varsStr})`;
-    }
-    const suffixes = [];
-    if (hasMultiplePrompts) {
-      suffixes.push(`prompt ${result.promptIdx}`);
-    }
-    if (providerId) {
-      suffixes.push(providerId);
-    }
-    const label = suffixes.length > 0 ? `${baseLabel} [${suffixes.join(", ")}]` : baseLabel;
-    const group = groups.get(key) || { successes: 0, total: 0, label };
+    const key = buildGroupKey(result);
+    const { label, disambiguator } = buildGroupLabel(
+      result,
+      hasMultiplePrompts
+    );
+    const group = groups.get(key) || {
+      successes: 0,
+      total: 0,
+      label,
+      ...disambiguator ? { disambiguator } : {}
+    };
     group.total++;
     if (result.success) {
       group.successes++;
     }
     groups.set(key, group);
   }
+  disambiguateLabels(groups);
   return groups;
 }
 function validateGroups(groups, repeatCount) {
@@ -36400,6 +36474,38 @@ function validateGitRef(ref) {
       "Git refs should not start with dashes to prevent option injection"
     );
   }
+}
+var RESERVED_EXIT_CODES = /* @__PURE__ */ new Set([0, 1, 2, 130]);
+function normalizeFailedTestExitCode(raw) {
+  const parsed = Number.parseInt(raw || "100", 10);
+  const isValid = Number.isInteger(parsed) && parsed >= 3 && parsed <= 255 && !RESERVED_EXIT_CODES.has(parsed);
+  if (isValid) {
+    return { value: parsed };
+  }
+  if (!raw) {
+    return { value: 100 };
+  }
+  return {
+    value: 100,
+    warning: `PROMPTFOO_FAILED_TEST_EXIT_CODE=${raw} is reserved or invalid. Using default (100).`
+  };
+}
+function parsePromptfooPassRateThreshold(raw, isConfigured) {
+  if (!isConfigured) {
+    return void 0;
+  }
+  const parsed = Number.parseFloat(raw || "");
+  if (Number.isNaN(parsed)) {
+    return 100;
+  }
+  return Number.isFinite(parsed) ? parsed : 100;
+}
+function calculateSuccessRate(stats) {
+  const total = stats.successes + stats.failures + (stats.errors ?? 0);
+  if (total === 0) {
+    return void 0;
+  }
+  return stats.successes / total * 100;
 }
 async function run() {
   try {
@@ -36771,6 +36877,21 @@ async function run() {
         );
       }
     }
+    const normalizedFailedTestExitCode = normalizeFailedTestExitCode(
+      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE
+    );
+    if (normalizedFailedTestExitCode.warning) {
+      warning(normalizedFailedTestExitCode.warning);
+    }
+    const failedTestExitCode = normalizedFailedTestExitCode.value;
+    const hasPromptfooPassRateThreshold = Object.prototype.hasOwnProperty.call(
+      process.env,
+      "PROMPTFOO_PASS_RATE_THRESHOLD"
+    );
+    const promptfooPassRateThreshold = parsePromptfooPassRateThreshold(
+      process.env.PROMPTFOO_PASS_RATE_THRESHOLD,
+      hasPromptfooPassRateThreshold
+    );
     const env = {
       ...process.env,
       // Includes cache settings and environment variable fallbacks
@@ -36786,25 +36907,14 @@ async function run() {
       ...vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {},
       ...cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {},
       ...mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {},
-      ...groqApiKey ? { GROQ_API_KEY: groqApiKey } : {}
+      ...groqApiKey ? { GROQ_API_KEY: groqApiKey } : {},
+      ...process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE ? { PROMPTFOO_FAILED_TEST_EXIT_CODE: failedTestExitCode.toString() } : {}
     };
     const exitCode = await exec(
       `npx promptfoo@${version}`,
       promptfooArgs,
       { env, cwd: workingDirectory, ignoreReturnCode: true }
     );
-    const RESERVED_EXIT_CODES = /* @__PURE__ */ new Set([0, 1, 2, 130]);
-    const rawFailedTestExitCode = Number.parseInt(
-      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE || "100",
-      10
-    );
-    const isValidExitCode = Number.isInteger(rawFailedTestExitCode) && rawFailedTestExitCode >= 3 && rawFailedTestExitCode <= 255 && !RESERVED_EXIT_CODES.has(rawFailedTestExitCode);
-    const failedTestExitCode = isValidExitCode ? rawFailedTestExitCode : 100;
-    if (process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE && failedTestExitCode !== rawFailedTestExitCode) {
-      warning(
-        `PROMPTFOO_FAILED_TEST_EXIT_CODE=${process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE} overlaps with a reserved exit code. Using default (100).`
-      );
-    }
     const isTestFailureExit = exitCode === failedTestExitCode;
     const isHardFailure = exitCode !== 0 && !isTestFailureExit;
     if (isHardFailure) {
@@ -36856,6 +36966,9 @@ async function run() {
         repeat2
       );
     }
+    const promptfooSuiteSuccessRate = calculateSuccessRate(
+      output.results.stats
+    );
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const octokit = getOctokit(githubToken);
       const modifiedFiles = promptFiles.join(", ");
@@ -36911,15 +37024,14 @@ async function run() {
       }
     }
     if (failOnThreshold !== void 0) {
-      const totalTests = output.results.stats.successes + output.results.stats.failures;
-      if (totalTests === 0) {
+      const successRate = calculateSuccessRate(output.results.stats);
+      if (successRate === void 0) {
         throw new PromptfooActionError(
           `No tests were run - cannot calculate success rate`,
           ErrorCodes.THRESHOLD_NOT_MET,
           `Ensure your configuration includes valid tests to run`
         );
       }
-      const successRate = output.results.stats.successes / totalTests * 100;
       if (successRate < failOnThreshold) {
         throw new PromptfooActionError(
           `Evaluation success rate (${successRate.toFixed(
@@ -36931,6 +37043,22 @@ async function run() {
       }
       info(
         `Suite threshold passed: ${successRate.toFixed(2)}% >= ${failOnThreshold}%`
+      );
+    }
+    if (promptfooPassRateThreshold !== void 0 && promptfooSuiteSuccessRate !== void 0 && promptfooSuiteSuccessRate < promptfooPassRateThreshold) {
+      throw new PromptfooActionError(
+        `Evaluation success rate (${promptfooSuiteSuccessRate.toFixed(
+          2
+        )}%) is below PROMPTFOO_PASS_RATE_THRESHOLD (${promptfooPassRateThreshold}%)`,
+        ErrorCodes.THRESHOLD_NOT_MET,
+        "Consider adjusting your prompts or lowering PROMPTFOO_PASS_RATE_THRESHOLD"
+      );
+    }
+    if (promptfooPassRateThreshold !== void 0 && promptfooSuiteSuccessRate !== void 0) {
+      info(
+        `Promptfoo pass-rate threshold passed: ${promptfooSuiteSuccessRate.toFixed(
+          2
+        )}% >= ${promptfooPassRateThreshold}%`
       );
     }
     if (repeatCheckResult) {

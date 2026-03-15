@@ -1303,6 +1303,53 @@ describe('repeat-min-pass feature', () => {
     );
   });
 
+  test('should not treat distinct tests with the same description as ambiguous', async () => {
+    withInputs({ repeat: '2', 'repeat-min-pass': '1' });
+
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            {
+              testIdx: 0,
+              promptIdx: 0,
+              success: true,
+              description: 'Shared label',
+              vars: { q: 'hello' },
+            },
+            {
+              testIdx: 1,
+              promptIdx: 0,
+              success: false,
+              description: 'Shared label',
+              vars: { q: 'hello' },
+            },
+            {
+              testIdx: 2,
+              promptIdx: 0,
+              success: true,
+              description: 'Shared label',
+              vars: { q: 'goodbye' },
+            },
+            {
+              testIdx: 3,
+              promptIdx: 0,
+              success: false,
+              description: 'Shared label',
+              vars: { q: 'goodbye' },
+            },
+          ],
+          stats: { successes: 2, failures: 2 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).not.toHaveBeenCalled();
+  });
+
   test('should fail when repeat-min-pass is set without repeat', async () => {
     withInputs({ 'repeat-min-pass': '2' });
 
@@ -1363,6 +1410,35 @@ describe('repeat-min-pass feature', () => {
     await run();
 
     expect(mockCore.setFailed).not.toHaveBeenCalled();
+  });
+
+  test('should count errors against fail-on-threshold', async () => {
+    withInputs({
+      repeat: '3',
+      'fail-on-threshold': '90',
+      'repeat-min-pass': '2',
+    });
+    mockExec.exec.mockResolvedValue(100);
+
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            { testIdx: 0, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 1, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 2, promptIdx: 0, success: false, description: 'Test A' },
+          ],
+          stats: { successes: 2, failures: 0, errors: 1 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('below the required threshold (90%)'),
+    );
   });
 
   test('should post PR comment with repeat summary before failing', async () => {
@@ -1490,6 +1566,64 @@ describe('exec error handling with repeat-min-pass', () => {
     );
   });
 
+  test('should preserve PROMPTFOO_PASS_RATE_THRESHOLD when repeat-min-pass passes', async () => {
+    process.env.PROMPTFOO_PASS_RATE_THRESHOLD = '90';
+    mockExec.exec.mockResolvedValue(100);
+
+    withInputs({ repeat: '3', 'repeat-min-pass': '2' });
+
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            { testIdx: 0, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 1, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 2, promptIdx: 0, success: false, description: 'Test A' },
+          ],
+          stats: { successes: 2, failures: 1, errors: 0 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('PROMPTFOO_PASS_RATE_THRESHOLD'),
+    );
+
+    delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
+  });
+
+  test('should preserve malformed PROMPTFOO_PASS_RATE_THRESHOLD as a 100% gate', async () => {
+    process.env.PROMPTFOO_PASS_RATE_THRESHOLD = 'not-a-number';
+    mockExec.exec.mockResolvedValue(100);
+
+    withInputs({ repeat: '3', 'repeat-min-pass': '2' });
+
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            { testIdx: 0, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 1, promptIdx: 0, success: true, description: 'Test A' },
+            { testIdx: 2, promptIdx: 0, success: false, description: 'Test A' },
+          ],
+          stats: { successes: 2, failures: 1, errors: 0 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('PROMPTFOO_PASS_RATE_THRESHOLD (100%)'),
+    );
+
+    delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
+  });
+
   test('should fail on test-failure exit when no thresholds configured', async () => {
     mockExec.exec.mockResolvedValue(100);
 
@@ -1510,10 +1644,12 @@ describe('exec error handling with repeat-min-pass', () => {
     );
   });
 
-  test('should warn and fall back to 100 when PROMPTFOO_FAILED_TEST_EXIT_CODE is a reserved code', async () => {
+  test('should normalize reserved PROMPTFOO_FAILED_TEST_EXIT_CODE before invoking promptfoo', async () => {
     process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = '1';
-    // Exit code 100 (the fallback) should be treated as test failure, not hard failure
-    mockExec.exec.mockResolvedValue(100);
+    mockExec.exec.mockImplementation((_command, _args, options) => {
+      expect(options?.env?.PROMPTFOO_FAILED_TEST_EXIT_CODE).toBe('100');
+      return Promise.resolve(100);
+    });
 
     withInputs({ repeat: '3', 'repeat-min-pass': '2' });
 
@@ -1534,9 +1670,8 @@ describe('exec error handling with repeat-min-pass', () => {
     await run();
 
     expect(mockCore.warning).toHaveBeenCalledWith(
-      expect.stringContaining('overlaps with a reserved exit code'),
+      expect.stringContaining('reserved or invalid'),
     );
-    // Should still suppress since fallback 100 matches
     expect(mockCore.setFailed).not.toHaveBeenCalled();
 
     delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;

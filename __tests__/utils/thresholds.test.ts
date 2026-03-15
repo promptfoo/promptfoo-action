@@ -38,10 +38,14 @@ describe('groupResultsByTest', () => {
     const groups = groupResultsByTest(results);
     expect(groups.size).toBe(2);
 
-    const groupA = groups.get('desc:Test A:0:test');
+    const groupA = Array.from(groups.values()).find(
+      (group) => group.label === 'Test A [test]',
+    );
     expect(groupA).toEqual({ successes: 1, total: 2, label: 'Test A [test]' });
 
-    const groupB = groups.get('desc:Test B:0:test');
+    const groupB = Array.from(groups.values()).find(
+      (group) => group.label === 'Test B [test]',
+    );
     expect(groupB).toEqual({ successes: 1, total: 1, label: 'Test B [test]' });
   });
 
@@ -62,12 +66,47 @@ describe('groupResultsByTest', () => {
     const groups = groupResultsByTest(results);
     expect(groups.size).toBe(1);
 
-    const key = 'vars:{"q":"hello"}:0:test';
-    expect(groups.get(key)).toEqual({
+    expect(Array.from(groups.values())[0]).toEqual({
       successes: 1,
       total: 2,
       label: 'test({"q":"hello"}) [test]',
     });
+  });
+
+  test('separates distinct tests that share a description', () => {
+    const results = [
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        description: 'Shared label',
+        vars: { q: 'hello' },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: false,
+        description: 'Shared label',
+        vars: { q: 'hello' },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        description: 'Shared label',
+        vars: { q: 'goodbye' },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: false,
+        description: 'Shared label',
+        vars: { q: 'goodbye' },
+      }),
+    ];
+
+    const groups = groupResultsByTest(results);
+    expect(groups.size).toBe(2);
+
+    const labels = Array.from(groups.values()).map((group) => group.label);
+    expect(labels).toContain('Shared label [test] (vars={"q":"hello"})');
+    expect(labels).toContain('Shared label [test] (vars={"q":"goodbye"})');
   });
 
   test('separates results by promptIdx', () => {
@@ -98,12 +137,9 @@ describe('groupResultsByTest', () => {
 
     const groups = groupResultsByTest(results);
     expect(groups.size).toBe(2);
-    expect(groups.get('desc:Test A:0:openai:gpt-4')?.label).toBe(
-      'Test A [openai:gpt-4]',
-    );
-    expect(groups.get('desc:Test A:0:anthropic:claude')?.label).toBe(
-      'Test A [anthropic:claude]',
-    );
+    const labels = Array.from(groups.values()).map((group) => group.label);
+    expect(labels).toContain('Test A [openai:gpt-4]');
+    expect(labels).toContain('Test A [anthropic:claude]');
   });
 
   test('includes promptIdx in labels for multi-prompt configs', () => {
@@ -189,6 +225,40 @@ describe('evaluateRepeatThreshold', () => {
       passed: 1,
       total: 3,
     });
+  });
+
+  test('passes when distinct tests share a description but not the same vars', () => {
+    const results = [
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        description: 'Shared label',
+        vars: { q: 'hello' },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: false,
+        description: 'Shared label',
+        vars: { q: 'hello' },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        description: 'Shared label',
+        vars: { q: 'goodbye' },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: false,
+        description: 'Shared label',
+        vars: { q: 'goodbye' },
+      }),
+    ];
+
+    const { passed, summary } = evaluateRepeatThreshold(results, 1, 2);
+    expect(passed).toBe(true);
+    expect(summary.groupingErrors).toHaveLength(0);
+    expect(summary.totalGroups).toBe(2);
   });
 
   test('handles empty results', () => {
