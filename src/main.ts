@@ -560,17 +560,21 @@ export async function run(): Promise<void> {
     //   2   = deprecated flag
     // We only suppress the failed-test exit code when repeat-min-pass passes.
     // All other non-zero exits are always hard failures.
-    // Reserved exit codes that always indicate hard failures, not test results.
+    // Exit codes must be 3-255 to be usable:
+    //   - 0, 1, 2, 130 are reserved (success, general error, deprecated flag, SIGINT)
+    //   - Values > 255 wrap at the OS boundary (e.g., 300 becomes 44), so they
+    //     won't match what the process actually exits with
     const RESERVED_EXIT_CODES = new Set([0, 1, 2, 130]);
     const rawFailedTestExitCode = Number.parseInt(
       process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE || '100',
       10,
     );
-    const failedTestExitCode =
-      Number.isSafeInteger(rawFailedTestExitCode) &&
-      !RESERVED_EXIT_CODES.has(rawFailedTestExitCode)
-        ? rawFailedTestExitCode
-        : 100;
+    const isValidExitCode =
+      Number.isInteger(rawFailedTestExitCode) &&
+      rawFailedTestExitCode >= 3 &&
+      rawFailedTestExitCode <= 255 &&
+      !RESERVED_EXIT_CODES.has(rawFailedTestExitCode);
+    const failedTestExitCode = isValidExitCode ? rawFailedTestExitCode : 100;
     if (
       process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE &&
       failedTestExitCode !== rawFailedTestExitCode

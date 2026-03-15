@@ -36798,7 +36798,8 @@ async function run() {
       process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE || "100",
       10
     );
-    const failedTestExitCode = Number.isSafeInteger(rawFailedTestExitCode) && !RESERVED_EXIT_CODES.has(rawFailedTestExitCode) ? rawFailedTestExitCode : 100;
+    const isValidExitCode = Number.isInteger(rawFailedTestExitCode) && rawFailedTestExitCode >= 3 && rawFailedTestExitCode <= 255 && !RESERVED_EXIT_CODES.has(rawFailedTestExitCode);
+    const failedTestExitCode = isValidExitCode ? rawFailedTestExitCode : 100;
     if (process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE && failedTestExitCode !== rawFailedTestExitCode) {
       warning(
         `PROMPTFOO_FAILED_TEST_EXIT_CODE=${process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE} overlaps with a reserved exit code. Using default (100).`
