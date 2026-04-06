@@ -38,6 +38,9 @@
     "glob": "^13.0.6",
     "simple-git": "^3.32.1"
   },
+  "overrides": {
+    "@anthropic-ai/sdk": "^0.81.0"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.4.10",
     "@swc/core": "^1.15.11",
