@@ -39,10 +39,10 @@
     "simple-git": "^3.32.1"
   },
   "overrides": {
-    "@anthropic-ai/sdk": "^0.87.0"
+    "@anthropic-ai/sdk": "^0.89.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.11",
+    "@biomejs/biome": "2.4.12",
     "@swc/core": "^1.15.11",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.3.0",
@@ -50,7 +50,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "esbuild": "^0.28.0",
     "js-yaml": "^4.1.1",
-    "promptfoo": "0.121.3",
+    "promptfoo": "0.121.4",
     "typescript": "^6.0.0",
     "vitest": "^4.0.18"
   },
