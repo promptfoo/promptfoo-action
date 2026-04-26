@@ -2046,13 +2046,20 @@ var require_dispatcher_base = __commonJS({
     var kOnDestroyed = /* @__PURE__ */ Symbol("onDestroyed");
     var kOnClosed = /* @__PURE__ */ Symbol("onClosed");
     var kInterceptedDispatch = /* @__PURE__ */ Symbol("Intercepted Dispatch");
+    var kWebSocketOptions = /* @__PURE__ */ Symbol("webSocketOptions");
     var DispatcherBase = class extends Dispatcher {
-      constructor() {
+      constructor(opts) {
         super();
         this[kDestroyed] = false;
         this[kOnDestroyed] = null;
         this[kClosed] = false;
         this[kOnClosed] = [];
+        this[kWebSocketOptions] = opts?.webSocket ?? {};
+      }
+      get webSocketOptions() {
+        return {
+          maxPayloadSize: this[kWebSocketOptions].maxPayloadSize ?? 128 * 1024 * 1024
+        };
       }
       get destroyed() {
         return this[kDestroyed];
@@ -7491,9 +7498,10 @@ var require_client = __commonJS({
         autoSelectFamilyAttemptTimeout,
         // h2
         maxConcurrentStreams,
-        allowH2
+        allowH2,
+        webSocket
       } = {}) {
-        super();
+        super({ webSocket });
         if (keepAlive !== void 0) {
           throw new InvalidArgumentError("unsupported keepAlive, use pipelining=0 instead");
         }
@@ -7999,8 +8007,8 @@ var require_pool_base = __commonJS({
     var kRemoveClient = /* @__PURE__ */ Symbol("remove client");
     var kStats = /* @__PURE__ */ Symbol("stats");
     var PoolBase = class extends DispatcherBase {
-      constructor() {
-        super();
+      constructor(opts) {
+        super(opts);
         this[kQueue] = new FixedQueue();
         this[kClients] = [];
         this[kQueued] = 0;
@@ -8171,7 +8179,6 @@ var require_pool = __commonJS({
         allowH2,
         ...options
       } = {}) {
-        super();
         if (connections != null && (!Number.isFinite(connections) || connections < 0)) {
           throw new InvalidArgumentError("invalid connections");
         }
@@ -8192,6 +8199,7 @@ var require_pool = __commonJS({
             ...connect
           });
         }
+        super(options);
         this[kInterceptors] = options.interceptors?.Pool && Array.isArray(options.interceptors.Pool) ? options.interceptors.Pool : [];
         this[kConnections] = connections || null;
         this[kUrl] = util.parseOrigin(origin);
@@ -8391,7 +8399,6 @@ var require_agent = __commonJS({
     }
     var Agent = class extends DispatcherBase {
       constructor({ factory = defaultFactory, maxRedirections = 0, connect, ...options } = {}) {
-        super();
         if (typeof factory !== "function") {
           throw new InvalidArgumentError("factory must be a function.");
         }
@@ -8401,6 +8408,7 @@ var require_agent = __commonJS({
         if (!Number.isInteger(maxRedirections) || maxRedirections < 0) {
           throw new InvalidArgumentError("maxRedirections must be a positive number");
         }
+        super(options);
         if (connect && typeof connect !== "function") {
           connect = { ...connect };
         }
@@ -17034,27 +17042,26 @@ var require_permessage_deflate = __commonJS({
     var tail = Buffer.from([0, 0, 255, 255]);
     var kBuffer = /* @__PURE__ */ Symbol("kBuffer");
     var kLength = /* @__PURE__ */ Symbol("kLength");
-    var kDefaultMaxDecompressedSize = 4 * 1024 * 1024;
     var PerMessageDeflate = class {
       /** @type {import('node:zlib').InflateRaw} */
       #inflate;
       #options = {};
-      /** @type {boolean} */
-      #aborted = false;
-      /** @type {Function|null} */
-      #currentCallback = null;
+      #maxPayloadSize = 0;
       /**
        * @param {Map<string, string>} extensions
        */
-      constructor(extensions) {
+      constructor(extensions, options) {
         this.#options.serverNoContextTakeover = extensions.has("server_no_context_takeover");
         this.#options.serverMaxWindowBits = extensions.get("server_max_window_bits");
+        this.#maxPayloadSize = options.maxPayloadSize;
       }
+      /**
+       * Decompress a compressed payload.
+       * @param {Buffer} chunk Compressed data
+       * @param {boolean} fin Final fragment flag
+       * @param {Function} callback Callback function
+       */
       decompress(chunk, fin, callback) {
-        if (this.#aborted) {
-          callback(new MessageSizeExceededError());
-          return;
-        }
         if (!this.#inflate) {
           let windowBits = Z_DEFAULT_WINDOWBITS;
           if (this.#options.serverMaxWindowBits) {
@@ -17073,20 +17080,11 @@ var require_permessage_deflate = __commonJS({
           this.#inflate[kBuffer] = [];
           this.#inflate[kLength] = 0;
           this.#inflate.on("data", (data) => {
-            if (this.#aborted) {
-              return;
-            }
             this.#inflate[kLength] += data.length;
-            if (this.#inflate[kLength] > kDefaultMaxDecompressedSize) {
-              this.#aborted = true;
+            if (this.#maxPayloadSize > 0 && this.#inflate[kLength] > this.#maxPayloadSize) {
+              callback(new MessageSizeExceededError());
               this.#inflate.removeAllListeners();
-              this.#inflate.destroy();
               this.#inflate = null;
-              if (this.#currentCallback) {
-                const cb = this.#currentCallback;
-                this.#currentCallback = null;
-                cb(new MessageSizeExceededError());
-              }
               return;
             }
             this.#inflate[kBuffer].push(data);
@@ -17096,19 +17094,17 @@ var require_permessage_deflate = __commonJS({
             callback(err);
           });
         }
-        this.#currentCallback = callback;
         this.#inflate.write(chunk);
         if (fin) {
           this.#inflate.write(tail);
         }
         this.#inflate.flush(() => {
-          if (this.#aborted || !this.#inflate) {
+          if (!this.#inflate) {
             return;
           }
           const full = Buffer.concat(this.#inflate[kBuffer], this.#inflate[kLength]);
           this.#inflate[kBuffer].length = 0;
           this.#inflate[kLength] = 0;
-          this.#currentCallback = null;
           callback(null, full);
         });
       }
@@ -17139,8 +17135,10 @@ var require_receiver = __commonJS({
     var { WebsocketFrameSend } = require_frame();
     var { closeWebSocketConnection } = require_connection();
     var { PerMessageDeflate } = require_permessage_deflate();
+    var { MessageSizeExceededError } = require_errors();
     var ByteParser = class extends Writable {
       #buffers = [];
+      #fragmentsBytes = 0;
       #byteOffset = 0;
       #loop = false;
       #state = parserStates.INFO;
@@ -17148,16 +17146,20 @@ var require_receiver = __commonJS({
       #fragments = [];
       /** @type {Map<string, PerMessageDeflate>} */
       #extensions;
+      /** @type {number} */
+      #maxPayloadSize;
       /**
        * @param {import('./websocket').WebSocket} ws
        * @param {Map<string, string>|null} extensions
+       * @param {{ maxPayloadSize?: number }} [options]
        */
-      constructor(ws2, extensions) {
+      constructor(ws2, extensions, options = {}) {
         super();
         this.ws = ws2;
         this.#extensions = extensions == null ? /* @__PURE__ */ new Map() : extensions;
+        this.#maxPayloadSize = options.maxPayloadSize ?? 0;
         if (this.#extensions.has("permessage-deflate")) {
-          this.#extensions.set("permessage-deflate", new PerMessageDeflate(extensions));
+          this.#extensions.set("permessage-deflate", new PerMessageDeflate(extensions, options));
         }
       }
       /**
@@ -17169,6 +17171,13 @@ var require_receiver = __commonJS({
         this.#byteOffset += chunk.length;
         this.#loop = true;
         this.run(callback);
+      }
+      #validatePayloadLength() {
+        if (this.#maxPayloadSize > 0 && !isControlFrame(this.#info.opcode) && this.#info.payloadLength > this.#maxPayloadSize) {
+          failWebsocketConnection(this.ws, "Payload size exceeds maximum allowed size");
+          return false;
+        }
+        return true;
       }
       /**
        * Runs whenever a new chunk is received.
@@ -17229,6 +17238,9 @@ var require_receiver = __commonJS({
             if (payloadLength <= 125) {
               this.#info.payloadLength = payloadLength;
               this.#state = parserStates.READ_DATA;
+              if (!this.#validatePayloadLength()) {
+                return;
+              }
             } else if (payloadLength === 126) {
               this.#state = parserStates.PAYLOADLENGTH_16;
             } else if (payloadLength === 127) {
@@ -17249,6 +17261,9 @@ var require_receiver = __commonJS({
             const buffer = this.consume(2);
             this.#info.payloadLength = buffer.readUInt16BE(0);
             this.#state = parserStates.READ_DATA;
+            if (!this.#validatePayloadLength()) {
+              return;
+            }
           } else if (this.#state === parserStates.PAYLOADLENGTH_64) {
             if (this.#byteOffset < 8) {
               return callback();
@@ -17262,6 +17277,9 @@ var require_receiver = __commonJS({
             }
             this.#info.payloadLength = lower;
             this.#state = parserStates.READ_DATA;
+            if (!this.#validatePayloadLength()) {
+              return;
+            }
           } else if (this.#state === parserStates.READ_DATA) {
             if (this.#byteOffset < this.#info.payloadLength) {
               return callback();
@@ -17272,32 +17290,41 @@ var require_receiver = __commonJS({
               this.#state = parserStates.INFO;
             } else {
               if (!this.#info.compressed) {
-                this.#fragments.push(body);
+                this.writeFragments(body);
+                if (this.#maxPayloadSize > 0 && this.#fragmentsBytes > this.#maxPayloadSize) {
+                  failWebsocketConnection(this.ws, new MessageSizeExceededError().message);
+                  return;
+                }
                 if (!this.#info.fragmented && this.#info.fin) {
-                  const fullMessage = Buffer.concat(this.#fragments);
-                  websocketMessageReceived(this.ws, this.#info.binaryType, fullMessage);
-                  this.#fragments.length = 0;
+                  websocketMessageReceived(this.ws, this.#info.binaryType, this.consumeFragments());
                 }
                 this.#state = parserStates.INFO;
               } else {
-                this.#extensions.get("permessage-deflate").decompress(body, this.#info.fin, (error2, data) => {
-                  if (error2) {
-                    failWebsocketConnection(this.ws, error2.message);
-                    return;
-                  }
-                  this.#fragments.push(data);
-                  if (!this.#info.fin) {
-                    this.#state = parserStates.INFO;
+                this.#extensions.get("permessage-deflate").decompress(
+                  body,
+                  this.#info.fin,
+                  (error2, data) => {
+                    if (error2) {
+                      failWebsocketConnection(this.ws, error2.message);
+                      return;
+                    }
+                    this.writeFragments(data);
+                    if (this.#maxPayloadSize > 0 && this.#fragmentsBytes > this.#maxPayloadSize) {
+                      failWebsocketConnection(this.ws, new MessageSizeExceededError().message);
+                      return;
+                    }
+                    if (!this.#info.fin) {
+                      this.#state = parserStates.INFO;
+                      this.#loop = true;
+                      this.run(callback);
+                      return;
+                    }
+                    websocketMessageReceived(this.ws, this.#info.binaryType, this.consumeFragments());
                     this.#loop = true;
+                    this.#state = parserStates.INFO;
                     this.run(callback);
-                    return;
                   }
-                  websocketMessageReceived(this.ws, this.#info.binaryType, Buffer.concat(this.#fragments));
-                  this.#loop = true;
-                  this.#state = parserStates.INFO;
-                  this.#fragments.length = 0;
-                  this.run(callback);
-                });
+                );
                 this.#loop = false;
                 break;
               }
@@ -17339,6 +17366,21 @@ var require_receiver = __commonJS({
         }
         this.#byteOffset -= n7;
         return buffer;
+      }
+      writeFragments(fragment) {
+        this.#fragmentsBytes += fragment.length;
+        this.#fragments.push(fragment);
+      }
+      consumeFragments() {
+        const fragments = this.#fragments;
+        if (fragments.length === 1) {
+          this.#fragmentsBytes = 0;
+          return fragments.shift();
+        }
+        const output = Buffer.concat(fragments, this.#fragmentsBytes);
+        this.#fragments = [];
+        this.#fragmentsBytes = 0;
+        return output;
       }
       parseCloseBody(data) {
         assert(data.length !== 1);
@@ -17777,7 +17819,10 @@ var require_websocket = __commonJS({
        */
       #onConnectionEstablished(response, parsedExtensions) {
         this[kResponse] = response;
-        const parser4 = new ByteParser(this, parsedExtensions);
+        const maxPayloadSize = this[kController]?.dispatcher?.webSocketOptions?.maxPayloadSize;
+        const parser4 = new ByteParser(this, parsedExtensions, {
+          maxPayloadSize
+        });
         parser4.on("drain", onParserDrain);
         parser4.on("error", onParserError.bind(this));
         response.socket.ws = this;
@@ -28636,7 +28681,7 @@ function* U2(e, t2) {
   for (const o2 of e)
     o2.isGlobal === n7 && (yield o2);
 }
-var y = /* @__PURE__ */ new Set([
+var k2 = /* @__PURE__ */ new Set([
   "--add",
   "--edit",
   "--remove-section",
@@ -28666,7 +28711,7 @@ var P2 = /* @__PURE__ */ new Set([
 var E = /* @__PURE__ */ new Set(["get", "get-color", "get-colorbool", "list"]);
 function F2(e, t2) {
   for (const { name: o2 } of U2(e, "task")) {
-    if (y.has(o2))
+    if (k2.has(o2))
       return p(true, t2);
     if (S.has(o2))
       return p(false, t2);
@@ -28725,18 +28770,18 @@ function* O2(e) {
     });
   }
 }
-function $(e, t2, n7) {
+function L2(e, t2, n7) {
   const o2 = {
     read: [],
     write: [...O2(t2)]
   };
-  return e === "config" && D2(
+  return e === "config" && $(
     o2,
     N2(t2),
     F2(t2, n7)
   ), o2;
 }
-function D2(e, t2, n7) {
+function $(e, t2, n7) {
   if (n7 === null)
     return;
   const o2 = A2(t2, n7);
@@ -28748,7 +28793,7 @@ var x2 = {
     //  -c <k=v>    set config key for this invocation
   ])
 };
-var L2 = {
+var D2 = {
   short: new Map([
     ["C", true],
     //  -C <path>   change working directory
@@ -28846,7 +28891,7 @@ function I2(e) {
     long: t2.long
   };
 }
-function C2(e, t2 = L2) {
+function b(e, t2 = D2) {
   if (e.startsWith("--")) {
     const n7 = e.indexOf("=");
     if (n7 > 2)
@@ -28863,15 +28908,15 @@ function C2(e, t2 = L2) {
 function W2(e, t2) {
   const n7 = e.slice(1).split(""), o2 = [];
   for (let s = 0; s < n7.length; s++) {
-    const l = n7[s], r2 = t2.get(l);
-    if (r2 === void 0)
+    const r2 = n7[s], l = t2.get(r2);
+    if (l === void 0)
       return [{ name: e, needsNext: false }];
-    if (r2) {
+    if (l) {
       const a = n7.slice(s + 1).join("");
       if (a && ![...a].every((w) => t2.has(w)))
-        return o2.push({ name: `-${l}`, value: a, needsNext: false }), o2;
+        return o2.push({ name: `-${r2}`, value: a, needsNext: false }), o2;
     }
-    o2.push({ name: `-${l}`, needsNext: r2 });
+    o2.push({ name: `-${r2}`, needsNext: l });
   }
   return o2;
 }
@@ -28880,44 +28925,44 @@ function j2(e, t2 = []) {
   for (; n7 < e.length; ) {
     const o2 = String(e[n7]);
     if (!o2.startsWith("-") || o2.length < 2) break;
-    const s = C2(o2);
-    let l = n7 + 1;
-    for (const r2 of s) {
+    const s = b(o2);
+    let r2 = n7 + 1;
+    for (const l of s) {
       const a = {
-        name: r2.name,
-        value: r2.value,
+        name: l.name,
+        value: l.value,
         absorbedNext: false,
         isGlobal: true
       };
-      r2.needsNext && a.value === void 0 && l < e.length && (a.value = String(e[l]), a.absorbedNext = true, l++), t2.push(a);
+      l.needsNext && a.value === void 0 && r2 < e.length && (a.value = String(e[r2]), a.absorbedNext = true, r2++), t2.push(a);
     }
-    n7 = l;
+    n7 = r2;
   }
   return { flags: t2, taskIndex: n7 };
 }
 function B2(e, t2, n7 = []) {
-  const o2 = I2(t2), s = [], l = [];
-  let r2 = 0;
-  for (; r2 < e.length; ) {
-    const a = e[r2];
+  const o2 = I2(t2), s = [], r2 = [];
+  let l = 0;
+  for (; l < e.length; ) {
+    const a = e[l];
     if (r(a)) {
-      l.push(...o(a)), r2++;
+      r2.push(...o(a)), l++;
       continue;
     }
     const f = String(a);
     if (f === "--") {
-      for (let g = r2 + 1; g < e.length; g++) {
+      for (let g = l + 1; g < e.length; g++) {
         const u = e[g];
-        r(u) ? l.push(...o(u)) : l.push(String(u));
+        r(u) ? r2.push(...o(u)) : r2.push(String(u));
       }
       break;
     }
     if (!f.startsWith("-") || f.length < 2) {
-      s.push(f), r2++;
+      s.push(f), l++;
       continue;
     }
-    const w = C2(f, o2);
-    let d = r2 + 1;
+    const w = b(f, o2);
+    let d = l + 1;
     for (const g of w) {
       const u = {
         name: g.name,
@@ -28927,9 +28972,9 @@ function B2(e, t2, n7 = []) {
       };
       g.needsNext && u.value === void 0 && d < e.length && !r(e[d]) && (u.value = String(e[d]), u.absorbedNext = true, d++), n7.push(u);
     }
-    r2 = d;
+    l = d;
   }
-  return { flags: n7, positionals: s, pathspecs: l };
+  return { flags: n7, positionals: s, pathspecs: r2 };
 }
 function* V2({
   write: e
@@ -28942,8 +28987,8 @@ function* V2({
 }
 function c2(e, t2, n7 = String(e)) {
   const o2 = typeof e == "string" ? new RegExp(`\\s*${e.toLowerCase()}`) : e;
-  return function(l) {
-    if (o2.test(l))
+  return function(r2) {
+    if (o2.test(r2))
       return {
         category: t2,
         message: `Configuring ${n7} is not permitted without enabling ${t2}`
@@ -28987,12 +29032,12 @@ function* K2(e, t2) {
     }
 }
 function h(e, t2, n7, o2 = String(t2)) {
-  const s = typeof t2 == "string" ? new RegExp(`\\s*${t2.toLowerCase()}`) : t2, l = `Use of ${e ? `${e} with option ` : ""}${o2} is not permitted without enabling ${n7}`;
+  const s = typeof t2 == "string" ? new RegExp(`\\s*${t2.toLowerCase()}`) : t2, r2 = `Use of ${e ? `${e} with option ` : ""}${o2} is not permitted without enabling ${n7}`;
   return function(a, f) {
     if ((!e || a === e) && s.test(f))
       return {
         category: n7,
-        message: l
+        message: r2
       };
   };
 }
@@ -29008,23 +29053,28 @@ var H2 = [
   h("push", "--exec", "allowUnsafePack"),
   h(null, "--template", "allowUnsafeTemplateDir")
 ];
-function b(e, t2, n7) {
+function C2(e, t2, n7) {
   return [...K2(e, t2), ...V2(n7)];
 }
 function Y2(...e) {
-  const { flags: t2, taskIndex: n7 } = j2(e), o2 = n7 < e.length ? String(e[n7]).toLowerCase() : null, s = o2 !== null ? e.slice(n7 + 1) : [], { positionals: l, pathspecs: r2 } = B2(s, o2, t2), a = $(o2, t2, l);
+  const { flags: t2, taskIndex: n7 } = j2(e), o2 = n7 < e.length ? String(e[n7]).toLowerCase() : null, s = o2 !== null ? e.slice(n7 + 1) : [], { positionals: r2, pathspecs: l } = B2(s, o2, t2), a = L2(o2, t2, r2);
   return {
     task: o2,
-    flags: t2.map(z),
-    paths: r2,
+    flags: t2.map(J),
+    paths: l,
     config: a,
-    vulnerabilities: b(o2, t2, a)
+    vulnerabilities: z(C2(o2, t2, a))
   };
 }
-function z({ value: e, name: t2 }) {
+function z(e) {
+  return Object.defineProperty(e, "vulnerabilities", {
+    value: e
+  });
+}
+function J({ value: e, name: t2 }) {
   return e !== void 0 ? { name: t2, value: e } : { name: t2 };
 }
-var _2 = {
+var y = {
   editor: "allowUnsafeEditor",
   git_askpass: "allowUnsafeAskPass",
   git_config_global: "allowUnsafeConfigPaths",
@@ -29044,49 +29094,49 @@ var _2 = {
   prefix: "allowUnsafeConfigPaths",
   ssh_askpass: "allowUnsafeAskPass"
 };
-function* J(e) {
+function* Q2(e) {
   const t2 = parseInt(e.git_config_count ?? "0", 10);
   for (let n7 = 0; n7 < t2; n7++) {
     const o2 = e[`git_config_key_${n7}`], s = e[`git_config_value_${n7}`];
     o2 !== void 0 && (yield { key: o2.toLowerCase().trim(), value: s, scope: "env" });
   }
 }
-function* Q2(e) {
+function* X2(e) {
   for (const t2 of Object.keys(e))
-    if (k2(t2)) {
-      const n7 = _2[t2];
+    if (_2(t2)) {
+      const n7 = y[t2];
       yield {
         category: n7,
         message: `Use of "${t2.toUpperCase()}" is not permitted without enabling ${n7}`
       };
     }
 }
-function k2(e) {
-  return Object.hasOwn(_2, e);
+function _2(e) {
+  return Object.hasOwn(y, e);
 }
-function X2(e) {
+function Z(e) {
   const t2 = {};
   for (const [n7, o2] of Object.entries(e)) {
     const s = n7.toLowerCase().trim();
-    (k2(s) || s.startsWith("git")) && (t2[s] = String(o2));
+    (_2(s) || s.startsWith("git")) && (t2[s] = String(o2));
   }
   return t2;
 }
-function Z(e) {
-  const t2 = X2(e), n7 = {
+function ee2(e) {
+  const t2 = Z(e), n7 = {
     read: [],
-    write: [...J(t2)]
+    write: [...Q2(t2)]
   }, o2 = [
-    ...Q2(t2),
-    ...b(null, [], n7)
+    ...X2(t2),
+    ...C2(null, [], n7)
   ];
   return {
     config: n7,
     vulnerabilities: o2
   };
 }
-function te2(e, t2) {
-  return [...Y2(...e).vulnerabilities, ...Z(t2).vulnerabilities];
+function ne2(e, t2) {
+  return [...Y2(...e).vulnerabilities, ...ee2(t2).vulnerabilities];
 }
 
 // node_modules/simple-git/dist/esm/index.js
@@ -33236,7 +33286,7 @@ function blockUnsafeOperationsPlugin(options = {}) {
   return {
     type: "spawn.args",
     action(args, { env }) {
-      for (const vulnerability of te2(args, env)) {
+      for (const vulnerability of ne2(args, env)) {
         if (options[vulnerability.category] !== true) {
           throw new GitPluginError(void 0, "unsafe", vulnerability.message);
         }
