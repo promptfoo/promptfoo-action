@@ -642,7 +642,7 @@ describe('GitHub Action Main', () => {
       mockExec.exec.mockImplementation(
         (command: string, args?: readonly string[]) => {
           if (command.includes('promptfoo') && args?.includes('eval')) {
-            throw new Error('Promptfoo evaluation failed');
+            return Promise.resolve(100);
           }
           return Promise.resolve(0);
         },
@@ -662,7 +662,7 @@ describe('GitHub Action Main', () => {
 
       // Should still fail the action after posting the comment
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('Promptfoo evaluation failed'),
+        expect.stringContaining('Promptfoo evaluation failed (exit code 100)'),
       );
     });
 
@@ -1233,6 +1233,50 @@ describe('repeat feature', () => {
       expect.stringContaining('repeat must be a positive integer'),
     );
   });
+
+  test('should fail when repeat is fractional', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '2.5',
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('repeat must be a positive integer'),
+    );
+  });
+
+  test('should fail when repeat has trailing text', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '2abc',
+      };
+      return inputs[name] || '';
+    });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('repeat must be a positive integer'),
+    );
+  });
 });
 
 describe('repeat-fail-on-threshold feature', () => {
@@ -1325,7 +1369,7 @@ describe('repeat-fail-on-threshold feature', () => {
       expect.stringContaining('1 test(s) failed the repeat threshold (66%)'),
     );
     expect(mockCore.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('Test B: 1/3 passed (33%)'),
+      expect.stringContaining('Test B [prompt 0]: 1/3 passed (33%)'),
     );
   });
 
@@ -1367,6 +1411,71 @@ describe('repeat-fail-on-threshold feature', () => {
 
     expect(mockCore.setFailed).toHaveBeenCalledWith(
       expect.stringContaining('1 test(s) failed the repeat threshold (50%)'),
+    );
+  });
+
+  test('should not merge distinct tests with the same description', async () => {
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        repeat: '2',
+        'repeat-fail-on-threshold': '50',
+      };
+      return inputs[name] || '';
+    });
+
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [
+            {
+              testIdx: 0,
+              promptIdx: 0,
+              success: false,
+              description: 'Shared label',
+              vars: { q: 'hello' },
+            },
+            {
+              testIdx: 1,
+              promptIdx: 0,
+              success: false,
+              description: 'Shared label',
+              vars: { q: 'hello' },
+            },
+            {
+              testIdx: 2,
+              promptIdx: 0,
+              success: true,
+              description: 'Shared label',
+              vars: { q: 'goodbye' },
+            },
+            {
+              testIdx: 3,
+              promptIdx: 0,
+              success: true,
+              description: 'Shared label',
+              vars: { q: 'goodbye' },
+            },
+          ],
+          stats: { successes: 2, failures: 2 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Shared label (vars={"q":"hello"})'),
+    );
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('0/2 passed'),
     );
   });
 
@@ -1504,12 +1613,12 @@ describe('threshold suppresses exec error', () => {
     vi.restoreAllMocks();
   });
 
-  test('should not fail when thresholds are configured and pass despite exec error', async () => {
+  test('should not fail when thresholds pass after the failed-test exit code', async () => {
     // Promptfoo exits non-zero when any test fails
     mockExec.exec.mockImplementation(
       (command: string, args?: readonly string[]) => {
         if (command.includes('promptfoo') && args?.includes('eval')) {
-          throw new Error('exit code 100');
+          return Promise.resolve(100);
         }
         return Promise.resolve(0);
       },
@@ -1545,8 +1654,48 @@ describe('threshold suppresses exec error', () => {
     expect(mockCore.setFailed).not.toHaveBeenCalled();
     expect(mockCore.info).toHaveBeenCalledWith(
       expect.stringContaining(
-        'Promptfoo exited with a non-zero code (some tests failed), but all configured thresholds passed.',
+        'Promptfoo exited with test-failure code 100, but all configured thresholds passed.',
       ),
+    );
+  });
+
+  test('should not suppress hard failures even when thresholds are configured', async () => {
+    mockExec.exec.mockImplementation(
+      (command: string, args?: readonly string[]) => {
+        if (command.includes('promptfoo') && args?.includes('eval')) {
+          return Promise.resolve(1);
+        }
+        return Promise.resolve(0);
+      },
+    );
+
+    mockCore.getInput.mockImplementation((name: string) => {
+      const inputs: Record<string, string> = {
+        'github-token': 'mock-github-token',
+        config: 'promptfooconfig.yaml',
+        prompts: 'prompts/*.txt',
+        'working-directory': '',
+        'cache-path': '',
+        'promptfoo-version': 'latest',
+        'env-files': '',
+        'fail-on-threshold': '80',
+      };
+      return inputs[name] || '';
+    });
+
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          stats: { successes: 9, failures: 1 },
+        },
+        shareableUrl: 'https://example.com/results',
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Promptfoo exited with unexpected code 1'),
     );
   });
 
@@ -1554,7 +1703,7 @@ describe('threshold suppresses exec error', () => {
     mockExec.exec.mockImplementation(
       (command: string, args?: readonly string[]) => {
         if (command.includes('promptfoo') && args?.includes('eval')) {
-          throw new Error('exit code 100');
+          return Promise.resolve(100);
         }
         return Promise.resolve(0);
       },

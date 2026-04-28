@@ -22,6 +22,7 @@ import {
 } from './utils/errors';
 
 const gitInterface = simpleGit();
+const RESERVED_FAILED_TEST_EXIT_CODES = new Set([0, 1, 2, 130]);
 
 /**
  * Validates git refs to prevent option injection attacks.
@@ -43,6 +44,95 @@ function validateGitRef(ref: string): void {
       'Git refs should not start with dashes to prevent option injection',
     );
   }
+}
+
+function parseOptionalPositiveInt(
+  raw: string,
+  name: string,
+): number | undefined {
+  if (!raw) {
+    return undefined;
+  }
+
+  if (!/^[1-9]\d*$/.test(raw)) {
+    throw new PromptfooActionError(
+      `${name} must be a positive integer`,
+      ErrorCodes.INVALID_REPEAT,
+      `Please provide a whole number, e.g., 3 to run each test 3 times`,
+    );
+  }
+
+  return Number(raw);
+}
+
+function normalizeFailedTestExitCode(raw: string | undefined): number {
+  if (!raw) {
+    return 100;
+  }
+
+  const parsed = Number(raw);
+  if (
+    Number.isInteger(parsed) &&
+    parsed >= 3 &&
+    parsed <= 255 &&
+    !RESERVED_FAILED_TEST_EXIT_CODES.has(parsed)
+  ) {
+    return parsed;
+  }
+
+  core.warning(
+    `PROMPTFOO_FAILED_TEST_EXIT_CODE=${raw} is reserved or invalid. Using default (100).`,
+  );
+  return 100;
+}
+
+function normalizeValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(normalizeValue);
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entryValue]) => [key, normalizeValue(entryValue)]),
+    );
+  }
+
+  return value;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(normalizeValue(value));
+}
+
+function getRepeatGroupKey(result: EvaluateResult): string {
+  const providerId = result.provider?.id || '';
+  const fingerprint = stableStringify(
+    result.testCase || {
+      description: result.description,
+      vars: result.vars || {},
+    },
+  );
+
+  return `test:${fingerprint}:prompt:${result.promptIdx}:provider:${providerId}`;
+}
+
+function getRepeatGroupLabel(result: EvaluateResult): string {
+  const desc = result.description || result.testCase?.description;
+  const vars = result.vars || result.testCase?.vars || {};
+  const varsSummary = stableStringify(vars);
+  const providerSuffix = result.provider?.id ? `, ${result.provider.id}` : '';
+  const promptSuffix = ` [prompt ${result.promptIdx}${providerSuffix}]`;
+
+  if (desc) {
+    return varsSummary === '{}'
+      ? `${desc}${promptSuffix}`
+      : `${desc} (vars=${varsSummary})${promptSuffix}`;
+  }
+
+  return `test(vars=${varsSummary})${promptSuffix}`;
 }
 
 export async function run(): Promise<void> {
@@ -142,9 +232,7 @@ export async function run(): Promise<void> {
       required: false,
     });
     const repeatInput: string = core.getInput('repeat', { required: false });
-    const repeat: number | undefined = repeatInput
-      ? parseInt(repeatInput, 10)
-      : undefined;
+    const repeat = parseOptionalPositiveInt(repeatInput, 'repeat');
     const repeatFailOnThresholdInput: string = core.getInput(
       'repeat-fail-on-threshold',
       { required: false },
@@ -487,7 +575,10 @@ export async function run(): Promise<void> {
     await logCacheMetrics(cacheDir);
     core.endGroup();
 
-    const outputFile = path.join(workingDirectory, 'output.json');
+    const outputFile = path.join(
+      workingDirectory,
+      `output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`,
+    );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
     if (!useConfigPrompts && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
@@ -560,20 +651,25 @@ export async function run(): Promise<void> {
       ...(mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {}),
       ...(groqApiKey ? { GROQ_API_KEY: groqApiKey } : {}),
     };
-    let errorToThrow: Error | undefined;
-    try {
-      await exec.exec(`npx promptfoo@${version}`, promptfooArgs, {
+    const failedTestExitCode = normalizeFailedTestExitCode(
+      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE,
+    );
+    const exitCode = await exec.exec(
+      `npx promptfoo@${version}`,
+      promptfooArgs,
+      {
         env,
         cwd: workingDirectory,
-      });
-    } catch (error) {
-      // Capture the error but don't throw yet - we want to post PR comments first
-      // This allows showing test results even when some tests fail
-      // See: https://github.com/promptfoo/promptfoo-action/issues/786
-      errorToThrow = new PromptfooActionError(
-        `Promptfoo evaluation failed: ${error instanceof Error ? error.message : String(error)}`,
+        ignoreReturnCode: true,
+      },
+    );
+    const isTestFailureExit = exitCode === failedTestExitCode;
+
+    if (exitCode !== 0 && !isTestFailureExit) {
+      throw new PromptfooActionError(
+        `Promptfoo exited with unexpected code ${exitCode}`,
         ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
-        'Check that your promptfoo configuration is valid and all required API keys are set',
+        'This indicates a configuration or runtime error, not just failed tests. Check the logs above for details.',
       );
     }
 
@@ -584,16 +680,24 @@ export async function run(): Promise<void> {
       const outputContent = fs.readFileSync(outputFile, 'utf8');
       output = JSON.parse(outputContent) as OutputFile;
     } catch (error) {
-      // If we can't read output and we already have an error, throw the original error
-      // If we can't read output but eval succeeded, throw the output read error
-      if (errorToThrow) {
-        throw errorToThrow;
+      if (isTestFailureExit) {
+        throw new PromptfooActionError(
+          `Promptfoo tests failed (exit code ${exitCode}) but no output was generated`,
+          ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+          'Check that your promptfoo configuration is valid and all required API keys are set',
+        );
       }
       throw new PromptfooActionError(
         `Failed to read or parse output file: ${error instanceof Error ? error.message : String(error)}`,
         ErrorCodes.INVALID_OUTPUT_FILE,
         'This usually happens when promptfoo fails to generate valid output. Check the logs above for more details',
       );
+    }
+
+    try {
+      fs.unlinkSync(outputFile);
+    } catch {
+      // best-effort cleanup
     }
 
     // Log final cache metrics and create manifest
@@ -711,23 +815,20 @@ export async function run(): Promise<void> {
         );
       }
 
-      // Group results by test identity to handle --repeat correctly.
-      // With --repeat N, each test runs N times with different testIdx values,
-      // so we group by (description, promptIdx) or (vars, promptIdx) to
-      // identify unique test cases across repeats.
+      // Group results by the resolved test identity to handle --repeat correctly.
+      // With --repeat N, each run gets a different testIdx, so testIdx cannot
+      // be part of the grouping key. Descriptions are not guaranteed unique, so
+      // include vars/testCase, prompt, and provider identity too.
       const groups = new Map<
         string,
-        { successes: number; total: number; description?: string }
+        { successes: number; total: number; label: string }
       >();
       for (const result of results) {
-        const desc = result.description || result.testCase?.description;
-        const key = desc
-          ? `desc:${desc}:${result.promptIdx}`
-          : `vars:${JSON.stringify(result.vars || {})}:${result.promptIdx}`;
+        const key = getRepeatGroupKey(result);
         const group = groups.get(key) || {
           successes: 0,
           total: 0,
-          description: desc,
+          label: getRepeatGroupLabel(result),
         };
         group.total++;
         if (result.success) {
@@ -736,13 +837,30 @@ export async function run(): Promise<void> {
         groups.set(key, group);
       }
 
+      if (repeat !== undefined && repeat > 1) {
+        const groupingErrors: string[] = [];
+        for (const [, group] of groups) {
+          if (group.total !== repeat) {
+            groupingErrors.push(
+              `${group.label}: ${group.total} result(s), expected ${repeat}`,
+            );
+          }
+        }
+        if (groupingErrors.length > 0) {
+          throw new PromptfooActionError(
+            `Cannot reliably check repeat threshold because ${groupingErrors.length} test group(s) have unexpected result counts:\n${groupingErrors.join('\n')}`,
+            ErrorCodes.REPEAT_THRESHOLD_NOT_MET,
+            'Ensure repeated runs complete and give duplicate tests unique vars or descriptions',
+          );
+        }
+      }
+
       const failedTests: string[] = [];
-      for (const [key, group] of groups) {
+      for (const [, group] of groups) {
         const passRate = (group.successes / group.total) * 100;
         if (passRate < repeatFailOnThreshold) {
-          const label = group.description || `test ${key}`;
           failedTests.push(
-            `${label}: ${group.successes}/${group.total} passed (${passRate.toFixed(0)}%)`,
+            `${group.label}: ${group.successes}/${group.total} passed (${passRate.toFixed(0)}%)`,
           );
         }
       }
@@ -764,15 +882,19 @@ export async function run(): Promise<void> {
     // the user opted into tolerating some test failures — don't fail the action.
     // Promptfoo exits non-zero when any test fails, but that's expected when
     // using thresholds to allow partial failures.
-    if (errorToThrow) {
+    if (isTestFailureExit) {
       const hasThresholds =
         failOnThreshold !== undefined || repeatFailOnThreshold !== undefined;
       if (hasThresholds) {
         core.info(
-          'Promptfoo exited with a non-zero code (some tests failed), but all configured thresholds passed.',
+          `Promptfoo exited with test-failure code ${exitCode}, but all configured thresholds passed.`,
         );
       } else {
-        throw errorToThrow;
+        throw new PromptfooActionError(
+          `Promptfoo evaluation failed (exit code ${exitCode})`,
+          ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+          'Some tests failed. Check the eval results for details.',
+        );
       }
     }
   } catch (error) {
