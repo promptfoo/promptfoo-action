@@ -1,11 +1,11 @@
 {
   "name": "promptfoo-action",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "GitHub Action for evaluating LLM outputs with promptfoo",
   "author": "Ian Webster",
   "license": "MIT",
   "main": "lib/main.js",
-  "packageManager": "npm@11.11.0",
+  "packageManager": "npm@11.13.0",
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
@@ -38,17 +38,20 @@
     "glob": "^13.0.6",
     "simple-git": "^3.32.1"
   },
+  "overrides": {
+    "@anthropic-ai/sdk": "^0.91.0"
+  },
   "devDependencies": {
-    "@biomejs/biome": "2.4.6",
+    "@biomejs/biome": "2.4.13",
     "@swc/core": "^1.15.11",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.3.0",
     "@vercel/ncc": "^0.38.4",
     "@vitest/coverage-v8": "^4.0.18",
-    "esbuild": "^0.27.3",
+    "esbuild": "^0.28.0",
     "js-yaml": "^4.1.1",
-    "promptfoo": "0.121.1",
-    "typescript": "^5.9.3",
+    "promptfoo": "0.121.9",
+    "typescript": "^6.0.0",
     "vitest": "^4.0.18"
   },
   "engines": {
