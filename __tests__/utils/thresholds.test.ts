@@ -142,6 +142,54 @@ describe('groupResultsByTest', () => {
     expect(labels).toContain('Test A [anthropic:claude]');
   });
 
+  test('splits indistinguishable same-id provider repeats by occurrence', () => {
+    const results = [
+      makeResult({
+        testIdx: 0,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+      makeResult({
+        testIdx: 0,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+      makeResult({
+        testIdx: 1,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+      makeResult({
+        testIdx: 1,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+    ];
+
+    const groups = groupResultsByTest(results, 2);
+    expect(groups.size).toBe(2);
+    expect(Array.from(groups.values())).toEqual([
+      {
+        successes: 2,
+        total: 2,
+        label: 'Test A [echo] (provider occurrence 1)',
+      },
+      {
+        successes: 2,
+        total: 2,
+        label: 'Test A [echo] (provider occurrence 2)',
+      },
+    ]);
+  });
+
   test('includes promptIdx in labels for multi-prompt configs', () => {
     const results = [
       makeResult({ promptIdx: 0, success: true, description: 'Test A' }),
@@ -259,6 +307,88 @@ describe('evaluateRepeatThreshold', () => {
     expect(passed).toBe(true);
     expect(summary.groupingErrors).toHaveLength(0);
     expect(summary.totalGroups).toBe(2);
+  });
+
+  test('passes all-successful same-id provider occurrences', () => {
+    const results = [
+      makeResult({
+        testIdx: 0,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+      makeResult({
+        testIdx: 0,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+      makeResult({
+        testIdx: 1,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+      makeResult({
+        testIdx: 1,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+    ];
+
+    const { passed, summary } = evaluateRepeatThreshold(results, 1, 2);
+    expect(passed).toBe(true);
+    expect(summary.groupingErrors).toHaveLength(0);
+    expect(summary.totalGroups).toBe(2);
+  });
+
+  test('fails same-id provider occurrence below minimum', () => {
+    const results = [
+      makeResult({
+        testIdx: 0,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+      makeResult({
+        testIdx: 0,
+        promptIdx: 1,
+        success: false,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+      makeResult({
+        testIdx: 1,
+        promptIdx: 1,
+        success: true,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+      makeResult({
+        testIdx: 1,
+        promptIdx: 1,
+        success: false,
+        description: 'Test A',
+        provider: { id: 'echo', label: '' },
+      }),
+    ];
+
+    const { passed, summary } = evaluateRepeatThreshold(results, 1, 2);
+    expect(passed).toBe(false);
+    expect(summary.groupingErrors).toHaveLength(0);
+    expect(summary.failures).toEqual([
+      {
+        label: 'Test A [echo] (provider occurrence 2)',
+        passed: 0,
+        total: 2,
+      },
+    ]);
   });
 
   test('handles empty results', () => {

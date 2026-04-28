@@ -828,6 +828,7 @@ export async function run(): Promise<void> {
     }
 
     // Check if we should fail based on threshold
+    let suiteThresholdPassed = false;
     if (failOnThreshold !== undefined) {
       const successRate = calculateSuccessRate(output.results.stats);
 
@@ -852,10 +853,11 @@ export async function run(): Promise<void> {
       core.info(
         `Suite threshold passed: ${successRate.toFixed(2)}% >= ${failOnThreshold}%`,
       );
+      suiteThresholdPassed = true;
     }
 
-    // Preserve promptfoo's own explicit pass-rate threshold when repeat-based
-    // suppression is enabled in this action.
+    // Preserve promptfoo's own explicit pass-rate threshold when this action
+    // suppresses Promptfoo's default failed-test exit code.
     if (
       promptfooPassRateThreshold !== undefined &&
       promptfooSuiteSuccessRate !== undefined &&
@@ -897,13 +899,21 @@ export async function run(): Promise<void> {
     }
 
     // Handle the failed-test exit code.
-    // When repeat-min-pass is configured, the user explicitly opts into tolerating
-    // some test failures — suppress the test-failure exit if the repeat check passed.
-    // We do NOT suppress for fail-on-threshold alone to preserve backward compat.
+    // When thresholds are configured, the user explicitly opts into tolerating
+    // some test failures. Suppress only Promptfoo's test-failure exit after the
+    // configured action-level thresholds have passed.
     if (isTestFailureExit) {
-      if (repeatMinPass !== undefined && repeatCheckResult?.passed) {
+      const repeatThresholdPassed =
+        repeatMinPass !== undefined && repeatCheckResult?.passed;
+      if (suiteThresholdPassed || repeatThresholdPassed) {
+        const passedThresholds = [
+          suiteThresholdPassed ? 'suite threshold' : undefined,
+          repeatThresholdPassed ? 'repeat minimum' : undefined,
+        ].filter(Boolean);
         core.info(
-          `Promptfoo exited with test-failure code ${exitCode}, but all repeated tests met the minimum pass count.`,
+          `Promptfoo exited with test-failure code ${exitCode}, but ${passedThresholds.join(
+            ' and ',
+          )} passed.`,
         );
       } else {
         throw new PromptfooActionError(

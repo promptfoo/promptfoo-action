@@ -36699,29 +36699,79 @@ function disambiguateLabels(groups) {
     }
   }
 }
-function groupResultsByTest(results) {
+function groupResultsByTest(results, repeatCount) {
   const hasMultiplePrompts = new Set(results.map((r2) => r2.promptIdx)).size > 1;
-  const groups = /* @__PURE__ */ new Map();
+  const pendingGroups = /* @__PURE__ */ new Map();
   for (const result of results) {
     const key = buildGroupKey(result);
     const { label, disambiguator } = buildGroupLabel(
       result,
       hasMultiplePrompts
     );
-    const group = groups.get(key) || {
-      successes: 0,
-      total: 0,
+    const pending = pendingGroups.get(key) || [];
+    pending.push({
+      result,
       label,
       ...disambiguator ? { disambiguator } : {}
-    };
-    group.total++;
-    if (result.success) {
-      group.successes++;
+    });
+    pendingGroups.set(key, pending);
+  }
+  const groups = /* @__PURE__ */ new Map();
+  for (const [key, pending] of pendingGroups) {
+    const splitCount = getIndistinguishableProviderSplitCount(
+      pending,
+      repeatCount
+    );
+    if (splitCount === void 0) {
+      for (const item of pending) {
+        addPendingResult(groups, key, item);
+      }
+      continue;
     }
-    groups.set(key, group);
+    const occurrencesByTestIdx = /* @__PURE__ */ new Map();
+    for (const item of pending) {
+      const occurrence = occurrencesByTestIdx.get(item.result.testIdx) || 0;
+      occurrencesByTestIdx.set(item.result.testIdx, occurrence + 1);
+      addPendingResult(groups, `${key}:provider-occurrence:${occurrence}`, {
+        ...item,
+        label: `${item.label} (provider occurrence ${occurrence + 1})`
+      });
+    }
   }
   disambiguateLabels(groups);
   return groups;
+}
+function getIndistinguishableProviderSplitCount(pending, repeatCount) {
+  if (repeatCount === void 0 || pending.length <= repeatCount || pending.length % repeatCount !== 0) {
+    return void 0;
+  }
+  const splitCount = pending.length / repeatCount;
+  const countsByTestIdx = /* @__PURE__ */ new Map();
+  for (const item of pending) {
+    countsByTestIdx.set(
+      item.result.testIdx,
+      (countsByTestIdx.get(item.result.testIdx) || 0) + 1
+    );
+  }
+  if (countsByTestIdx.size !== repeatCount) {
+    return void 0;
+  }
+  return Array.from(countsByTestIdx.values()).every(
+    (count) => count === splitCount
+  ) ? splitCount : void 0;
+}
+function addPendingResult(groups, key, item) {
+  const group = groups.get(key) || {
+    successes: 0,
+    total: 0,
+    label: item.label,
+    ...item.disambiguator ? { disambiguator: item.disambiguator } : {}
+  };
+  group.total++;
+  if (item.result.success) {
+    group.successes++;
+  }
+  groups.set(key, group);
 }
 function validateGroups(groups, repeatCount) {
   const errors = [];
@@ -36745,7 +36795,7 @@ function validateGroups(groups, repeatCount) {
   return errors;
 }
 function evaluateRepeatThreshold(results, minPass, repeatCount) {
-  const groups = groupResultsByTest(results);
+  const groups = groupResultsByTest(results, repeatCount);
   const groupingErrors = validateGroups(groups, repeatCount);
   if (groupingErrors.length > 0) {
     for (const ge2 of groupingErrors) {
@@ -37441,6 +37491,7 @@ async function run() {
         info(`View results: ${output.shareableUrl}`);
       }
     }
+    let suiteThresholdPassed = false;
     if (failOnThreshold !== void 0) {
       const successRate = calculateSuccessRate(output.results.stats);
       if (successRate === void 0) {
@@ -37462,6 +37513,7 @@ async function run() {
       info(
         `Suite threshold passed: ${successRate.toFixed(2)}% >= ${failOnThreshold}%`
       );
+      suiteThresholdPassed = true;
     }
     if (promptfooPassRateThreshold !== void 0 && promptfooSuiteSuccessRate !== void 0 && promptfooSuiteSuccessRate < promptfooPassRateThreshold) {
       throw new PromptfooActionError(
@@ -37493,9 +37545,16 @@ async function run() {
       }
     }
     if (isTestFailureExit) {
-      if (repeatMinPass !== void 0 && repeatCheckResult?.passed) {
+      const repeatThresholdPassed = repeatMinPass !== void 0 && repeatCheckResult?.passed;
+      if (suiteThresholdPassed || repeatThresholdPassed) {
+        const passedThresholds = [
+          suiteThresholdPassed ? "suite threshold" : void 0,
+          repeatThresholdPassed ? "repeat minimum" : void 0
+        ].filter(Boolean);
         info(
-          `Promptfoo exited with test-failure code ${exitCode}, but all repeated tests met the minimum pass count.`
+          `Promptfoo exited with test-failure code ${exitCode}, but ${passedThresholds.join(
+            " and "
+          )} passed.`
         );
       } else {
         throw new PromptfooActionError(

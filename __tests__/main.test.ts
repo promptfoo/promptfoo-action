@@ -1542,8 +1542,8 @@ describe('exec error handling with repeat-min-pass', () => {
     );
   });
 
-  test('should NOT suppress exec error when only fail-on-threshold is configured', async () => {
-    // Test-failure exit code 100 — but fail-on-threshold alone does not suppress
+  test('should suppress test-failure exit when fail-on-threshold passes', async () => {
+    // Test-failure exit code 100 — fail-on-threshold permits partial failures
     mockExec.exec.mockResolvedValue(100);
 
     withInputs({ 'fail-on-threshold': '80' });
@@ -1560,9 +1560,9 @@ describe('exec error handling with repeat-min-pass', () => {
 
     await run();
 
-    // Should STILL fail — fail-on-threshold does not suppress exec errors
-    expect(mockCore.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('Promptfoo evaluation failed'),
+    expect(mockCore.setFailed).not.toHaveBeenCalled();
+    expect(mockCore.info).toHaveBeenCalledWith(
+      expect.stringContaining('suite threshold passed'),
     );
   });
 

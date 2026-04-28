@@ -29,6 +29,12 @@ export interface RepeatSummary {
   repeatCount: number;
 }
 
+interface PendingResult {
+  result: EvaluateResult;
+  label: string;
+  disambiguator?: string;
+}
+
 function normalizeValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(normalizeValue);
@@ -150,33 +156,107 @@ function disambiguateLabels(groups: Map<string, TestGroup>): void {
 
 export function groupResultsByTest(
   results: EvaluateResult[],
+  repeatCount?: number,
 ): Map<string, TestGroup> {
   // Detect multi-prompt configs so we can include promptIdx in labels
   const hasMultiplePrompts = new Set(results.map((r) => r.promptIdx)).size > 1;
 
-  const groups = new Map<string, TestGroup>();
+  const pendingGroups = new Map<string, PendingResult[]>();
   for (const result of results) {
     const key = buildGroupKey(result);
     const { label, disambiguator } = buildGroupLabel(
       result,
       hasMultiplePrompts,
     );
-    const group = groups.get(key) || {
-      successes: 0,
-      total: 0,
+    const pending = pendingGroups.get(key) || [];
+    pending.push({
+      result,
       label,
       ...(disambiguator ? { disambiguator } : {}),
-    };
-    group.total++;
-    if (result.success) {
-      group.successes++;
+    });
+    pendingGroups.set(key, pending);
+  }
+
+  const groups = new Map<string, TestGroup>();
+  for (const [key, pending] of pendingGroups) {
+    const splitCount = getIndistinguishableProviderSplitCount(
+      pending,
+      repeatCount,
+    );
+
+    if (splitCount === undefined) {
+      for (const item of pending) {
+        addPendingResult(groups, key, item);
+      }
+      continue;
     }
-    groups.set(key, group);
+
+    // Promptfoo does not include provider config/index in EvaluateResult. When
+    // same-id providers collapse into one key, split by per-repeat occurrence.
+    const occurrencesByTestIdx = new Map<number, number>();
+    for (const item of pending) {
+      const occurrence = occurrencesByTestIdx.get(item.result.testIdx) || 0;
+      occurrencesByTestIdx.set(item.result.testIdx, occurrence + 1);
+      addPendingResult(groups, `${key}:provider-occurrence:${occurrence}`, {
+        ...item,
+        label: `${item.label} (provider occurrence ${occurrence + 1})`,
+      });
+    }
   }
 
   disambiguateLabels(groups);
 
   return groups;
+}
+
+function getIndistinguishableProviderSplitCount(
+  pending: PendingResult[],
+  repeatCount: number | undefined,
+): number | undefined {
+  if (
+    repeatCount === undefined ||
+    pending.length <= repeatCount ||
+    pending.length % repeatCount !== 0
+  ) {
+    return undefined;
+  }
+
+  const splitCount = pending.length / repeatCount;
+  const countsByTestIdx = new Map<number, number>();
+  for (const item of pending) {
+    countsByTestIdx.set(
+      item.result.testIdx,
+      (countsByTestIdx.get(item.result.testIdx) || 0) + 1,
+    );
+  }
+
+  if (countsByTestIdx.size !== repeatCount) {
+    return undefined;
+  }
+
+  return Array.from(countsByTestIdx.values()).every(
+    (count) => count === splitCount,
+  )
+    ? splitCount
+    : undefined;
+}
+
+function addPendingResult(
+  groups: Map<string, TestGroup>,
+  key: string,
+  item: PendingResult,
+): void {
+  const group = groups.get(key) || {
+    successes: 0,
+    total: 0,
+    label: item.label,
+    ...(item.disambiguator ? { disambiguator: item.disambiguator } : {}),
+  };
+  group.total++;
+  if (item.result.success) {
+    group.successes++;
+  }
+  groups.set(key, group);
 }
 
 export function validateGroups(
@@ -209,7 +289,7 @@ export function evaluateRepeatThreshold(
   minPass: number,
   repeatCount: number,
 ): { passed: boolean; summary: RepeatSummary } {
-  const groups = groupResultsByTest(results);
+  const groups = groupResultsByTest(results, repeatCount);
   const groupingErrors = validateGroups(groups, repeatCount);
 
   // If any group has the wrong number of results, the threshold check
