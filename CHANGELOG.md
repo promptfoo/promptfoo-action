@@ -5,7 +5,7 @@
 
 ### Features
 
-* add repeat and repeat-fail-on-threshold inputs ([#865](https://github.com/promptfoo/promptfoo-action/issues/865)) ([03ebdf7](https://github.com/promptfoo/promptfoo-action/commit/03ebdf7dce8111ef1998a933d5da50972ba54651))
+* add repeat execution support ([#865](https://github.com/promptfoo/promptfoo-action/issues/865)) ([03ebdf7](https://github.com/promptfoo/promptfoo-action/commit/03ebdf7dce8111ef1998a933d5da50972ba54651))
 * add repeat-min-pass thresholds and harden eval handling ([#870](https://github.com/promptfoo/promptfoo-action/issues/870)) ([145af41](https://github.com/promptfoo/promptfoo-action/commit/145af41a877547cc2aeef675359f40d93a6c82d7))
 
 ## [1.2.2](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.2.1...promptfoo-action-v1.2.2) (2026-04-05)
