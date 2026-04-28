@@ -1,4 +1,5 @@
 name: codeql-config
 paths-ignore:
   - .github/workflows/dependabot-post-update.yml
-
+  # dist/ is the generated action bundle; scan the TypeScript source instead.
+  - dist/**
