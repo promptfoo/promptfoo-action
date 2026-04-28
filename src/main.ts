@@ -586,10 +586,8 @@ export async function run(): Promise<void> {
       core.warning(normalizedFailedTestExitCode.warning);
     }
     const failedTestExitCode = normalizedFailedTestExitCode.value;
-    const hasPromptfooPassRateThreshold = Object.prototype.hasOwnProperty.call(
-      process.env,
-      'PROMPTFOO_PASS_RATE_THRESHOLD',
-    );
+    const hasPromptfooPassRateThreshold =
+      'PROMPTFOO_PASS_RATE_THRESHOLD' in process.env;
     const promptfooPassRateThreshold = parsePromptfooPassRateThreshold(
       process.env.PROMPTFOO_PASS_RATE_THRESHOLD,
       hasPromptfooPassRateThreshold,
@@ -692,6 +690,15 @@ export async function run(): Promise<void> {
       | ReturnType<typeof evaluateRepeatThreshold>
       | undefined;
     if (repeatMinPass !== undefined) {
+      const repeatCount = repeat;
+      if (repeatCount === undefined) {
+        throw new PromptfooActionError(
+          'repeat-min-pass requires repeat to be set (e.g., repeat: 3)',
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Set repeat to the number of times each test should run',
+        );
+      }
+
       // Runtime validation: extract and validate output.results structure
       const rawResults = (output.results as { results?: unknown }).results;
 
@@ -746,7 +753,7 @@ export async function run(): Promise<void> {
       repeatCheckResult = evaluateRepeatThreshold(
         results,
         repeatMinPass,
-        repeat!,
+        repeatCount,
       );
     }
 
