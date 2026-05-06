@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.0...promptfoo-action-v1.3.1) (2026-05-06)
+
+
+### Bug Fixes
+
+* resolve security quality findings ([#919](https://github.com/promptfoo/promptfoo-action/issues/919)) ([4c848e0](https://github.com/promptfoo/promptfoo-action/commit/4c848e01baa316dc1171233e928ef0c1caa34014))
+
 ## [1.3.0](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.2.2...promptfoo-action-v1.3.0) (2026-04-28)
 
 
