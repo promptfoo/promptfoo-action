@@ -125,6 +125,17 @@ inputs:
     description: 'Base ref to compare against in workflow_dispatch mode (e.g., main, HEAD~1). If not specified, falls back to workflow inputs or HEAD~1.'
     required: false
     default: ''
+  repeat:
+    description: 'Number of times to run each test (must be >= 2). Useful for non-deterministic LLM evals where a single run is noisy.'
+    required: false
+    default: ''
+  repeat-min-pass:
+    description: >
+      Minimum number of repeated runs each test must pass. Requires repeat to be set.
+      Must be <= repeat. Example: with repeat=3 and repeat-min-pass=2, each test must
+      pass at least 2 of its 3 runs.
+    required: false
+    default: ''
   force-run:
     description: 'Force evaluation to run even if no files changed'
     required: false

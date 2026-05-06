@@ -33633,7 +33633,8 @@ var ErrorCodes = {
   ENV_FILE_NOT_FOUND: "ENV_FILE_NOT_FOUND",
   ENV_FILE_LOAD_ERROR: "ENV_FILE_LOAD_ERROR",
   INVALID_CONFIGURATION: "INVALID_CONFIGURATION",
-  AUTH_FAILED: "AUTH_FAILED"
+  AUTH_FAILED: "AUTH_FAILED",
+  REPEAT_CHECK_FAILED: "REPEAT_CHECK_FAILED"
 };
 function formatErrorMessage(error2) {
   if (error2 instanceof PromptfooActionError) {
@@ -36585,6 +36586,314 @@ function extractFileDependencies(configPath) {
   }
 }
 
+// src/utils/inputs.ts
+function parseStrictPositiveInt(value, name) {
+  const n7 = Number(value);
+  if (!Number.isInteger(n7) || n7 < 1 || String(n7) !== value) {
+    throw new PromptfooActionError(
+      `${name} must be a positive integer, got "${value}"`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Provide a whole number like 2 or 3, not "${value}"`
+    );
+  }
+  return n7;
+}
+function parseOptionalPositiveInt(raw, name) {
+  if (!raw) return void 0;
+  return parseStrictPositiveInt(raw, name);
+}
+function parseOptionalPercentage(raw, name) {
+  if (!raw) return void 0;
+  const n7 = Number(raw);
+  if (Number.isNaN(n7) || n7 < 0 || n7 > 100) {
+    throw new PromptfooActionError(
+      `${name} must be a number between 0 and 100, got "${raw}"`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Provide a percentage like 80, not "${raw}"`
+    );
+  }
+  return n7;
+}
+
+// src/utils/thresholds.ts
+function normalizeValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(normalizeValue);
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).filter(([, entryValue]) => entryValue !== void 0).sort(([a], [b2]) => a.localeCompare(b2)).map(([key, entryValue]) => [key, normalizeValue(entryValue)])
+    );
+  }
+  return value;
+}
+function stableStringify(value) {
+  return JSON.stringify(normalizeValue(value));
+}
+function formatSingleLine(value) {
+  return value.replace(/\s+/g, " ").trim();
+}
+function formatValueSummary(value, maxLength = 80) {
+  const singleLine = formatSingleLine(stableStringify(value));
+  if (singleLine.length <= maxLength) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, maxLength - 3)}...`;
+}
+function getTestCaseIdentifier(result) {
+  const testCase = result.testCase;
+  if (typeof testCase?.id === "string") {
+    return testCase.id;
+  }
+  if (typeof testCase?.metadata?.testCaseId === "string") {
+    return testCase.metadata.testCaseId;
+  }
+  return void 0;
+}
+function buildGroupKey(result) {
+  const providerId = result.provider?.id || "";
+  const fingerprint = stableStringify(
+    result.testCase || {
+      description: result.description,
+      vars: result.vars || {}
+    }
+  );
+  return `test:${fingerprint}:prompt:${result.promptIdx}:provider:${providerId}`;
+}
+function buildGroupLabel(result, hasMultiplePrompts) {
+  const providerId = result.provider?.id || "";
+  const desc = result.description || result.testCase?.description;
+  const testCaseIdentifier = getTestCaseIdentifier(result);
+  const testCaseId = testCaseIdentifier ? formatSingleLine(testCaseIdentifier) : void 0;
+  const varsSummary = formatValueSummary(
+    result.vars || result.testCase?.vars || {}
+  );
+  const baseLabel = desc ? formatSingleLine(desc) : `test(${varsSummary})`;
+  const suffixes = [];
+  if (hasMultiplePrompts) {
+    suffixes.push(`prompt ${result.promptIdx}`);
+  }
+  if (providerId) {
+    suffixes.push(providerId);
+  }
+  const label = suffixes.length > 0 ? `${baseLabel} [${suffixes.join(", ")}]` : baseLabel;
+  if (!desc) {
+    return { label };
+  }
+  if (testCaseId) {
+    return { label, disambiguator: `id=${testCaseId}` };
+  }
+  if (varsSummary !== "{}") {
+    return { label, disambiguator: `vars=${varsSummary}` };
+  }
+  return { label };
+}
+function disambiguateLabels(groups) {
+  const labelCounts = /* @__PURE__ */ new Map();
+  for (const group of groups.values()) {
+    labelCounts.set(group.label, (labelCounts.get(group.label) || 0) + 1);
+  }
+  for (const group of groups.values()) {
+    if ((labelCounts.get(group.label) || 0) > 1 && group.disambiguator) {
+      group.label = `${group.label} (${group.disambiguator})`;
+    }
+  }
+}
+function groupResultsByTest(results, repeatCount) {
+  const hasMultiplePrompts = new Set(results.map((r2) => r2.promptIdx)).size > 1;
+  const pendingGroups = /* @__PURE__ */ new Map();
+  for (const result of results) {
+    const key = buildGroupKey(result);
+    const { label, disambiguator } = buildGroupLabel(
+      result,
+      hasMultiplePrompts
+    );
+    const pending = pendingGroups.get(key) || [];
+    pending.push({
+      result,
+      label,
+      ...disambiguator ? { disambiguator } : {}
+    });
+    pendingGroups.set(key, pending);
+  }
+  const groups = /* @__PURE__ */ new Map();
+  for (const [key, pending] of pendingGroups) {
+    const splitCount = getIndistinguishableProviderSplitCount(
+      pending,
+      repeatCount
+    );
+    if (splitCount === void 0) {
+      for (const item of pending) {
+        addPendingResult(groups, key, item);
+      }
+      continue;
+    }
+    const occurrencesByTestIdx = /* @__PURE__ */ new Map();
+    for (const item of pending) {
+      const occurrence = occurrencesByTestIdx.get(item.result.testIdx) || 0;
+      occurrencesByTestIdx.set(item.result.testIdx, occurrence + 1);
+      addPendingResult(groups, `${key}:provider-occurrence:${occurrence}`, {
+        ...item,
+        label: `${item.label} (provider occurrence ${occurrence + 1})`
+      });
+    }
+  }
+  disambiguateLabels(groups);
+  return groups;
+}
+function getIndistinguishableProviderSplitCount(pending, repeatCount) {
+  if (repeatCount === void 0 || pending.length <= repeatCount || pending.length % repeatCount !== 0) {
+    return void 0;
+  }
+  const splitCount = pending.length / repeatCount;
+  const countsByTestIdx = /* @__PURE__ */ new Map();
+  for (const item of pending) {
+    countsByTestIdx.set(
+      item.result.testIdx,
+      (countsByTestIdx.get(item.result.testIdx) || 0) + 1
+    );
+  }
+  if (countsByTestIdx.size !== repeatCount) {
+    return void 0;
+  }
+  return Array.from(countsByTestIdx.values()).every(
+    (count) => count === splitCount
+  ) ? splitCount : void 0;
+}
+function addPendingResult(groups, key, item) {
+  const group = groups.get(key) || {
+    successes: 0,
+    total: 0,
+    label: item.label,
+    ...item.disambiguator ? { disambiguator: item.disambiguator } : {}
+  };
+  group.total++;
+  if (item.result.success) {
+    group.successes++;
+  }
+  groups.set(key, group);
+}
+function validateGroups(groups, repeatCount) {
+  const errors = [];
+  for (const [, group] of groups) {
+    if (group.total > repeatCount) {
+      errors.push({
+        label: group.label,
+        actual: group.total,
+        expected: repeatCount,
+        kind: "ambiguous"
+      });
+    } else if (group.total < repeatCount) {
+      errors.push({
+        label: group.label,
+        actual: group.total,
+        expected: repeatCount,
+        kind: "partial"
+      });
+    }
+  }
+  return errors;
+}
+function evaluateRepeatThreshold(results, minPass, repeatCount) {
+  const groups = groupResultsByTest(results, repeatCount);
+  const groupingErrors = validateGroups(groups, repeatCount);
+  if (groupingErrors.length > 0) {
+    for (const ge2 of groupingErrors) {
+      const reason = ge2.kind === "ambiguous" ? "multiple tests may share the same description" : "some repeat runs may not have produced output";
+      warning(
+        `Test "${ge2.label}" has ${ge2.actual} results but expected ${ge2.expected} (${reason}).`
+      );
+    }
+    return {
+      passed: false,
+      summary: {
+        totalGroups: groups.size,
+        failures: [],
+        groupingErrors,
+        minPass,
+        repeatCount
+      }
+    };
+  }
+  const failures = [];
+  for (const [, group] of groups) {
+    if (group.successes < minPass) {
+      failures.push({
+        label: group.label,
+        passed: group.successes,
+        total: group.total
+      });
+    }
+  }
+  return {
+    passed: failures.length === 0,
+    summary: {
+      totalGroups: groups.size,
+      failures,
+      groupingErrors: [],
+      minPass,
+      repeatCount
+    }
+  };
+}
+function formatRepeatFailureMessage(summary2) {
+  if (summary2.groupingErrors.length > 0) {
+    const lines2 = [
+      `Repeat check failed: ${summary2.groupingErrors.length} test group(s) have unexpected result counts (expected ${summary2.repeatCount} each):`,
+      ...summary2.groupingErrors.map(
+        (ge2) => `  ${ge2.label}: ${ge2.actual} results (${ge2.kind === "ambiguous" ? "possible description collision" : "missing repeat runs"})`
+      )
+    ];
+    return lines2.join("\n");
+  }
+  const lines = [
+    `${summary2.failures.length} test(s) failed the repeat check (min ${summary2.minPass} of ${summary2.repeatCount} required):`,
+    ...summary2.failures.map(
+      (f) => `  ${f.label}: passed ${f.passed}/${f.total} runs`
+    )
+  ];
+  return lines.join("\n");
+}
+function formatRepeatCommentMarkdown(summary2) {
+  if (summary2.groupingErrors.length > 0) {
+    const hasAmbiguous = summary2.groupingErrors.some(
+      (ge2) => ge2.kind === "ambiguous"
+    );
+    const hasPartial = summary2.groupingErrors.some(
+      (ge2) => ge2.kind === "partial"
+    );
+    let md2 = `**Repeat check**: **failed** \u2014 ${summary2.groupingErrors.length} test group(s) have unexpected result counts
+
+`;
+    if (hasAmbiguous && hasPartial) {
+      md2 += "> Some tests have duplicate descriptions and some repeat runs did not produce output.\n";
+    } else if (hasAmbiguous) {
+      md2 += "> Ensure each test case has a unique description.\n";
+    } else {
+      md2 += "> Some repeat runs did not produce output. Check for timeouts or errors in the eval logs.\n";
+    }
+    for (const ge2 of summary2.groupingErrors) {
+      md2 += `> - ${ge2.label}: ${ge2.actual} results, expected ${ge2.expected}
+`;
+    }
+    return md2;
+  }
+  const passed = summary2.totalGroups - summary2.failures.length;
+  if (summary2.failures.length === 0) {
+    return `**Repeat check**: all ${summary2.totalGroups} test(s) passed (min ${summary2.minPass} of ${summary2.repeatCount} runs)
+`;
+  }
+  let md = `**Repeat check** (each test run ${summary2.repeatCount} times, min ${summary2.minPass} passes required): **${passed}/${summary2.totalGroups} tests passed**
+
+`;
+  md += "> Tests below minimum:\n";
+  for (const f of summary2.failures) {
+    md += `> - ${f.label}: ${f.passed}/${f.total}
+`;
+  }
+  return md;
+}
+
 // src/main.ts
 var gitInterface = simpleGit();
 function validateGitRef(ref) {
@@ -36595,6 +36904,38 @@ function validateGitRef(ref) {
       "Git refs should not start with dashes to prevent option injection"
     );
   }
+}
+var RESERVED_EXIT_CODES = /* @__PURE__ */ new Set([0, 1, 2, 130]);
+function normalizeFailedTestExitCode(raw) {
+  const parsed = Number.parseInt(raw || "100", 10);
+  const isValid = Number.isInteger(parsed) && parsed >= 3 && parsed <= 255 && !RESERVED_EXIT_CODES.has(parsed);
+  if (isValid) {
+    return { value: parsed };
+  }
+  if (!raw) {
+    return { value: 100 };
+  }
+  return {
+    value: 100,
+    warning: `PROMPTFOO_FAILED_TEST_EXIT_CODE=${raw} is reserved or invalid. Using default (100).`
+  };
+}
+function parsePromptfooPassRateThreshold(raw, isConfigured) {
+  if (!isConfigured) {
+    return void 0;
+  }
+  const parsed = Number.parseFloat(raw || "");
+  if (Number.isNaN(parsed)) {
+    return 100;
+  }
+  return Number.isFinite(parsed) ? parsed : 100;
+}
+function calculateSuccessRate(stats) {
+  const total = stats.successes + stats.failures + (stats.errors ?? 0);
+  if (total === 0) {
+    return void 0;
+  }
+  return stats.successes / total * 100;
 }
 async function run() {
   try {
@@ -36656,14 +36997,14 @@ async function run() {
       { required: false }
     );
     const envFiles = getInput("env-files", { required: false });
-    const failOnThresholdInput = getInput("fail-on-threshold", {
-      required: false
-    });
-    const failOnThreshold = failOnThresholdInput ? parseFloat(failOnThresholdInput) : void 0;
-    const maxConcurrencyInput = getInput("max-concurrency", {
-      required: false
-    });
-    const maxConcurrency = maxConcurrencyInput ? parseInt(maxConcurrencyInput, 10) : void 0;
+    const failOnThreshold = parseOptionalPercentage(
+      getInput("fail-on-threshold", { required: false }),
+      "fail-on-threshold"
+    );
+    const maxConcurrency = parseOptionalPositiveInt(
+      getInput("max-concurrency", { required: false }),
+      "max-concurrency"
+    );
     const noTable = getBooleanInput("no-table", {
       required: false
     });
@@ -36685,19 +37026,36 @@ async function run() {
     const forceRun = getBooleanInput("force-run", {
       required: false
     });
-    if (failOnThreshold !== void 0 && (Number.isNaN(failOnThreshold) || failOnThreshold < 0 || failOnThreshold > 100)) {
+    const repeat2 = parseOptionalPositiveInt(
+      getInput("repeat", { required: false }),
+      "repeat"
+    );
+    const repeatMinPass = parseOptionalPositiveInt(
+      getInput("repeat-min-pass", { required: false }),
+      "repeat-min-pass"
+    );
+    if (repeat2 !== void 0 && repeat2 < 2) {
       throw new PromptfooActionError(
-        "fail-on-threshold must be a number between 0 and 100",
-        ErrorCodes.INVALID_THRESHOLD,
-        "Please provide a valid percentage value, e.g., 80 for 80% success rate"
+        "repeat must be at least 2 (omit it to run tests once)",
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Provide a value like 3 to run each test 3 times"
       );
     }
-    if (maxConcurrency !== void 0 && (Number.isNaN(maxConcurrency) || maxConcurrency < 1)) {
-      throw new PromptfooActionError(
-        "max-concurrency must be a positive integer",
-        ErrorCodes.INVALID_CONFIGURATION,
-        "Please provide a valid concurrency value, e.g., 10 for 10 concurrent requests"
-      );
+    if (repeatMinPass !== void 0) {
+      if (repeat2 === void 0) {
+        throw new PromptfooActionError(
+          "repeat-min-pass requires repeat to be set (e.g., repeat: 3)",
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Set repeat to the number of times each test should run"
+        );
+      }
+      if (repeatMinPass > repeat2) {
+        throw new PromptfooActionError(
+          `repeat-min-pass (${repeatMinPass}) cannot exceed repeat (${repeat2})`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          `Set repeat-min-pass to at most ${repeat2}`
+        );
+      }
     }
     if (envFiles) {
       const envFileList = envFiles.split(",").map((f) => f.trim());
@@ -36901,7 +37259,10 @@ async function run() {
     const cacheDir = process.env.PROMPTFOO_CACHE_PATH || cachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
     await logCacheMetrics(cacheDir);
     endGroup();
-    const outputFile = path6.join(workingDirectory, "output.json");
+    const outputFile = path6.join(
+      workingDirectory,
+      `output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`
+    );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
     if (!useConfigPrompts && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
@@ -36937,6 +37298,27 @@ async function run() {
     if (noCache) {
       promptfooArgs.push("--no-cache");
     }
+    if (repeat2 !== void 0) {
+      promptfooArgs.push("--repeat", repeat2.toString());
+      info(`Running each test ${repeat2} times (--repeat ${repeat2})`);
+      if (repeatMinPass !== void 0) {
+        info(
+          `Per-test minimum: ${repeatMinPass} of ${repeat2} runs must pass`
+        );
+      }
+    }
+    const normalizedFailedTestExitCode = normalizeFailedTestExitCode(
+      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE
+    );
+    if (normalizedFailedTestExitCode.warning) {
+      warning(normalizedFailedTestExitCode.warning);
+    }
+    const failedTestExitCode = normalizedFailedTestExitCode.value;
+    const hasPromptfooPassRateThreshold = "PROMPTFOO_PASS_RATE_THRESHOLD" in process.env;
+    const promptfooPassRateThreshold = parsePromptfooPassRateThreshold(
+      process.env.PROMPTFOO_PASS_RATE_THRESHOLD,
+      hasPromptfooPassRateThreshold
+    );
     const env = {
       ...process.env,
       // Includes cache settings and environment variable fallbacks
@@ -36952,19 +37334,21 @@ async function run() {
       ...vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {},
       ...cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {},
       ...mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {},
-      ...groqApiKey ? { GROQ_API_KEY: groqApiKey } : {}
+      ...groqApiKey ? { GROQ_API_KEY: groqApiKey } : {},
+      ...process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE ? { PROMPTFOO_FAILED_TEST_EXIT_CODE: failedTestExitCode.toString() } : {}
     };
-    let errorToThrow;
-    try {
-      await exec(`npx promptfoo@${version}`, promptfooArgs, {
-        env,
-        cwd: workingDirectory
-      });
-    } catch (error2) {
-      errorToThrow = new PromptfooActionError(
-        `Promptfoo evaluation failed: ${error2 instanceof Error ? error2.message : String(error2)}`,
+    const exitCode = await exec(
+      `npx promptfoo@${version}`,
+      promptfooArgs,
+      { env, cwd: workingDirectory, ignoreReturnCode: true }
+    );
+    const isTestFailureExit = exitCode === failedTestExitCode;
+    const isHardFailure = exitCode !== 0 && !isTestFailureExit;
+    if (isHardFailure) {
+      throw new PromptfooActionError(
+        `Promptfoo exited with unexpected code ${exitCode}`,
         ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
-        "Check that your promptfoo configuration is valid and all required API keys are set"
+        "This indicates a configuration or runtime error, not just failed tests. Check the logs above for details."
       );
     }
     let output;
@@ -36972,8 +37356,12 @@ async function run() {
       const outputContent = fs6.readFileSync(outputFile, "utf8");
       output = JSON.parse(outputContent);
     } catch (error2) {
-      if (errorToThrow) {
-        throw errorToThrow;
+      if (isTestFailureExit) {
+        throw new PromptfooActionError(
+          `Promptfoo tests failed (exit code ${exitCode}) but no output was generated`,
+          ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+          "Check that your promptfoo configuration is valid and all required API keys are set"
+        );
       }
       throw new PromptfooActionError(
         `Failed to read or parse output file: ${error2 instanceof Error ? error2.message : String(error2)}`,
@@ -36981,10 +37369,74 @@ async function run() {
         "This usually happens when promptfoo fails to generate valid output. Check the logs above for more details"
       );
     }
+    try {
+      fs6.unlinkSync(outputFile);
+    } catch {
+    }
     startGroup("Cache metrics after evaluation");
     await logCacheMetrics(cacheDir);
     await createCacheManifest(cacheDir);
     endGroup();
+    let repeatCheckResult;
+    if (repeatMinPass !== void 0) {
+      const repeatCount = repeat2;
+      if (repeatCount === void 0) {
+        throw new PromptfooActionError(
+          "repeat-min-pass requires repeat to be set (e.g., repeat: 3)",
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Set repeat to the number of times each test should run"
+        );
+      }
+      const rawResults = output.results.results;
+      if (!Array.isArray(rawResults)) {
+        throw new PromptfooActionError(
+          `Invalid output format: expected output.results.results to be an array, got ${typeof rawResults}`,
+          ErrorCodes.REPEAT_CHECK_FAILED,
+          "The evaluation output may be malformed or truncated. Check promptfoo logs for errors."
+        );
+      }
+      for (let i2 = 0; i2 < rawResults.length; i2++) {
+        const item = rawResults[i2];
+        if (!item || typeof item !== "object") {
+          throw new PromptfooActionError(
+            `Invalid result at index ${i2}: expected object, got ${typeof item}`,
+            ErrorCodes.REPEAT_CHECK_FAILED,
+            "The evaluation output contains invalid result entries. Check promptfoo logs for errors."
+          );
+        }
+        const result = item;
+        if (typeof result.promptIdx !== "number") {
+          throw new PromptfooActionError(
+            `Invalid result at index ${i2}: missing or invalid 'promptIdx' field`,
+            ErrorCodes.REPEAT_CHECK_FAILED,
+            "The evaluation output contains malformed result entries. Check promptfoo logs for errors."
+          );
+        }
+        if (typeof result.success !== "boolean") {
+          throw new PromptfooActionError(
+            `Invalid result at index ${i2}: missing or invalid 'success' field`,
+            ErrorCodes.REPEAT_CHECK_FAILED,
+            "The evaluation output contains malformed result entries. Check promptfoo logs for errors."
+          );
+        }
+      }
+      const results = rawResults;
+      if (results.length === 0) {
+        throw new PromptfooActionError(
+          "No test results found - cannot check per-test repeat threshold",
+          ErrorCodes.REPEAT_CHECK_FAILED,
+          "Ensure your configuration includes valid tests to run"
+        );
+      }
+      repeatCheckResult = evaluateRepeatThreshold(
+        results,
+        repeatMinPass,
+        repeatCount
+      );
+    }
+    const promptfooSuiteSuccessRate = calculateSuccessRate(
+      output.results.stats
+    );
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const octokit = getOctokit(githubToken);
       const modifiedFiles = promptFiles.join(", ");
@@ -36995,12 +37447,14 @@ async function run() {
 | ${output.results.stats.successes}      | ${output.results.stats.failures}       |
 
 `;
+      if (repeatCheckResult) {
+        body += formatRepeatCommentMarkdown(repeatCheckResult.summary);
+        body += "\n";
+      }
       if (output.shareableUrl) {
-        body = body.concat(
-          `**\xBB [View eval results](${output.shareableUrl}) \xAB**`
-        );
+        body += `**\xBB [View eval results](${output.shareableUrl}) \xAB**`;
       } else {
-        body = body.concat("**\xBB View eval results in CI console \xAB**");
+        body += "**\xBB View eval results in CI console \xAB**";
       }
       await octokit.rest.issues.createComment({
         ...context2.repo,
@@ -37020,6 +37474,10 @@ async function run() {
         summary2.addHeading("Evaluated Files", 3);
         summary2.addList(promptFiles);
       }
+      if (repeatCheckResult) {
+        summary2.addHeading("Repeat Check", 3);
+        summary2.addRaw(formatRepeatCommentMarkdown(repeatCheckResult.summary));
+      }
       if (output.shareableUrl) {
         summary2.addLink("View detailed results", output.shareableUrl);
       } else {
@@ -37033,16 +37491,16 @@ async function run() {
         info(`View results: ${output.shareableUrl}`);
       }
     }
+    let suiteThresholdPassed = false;
     if (failOnThreshold !== void 0) {
-      const totalTests = output.results.stats.successes + output.results.stats.failures;
-      if (totalTests === 0) {
+      const successRate = calculateSuccessRate(output.results.stats);
+      if (successRate === void 0) {
         throw new PromptfooActionError(
           `No tests were run - cannot calculate success rate`,
           ErrorCodes.THRESHOLD_NOT_MET,
           `Ensure your configuration includes valid tests to run`
         );
       }
-      const successRate = output.results.stats.successes / totalTests * 100;
       if (successRate < failOnThreshold) {
         throw new PromptfooActionError(
           `Evaluation success rate (${successRate.toFixed(
@@ -37052,9 +37510,59 @@ async function run() {
           `Consider adjusting your prompts or lowering the threshold`
         );
       }
+      info(
+        `Suite threshold passed: ${successRate.toFixed(2)}% >= ${failOnThreshold}%`
+      );
+      suiteThresholdPassed = true;
     }
-    if (errorToThrow) {
-      throw errorToThrow;
+    if (promptfooPassRateThreshold !== void 0 && promptfooSuiteSuccessRate !== void 0 && promptfooSuiteSuccessRate < promptfooPassRateThreshold) {
+      throw new PromptfooActionError(
+        `Evaluation success rate (${promptfooSuiteSuccessRate.toFixed(
+          2
+        )}%) is below PROMPTFOO_PASS_RATE_THRESHOLD (${promptfooPassRateThreshold}%)`,
+        ErrorCodes.THRESHOLD_NOT_MET,
+        "Consider adjusting your prompts or lowering PROMPTFOO_PASS_RATE_THRESHOLD"
+      );
+    }
+    if (promptfooPassRateThreshold !== void 0 && promptfooSuiteSuccessRate !== void 0) {
+      info(
+        `Promptfoo pass-rate threshold passed: ${promptfooSuiteSuccessRate.toFixed(
+          2
+        )}% >= ${promptfooPassRateThreshold}%`
+      );
+    }
+    if (repeatCheckResult) {
+      if (repeatCheckResult.passed) {
+        info(
+          `Repeat check passed: all ${repeatCheckResult.summary.totalGroups} test(s) met minimum (${repeatCheckResult.summary.minPass} of ${repeatCheckResult.summary.repeatCount})`
+        );
+      } else {
+        throw new PromptfooActionError(
+          formatRepeatFailureMessage(repeatCheckResult.summary),
+          ErrorCodes.REPEAT_CHECK_FAILED,
+          "Consider adjusting your prompts or lowering repeat-min-pass"
+        );
+      }
+    }
+    if (isTestFailureExit) {
+      const repeatThresholdPassed = repeatMinPass !== void 0 && repeatCheckResult?.passed;
+      if (suiteThresholdPassed || repeatThresholdPassed) {
+        const passedThresholds = [
+          suiteThresholdPassed ? "suite threshold" : void 0,
+          repeatThresholdPassed ? "repeat minimum" : void 0
+        ].filter(Boolean);
+        info(
+          `Promptfoo exited with test-failure code ${exitCode}, but ${passedThresholds.join(
+            " and "
+          )} passed.`
+        );
+      } else {
+        throw new PromptfooActionError(
+          `Promptfoo evaluation failed (exit code ${exitCode})`,
+          ErrorCodes.PROMPTFOO_EXECUTION_FAILED,
+          "Some tests failed. Check the eval results for details."
+        );
+      }
     }
   } catch (error2) {
     if (error2 instanceof Error) {
