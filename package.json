@@ -39,11 +39,11 @@
     "simple-git": "^3.32.1"
   },
   "overrides": {
-    "@anthropic-ai/sdk": "^0.91.0",
+    "@anthropic-ai/sdk": "^0.95.0",
     "uuid": "^14.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.13",
+    "@biomejs/biome": "2.4.14",
     "@swc/core": "^1.15.11",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.3.0",
