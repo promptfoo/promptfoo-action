@@ -20,9 +20,13 @@ const actualFs = await vi.importActual<typeof import('fs')>('fs');
 
 // Type definitions for mocks
 type MockOctokit = {
+  paginate: Mock;
   rest: {
     issues: {
       createComment: Mock;
+    };
+    pulls: {
+      listFiles: Mock;
     };
   };
 };
@@ -133,6 +137,7 @@ function setupCommonMocks(): MockOctokit {
   vi.clearAllMocks();
 
   // Reset git interface mocks
+  mockGitInterface.fetch.mockClear();
   mockGitInterface.revparse.mockClear();
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
@@ -142,9 +147,18 @@ function setupCommonMocks(): MockOctokit {
 
   // Setup octokit mock
   const mockOctokit: MockOctokit = {
+    paginate: vi.fn(() =>
+      Promise.resolve([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'promptfooconfig.yaml' },
+      ]),
+    ),
     rest: {
       issues: {
         createComment: vi.fn(() => Promise.resolve({})),
+      },
+      pulls: {
+        listFiles: vi.fn(),
       },
     },
   };
@@ -233,23 +247,27 @@ describe('GitHub Action Main', () => {
     test('should successfully run evaluation when prompt files change', async () => {
       await run();
 
-      // Verify git operations - now with -- separator for security
-      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
-        '--',
-        'origin',
-        'main',
-      ]);
-      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
-        '--',
-        'origin',
-        'feature-branch',
-      ]);
-      expect(mockGitInterface.diff).toHaveBeenCalled();
+      expect(mockOctokit.paginate).toHaveBeenCalledWith(
+        mockOctokit.rest.pulls.listFiles,
+        {
+          owner: 'test-owner',
+          repo: 'test-repo',
+          pull_number: 123,
+          per_page: 100,
+        },
+      );
+      expect(mockGitInterface.fetch).not.toHaveBeenCalled();
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
 
       // Verify promptfoo execution
       expect(mockExec.exec).toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo@latest'),
-        expect.arrayContaining(['eval', '-c', 'promptfooconfig.yaml']),
+        'npx',
+        expect.arrayContaining([
+          'promptfoo@latest',
+          'eval',
+          '-c',
+          'promptfooconfig.yaml',
+        ]),
         expect.any(Object),
       );
 
@@ -263,8 +281,10 @@ describe('GitHub Action Main', () => {
     });
 
     test('should skip evaluation when no relevant files change', async () => {
-      // Mock git diff to return files that don't match our glob pattern
-      mockGitInterface.diff.mockResolvedValue('README.md\npackage.json');
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'README.md' },
+        { filename: 'package.json' },
+      ]);
       mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
 
       await run();
@@ -273,9 +293,36 @@ describe('GitHub Action Main', () => {
         'No LLM prompt, config files, or dependencies were modified.',
       );
       expect(mockExec.exec).not.toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo'),
+        'npx',
         expect.any(Array),
         expect.any(Object),
+      );
+    });
+
+    test('should process all matching prompts when PR file list hits GitHub cap', async () => {
+      mockOctokit.paginate.mockResolvedValue(
+        Array.from({ length: 3000 }, (_, index) => ({
+          filename: `docs/file-${index}.md`,
+        })),
+      );
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('GitHub only returns the first 3000 files'),
+      );
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
       );
     });
 
@@ -300,8 +347,8 @@ describe('GitHub Action Main', () => {
 
       // Should still proceed with evaluation using config file
       expect(mockExec.exec).toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo@latest'),
-        expect.arrayContaining(['eval']),
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
     });
@@ -327,8 +374,8 @@ describe('GitHub Action Main', () => {
 
       // Should still proceed with evaluation using config file
       expect(mockExec.exec).toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo@latest'),
-        expect.arrayContaining(['eval']),
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
     });
@@ -398,13 +445,13 @@ describe('GitHub Action Main', () => {
       });
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
-          before: 'abc123',
-          after: 'def456',
+          before: 'a'.repeat(40),
+          after: 'b'.repeat(40),
         },
         configurable: true,
       });
       Object.defineProperty(mockGithub.context, 'sha', {
-        value: 'def456',
+        value: 'b'.repeat(40),
         configurable: true,
       });
 
@@ -416,7 +463,12 @@ describe('GitHub Action Main', () => {
         [string[]]
       >;
       if (diffCalls.length > 0) {
-        expect(diffCalls[0][0]).toEqual(['--name-only', 'abc123', 'def456']);
+        expect(diffCalls[0][0]).toEqual([
+          '--name-only',
+          'a'.repeat(40),
+          'b'.repeat(40),
+          '--',
+        ]);
       }
     });
 
@@ -439,8 +491,8 @@ describe('GitHub Action Main', () => {
       );
       // Verify it processes files (either through diff or all files)
       expect(mockExec.exec).toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo@latest'),
-        expect.arrayContaining(['eval']),
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
     });
@@ -485,8 +537,8 @@ describe('GitHub Action Main', () => {
 
       // Should still run the evaluation
       expect(mockExec.exec).toHaveBeenCalledWith(
-        expect.stringContaining('npx promptfoo@latest'),
-        expect.arrayContaining(['eval']),
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
     });
@@ -608,6 +660,7 @@ describe('GitHub Action Main', () => {
           '--name-only',
           'feature-branch',
           'HEAD',
+          '--',
         ]);
       }
     });
@@ -679,9 +732,10 @@ describe('GitHub Action Main', () => {
 
       expect(mockExec.exec).toHaveBeenCalledTimes(1);
       const promptfooCall = mockExec.exec.mock.calls[0];
-      expect(promptfooCall[0]).toBe('npx promptfoo@latest');
+      expect(promptfooCall[0]).toBe('npx');
 
       const args = promptfooCall[1] as string[];
+      expect(args).toContain('promptfoo@latest');
       expect(args).toContain('eval');
       expect(args).toContain('-c');
       expect(args).toContain('promptfooconfig.yaml');
@@ -875,31 +929,12 @@ describe('GitHub Action Main', () => {
   });
 
   describe('security validation', () => {
-    test('should reject git refs starting with --', async () => {
+    test('should use the GitHub API instead of PR refs for changed files', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
           pull_request: {
             number: 123,
             base: { ref: '--upload-pack=/evil/script' },
-            head: { ref: 'feature-branch' },
-          },
-        },
-        configurable: true,
-      });
-
-      await run();
-
-      expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('refs cannot start with "-" or "--"'),
-      );
-    });
-
-    test('should reject git refs with spaces', async () => {
-      Object.defineProperty(mockGithub.context, 'payload', {
-        value: {
-          pull_request: {
-            number: 123,
-            base: { ref: 'main' },
             head: { ref: 'feature branch' },
           },
         },
@@ -908,20 +943,28 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // Assert that the action failed with the deterministic error from our mock
-      expect(mockCore.setFailed).toHaveBeenCalled();
-      const failedCall = mockCore.setFailed.mock.calls[0][0];
-      expect(typeof failedCall).toBe('string');
-      expect(failedCall).toContain('Git fetch failed for invalid ref');
+      expect(mockOctokit.paginate).toHaveBeenCalledWith(
+        mockOctokit.rest.pulls.listFiles,
+        expect.objectContaining({ pull_number: 123 }),
+      );
+      expect(mockGitInterface.fetch).not.toHaveBeenCalled();
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
+        expect.any(Object),
+      );
     });
 
-    test('should accept valid git refs', async () => {
+    test('should reject unsafe workflow_dispatch base revisions', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
-          pull_request: {
-            number: 123,
-            base: { ref: 'main' },
-            head: { ref: 'feature/JIRA-123_update-deps' },
+          inputs: {
+            base: '--upload-pack=/evil/script',
           },
         },
         configurable: true,
@@ -929,16 +972,73 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      // Should proceed with git fetch using -- separator
-      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
-        '--',
-        'origin',
-        'main',
-      ]);
-      expect(mockGitInterface.fetch).toHaveBeenCalledWith([
-        '--',
-        'origin',
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid Git revision'),
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject malformed push commit SHAs', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'abc123',
+          after: 'def456',
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid before commit'),
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject unsafe promptfoo versions', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs: Record<string, string> = {
+          ...DEFAULT_INPUTS,
+          'promptfoo-version': 'latest --package evil',
+        };
+        return inputs[name] || '';
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid promptfoo-version'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should accept valid workflow_dispatch base revisions', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            base: 'feature/JIRA-123_update-deps',
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockGitInterface.diff).toHaveBeenCalledWith([
+        '--name-only',
         'feature/JIRA-123_update-deps',
+        'HEAD',
+        '--',
       ]);
     });
   });

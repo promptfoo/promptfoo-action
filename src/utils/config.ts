@@ -18,6 +18,14 @@ export interface PromptfooConfig {
   };
 }
 
+function isDirectory(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -61,10 +69,7 @@ export function extractFileDependencies(configPath: string): string[] {
         if (basePath) {
           dependencies.add(path.join(configDir, basePath));
         }
-      } else if (
-        fs.existsSync(absolutePath) &&
-        fs.statSync(absolutePath).isDirectory()
-      ) {
+      } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         if (fileUrl.endsWith('/') && !absolutePath.endsWith('/')) {
           dependencies.add(`${absolutePath}/`);
