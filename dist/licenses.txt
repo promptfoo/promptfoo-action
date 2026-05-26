@@ -6,6 +6,13 @@ undici/lib/web/fetch/body.js:
 undici/lib/web/websocket/frame.js:
   /*! ws. MIT License. Einar Otto Stangvik <einaros@gmail.com> */
 
+content-type/dist/index.js:
+  /*!
+   * content-type
+   * Copyright(c) 2015 Douglas Christopher Wilson
+   * MIT Licensed
+   */
+
 @octokit/request-error/dist-src/index.js:
   /* v8 ignore else -- @preserve -- Bug with vitest coverage where it sees an else branch that doesn't exist */
 
