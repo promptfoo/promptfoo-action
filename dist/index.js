@@ -20629,7 +20629,7 @@ var require_src2 = __commonJS({
     var fs_1 = require("fs");
     var debug_1 = __importDefault(require_src());
     var log = debug_1.default("@kwsites/file-exists");
-    function check(path7, isFile, isDirectory2) {
+    function check(path7, isFile, isDirectory4) {
       log(`checking %s`, path7);
       try {
         const stat2 = fs_1.statSync(path7);
@@ -20637,7 +20637,7 @@ var require_src2 = __commonJS({
           log(`[OK] path represents a file`);
           return true;
         }
-        if (stat2.isDirectory() && isDirectory2) {
+        if (stat2.isDirectory() && isDirectory4) {
           log(`[OK] path represents a directory`);
           return true;
         }
@@ -36515,6 +36515,13 @@ var safeDump = renamed("safeDump", "dump");
 
 // src/utils/config.ts
 var path5 = __toESM(require("path"));
+function isDirectory2(filePath) {
+  try {
+    return fs5.statSync(filePath).isDirectory();
+  } catch {
+    return false;
+  }
+}
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path5.dirname(configPath);
@@ -36544,7 +36551,7 @@ function extractFileDependencies(configPath) {
         if (basePath) {
           dependencies.add(path5.join(configDir, basePath));
         }
-      } else if (fs5.existsSync(absolutePath) && fs5.statSync(absolutePath).isDirectory()) {
+      } else if (isDirectory2(absolutePath)) {
         if (fileUrl.endsWith("/") && !absolutePath.endsWith("/")) {
           dependencies.add(`${absolutePath}/`);
         } else {
@@ -36931,13 +36938,42 @@ function formatRepeatCommentMarkdown(summary2) {
 
 // src/main.ts
 var gitInterface = simpleGit();
-function validateGitRef(ref) {
-  if (ref.startsWith("--") || ref.startsWith("-")) {
+var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
+function validateGitRevision(ref) {
+  const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
+  const safeHeadRevision = /^HEAD(?:~[1-9][0-9]*|\^[1-9]?)?$/.test(ref);
+  const safeCommitSha = /^[0-9a-f]{40}$/i.test(ref);
+  if (!safeBranchOrTag && !safeHeadRevision && !safeCommitSha) {
     throw new PromptfooActionError(
-      `Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`,
+      `Invalid Git revision "${ref}"`,
       ErrorCodes.INVALID_GIT_REF,
-      "Git refs should not start with dashes to prevent option injection"
+      "Use a branch/tag name, a 40-character commit SHA, HEAD, HEAD~N, or HEAD^N"
     );
+  }
+}
+function validateCommitSha(sha, name) {
+  if (!/^[0-9a-f]{40}$/i.test(sha)) {
+    throw new PromptfooActionError(
+      `Invalid ${name} "${sha}": expected a 40-character commit SHA`,
+      ErrorCodes.INVALID_GIT_REF,
+      "GitHub push payload commits must be full hexadecimal SHAs"
+    );
+  }
+}
+function validatePromptfooVersion(version) {
+  if (version.length > 128 || version.startsWith("-") || !/^[A-Za-z0-9._~^*+-]+$/.test(version)) {
+    throw new PromptfooActionError(
+      `Invalid promptfoo-version "${version}"`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      'Use a safe npm version or dist-tag such as "latest", "0.121.12", or "^0.121.0"'
+    );
+  }
+}
+function isDirectory3(filePath) {
+  try {
+    return fs6.statSync(filePath).isDirectory();
+  } catch {
+    return false;
   }
 }
 var RESERVED_EXIT_CODES = /* @__PURE__ */ new Set([0, 1, 2, 130]);
@@ -37020,6 +37056,7 @@ async function run() {
     });
     const cachePath = getInput("cache-path", { required: false });
     const version = getInput("promptfoo-version", { required: false }) || "latest";
+    validatePromptfooVersion(version);
     const workingDirectory = path6.join(
       process.cwd(),
       getInput("working-directory", { required: false })
@@ -37141,10 +37178,9 @@ async function run() {
       }
     }
     setSecret(githubToken);
+    const octokit = getOctokit(githubToken);
     const event = context2.eventName;
     let changedFiles = "";
-    let baseRef;
-    let headRef;
     let isPullRequest = false;
     let pullRequestNumber;
     if (event === "pull_request" || event === "pull_request_target") {
@@ -37154,38 +37190,38 @@ async function run() {
       }
       isPullRequest = true;
       pullRequestNumber = pullRequest.number;
-      baseRef = pullRequest.base.ref;
-      headRef = pullRequest.head.ref;
-      if (!baseRef || !headRef) {
-        throw new Error(
-          "Unable to determine base or head references from pull request"
+      const pullRequestFiles = await octokit.paginate(
+        octokit.rest.pulls.listFiles,
+        {
+          ...context2.repo,
+          pull_number: pullRequestNumber,
+          per_page: 100
+        }
+      );
+      if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
+        warning(
+          `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
         );
+      } else {
+        changedFiles = pullRequestFiles.map((file) => file.filename).join("\n");
       }
-      validateGitRef(baseRef);
-      validateGitRef(headRef);
-      await gitInterface.fetch(["--", "origin", baseRef]);
-      const baseFetchHead = (await gitInterface.revparse(["FETCH_HEAD"])).trim();
-      await gitInterface.fetch(["--", "origin", headRef]);
-      const headFetchHead = (await gitInterface.revparse(["FETCH_HEAD"])).trim();
-      changedFiles = await gitInterface.diff([
-        "--name-only",
-        baseFetchHead,
-        headFetchHead
-      ]);
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
       const filesInput = workflowFiles || context2.payload.inputs?.files;
-      const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
+      const compareBase = String(
+        workflowBase || context2.payload.inputs?.base || "HEAD~1"
+      );
       if (filesInput) {
         changedFiles = filesInput;
         info(`Using manually specified files: ${changedFiles}`);
       } else {
+        validateGitRevision(compareBase);
         try {
-          validateGitRef(compareBase);
           changedFiles = await gitInterface.diff([
             "--name-only",
             compareBase,
-            "HEAD"
+            "HEAD",
+            "--"
           ]);
           info(
             `Comparing against ${compareBase}, found changed files: ${changedFiles}`
@@ -37202,11 +37238,14 @@ async function run() {
       const beforeSha = context2.payload.before;
       const afterSha = context2.payload.after || context2.sha;
       if (beforeSha && afterSha && beforeSha !== "0000000000000000000000000000000000000000") {
+        validateCommitSha(beforeSha, "before commit");
+        validateCommitSha(afterSha, "after commit");
         try {
           changedFiles = await gitInterface.diff([
             "--name-only",
             beforeSha,
-            afterSha
+            afterSha,
+            "--"
           ]);
           info(
             `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`
@@ -37254,7 +37293,7 @@ async function run() {
           if (changedFilesList.includes(dep)) {
             return true;
           }
-          if (dep.endsWith("/") || fs6.existsSync(dep) && fs6.statSync(dep).isDirectory()) {
+          if (dep.endsWith("/") || isDirectory3(dep)) {
             const depDir = dep.endsWith("/") ? dep : `${dep}/`;
             return changedFilesList.some(
               (changedFile) => changedFile.startsWith(depDir)
@@ -37296,7 +37335,7 @@ async function run() {
     endGroup();
     const outputFile = path6.join(
       workingDirectory,
-      `output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`
+      `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
     if (!useConfigPrompts && promptFiles.length > 0) {
@@ -37373,8 +37412,8 @@ async function run() {
       ...process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE ? { PROMPTFOO_FAILED_TEST_EXIT_CODE: failedTestExitCode.toString() } : {}
     };
     const exitCode = await exec(
-      `npx promptfoo@${version}`,
-      promptfooArgs,
+      "npx",
+      [`promptfoo@${version}`, ...promptfooArgs],
       { env, cwd: workingDirectory, ignoreReturnCode: true }
     );
     const isTestFailureExit = exitCode === failedTestExitCode;
@@ -37473,7 +37512,6 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const octokit = getOctokit(githubToken);
       const modifiedFiles = promptFiles.join(", ");
       let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
 

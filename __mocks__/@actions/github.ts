@@ -18,9 +18,18 @@ export const context = {
 };
 
 export const getOctokit = vi.fn(() => ({
+  paginate: vi.fn(() =>
+    Promise.resolve([
+      { filename: 'prompts/prompt1.txt' },
+      { filename: 'promptfooconfig.yaml' },
+    ]),
+  ),
   rest: {
     issues: {
       createComment: vi.fn(() => Promise.resolve({})),
+    },
+    pulls: {
+      listFiles: vi.fn(),
     },
   },
 }));

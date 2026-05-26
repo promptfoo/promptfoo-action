@@ -31,26 +31,63 @@ import {
 } from './utils/thresholds';
 
 const gitInterface = simpleGit();
+const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 
 /**
- * Validates git refs to prevent option injection attacks.
- *
- * As branch names like `$(true)` are valid, this does **NOT** protect against
- * shell injection attacks.
- *
- * Security considerations:
- * - Refs starting with "--" could be interpreted as command options
- * - Even with validation, we use "--" separator in git commands for defense in depth
- * - We always use simple-git to avoid shell-injection attacks
+ * Conservatively validates user-controlled git revisions before passing them to
+ * git. This action accepts only the revision forms it documents for manual
+ * workflow dispatch comparisons.
  */
-function validateGitRef(ref: string): void {
-  // Security check: prevent option injection
-  if (ref.startsWith('--') || ref.startsWith('-')) {
+function validateGitRevision(ref: string): void {
+  const safeBranchOrTag =
+    /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) &&
+    !ref.includes('..') &&
+    !ref.includes('//') &&
+    !ref.includes('@{') &&
+    !ref.endsWith('/') &&
+    !ref.endsWith('.') &&
+    !ref.endsWith('.lock');
+  const safeHeadRevision = /^HEAD(?:~[1-9][0-9]*|\^[1-9]?)?$/.test(ref);
+  const safeCommitSha = /^[0-9a-f]{40}$/i.test(ref);
+
+  if (!safeBranchOrTag && !safeHeadRevision && !safeCommitSha) {
     throw new PromptfooActionError(
-      `Invalid Git ref "${ref}": refs cannot start with "-" or "--" (this could be interpreted as a command option)`,
+      `Invalid Git revision "${ref}"`,
       ErrorCodes.INVALID_GIT_REF,
-      'Git refs should not start with dashes to prevent option injection',
+      'Use a branch/tag name, a 40-character commit SHA, HEAD, HEAD~N, or HEAD^N',
     );
+  }
+}
+
+function validateCommitSha(sha: string, name: string): void {
+  if (!/^[0-9a-f]{40}$/i.test(sha)) {
+    throw new PromptfooActionError(
+      `Invalid ${name} "${sha}": expected a 40-character commit SHA`,
+      ErrorCodes.INVALID_GIT_REF,
+      'GitHub push payload commits must be full hexadecimal SHAs',
+    );
+  }
+}
+
+function validatePromptfooVersion(version: string): void {
+  if (
+    version.length > 128 ||
+    version.startsWith('-') ||
+    !/^[A-Za-z0-9._~^*+-]+$/.test(version)
+  ) {
+    throw new PromptfooActionError(
+      `Invalid promptfoo-version "${version}"`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      'Use a safe npm version or dist-tag such as "latest", "0.121.12", or "^0.121.0"',
+    );
+  }
+}
+
+function isDirectory(filePath: string): boolean {
+  try {
+    return fs.statSync(filePath).isDirectory();
+  } catch {
+    return false;
   }
 }
 
@@ -162,6 +199,7 @@ export async function run(): Promise<void> {
     const cachePath: string = core.getInput('cache-path', { required: false });
     const version: string =
       core.getInput('promptfoo-version', { required: false }) || 'latest';
+    validatePromptfooVersion(version);
     const workingDirectory: string = path.join(
       process.cwd(),
       core.getInput('working-directory', { required: false }),
@@ -289,11 +327,10 @@ export async function run(): Promise<void> {
       }
     }
     core.setSecret(githubToken);
+    const octokit = github.getOctokit(githubToken);
 
     const event = github.context.eventName;
     let changedFiles = '';
-    let baseRef: string | undefined;
-    let headRef: string | undefined;
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -306,35 +343,21 @@ export async function run(): Promise<void> {
       isPullRequest = true;
       pullRequestNumber = pullRequest.number;
 
-      // Get list of changed files in PR
-      baseRef = pullRequest.base.ref;
-      headRef = pullRequest.head.ref;
-
-      if (!baseRef || !headRef) {
-        throw new Error(
-          'Unable to determine base or head references from pull request',
+      const pullRequestFiles = await octokit.paginate(
+        octokit.rest.pulls.listFiles,
+        {
+          ...github.context.repo,
+          pull_number: pullRequestNumber,
+          per_page: 100,
+        },
+      );
+      if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
+        core.warning(
+          `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
+      } else {
+        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
       }
-
-      // Validate baseRef and headRef to prevent option injection
-      validateGitRef(baseRef);
-      validateGitRef(headRef);
-
-      await gitInterface.fetch(['--', 'origin', baseRef]);
-      const baseFetchHead = (
-        await gitInterface.revparse(['FETCH_HEAD'])
-      ).trim();
-
-      await gitInterface.fetch(['--', 'origin', headRef]);
-      const headFetchHead = (
-        await gitInterface.revparse(['FETCH_HEAD'])
-      ).trim();
-
-      changedFiles = await gitInterface.diff([
-        '--name-only',
-        baseFetchHead,
-        headFetchHead,
-      ]);
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
 
@@ -345,8 +368,9 @@ export async function run(): Promise<void> {
 
       // Priority: action inputs > workflow inputs > defaults
       const filesInput = workflowFiles || github.context.payload.inputs?.files;
-      const compareBase =
-        workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
+      const compareBase = String(
+        workflowBase || github.context.payload.inputs?.base || 'HEAD~1',
+      );
 
       if (filesInput) {
         // Option 1: Use provided file list
@@ -354,14 +378,13 @@ export async function run(): Promise<void> {
         core.info(`Using manually specified files: ${changedFiles}`);
       } else {
         // Option 2: Compare against base (default to previous commit)
+        validateGitRevision(compareBase);
         try {
-          // Validate compareBase to prevent option injection
-          validateGitRef(compareBase);
-
           changedFiles = await gitInterface.diff([
             '--name-only',
             compareBase,
             'HEAD',
+            '--',
           ]);
           core.info(
             `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
@@ -386,11 +409,14 @@ export async function run(): Promise<void> {
         afterSha &&
         beforeSha !== '0000000000000000000000000000000000000000'
       ) {
+        validateCommitSha(beforeSha, 'before commit');
+        validateCommitSha(afterSha, 'after commit');
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
             beforeSha,
             afterSha,
+            '--',
           ]);
           core.info(
             `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
@@ -454,10 +480,7 @@ export async function run(): Promise<void> {
           }
 
           // Check if the dependency is a directory and any changed file is within it
-          if (
-            dep.endsWith('/') ||
-            (fs.existsSync(dep) && fs.statSync(dep).isDirectory())
-          ) {
+          if (dep.endsWith('/') || isDirectory(dep)) {
             const depDir = dep.endsWith('/') ? dep : `${dep}/`;
             return changedFilesList.some((changedFile) =>
               changedFile.startsWith(depDir),
@@ -526,7 +549,7 @@ export async function run(): Promise<void> {
     // cannot influence the current run's comments, thresholds, or pass/fail.
     const outputFile = path.join(
       workingDirectory,
-      `output-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`,
+      `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
     if (!useConfigPrompts && promptFiles.length > 0) {
@@ -622,8 +645,8 @@ export async function run(): Promise<void> {
     // and evaluate thresholds before deciding whether to fail the action.
     // See: https://github.com/promptfoo/promptfoo-action/issues/786
     const exitCode = await exec.exec(
-      `npx promptfoo@${version}`,
-      promptfooArgs,
+      'npx',
+      [`promptfoo@${version}`, ...promptfooArgs],
       { env, cwd: workingDirectory, ignoreReturnCode: true },
     );
 
@@ -763,7 +786,6 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const octokit = github.getOctokit(githubToken);
       const modifiedFiles = promptFiles.join(', ');
       let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 

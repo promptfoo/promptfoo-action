@@ -12,11 +12,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rebuild-dist:
-    if: github.actor == 'dependabot[bot]' || github.actor == 'renovate[bot]'
+  build-dist:
+    if: >-
+      (github.actor == 'dependabot[bot]' || github.actor == 'renovate[bot]') &&
+      github.event.pull_request.head.repo.full_name == github.repository
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout PR branch
@@ -24,7 +25,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - name: Use Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -42,15 +43,142 @@ jobs:
           npm run build
           npm run package
 
-      - name: Check for changes and commit
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rebuilt-dist
+          path: dist/
+          if-no-files-found: error
+
+  commit-dist:
+    needs: build-dist
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rebuilt-dist
+          path: dist/
+
+      - name: Commit dist artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          if [ -n "$(git status --porcelain dist/)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add dist/
-            git commit -m "chore: rebuild dist after dependency update"
-            git push
-            echo "Dist files rebuilt and committed"
-          else
-            echo "No changes to dist files"
-          fi
+          node <<'NODE'
+          const fs = require('fs');
+          const path = require('path');
+
+          async function main() {
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+            const apiBase = `https://api.github.com/repos/${owner}/${repo}`;
+            const headers = {
+              Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+              Accept: 'application/vnd.github+json',
+              'X-GitHub-Api-Version': '2022-11-28',
+            };
+
+            async function request(url, options = {}) {
+              const response = await fetch(url, {
+                ...options,
+                headers: {
+                  ...headers,
+                  ...(options.headers || {}),
+                },
+              });
+              if (!response.ok) {
+                const body = await response.text();
+                throw new Error(`${options.method || 'GET'} ${url} failed: ${response.status} ${body}`);
+              }
+              return response.json();
+            }
+
+            function listFiles(dir) {
+              return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                  return listFiles(fullPath);
+                }
+                if (!entry.isFile()) {
+                  throw new Error(`Unexpected non-file dist artifact: ${fullPath}`);
+                }
+                return [fullPath];
+              });
+            }
+
+            const headCommit = await request(`${apiBase}/git/commits/${process.env.PR_HEAD_SHA}`);
+            const headTree = await request(`${apiBase}/git/trees/${headCommit.tree.sha}?recursive=1`);
+            const newFiles = listFiles('dist');
+            const newPaths = new Set(newFiles.map((file) => file.replace(/\\/g, '/')));
+            const tree = [];
+
+            for (const file of newFiles) {
+              const content = fs.readFileSync(file).toString('base64');
+              const blob = await request(`${apiBase}/git/blobs`, {
+                method: 'POST',
+                body: JSON.stringify({ content, encoding: 'base64' }),
+              });
+              tree.push({
+                path: file.replace(/\\/g, '/'),
+                mode: '100644',
+                type: 'blob',
+                sha: blob.sha,
+              });
+            }
+
+            for (const item of headTree.tree) {
+              if (
+                item.type === 'blob' &&
+                item.path.startsWith('dist/') &&
+                !newPaths.has(item.path)
+              ) {
+                tree.push({
+                  path: item.path,
+                  mode: '100644',
+                  type: 'blob',
+                  sha: null,
+                });
+              }
+            }
+
+            const newTree = await request(`${apiBase}/git/trees`, {
+              method: 'POST',
+              body: JSON.stringify({
+                base_tree: headCommit.tree.sha,
+                tree,
+              }),
+            });
+
+            if (newTree.sha === headCommit.tree.sha) {
+              console.log('No changes to dist files');
+              return;
+            }
+
+            const commit = await request(`${apiBase}/git/commits`, {
+              method: 'POST',
+              body: JSON.stringify({
+                message: 'chore: rebuild dist after dependency update',
+                tree: newTree.sha,
+                parents: [process.env.PR_HEAD_SHA],
+              }),
+            });
+
+            const encodedHeadRef = encodeURIComponent(process.env.PR_HEAD_REF);
+            await request(`${apiBase}/git/refs/heads/${encodedHeadRef}`, {
+              method: 'PATCH',
+              body: JSON.stringify({
+                sha: commit.sha,
+                force: false,
+              }),
+            });
+            console.log('Dist files rebuilt and committed');
+          }
+
+          main().catch((error) => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
