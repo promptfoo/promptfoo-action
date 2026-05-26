@@ -19539,7 +19539,7 @@ var require_dist = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs7 = require("fs");
+    var fs8 = require("fs");
     var path7 = require("path");
     var os7 = require("os");
     var crypto2 = require("crypto");
@@ -19671,7 +19671,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs7.existsSync(filepath)) {
+            if (fs8.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -19681,7 +19681,7 @@ var require_main = __commonJS({
       } else {
         possibleVaultPath = path7.resolve(process.cwd(), ".env.vault");
       }
-      if (fs7.existsSync(possibleVaultPath)) {
+      if (fs8.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
@@ -19734,7 +19734,7 @@ var require_main = __commonJS({
       const parsedAll = {};
       for (const path8 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs7.readFileSync(path8, { encoding }));
+          const parsed = DotenvModule.parse(fs8.readFileSync(path8, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug3) {
@@ -20629,7 +20629,7 @@ var require_src2 = __commonJS({
     var fs_1 = require("fs");
     var debug_1 = __importDefault(require_src());
     var log = debug_1.default("@kwsites/file-exists");
-    function check(path7, isFile, isDirectory4) {
+    function check(path7, isFile, isDirectory3) {
       log(`checking %s`, path7);
       try {
         const stat2 = fs_1.statSync(path7);
@@ -20637,7 +20637,7 @@ var require_src2 = __commonJS({
           log(`[OK] path represents a file`);
           return true;
         }
-        if (stat2.isDirectory() && isDirectory4) {
+        if (stat2.isDirectory() && isDirectory3) {
           log(`[OK] path represents a directory`);
           return true;
         }
@@ -25699,7 +25699,7 @@ function getOctokit(token, options, ...additionalPlugins) {
 
 // src/main.ts
 var dotenv = __toESM(require_main());
-var fs6 = __toESM(require("fs"));
+var fs7 = __toESM(require("fs"));
 
 // node_modules/glob/dist/esm/index.min.js
 var import_node_url = require("node:url");
@@ -33925,7 +33925,7 @@ async function createCacheManifest(cachePath, outputPath) {
 }
 
 // src/utils/config.ts
-var fs5 = __toESM(require("fs"));
+var fs6 = __toESM(require("fs"));
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 function isNothing(subject) {
@@ -36515,6 +36515,9 @@ var safeDump = renamed("safeDump", "dump");
 
 // src/utils/config.ts
 var path5 = __toESM(require("path"));
+
+// src/utils/fs.ts
+var fs5 = __toESM(require("fs"));
 function isDirectory2(filePath) {
   try {
     return fs5.statSync(filePath).isDirectory();
@@ -36522,11 +36525,13 @@ function isDirectory2(filePath) {
     return false;
   }
 }
+
+// src/utils/config.ts
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path5.dirname(configPath);
   try {
-    const configContent = fs5.readFileSync(configPath, "utf8");
+    const configContent = fs6.readFileSync(configPath, "utf8");
     const config2 = load(configContent);
     if (!config2) {
       debug("Config file is empty or invalid");
@@ -36969,13 +36974,6 @@ function validatePromptfooVersion(version) {
     );
   }
 }
-function isDirectory3(filePath) {
-  try {
-    return fs6.statSync(filePath).isDirectory();
-  } catch {
-    return false;
-  }
-}
 var RESERVED_EXIT_CODES = /* @__PURE__ */ new Set([0, 1, 2, 130]);
 function normalizeFailedTestExitCode(raw) {
   const parsed = Number.parseInt(raw || "100", 10);
@@ -37133,7 +37131,7 @@ async function run() {
       const envFileList = envFiles.split(",").map((f) => f.trim());
       for (const envFile of envFileList) {
         const envFilePath = path6.join(workingDirectory, envFile);
-        if (fs6.existsSync(envFilePath)) {
+        if (fs7.existsSync(envFilePath)) {
           info(`Loading environment variables from ${envFilePath}`);
           const result = dotenv.config({
             path: envFilePath,
@@ -37208,9 +37206,7 @@ async function run() {
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
       const filesInput = workflowFiles || context2.payload.inputs?.files;
-      const compareBase = String(
-        workflowBase || context2.payload.inputs?.base || "HEAD~1"
-      );
+      const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
         changedFiles = filesInput;
         info(`Using manually specified files: ${changedFiles}`);
@@ -37293,7 +37289,7 @@ async function run() {
           if (changedFilesList.includes(dep)) {
             return true;
           }
-          if (dep.endsWith("/") || isDirectory3(dep)) {
+          if (dep.endsWith("/") || isDirectory2(dep)) {
             const depDir = dep.endsWith("/") ? dep : `${dep}/`;
             return changedFilesList.some(
               (changedFile) => changedFile.startsWith(depDir)
@@ -37427,7 +37423,7 @@ async function run() {
     }
     let output;
     try {
-      const outputContent = fs6.readFileSync(outputFile, "utf8");
+      const outputContent = fs7.readFileSync(outputFile, "utf8");
       output = JSON.parse(outputContent);
     } catch (error2) {
       if (isTestFailureExit) {
@@ -37444,7 +37440,7 @@ async function run() {
       );
     }
     try {
-      fs6.unlinkSync(outputFile);
+      fs7.unlinkSync(outputFile);
     } catch {
     }
     startGroup("Cache metrics after evaluation");
