@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as glob from 'glob';
 import * as yaml from 'js-yaml';
 import * as path from 'path';
+import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
@@ -16,14 +17,6 @@ export interface PromptfooConfig {
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
   };
-}
-
-function isDirectory(filePath: string): boolean {
-  try {
-    return fs.statSync(filePath).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 /**

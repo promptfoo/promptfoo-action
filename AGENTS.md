@@ -124,6 +124,6 @@ git push origin feature/branch-name
 
 ## Notes
 
-- The action currently uses Node 16 runtime and should be updated to Node 20.
+- The action runs on the Node 20 runtime (see `action.yml`).
 - Bundle size is around 1.5 MB; avoid unnecessary growth.
 - Review `TODO.md` before planning larger improvements.

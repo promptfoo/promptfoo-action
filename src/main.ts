@@ -20,6 +20,7 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
+import { isDirectory } from './utils/fs';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -80,14 +81,6 @@ function validatePromptfooVersion(version: string): void {
       ErrorCodes.INVALID_CONFIGURATION,
       'Use a safe npm version or dist-tag such as "latest", "0.121.12", or "^0.121.0"',
     );
-  }
-}
-
-function isDirectory(filePath: string): boolean {
-  try {
-    return fs.statSync(filePath).isDirectory();
-  } catch {
-    return false;
   }
 }
 
@@ -368,9 +361,8 @@ export async function run(): Promise<void> {
 
       // Priority: action inputs > workflow inputs > defaults
       const filesInput = workflowFiles || github.context.payload.inputs?.files;
-      const compareBase = String(
-        workflowBase || github.context.payload.inputs?.base || 'HEAD~1',
-      );
+      const compareBase: string =
+        workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
 
       if (filesInput) {
         // Option 1: Use provided file list

@@ -105,14 +105,14 @@ jobs:
                 if (!entry.isFile()) {
                   throw new Error(`Unexpected non-file dist artifact: ${fullPath}`);
                 }
-                return [fullPath];
+                return [fullPath.split(path.sep).join('/')];
               });
             }
 
             const headCommit = await request(`${apiBase}/git/commits/${process.env.PR_HEAD_SHA}`);
             const headTree = await request(`${apiBase}/git/trees/${headCommit.tree.sha}?recursive=1`);
             const newFiles = listFiles('dist');
-            const newPaths = new Set(newFiles.map((file) => file.replace(/\\/g, '/')));
+            const newPaths = new Set(newFiles);
             const tree = [];
 
             for (const file of newFiles) {
@@ -122,7 +122,7 @@ jobs:
                 body: JSON.stringify({ content, encoding: 'base64' }),
               });
               tree.push({
-                path: file.replace(/\\/g, '/'),
+                path: file,
                 mode: '100644',
                 type: 'blob',
                 sha: blob.sha,
