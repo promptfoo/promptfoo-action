@@ -23,7 +23,9 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   const relativePath = path.relative(baseDir, targetPath);
   return (
     relativePath === '' ||
-    (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
+    (relativePath !== '..' &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath))
   );
 }
 
@@ -50,18 +52,15 @@ export function extractFileDependencies(configPath: string): string[] {
       filePath: string,
       source: string,
     ): string | undefined => {
-      const trimmedFilePath = filePath.trim();
       try {
-        if (!trimmedFilePath) {
+        if (!filePath) {
           throw new Error(`${source} is empty`);
         }
-        if (trimmedFilePath.includes('\0')) {
+        if (filePath.includes('\0')) {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(
-          path.join(configDir, trimmedFilePath),
-        );
+        const absolutePath = path.resolve(path.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,

@@ -36343,7 +36343,7 @@ function isDirectory2(filePath) {
 // src/utils/config.ts
 function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
-  return relativePath === "" || !relativePath.startsWith("..") && !path5.isAbsolute(relativePath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
@@ -36358,17 +36358,14 @@ function extractFileDependencies(configPath) {
       return [];
     }
     const resolveConfigDependency = (filePath, source) => {
-      const trimmedFilePath = filePath.trim();
       try {
-        if (!trimmedFilePath) {
+        if (!filePath) {
           throw new Error(`${source} is empty`);
         }
-        if (trimmedFilePath.includes("\0")) {
+        if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(
-          path5.join(configDir, trimmedFilePath)
-        );
+        const absolutePath = path5.resolve(path5.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`

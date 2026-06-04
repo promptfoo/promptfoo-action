@@ -187,6 +187,34 @@ prompts:
     expect(deps).toEqual(['providers/custom.py', 'prompts/prompt.txt']);
   });
 
+  it('should keep dependencies whose names begin with two dots', () => {
+    const configContent = `
+providers:
+  - file://..fixtures/custom.py
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/..fixtures/custom.py']);
+  });
+
+  it('should preserve whitespace in quoted dependency paths', () => {
+    const configContent = `
+providers:
+  - "file:// prompts/custom.py "
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/ prompts/custom.py ']);
+  });
+
   it('should ignore expanded glob matches that escape the dependency root', () => {
     const configContent = `
 providers:
