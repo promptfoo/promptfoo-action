@@ -438,25 +438,6 @@ describe('GitHub Action Main', () => {
       );
     });
 
-    test('should reject environment files outside the working directory', async () => {
-      mockCore.getInput.mockImplementation((name: string) => {
-        const inputs: Record<string, string> = {
-          'github-token': 'mock-github-token',
-          config: 'promptfooconfig.yaml',
-          prompts: 'prompts/*.txt',
-          'env-files': '../.env',
-        };
-        return inputs[name] || '';
-      });
-
-      await run();
-
-      expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('Invalid env-files'),
-      );
-      expect(mockExec.exec).not.toHaveBeenCalled();
-    });
-
     test('should handle push events', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',

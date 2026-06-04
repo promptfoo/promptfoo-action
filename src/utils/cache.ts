@@ -2,7 +2,6 @@ import * as core from '@actions/core';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { resolvePathWithin } from './fs';
 
 /**
  * Cache utilities for optimizing promptfoo evaluations in GitHub Actions.
@@ -21,18 +20,11 @@ export interface CacheConfig {
  * Get default cache configuration optimized for GitHub Actions
  */
 export function getDefaultCacheConfig(): CacheConfig {
-  const cachePath = process.env.PROMPTFOO_CACHE_PATH
-    ? resolvePathWithin(
-        process.cwd(),
-        process.env.PROMPTFOO_CACHE_PATH,
-        'PROMPTFOO_CACHE_PATH',
-        { allowAbsolute: true },
-      )
-    : path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache');
-
   return {
     enabled: true,
-    path: cachePath,
+    path:
+      process.env.PROMPTFOO_CACHE_PATH ||
+      path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache'),
     ttl: parseInt(process.env.PROMPTFOO_CACHE_TTL || '86400', 10), // 1 day default for CI
     maxSize: parseInt(process.env.PROMPTFOO_CACHE_MAX_SIZE || '52428800', 10), // 50MB for CI
     maxFiles: parseInt(
@@ -54,12 +46,9 @@ export function setupCacheEnvironment(cachePath?: string): void {
 
   if (cachePath) {
     // Use provided cache path
-    const absolutePath = resolvePathWithin(
-      process.cwd(),
-      cachePath,
-      'cache-path',
-      { allowAbsolute: true },
-    );
+    const absolutePath = path.isAbsolute(cachePath)
+      ? cachePath
+      : path.join(process.cwd(), cachePath);
 
     process.env.PROMPTFOO_CACHE_PATH = absolutePath;
 

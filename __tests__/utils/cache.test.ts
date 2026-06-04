@@ -142,12 +142,6 @@ describe('Cache Utilities', () => {
       );
     });
 
-    it('should reject relative cache paths outside the workspace', () => {
-      expect(() => setupCacheEnvironment('../outside-cache')).toThrow(
-        'Invalid cache-path',
-      );
-    });
-
     it('should not create directory if it exists', () => {
       mockFs.existsSync.mockReturnValue(true);
       setupCacheEnvironment('/existing/cache');

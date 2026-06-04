@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as glob from 'glob';
 import * as yaml from 'js-yaml';
 import * as path from 'path';
-import { isDirectory, resolvePathWithin } from './fs';
+import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
@@ -52,8 +52,11 @@ export function extractFileDependencies(configPath: string): string[] {
     ): string | undefined => {
       const trimmedFilePath = filePath.trim();
       try {
-        if (!trimmedFilePath || trimmedFilePath.includes('\0')) {
-          return resolvePathWithin(configDir, trimmedFilePath, source);
+        if (!trimmedFilePath) {
+          throw new Error(`${source} is empty`);
+        }
+        if (trimmedFilePath.includes('\0')) {
+          throw new Error(`${source} contains an invalid null byte`);
         }
 
         const absolutePath = path.resolve(
