@@ -1183,6 +1183,7 @@ describe('GitHub Action Main', () => {
         'test-api-key',
         'https://api.promptfoo.app',
       );
+      expect(mockCore.setSecret).toHaveBeenCalledWith('test-api-key');
 
       // Only 1 exec call (eval) - promptfoo now reads PROMPTFOO_API_KEY env var directly
       expect(mockExec.exec).toHaveBeenCalledTimes(1);
