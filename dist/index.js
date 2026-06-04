@@ -36432,7 +36432,7 @@ function extractFileDependencies(configPath) {
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
       const repositoryPath = relativePath.split(path5.sep).join("/");
-      if (dep.endsWith("/") && !repositoryPath.endsWith("/")) {
+      if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
         return `${repositoryPath}/`;
       }
       return repositoryPath;
@@ -36873,8 +36873,10 @@ async function run() {
     validatePromptfooVersion(version);
     const workspaceRoot = process.cwd();
     const workingDirectory = path6.resolve(
-      workspaceRoot,
-      getInput("working-directory", { required: false }) || "."
+      path6.join(
+        workspaceRoot,
+        getInput("working-directory", { required: false }) || "."
+      )
     );
     const configAbsolutePath = path6.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(

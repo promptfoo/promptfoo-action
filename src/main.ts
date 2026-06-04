@@ -199,8 +199,10 @@ export async function run(): Promise<void> {
     validatePromptfooVersion(version);
     const workspaceRoot = process.cwd();
     const workingDirectory = path.resolve(
-      workspaceRoot,
-      core.getInput('working-directory', { required: false }) || '.',
+      path.join(
+        workspaceRoot,
+        core.getInput('working-directory', { required: false }) || '.',
+      ),
     );
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
