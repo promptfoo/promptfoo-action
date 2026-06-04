@@ -156,6 +156,16 @@ defaultTest:
     expect(deps).toHaveLength(0);
   });
 
+  it('should handle non-Error file read failures gracefully', () => {
+    mockFs.readFileSync.mockImplementation(() => {
+      throw 'permission denied';
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
   it('should ignore dependencies that escape the config directory', () => {
     const configContent = `
 providers:
@@ -169,6 +179,39 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/providers/custom.py']);
+  });
+
+  it('should ignore empty and null-byte dependencies', () => {
+    const configContent = `
+providers:
+  - file://
+  - "file://\\0provider.py"
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
+  it('should ignore unsafe object-form variable and assertion dependencies', () => {
+    const configContent = `
+tests:
+  - vars:
+      context:
+        file: ../../outside/context.txt
+    assert:
+      - type: javascript
+        value:
+          file: ../../outside/validator.js
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
   });
 
   it('should keep sibling dependencies inside the workspace', () => {
@@ -333,6 +376,38 @@ providers:
     expect(deps).toContain('../config/custom');
   });
 
+  it('should handle a glob without a base directory', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/provider.py']);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/provider.py']);
+  });
+
+  it('should build nested base directories for globs', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/python/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/config/providers/python/provider.py',
+    ]);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toContain('../config/providers/python');
+  });
+
   it('should handle directory paths in file:// URLs', () => {
     const configContent = `
 providers:
@@ -389,5 +464,18 @@ tests:
     expect(deps).toContain('../config/validators/validator.js');
     expect(deps).toContain('../config/test-data');
     expect(deps).toContain('../config/validators');
+  });
+
+  it('should ignore inline assertion values', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert:
+      - type: contains
+        value: inline expected text
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
   });
 });

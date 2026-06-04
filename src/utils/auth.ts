@@ -67,7 +67,15 @@ export async function validatePromptfooApiKey(
 
     const data = (await response.json()) as ValidateApiKeyResponse;
 
-    if (!data.user || !data.organization) {
+    if (
+      !data.user ||
+      typeof data.user.id !== 'string' ||
+      typeof data.user.name !== 'string' ||
+      typeof data.user.email !== 'string' ||
+      !data.organization ||
+      typeof data.organization.id !== 'string' ||
+      typeof data.organization.name !== 'string'
+    ) {
       throw new PromptfooActionError(
         'Invalid response from authentication endpoint',
         ErrorCodes.AUTH_FAILED,
@@ -88,7 +96,7 @@ export async function validatePromptfooApiKey(
 
     // Handle network/timeout errors
     if (error instanceof Error) {
-      if (error.name === 'AbortError') {
+      if (error.name === 'AbortError' || error.name === 'TimeoutError') {
         throw new PromptfooActionError(
           'Authentication request timed out after 10 seconds',
           ErrorCodes.AUTH_FAILED,

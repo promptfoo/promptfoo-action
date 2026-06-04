@@ -34,6 +34,10 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 
+function toRepositoryPath(filePath: string): string {
+  return filePath.split(path.sep).join('/');
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -90,7 +94,11 @@ function normalizeFailedTestExitCode(raw: string | undefined): {
   value: number;
   warning?: string;
 } {
-  const parsed = Number.parseInt(raw || '100', 10);
+  if (!raw) {
+    return { value: 100 };
+  }
+
+  const parsed = Number.parseInt(raw, 10);
   const isValid =
     Number.isInteger(parsed) &&
     parsed >= 3 &&
@@ -99,10 +107,6 @@ function normalizeFailedTestExitCode(raw: string | undefined): {
 
   if (isValid) {
     return { value: parsed };
-  }
-
-  if (!raw) {
-    return { value: 100 };
   }
 
   return {
@@ -193,9 +197,16 @@ export async function run(): Promise<void> {
     const version: string =
       core.getInput('promptfoo-version', { required: false }) || 'latest';
     validatePromptfooVersion(version);
-    const workingDirectory: string = path.join(
-      process.cwd(),
-      core.getInput('working-directory', { required: false }),
+    const workspaceRoot = process.cwd();
+    const workingDirectory = path.resolve(
+      path.join(
+        workspaceRoot,
+        core.getInput('working-directory', { required: false }) || '.',
+      ),
+    );
+    const configAbsolutePath = path.resolve(workingDirectory, configPath);
+    const configRepositoryPath = toRepositoryPath(
+      path.relative(workspaceRoot, configAbsolutePath),
     );
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
@@ -441,28 +452,44 @@ export async function run(): Promise<void> {
     const changedFilesList = changedFiles.split('\n').filter((f) => f);
 
     for (const globPattern of promptFilesGlobs) {
-      const matches = glob.sync(globPattern);
+      const matches = glob.sync(globPattern, {
+        cwd: workingDirectory,
+        nodir: true,
+      });
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matches.filter(
-          (file) => file !== configPath && changedFilesList.includes(file),
-        );
+        const changedMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          );
+          return (
+            repositoryFile !== configRepositoryPath &&
+            changedFilesList.includes(repositoryFile)
+          );
+        });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => file !== configPath);
+        const allMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          );
+          return repositoryFile !== configRepositoryPath;
+        });
         promptFiles.push(...allMatches);
       }
     }
 
     const configChanged =
-      changedFilesList.length > 0 && changedFilesList.includes(configPath);
+      changedFilesList.length > 0 &&
+      changedFilesList.includes(configRepositoryPath);
 
     // Extract dependencies from config file
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(configPath);
+      const dependencies =
+        extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
@@ -518,13 +545,16 @@ export async function run(): Promise<void> {
 
     // Set up caching environment for optimal performance
     core.startGroup('Setting up cache');
-    setupCacheEnvironment(cachePath);
+    const resolvedCachePath = cachePath
+      ? path.resolve(workingDirectory, cachePath)
+      : undefined;
+    setupCacheEnvironment(resolvedCachePath);
 
     // Clean up old cache entries in CI to prevent unbounded growth
     if (process.env.CI === 'true') {
       const cleanedCount = await cleanupOldCache(
         process.env.PROMPTFOO_CACHE_PATH ||
-          cachePath ||
+          resolvedCachePath ||
           path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache'),
         7 * 24 * 60 * 60, // 7 days
       );
@@ -536,7 +566,7 @@ export async function run(): Promise<void> {
     // Log initial cache metrics
     const cacheDir =
       process.env.PROMPTFOO_CACHE_PATH ||
-      cachePath ||
+      resolvedCachePath ||
       path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache');
     await logCacheMetrics(cacheDir);
     core.endGroup();
@@ -552,7 +582,10 @@ export async function run(): Promise<void> {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
     // Check if sharing is enabled and validate authentication upfront
-    if (!noShare) {
+    if (noShare) {
+      // Override config-level sharing as well as the action's default behavior.
+      promptfooArgs.push('--no-share');
+    } else {
       const promptfooApiKey = process.env.PROMPTFOO_API_KEY;
       const hasRemoteConfig = process.env.PROMPTFOO_REMOTE_API_BASE_URL;
 
@@ -574,6 +607,8 @@ export async function run(): Promise<void> {
           'Sharing is enabled but no authentication found (PROMPTFOO_API_KEY or PROMPTFOO_REMOTE_API_BASE_URL). ' +
             'Skipping share step. To enable sharing, set PROMPTFOO_API_KEY as an environment variable.',
         );
+        // Prevent a config-level share setting from bypassing this guard.
+        promptfooArgs.push('--no-share');
       }
     }
     if (maxConcurrency !== undefined) {
@@ -708,16 +743,8 @@ export async function run(): Promise<void> {
     let repeatCheckResult:
       | ReturnType<typeof evaluateRepeatThreshold>
       | undefined;
-    if (repeatMinPass !== undefined) {
+    if (repeatMinPass !== undefined && repeat !== undefined) {
       const repeatCount = repeat;
-      if (repeatCount === undefined) {
-        throw new PromptfooActionError(
-          'repeat-min-pass requires repeat to be set (e.g., repeat: 3)',
-          ErrorCodes.INVALID_CONFIGURATION,
-          'Set repeat to the number of times each test should run',
-        );
-      }
-
       // Runtime validation: extract and validate output.results structure
       const rawResults = (output.results as { results?: unknown }).results;
 
@@ -954,6 +981,7 @@ export function handleError(error: Error): void {
   core.setFailed(formatErrorMessage(error));
 }
 
+/* v8 ignore next 3 -- packaged action bootstrap */
 if (require.main === module) {
   run();
 }

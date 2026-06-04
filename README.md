@@ -1,48 +1,63 @@
-# Github Action for LLM Prompt Evaluation
+# GitHub Action for LLM Prompt Evaluation
 
-This Github Action uses [promptfoo](https://www.promptfoo.dev) to produce a before/after view of edit prompts.
+This GitHub Action uses [Promptfoo](https://www.promptfoo.dev) to evaluate
+prompts when monitored files change.
 
-When you change a prompt, an eval will automatically be posted on the pull request:
+On pull requests, the action evaluates the current checkout and posts a summary
+comment with pass/fail counts and, when sharing is enabled, a link to the
+Promptfoo web viewer:
 
 <img width="650" alt="pull request llm eval" src="https://github.com/typpo/promptfoo-action/assets/310310/ec75fb39-c6b1-4395-9e41-6d66a7bf8657"/>
 
-The provided link opens the promptfoo web viewer, which allows you to interactively explore the before vs. after:
+The web viewer lets you inspect the evaluation results:
 
 <img width="650" alt="promptfoo web viewer" src="https://github.com/typpo/promptfoo-action/assets/310310/d0ef0497-0c1a-4886-b115-1ee92680891b"/>
 
 ## Supported Events
 
 This action supports multiple GitHub event types:
-- **Pull Request** (`pull_request`, `pull_request_target`) - Compares changes between base and head branches
-- **Push** (`push`) - Compares changes between commits *(requires v1.1.0+)*
-- **Manual Trigger** (`workflow_dispatch`) - Allows manual evaluation with custom inputs *(requires v1.1.0+)*
 
-> **Note:** Version v1.0.0 only supports `pull_request` events. To use `push` or `workflow_dispatch` events, please use `@v1` (which now points to v1.1.0+) or explicitly use `@v1.1.0`.
+- **Pull Request** (`pull_request`, `pull_request_target`) - Uses the pull
+  request file list to select matching prompt files and posts a PR comment.
+- **Push** (`push`) - Uses the before/after commit SHAs to select matching
+  prompt files and writes a workflow summary.
+- **Manual Trigger** (`workflow_dispatch`) - Uses a supplied file list or a git
+  comparison against a base ref and writes a workflow summary.
+
+If change detection is unavailable, the action evaluates all files matching the
+configured `prompts` globs. The action evaluates only the current checkout; it
+does not run separate base and head evaluations.
+
+For `pull_request_target`, use extra care with checkout configuration and
+credentials. Do not execute untrusted pull request code with a privileged token.
 
 ## Configuration
 
 The action can be configured using the following inputs:
 
-| Parameter            | Description                                                                                                                                               | Required |
-| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| `config`             | The path to the configuration file. This file contains settings for the action.                                                                           | Yes      |
-| `github-token`       | The Github token. Used to authenticate requests to the Github API.                                                                                        | Yes      |
-| `cache-path`         | The path to the cache. This is where the action stores temporary data.                                                                                    | No       |
-| `no-share`           | Disable sharing of evaluation results. Defaults to `false` (sharing enabled). See [Sharing Results](#sharing-results) for details.                       | No       |
-| `promptfoo-version`  | The version of promptfoo to use. Defaults to `latest`                                                                                                     | No       |
-| `working-directory`  | The working directory to run `promptfoo` in. Can be set to a location where `promptfoo` is already installed.                                             | No       |
-| `prompts`            | The glob patterns for the prompt files. These patterns are used to find the prompt files that the action should evaluate.                                 | No       |
-| `use-config-prompts` | Use prompt files set at config file. Defaults to `false`                                                                                                  | No       |
-| `env-files`          | Comma-separated list of .env files to load (e.g. ".env,.env.test.local"). Environment variables from these files will be loaded before running promptfoo. | No       |
-| `fail-on-threshold`  | Fail the action if the evaluation success rate is below this percentage (0-100). Example: `80` for 80% success rate.                                      | No       |
-| `max-concurrency`    | Maximum number of concurrent API calls. Defaults to `4`. Useful for rate limiting.                                                                         | No       |
-| `no-table`           | Run promptfoo with `--no-table` flag to keep output minimal. Defaults to `false`                                                                          | No       |
-| `no-progress-bar`    | Run promptfoo with `--no-progress-bar` flag to keep output minimal. Defaults to `false`                                                                   | No       |
-| `no-cache`           | Run promptfoo with `--no-cache` flag to avoid reading or writing results to the disk cache. Defaults to `false`                                             | No       |
-| `disable-comment`    | Disable posting comments to the PR. Defaults to `false`                                                                                                   | No       |
-| `repeat`             | Number of times to run each test (must be >= 2). Useful for non-deterministic LLM evals. Omit to run tests once.                                          | No       |
-| `repeat-min-pass`    | Minimum number of repeated runs each test must pass. Requires `repeat`. Must be <= `repeat`. Example: `2` with `repeat: 3` means each test must pass at least 2 of 3 runs. | No       |
-| `force-run`          | Force evaluation to run even if no files changed. Defaults to `false`                                                                                      | No       |
+| Parameter | Description | Required |
+| --- | --- | --- |
+| `config` | Promptfoo configuration path, relative to `working-directory` unless absolute. | Yes |
+| `github-token` | GitHub token used to list PR files and post PR comments. | Yes |
+| `prompts` | Newline-separated prompt glob patterns, resolved from `working-directory`. Matching changed files are passed to Promptfoo with `--prompts`. If omitted, Promptfoo uses the prompts in `config`. | No |
+| `working-directory` | Base directory for the Promptfoo process and relative config, prompt, environment, and cache paths. Defaults to `.`. | No |
+| `cache-path` | Promptfoo disk-cache directory. Relative paths are resolved from `working-directory`. | No |
+| `promptfoo-version` | Version or dist-tag used by `npx promptfoo@<version>`. Defaults to `latest`. | No |
+| `no-share` | Pass `--no-share`, overriding config-level sharing. Defaults to `false`. | No |
+| `use-config-prompts` | Do not override config prompts with changed files matched by `prompts`. Defaults to `false`. | No |
+| `env-files` | Comma-separated `.env` paths loaded in order from `working-directory`. Later files override earlier files. | No |
+| `fail-on-threshold` | Required suite pass percentage from 0 to 100. | No |
+| `max-concurrency` | Value passed to Promptfoo's `--max-concurrency`. Defaults to `4`. | No |
+| `no-table` | Pass `--no-table`. Defaults to `false`. | No |
+| `no-progress-bar` | Pass `--no-progress-bar`. Defaults to `false`. | No |
+| `no-cache` | Pass `--no-cache` so Promptfoo does not read or write cached evaluation results. Defaults to `false`. | No |
+| `disable-comment` | Disable posting comments to the PR. Defaults to `false`. Non-PR workflow summaries are unaffected. | No |
+| `workflow-files` | Newline-separated changed-file list for `workflow_dispatch`. Takes precedence over workflow-level `files`. | No |
+| `workflow-base` | Base branch, tag, full commit SHA, or supported `HEAD` revision for `workflow_dispatch`. Takes precedence over workflow-level `base`; defaults to `HEAD~1`. | No |
+| `repeat` | Number of times Promptfoo runs each test. Must be at least `2`; omit it to run once. | No |
+| `repeat-min-pass` | Minimum passes required for each repeated test. Requires `repeat` and cannot exceed it. | No |
+| `force-run` | Evaluate even when change detection finds no relevant files. Defaults to `false`. | No |
+| `debug` | Accepted for compatibility but does not change runner log visibility. Use GitHub Actions step debug logging to display `core.debug` messages. | No |
 
 The following API key parameters are supported:
 
@@ -63,7 +78,8 @@ The following API key parameters are supported:
 
 ### Environment Variables
 
-All workflow environment variables are passed through to promptfoo. You can set API keys at the job/workflow level instead of as action inputs:
+All workflow environment variables are passed through to promptfoo. You can set
+API keys at the job or workflow level instead of using action inputs:
 
 ```yaml
 env:
@@ -76,13 +92,15 @@ steps:
       config: 'promptfooconfig.yaml'
 ```
 
-Action inputs take precedence over environment variables. See action.yml for the complete mapping of input parameters to environment variables.
+Action inputs take precedence over their corresponding environment variables.
+See [`action.yml`](action.yml) for the complete input metadata.
 
 ## Usage Examples
 
 ### Pull Request Evaluation
 
-Here is a generic Github Action configuration using "typpo/promptfoo-action@v1" with a cache step:
+Here is a pull request workflow with changed-prompt filtering and an optional
+GitHub Actions cache:
 
 ```yaml
 name: 'Prompt Evaluation'
@@ -90,6 +108,7 @@ on:
   pull_request:
     paths:
       - 'prompts/**'
+      - 'promptfooconfig.yaml'
 
 jobs:
   evaluate:
@@ -102,16 +121,12 @@ jobs:
       - uses: actions/checkout@v4
 
       # This cache is optional, but you'll save money and time by setting it up!
-      # IMPORTANT: Use actions/cache@v4 or later (required after Feb 1, 2025)
       - name: Set up promptfoo cache
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.promptfoo/cache
-            .promptfoo-cache
-          key: ${{ runner.os }}-promptfoo-${{ hashFiles('prompts/**') }}-${{ github.sha }}
+          path: .promptfoo-cache
+          key: ${{ runner.os }}-promptfoo-${{ hashFiles('promptfooconfig.yaml', 'prompts/**') }}
           restore-keys: |
-            ${{ runner.os }}-promptfoo-${{ hashFiles('prompts/**') }}-
             ${{ runner.os }}-promptfoo-
 
       - name: Run promptfoo evaluation
@@ -120,6 +135,7 @@ jobs:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           config: 'promptfooconfig.yaml'
+          prompts: 'prompts/**'
           cache-path: '.promptfoo-cache'
 ```
 
@@ -133,7 +149,7 @@ on:
   workflow_dispatch:
     inputs:
       files:
-        description: 'Files to evaluate (leave empty to auto-detect)'
+        description: 'Changed files to consider (leave empty to auto-detect)'
         required: false
         type: string
       base:
@@ -147,26 +163,30 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write # Required for workflow summaries
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Fetch all history for comparisons
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@main
+        uses: promptfoo/promptfoo-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           config: 'promptfooconfig.yaml'
+          prompts: 'prompts/**'
 ```
 
 When triggered manually:
-- If `files` input is provided, only those files will be evaluated (one file per line)
-- If `base` input is provided, it will compare against that branch/commit
-- If no inputs are provided, it will compare against the previous commit (HEAD~1)
+
+- If `files` is provided, those paths are treated as the changed-file set.
+- Only changed files that also match `prompts` are passed through
+  `--prompts`.
+- If `base` is provided, the action compares that ref with `HEAD`.
+- If neither input is provided, the action compares `HEAD~1` with `HEAD`.
 - Results will be displayed in the workflow summary instead of a PR comment
-- **Important**: The `actions: write` permission is required for writing workflow summaries
+
+Writing a step summary does not require `actions: write`.
 
 #### Alternative: Using Action Inputs
 
@@ -174,10 +194,11 @@ You can also specify files and base directly as action inputs:
 
 ```yaml
 - name: Run promptfoo evaluation
-  uses: promptfoo/promptfoo-action@main
+  uses: promptfoo/promptfoo-action@v1
   with:
     github-token: ${{ secrets.GITHUB_TOKEN }}
     config: 'promptfooconfig.yaml'
+    prompts: 'prompts/**'
     workflow-files: |
       prompts/prompt1.txt
       prompts/prompt2.txt
@@ -196,24 +217,25 @@ on:
       - main
     paths:
       - 'prompts/**'
+      - 'promptfooconfig.yaml'
 
 jobs:
   evaluate:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: write # Required for workflow summaries
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2 # Need at least 2 commits for comparison
+          fetch-depth: 0 # Ensure the push before/after commits are available
 
       - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@main
+        uses: promptfoo/promptfoo-action@v1
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           config: 'promptfooconfig.yaml'
+          prompts: 'prompts/**'
 ```
 
 ## Tips
@@ -232,6 +254,7 @@ on:
   pull_request:
     paths:
       - 'prompts/**'
+      - 'promptfooconfig.yaml'
 
 jobs:
   evaluate:
@@ -255,7 +278,13 @@ This is particularly useful for Next.js applications or other frameworks that us
 
 ## Custom Provider Detection
 
-The action automatically detects changes to custom provider files referenced in your promptfoo configuration. When you use custom providers with `file://` URLs, the action will trigger evaluations when these files change.
+When `prompts` is configured, the action also checks file dependencies referenced
+by the Promptfoo config before deciding to skip an evaluation. This includes
+custom providers, prompt files, test variables, and assertion files.
+
+If the workflow uses an `on.<event>.paths` filter, include these dependency
+paths there too; GitHub must start the workflow before the action can inspect
+changed files.
 
 ### Supported Patterns
 
@@ -273,18 +302,15 @@ The action automatically detects changes to custom provider files referenced in 
      - file://lib/**/*.js            # All JS files recursively in lib/
    ```
 
-3. **Directory watching:**
-   ```yaml
-   providers:
-     - file://providers/             # Watch entire directory
-   ```
-
 ### How It Works
 
-- When you specify a wildcard pattern (e.g., `file://providers/*.py`), the action watches the entire directory
-- Changes to any file matching the pattern will trigger evaluation
-- Directory paths automatically watch all files within that directory
-- This works for providers, prompts, test data files, and assertion files
+- Direct file dependencies are compared with GitHub's changed-file list.
+- For wildcard dependencies, the action expands existing matches and also
+  watches the non-wildcard directory prefix conservatively.
+- A directory dependency watches all changed files below that directory.
+- Dependency detection matters when `prompts` is set and the action is deciding
+  whether it can safely skip an evaluation. Without `prompts`, the config is
+  evaluated on every supported event.
 
 ### Example Configuration
 
@@ -294,14 +320,14 @@ providers:
   - file://providers/**/*.py      # Watch all Python files recursively
   
 prompts:
-  - file://prompts/               # Watch entire prompts directory
+  - file://prompts/system.txt
 
 tests:
   - vars:
-      context: file://data/*.json # Watch all JSON files in data/
+      context: file://data/context.json
     assert:
       - type: javascript
-        value: file://validators/ # Watch all files in validators/
+        value: file://validators/check.js
 ```
 
 ### Force Running Evaluations
@@ -334,28 +360,34 @@ LLM eval outputs are non-deterministic. Use `repeat` to run each test multiple t
 
 This runs each test 3 times and requires each test to pass at least 2 of its 3 runs. Tests that consistently fail will be flagged, while random grader variance is tolerated.
 
-You can combine this with `fail-on-threshold` for a suite-level check — both are evaluated independently.
+You can combine this with `fail-on-threshold` for a suite-level check. Both
+configured checks must pass.
 
 **Note:** The repeat check groups results by the resolved test case, prompt, and provider. If you intentionally define exact duplicate tests, give them unique `id` or `description` values so the report can distinguish them cleanly.
 
 ## Caching for Better Performance
 
-promptfoo-action integrates with both GitHub Actions caching and promptfoo's internal caching to significantly reduce API costs and evaluation time. 
+The action configures Promptfoo's disk cache. Disk contents do not persist
+between fresh GitHub-hosted runners unless the workflow also uses
+`actions/cache`.
 
 ### Why Caching Matters
 
 - **Cost Savings**: Avoid redundant API calls to OpenAI, Anthropic, and other providers
-- **Speed**: Cached evaluations complete in seconds vs. minutes
-- **Reliability**: Reduce dependency on external API availability
-- **Consistency**: Ensure reproducible results across runs
+- **Speed**: Cached evaluations can complete much faster
+- **Reliability**: Reduce repeated calls to external model providers
 
 ### How It Works
 
-The action uses a multi-layer caching strategy:
+The action:
 
-1. **promptfoo Internal Cache**: Caches individual API responses (default: 1 day TTL in CI)
-2. **GitHub Actions Cache**: Persists the cache across workflow runs
-3. **Smart Invalidation**: Cache keys include content hashes for automatic invalidation
+1. Enables Promptfoo's disk cache and configures its path and TTL.
+2. Logs cache size and file-count metrics before and after evaluation.
+3. Removes cache entries older than seven days when `CI=true`.
+4. Writes a `.cache-manifest.json` file into the cache directory.
+
+Your workflow is responsible for choosing an `actions/cache` key and persisting
+the directory across jobs.
 
 ### Basic Setup
 
@@ -365,6 +397,7 @@ on:
   pull_request:
     paths:
       - 'prompts/**'
+      - 'promptfooconfig.yaml'
 
 jobs:
   evaluate:
@@ -373,21 +406,16 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0  # Required for git diff comparisons
 
-      # IMPORTANT: Use actions/cache@v4 or later (required after Feb 1, 2025)
       - name: Cache promptfoo evaluations
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.promptfoo/cache
-            .promptfoo-cache
-          # Cache key includes content hash for automatic invalidation
-          key: ${{ runner.os }}-promptfoo-${{ hashFiles('prompts/**') }}-${{ github.sha }}
+          path: .promptfoo-cache
+          key: ${{ runner.os }}-promptfoo-${{ hashFiles('promptfooconfig.yaml', 'prompts/**') }}
           restore-keys: |
-            ${{ runner.os }}-promptfoo-${{ hashFiles('prompts/**') }}-
             ${{ runner.os }}-promptfoo-
 
       - name: Run promptfoo evaluation
@@ -396,6 +424,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           config: 'promptfooconfig.yaml'
+          prompts: 'prompts/**'
           cache-path: '.promptfoo-cache'  # Local cache directory
 ```
 
@@ -420,16 +449,21 @@ For better cache freshness while maintaining efficiency:
 
 ### Environment Variables for Cache Control
 
-The action automatically configures optimal caching settings for CI:
+The action sets these Promptfoo cache variables. Existing values are respected.
+Promptfoo currently consumes the path and TTL settings; the size and file-count
+variables are exported for compatibility but are not enforced by the current
+Promptfoo CLI:
 
 ```yaml
-- name: Configure cache environment
-  run: |
-    echo "PROMPTFOO_CACHE_ENABLED=true" >> $GITHUB_ENV
-    echo "PROMPTFOO_CACHE_TYPE=disk" >> $GITHUB_ENV
-    echo "PROMPTFOO_CACHE_PATH=$HOME/.promptfoo/cache" >> $GITHUB_ENV
-    echo "PROMPTFOO_CACHE_TTL=86400" >> $GITHUB_ENV  # 1 day for CI
-    echo "PROMPTFOO_CACHE_MAX_SIZE=52428800" >> $GITHUB_ENV  # 50MB
+- name: Run evaluation with custom cache limits
+  uses: promptfoo/promptfoo-action@v1
+  env:
+    PROMPTFOO_CACHE_TTL: 86400
+    PROMPTFOO_CACHE_MAX_SIZE: 52428800
+    PROMPTFOO_CACHE_MAX_FILE_COUNT: 5000
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    config: 'promptfooconfig.yaml'
 ```
 
 ### Cache Metrics and Monitoring
@@ -453,37 +487,37 @@ The action provides cache statistics as outputs:
 
 ### Best Practices
 
-1. **Always use actions/cache@v4 or later** (required after February 1, 2025)
+1. **Use a supported `actions/cache` release**
 2. **Include content hashes in cache keys** for automatic invalidation
 3. **Use restore-keys for fallback** to partial cache hits
 4. **Set appropriate TTL** - shorter for development (1 day), longer for stable prompts
-5. **Monitor cache size** to avoid hitting GitHub's 10GB limit
+5. **Monitor cache size** to stay within repository cache quotas
 6. **Use separate caches** for different prompt sets or environments
 
 ### Troubleshooting Cache Issues
 
 If caching isn't working as expected:
 
-1. **Enable debug mode** to see cache hits/misses:
-   ```yaml
-   - uses: promptfoo/promptfoo-action@v1
-     with:
-       debug: true
-   ```
-
-2. **Check cache statistics** in the action output
-3. **Verify cache paths** match between save and restore
-4. **Clear cache manually** if needed via GitHub UI or API
-
-For a complete example with all caching features, see [.github/workflows/example-cached.yml](.github/workflows/example-cached.yml).
+1. **Check cache statistics** in the action output
+2. **Verify cache paths** match between the action and `actions/cache`
+3. **Check that the cache key or a restore key matches a previous run**
+4. **Clear stale caches** through the GitHub Actions cache UI when needed
 
 ## Sharing
 
-By default, results are shared online. Without `PROMPTFOO_API_KEY`, sharing is skipped and results only appear in logs.
+By default, the action requests a shareable result only when either
+`PROMPTFOO_API_KEY` or `PROMPTFOO_REMOTE_API_BASE_URL` is set. Without either
+variable, it passes `--no-share`. Results remain available in the PR comment or
+workflow summary, as applicable, and in logs. Set `no-share: true` to override
+config-level sharing explicitly.
 
 ### Authentication Validation
 
-The action validates your `PROMPTFOO_API_KEY` **before** running the evaluation. This ensures:
+When `PROMPTFOO_API_KEY` is set, the action validates it before running the
+evaluation. Validation uses `PROMPTFOO_REMOTE_API_BASE_URL` when configured and
+Promptfoo Cloud otherwise. When a remote base URL is set without an API key, the
+action requests sharing but skips validation because self-hosted instances may
+use a different authentication mechanism.
 
 - **Fast failure**: Invalid credentials are detected immediately, saving CI time
 - **Clear error messages**: You'll know exactly what's wrong with your authentication
@@ -520,33 +554,12 @@ To explicitly disable sharing:
 
 To reduce console output in CI, set `no-table: true` and `no-progress-bar: true` in your action configuration.
 
-## Persisting Results as Artifacts
+## Evaluation Result Files
 
-The action writes evaluation results to `output.json` in the working directory. You can upload this as a GitHub Action artifact to preserve results beyond the 2-week shareable URL expiration:
+The action creates a uniquely named JSON result file for internal processing and
+deletes it after parsing. It does not leave `output.json` in the workspace.
 
-```yaml
-jobs:
-  evaluate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run promptfoo evaluation
-        uses: promptfoo/promptfoo-action@v1
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          config: 'promptfooconfig.yaml'
-
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        if: always()  # Upload even if evaluation fails
-        with:
-          name: promptfoo-results
-          path: output.json
-          retention-days: 90
-```
-
-Artifacts are retained for up to 90 days and can be downloaded from the GitHub Actions UI or via the GitHub API.
+The PR comment or workflow summary contains aggregate results and a viewer link
+when sharing succeeds. Workflows that require a persistent raw result file
+should run the Promptfoo CLI directly with `--output <path>` and upload that
+file separately.

@@ -2083,9 +2083,9 @@ var require_dispatcher_base = __commonJS({
       }
       close(callback) {
         if (callback === void 0) {
-          return new Promise((resolve3, reject) => {
+          return new Promise((resolve4, reject) => {
             this.close((err, data) => {
-              return err ? reject(err) : resolve3(data);
+              return err ? reject(err) : resolve4(data);
             });
           });
         }
@@ -2123,12 +2123,12 @@ var require_dispatcher_base = __commonJS({
           err = null;
         }
         if (callback === void 0) {
-          return new Promise((resolve3, reject) => {
+          return new Promise((resolve4, reject) => {
             this.destroy(err, (err2, data) => {
               return err2 ? (
                 /* istanbul ignore next: should never error */
                 reject(err2)
-              ) : resolve3(data);
+              ) : resolve4(data);
             });
           });
         }
@@ -4395,8 +4395,8 @@ var require_util2 = __commonJS({
     function createDeferredPromise() {
       let res;
       let rej;
-      const promise = new Promise((resolve3, reject) => {
-        res = resolve3;
+      const promise = new Promise((resolve4, reject) => {
+        res = resolve4;
         rej = reject;
       });
       return { promise, resolve: res, reject: rej };
@@ -6575,12 +6575,12 @@ upgrade: ${upgrade}\r
           cb();
         }
       }
-      const waitForDrain = () => new Promise((resolve3, reject) => {
+      const waitForDrain = () => new Promise((resolve4, reject) => {
         assert(callback === null);
         if (socket[kError]) {
           reject(socket[kError]);
         } else {
-          callback = resolve3;
+          callback = resolve4;
         }
       });
       socket.on("close", onDrain).on("drain", onDrain);
@@ -7217,12 +7217,12 @@ var require_client_h2 = __commonJS({
           cb();
         }
       }
-      const waitForDrain = () => new Promise((resolve3, reject) => {
+      const waitForDrain = () => new Promise((resolve4, reject) => {
         assert(callback === null);
         if (socket[kError]) {
           reject(socket[kError]);
         } else {
-          callback = resolve3;
+          callback = resolve4;
         }
       });
       h2stream.on("close", onDrain).on("drain", onDrain);
@@ -7700,16 +7700,16 @@ var require_client = __commonJS({
         return this[kNeedDrain] < 2;
       }
       async [kClose]() {
-        return new Promise((resolve3) => {
+        return new Promise((resolve4) => {
           if (this[kSize]) {
-            this[kClosedResolve] = resolve3;
+            this[kClosedResolve] = resolve4;
           } else {
-            resolve3(null);
+            resolve4(null);
           }
         });
       }
       async [kDestroy](err) {
-        return new Promise((resolve3) => {
+        return new Promise((resolve4) => {
           const requests = this[kQueue].splice(this[kPendingIdx]);
           for (let i2 = 0; i2 < requests.length; i2++) {
             const request2 = requests[i2];
@@ -7720,7 +7720,7 @@ var require_client = __commonJS({
               this[kClosedResolve]();
               this[kClosedResolve] = null;
             }
-            resolve3(null);
+            resolve4(null);
           };
           if (this[kHTTPContext]) {
             this[kHTTPContext].destroy(err, callback);
@@ -7771,7 +7771,7 @@ var require_client = __commonJS({
         });
       }
       try {
-        const socket = await new Promise((resolve3, reject) => {
+        const socket = await new Promise((resolve4, reject) => {
           client[kConnector]({
             host,
             hostname,
@@ -7783,7 +7783,7 @@ var require_client = __commonJS({
             if (err) {
               reject(err);
             } else {
-              resolve3(socket2);
+              resolve4(socket2);
             }
           });
         });
@@ -8119,8 +8119,8 @@ var require_pool_base = __commonJS({
         if (this[kQueue].isEmpty()) {
           await Promise.all(this[kClients].map((c3) => c3.close()));
         } else {
-          await new Promise((resolve3) => {
-            this[kClosedResolve] = resolve3;
+          await new Promise((resolve4) => {
+            this[kClosedResolve] = resolve4;
           });
         }
       }
@@ -9335,7 +9335,7 @@ var require_readable = __commonJS({
         if (this._readableState.closeEmitted) {
           return null;
         }
-        return await new Promise((resolve3, reject) => {
+        return await new Promise((resolve4, reject) => {
           if (this[kContentLength] > limit) {
             this.destroy(new AbortError());
           }
@@ -9348,7 +9348,7 @@ var require_readable = __commonJS({
             if (signal?.aborted) {
               reject(signal.reason ?? new AbortError());
             } else {
-              resolve3(null);
+              resolve4(null);
             }
           }).on("error", noop3).on("data", function(chunk) {
             limit -= chunk.length;
@@ -9367,7 +9367,7 @@ var require_readable = __commonJS({
     }
     async function consume(stream, type) {
       assert(!stream[kConsume]);
-      return new Promise((resolve3, reject) => {
+      return new Promise((resolve4, reject) => {
         if (isUnusable(stream)) {
           const rState = stream._readableState;
           if (rState.destroyed && rState.closeEmitted === false) {
@@ -9384,7 +9384,7 @@ var require_readable = __commonJS({
             stream[kConsume] = {
               type,
               stream,
-              resolve: resolve3,
+              resolve: resolve4,
               reject,
               length: 0,
               body: []
@@ -9454,18 +9454,18 @@ var require_readable = __commonJS({
       return buffer;
     }
     function consumeEnd(consume2) {
-      const { type, body, resolve: resolve3, stream, length } = consume2;
+      const { type, body, resolve: resolve4, stream, length } = consume2;
       try {
         if (type === "text") {
-          resolve3(chunksDecode(body, length));
+          resolve4(chunksDecode(body, length));
         } else if (type === "json") {
-          resolve3(JSON.parse(chunksDecode(body, length)));
+          resolve4(JSON.parse(chunksDecode(body, length)));
         } else if (type === "arrayBuffer") {
-          resolve3(chunksConcat(body, length).buffer);
+          resolve4(chunksConcat(body, length).buffer);
         } else if (type === "blob") {
-          resolve3(new Blob(body, { type: stream[kContentType] }));
+          resolve4(new Blob(body, { type: stream[kContentType] }));
         } else if (type === "bytes") {
-          resolve3(chunksConcat(body, length));
+          resolve4(chunksConcat(body, length));
         }
         consumeFinish(consume2);
       } catch (err) {
@@ -9722,9 +9722,9 @@ var require_api_request = __commonJS({
     };
     function request2(opts, callback) {
       if (callback === void 0) {
-        return new Promise((resolve3, reject) => {
+        return new Promise((resolve4, reject) => {
           request2.call(this, opts, (err, data) => {
-            return err ? reject(err) : resolve3(data);
+            return err ? reject(err) : resolve4(data);
           });
         });
       }
@@ -9947,9 +9947,9 @@ var require_api_stream = __commonJS({
     };
     function stream(opts, factory, callback) {
       if (callback === void 0) {
-        return new Promise((resolve3, reject) => {
+        return new Promise((resolve4, reject) => {
           stream.call(this, opts, factory, (err, data) => {
-            return err ? reject(err) : resolve3(data);
+            return err ? reject(err) : resolve4(data);
           });
         });
       }
@@ -10234,9 +10234,9 @@ var require_api_upgrade = __commonJS({
     };
     function upgrade(opts, callback) {
       if (callback === void 0) {
-        return new Promise((resolve3, reject) => {
+        return new Promise((resolve4, reject) => {
           upgrade.call(this, opts, (err, data) => {
-            return err ? reject(err) : resolve3(data);
+            return err ? reject(err) : resolve4(data);
           });
         });
       }
@@ -10328,9 +10328,9 @@ var require_api_connect = __commonJS({
     };
     function connect(opts, callback) {
       if (callback === void 0) {
-        return new Promise((resolve3, reject) => {
+        return new Promise((resolve4, reject) => {
           connect.call(this, opts, (err, data) => {
-            return err ? reject(err) : resolve3(data);
+            return err ? reject(err) : resolve4(data);
           });
         });
       }
@@ -14192,7 +14192,7 @@ var require_fetch = __commonJS({
       function dispatch({ body }) {
         const url = requestCurrentURL(request2);
         const agent = fetchParams.controller.dispatcher;
-        return new Promise((resolve3, reject) => agent.dispatch(
+        return new Promise((resolve4, reject) => agent.dispatch(
           {
             path: url.pathname + url.search,
             origin: url.origin,
@@ -14268,7 +14268,7 @@ var require_fetch = __commonJS({
                 }
               }
               const onError2 = this.onError.bind(this);
-              resolve3({
+              resolve4({
                 status,
                 statusText,
                 headersList,
@@ -14314,7 +14314,7 @@ var require_fetch = __commonJS({
               for (let i2 = 0; i2 < rawHeaders.length; i2 += 2) {
                 headersList.append(bufferToLowerCasedHeaderName(rawHeaders[i2]), rawHeaders[i2 + 1].toString("latin1"), true);
               }
-              resolve3({
+              resolve4({
                 status,
                 statusText: STATUS_CODES[status],
                 headersList,
@@ -17990,8 +17990,8 @@ var require_util8 = __commonJS({
       return true;
     }
     function delay2(ms2) {
-      return new Promise((resolve3) => {
-        setTimeout(resolve3, ms2).unref();
+      return new Promise((resolve4) => {
+        setTimeout(resolve4, ms2).unref();
       });
     }
     module2.exports = {
@@ -18795,11 +18795,11 @@ var require_lib = __commonJS({
     })();
     var __awaiter7 = exports2 && exports2.__awaiter || function(thisArg, _arguments, P3, generator) {
       function adopt(value) {
-        return value instanceof P3 ? value : new P3(function(resolve3) {
-          resolve3(value);
+        return value instanceof P3 ? value : new P3(function(resolve4) {
+          resolve4(value);
         });
       }
-      return new (P3 || (P3 = Promise))(function(resolve3, reject) {
+      return new (P3 || (P3 = Promise))(function(resolve4, reject) {
         function fulfilled(value) {
           try {
             step(generator.next(value));
@@ -18815,7 +18815,7 @@ var require_lib = __commonJS({
           }
         }
         function step(result) {
-          result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
+          result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
         }
         step((generator = generator.apply(thisArg, _arguments || [])).next());
       });
@@ -18902,26 +18902,26 @@ var require_lib = __commonJS({
       }
       readBody() {
         return __awaiter7(this, void 0, void 0, function* () {
-          return new Promise((resolve3) => __awaiter7(this, void 0, void 0, function* () {
+          return new Promise((resolve4) => __awaiter7(this, void 0, void 0, function* () {
             let output = Buffer.alloc(0);
             this.message.on("data", (chunk) => {
               output = Buffer.concat([output, chunk]);
             });
             this.message.on("end", () => {
-              resolve3(output.toString());
+              resolve4(output.toString());
             });
           }));
         });
       }
       readBodyBuffer() {
         return __awaiter7(this, void 0, void 0, function* () {
-          return new Promise((resolve3) => __awaiter7(this, void 0, void 0, function* () {
+          return new Promise((resolve4) => __awaiter7(this, void 0, void 0, function* () {
             const chunks = [];
             this.message.on("data", (chunk) => {
               chunks.push(chunk);
             });
             this.message.on("end", () => {
-              resolve3(Buffer.concat(chunks));
+              resolve4(Buffer.concat(chunks));
             });
           }));
         });
@@ -19129,14 +19129,14 @@ var require_lib = __commonJS({
        */
       requestRaw(info2, data) {
         return __awaiter7(this, void 0, void 0, function* () {
-          return new Promise((resolve3, reject) => {
+          return new Promise((resolve4, reject) => {
             function callbackForResult(err, res) {
               if (err) {
                 reject(err);
               } else if (!res) {
                 reject(new Error("Unknown error"));
               } else {
-                resolve3(res);
+                resolve4(res);
               }
             }
             this.requestRawWithCallback(info2, data, callbackForResult);
@@ -19380,12 +19380,12 @@ var require_lib = __commonJS({
         return __awaiter7(this, void 0, void 0, function* () {
           retryNumber = Math.min(ExponentialBackoffCeiling, retryNumber);
           const ms2 = ExponentialBackoffTimeSlice * Math.pow(2, retryNumber);
-          return new Promise((resolve3) => setTimeout(() => resolve3(), ms2));
+          return new Promise((resolve4) => setTimeout(() => resolve4(), ms2));
         });
       }
       _processResponse(res, options) {
         return __awaiter7(this, void 0, void 0, function* () {
-          return new Promise((resolve3, reject) => __awaiter7(this, void 0, void 0, function* () {
+          return new Promise((resolve4, reject) => __awaiter7(this, void 0, void 0, function* () {
             const statusCode = res.message.statusCode || 0;
             const response = {
               statusCode,
@@ -19393,7 +19393,7 @@ var require_lib = __commonJS({
               headers: {}
             };
             if (statusCode === HttpCodes2.NotFound) {
-              resolve3(response);
+              resolve4(response);
             }
             function dateTimeDeserializer(key, value) {
               if (typeof value === "string") {
@@ -19432,7 +19432,7 @@ var require_lib = __commonJS({
               err.result = response.result;
               reject(err);
             } else {
-              resolve3(response);
+              resolve4(response);
             }
           }));
         });
@@ -19789,8 +19789,8 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative3 = path7.relative(process.cwd(), filePath);
-            shortPaths.push(relative3);
+            const relative4 = path7.relative(process.cwd(), filePath);
+            shortPaths.push(relative4);
           } catch (e) {
             if (debug3) {
               _debug(`failed to load ${filePath} ${e.message}`);
@@ -20927,11 +20927,11 @@ var import_os = require("os");
 var import_fs = require("fs");
 var __awaiter = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve3) {
-      resolve3(value);
+    return value instanceof P3 ? value : new P3(function(resolve4) {
+      resolve4(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve3, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -20947,7 +20947,7 @@ var __awaiter = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21224,11 +21224,11 @@ var fs2 = __toESM(require("fs"), 1);
 var path = __toESM(require("path"), 1);
 var __awaiter2 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve3) {
-      resolve3(value);
+    return value instanceof P3 ? value : new P3(function(resolve4) {
+      resolve4(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve3, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21244,7 +21244,7 @@ var __awaiter2 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21348,11 +21348,11 @@ function isUnixExecutable(stats) {
 // node_modules/@actions/io/lib/io.js
 var __awaiter3 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve3) {
-      resolve3(value);
+    return value instanceof P3 ? value : new P3(function(resolve4) {
+      resolve4(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve3, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21368,7 +21368,7 @@ var __awaiter3 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21442,11 +21442,11 @@ function findInPath(tool) {
 var import_timers = require("timers");
 var __awaiter4 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve3) {
-      resolve3(value);
+    return value instanceof P3 ? value : new P3(function(resolve4) {
+      resolve4(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve3, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21462,7 +21462,7 @@ var __awaiter4 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21681,7 +21681,7 @@ var ToolRunner = class extends events.EventEmitter {
         this.toolPath = path3.resolve(process.cwd(), this.options.cwd || process.cwd(), this.toolPath);
       }
       this.toolPath = yield which(this.toolPath, true);
-      return new Promise((resolve3, reject) => __awaiter4(this, void 0, void 0, function* () {
+      return new Promise((resolve4, reject) => __awaiter4(this, void 0, void 0, function* () {
         this._debug(`exec tool: ${this.toolPath}`);
         this._debug("arguments:");
         for (const arg of this.args) {
@@ -21764,7 +21764,7 @@ var ToolRunner = class extends events.EventEmitter {
           if (error2) {
             reject(error2);
           } else {
-            resolve3(exitCode);
+            resolve4(exitCode);
           }
         });
         if (this.options.input) {
@@ -21887,11 +21887,11 @@ var ExecState = class _ExecState extends events.EventEmitter {
 // node_modules/@actions/exec/lib/exec.js
 var __awaiter5 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve3) {
-      resolve3(value);
+    return value instanceof P3 ? value : new P3(function(resolve4) {
+      resolve4(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve3, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21907,7 +21907,7 @@ var __awaiter5 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -22046,11 +22046,11 @@ var httpClient = __toESM(require_lib(), 1);
 var import_undici2 = __toESM(require_undici(), 1);
 var __awaiter6 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve3) {
-      resolve3(value);
+    return value instanceof P3 ? value : new P3(function(resolve4) {
+      resolve4(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve3, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -22066,7 +22066,7 @@ var __awaiter6 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -33756,7 +33756,7 @@ async function validatePromptfooApiKey(apiKey, apiHost = DEFAULT_CLOUD_API_HOST)
       );
     }
     const data = await response.json();
-    if (!data.user || !data.organization) {
+    if (!data.user || typeof data.user.id !== "string" || typeof data.user.name !== "string" || typeof data.user.email !== "string" || !data.organization || typeof data.organization.id !== "string" || typeof data.organization.name !== "string") {
       throw new PromptfooActionError(
         "Invalid response from authentication endpoint",
         ErrorCodes.AUTH_FAILED,
@@ -33772,7 +33772,7 @@ async function validatePromptfooApiKey(apiKey, apiHost = DEFAULT_CLOUD_API_HOST)
       throw error2;
     }
     if (error2 instanceof Error) {
-      if (error2.name === "AbortError") {
+      if (error2.name === "AbortError" || error2.name === "TimeoutError") {
         throw new PromptfooActionError(
           "Authentication request timed out after 10 seconds",
           ErrorCodes.AUTH_FAILED,
@@ -33862,8 +33862,8 @@ async function getCacheStats(cachePath) {
         totalSize += stat2.size;
         fileCount++;
         const mtime = stat2.mtime.getTime();
-        if (!oldestTime || mtime < oldestTime) oldestTime = mtime;
-        if (!newestTime || mtime > newestTime) newestTime = mtime;
+        if (oldestTime === void 0 || mtime < oldestTime) oldestTime = mtime;
+        if (newestTime === void 0 || mtime > newestTime) newestTime = mtime;
       }
     }
   }
@@ -33872,8 +33872,8 @@ async function getCacheStats(cachePath) {
     exists: true,
     sizeBytes: totalSize,
     fileCount,
-    oldestFile: oldestTime ? new Date(oldestTime) : void 0,
-    newestFile: newestTime ? new Date(newestTime) : void 0
+    oldestFile: oldestTime === void 0 ? void 0 : new Date(oldestTime),
+    newestFile: newestTime === void 0 ? void 0 : new Date(newestTime)
   };
 }
 async function logCacheMetrics(cachePath) {
@@ -36374,7 +36374,9 @@ function extractFileDependencies(configPath) {
         return absolutePath;
       } catch (error2) {
         warning(
-          `Ignoring unsafe config dependency "${filePath}": ${error2 instanceof Error ? error2.message : String(error2)}`
+          `Ignoring unsafe config dependency "${filePath}": ${String(
+            error2
+          ).replace(/^(?:[A-Za-z]+)?Error: /, "")}`
         );
         return void 0;
       }
@@ -36409,20 +36411,11 @@ function extractFileDependencies(configPath) {
           basePath = basePath ? path5.join(basePath, part) : part;
         }
         if (basePath) {
-          const absoluteBasePath = resolveConfigDependency(
-            basePath,
-            "config file dependency glob base"
-          );
-          if (absoluteBasePath) {
-            dependencies.add(absoluteBasePath);
-          }
+          dependencies.add(path5.resolve(path5.join(configDir, basePath)));
         }
       } else if (isDirectory2(absolutePath)) {
-        if (fileUrl.endsWith("/") && !absolutePath.endsWith("/")) {
-          dependencies.add(`${absolutePath}/`);
-        } else {
-          dependencies.add(absolutePath);
-        }
+        const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
+        dependencies.add(directoryPath);
       } else {
         dependencies.add(absolutePath);
       }
@@ -36495,10 +36488,11 @@ function extractFileDependencies(configPath) {
     }
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
-      if (dep.endsWith("/") && !relativePath.endsWith("/")) {
-        return `${relativePath}/`;
+      const repositoryPath = relativePath.split(path5.sep).join("/");
+      if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
+        return `${repositoryPath}/`;
       }
-      return relativePath;
+      return repositoryPath;
     });
   } catch (error2) {
     warning(
@@ -36616,7 +36610,8 @@ function disambiguateLabels(groups) {
     labelCounts.set(group.label, (labelCounts.get(group.label) || 0) + 1);
   }
   for (const group of groups.values()) {
-    if ((labelCounts.get(group.label) || 0) > 1 && group.disambiguator) {
+    const labelCount = labelCounts.get(group.label);
+    if (labelCount > 1 && group.disambiguator) {
       group.label = `${group.label} (${group.disambiguator})`;
     }
   }
@@ -36819,6 +36814,9 @@ function formatRepeatCommentMarkdown(summary2) {
 // src/main.ts
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
+function toRepositoryPath(filePath) {
+  return filePath.split(path6.sep).join("/");
+}
 function validateGitRevision(ref) {
   const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
   const safeHeadRevision = /^HEAD(?:~[1-9][0-9]*|\^[1-9]?)?$/.test(ref);
@@ -36851,13 +36849,13 @@ function validatePromptfooVersion(version) {
 }
 var RESERVED_EXIT_CODES = /* @__PURE__ */ new Set([0, 1, 2, 130]);
 function normalizeFailedTestExitCode(raw) {
-  const parsed = Number.parseInt(raw || "100", 10);
+  if (!raw) {
+    return { value: 100 };
+  }
+  const parsed = Number.parseInt(raw, 10);
   const isValid = Number.isInteger(parsed) && parsed >= 3 && parsed <= 255 && !RESERVED_EXIT_CODES.has(parsed);
   if (isValid) {
     return { value: parsed };
-  }
-  if (!raw) {
-    return { value: 100 };
   }
   return {
     value: 100,
@@ -36930,9 +36928,16 @@ async function run() {
     const cachePath = getInput("cache-path", { required: false });
     const version = getInput("promptfoo-version", { required: false }) || "latest";
     validatePromptfooVersion(version);
-    const workingDirectory = path6.join(
-      process.cwd(),
-      getInput("working-directory", { required: false })
+    const workspaceRoot = process.cwd();
+    const workingDirectory = path6.resolve(
+      path6.join(
+        workspaceRoot,
+        getInput("working-directory", { required: false }) || "."
+      )
+    );
+    const configAbsolutePath = path6.resolve(workingDirectory, configPath);
+    const configRepositoryPath = toRepositoryPath(
+      path6.relative(workspaceRoot, configAbsolutePath)
     );
     const noShare = getBooleanInput("no-share", {
       required: false
@@ -37142,21 +37147,32 @@ async function run() {
     const promptFiles = [];
     const changedFilesList = changedFiles.split("\n").filter((f) => f);
     for (const globPattern of promptFilesGlobs) {
-      const matches = Ui(globPattern);
+      const matches = Ui(globPattern, {
+        cwd: workingDirectory,
+        nodir: true
+      });
       if (changedFilesList.length > 0) {
-        const changedMatches = matches.filter(
-          (file) => file !== configPath && changedFilesList.includes(file)
-        );
+        const changedMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
+          );
+          return repositoryFile !== configRepositoryPath && changedFilesList.includes(repositoryFile);
+        });
         promptFiles.push(...changedMatches);
       } else {
-        const allMatches = matches.filter((file) => file !== configPath);
+        const allMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
+          );
+          return repositoryFile !== configRepositoryPath;
+        });
         promptFiles.push(...allMatches);
       }
     }
-    const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configPath);
+    const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(configPath);
+      const dependencies = extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
       if (dependencies.length > 0) {
         debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
@@ -37191,10 +37207,11 @@ async function run() {
       );
     }
     startGroup("Setting up cache");
-    setupCacheEnvironment(cachePath);
+    const resolvedCachePath = cachePath ? path6.resolve(workingDirectory, cachePath) : void 0;
+    setupCacheEnvironment(resolvedCachePath);
     if (process.env.CI === "true") {
       const cleanedCount = await cleanupOldCache(
-        process.env.PROMPTFOO_CACHE_PATH || cachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
+        process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
         7 * 24 * 60 * 60
         // 7 days
       );
@@ -37202,7 +37219,7 @@ async function run() {
         info(`Cleaned ${cleanedCount} old cache entries`);
       }
     }
-    const cacheDir = process.env.PROMPTFOO_CACHE_PATH || cachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
+    const cacheDir = process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
     await logCacheMetrics(cacheDir);
     endGroup();
     const outputFile = path6.join(
@@ -37213,7 +37230,9 @@ async function run() {
     if (!useConfigPrompts && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
     }
-    if (!noShare) {
+    if (noShare) {
+      promptfooArgs.push("--no-share");
+    } else {
       const promptfooApiKey = process.env.PROMPTFOO_API_KEY;
       const hasRemoteConfig = process.env.PROMPTFOO_REMOTE_API_BASE_URL;
       if (promptfooApiKey) {
@@ -37230,6 +37249,7 @@ async function run() {
         info(
           "Sharing is enabled but no authentication found (PROMPTFOO_API_KEY or PROMPTFOO_REMOTE_API_BASE_URL). Skipping share step. To enable sharing, set PROMPTFOO_API_KEY as an environment variable."
         );
+        promptfooArgs.push("--no-share");
       }
     }
     if (maxConcurrency !== void 0) {
@@ -37324,15 +37344,8 @@ async function run() {
     await createCacheManifest(cacheDir);
     endGroup();
     let repeatCheckResult;
-    if (repeatMinPass !== void 0) {
+    if (repeatMinPass !== void 0 && repeat !== void 0) {
       const repeatCount = repeat;
-      if (repeatCount === void 0) {
-        throw new PromptfooActionError(
-          "repeat-min-pass requires repeat to be set (e.g., repeat: 3)",
-          ErrorCodes.INVALID_CONFIGURATION,
-          "Set repeat to the number of times each test should run"
-        );
-      }
       const rawResults = output.results.results;
       if (!Array.isArray(rawResults)) {
         throw new PromptfooActionError(

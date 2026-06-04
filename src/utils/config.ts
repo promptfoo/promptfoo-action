@@ -70,9 +70,9 @@ export function extractFileDependencies(configPath: string): string[] {
         return absolutePath;
       } catch (error) {
         core.warning(
-          `Ignoring unsafe config dependency "${filePath}": ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `Ignoring unsafe config dependency "${filePath}": ${String(
+            error,
+          ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
         );
         return undefined;
       }
@@ -115,21 +115,14 @@ export function extractFileDependencies(configPath: string): string[] {
           basePath = basePath ? path.join(basePath, part) : part;
         }
         if (basePath) {
-          const absoluteBasePath = resolveConfigDependency(
-            basePath,
-            'config file dependency glob base',
-          );
-          if (absoluteBasePath) {
-            dependencies.add(absoluteBasePath);
-          }
+          dependencies.add(path.resolve(path.join(configDir, basePath)));
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
-        if (fileUrl.endsWith('/') && !absolutePath.endsWith('/')) {
-          dependencies.add(`${absolutePath}/`);
-        } else {
-          dependencies.add(absolutePath);
-        }
+        const directoryPath = fileUrl.endsWith('/')
+          ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
+          : absolutePath;
+        dependencies.add(directoryPath);
       } else {
         // It's a regular file path
         dependencies.add(absolutePath);
@@ -235,11 +228,12 @@ export function extractFileDependencies(configPath: string): string[] {
     // Convert absolute paths back to relative paths from working directory
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
+      const repositoryPath = relativePath.split(path.sep).join('/');
       // Preserve trailing slash for directories
-      if (dep.endsWith('/') && !relativePath.endsWith('/')) {
-        return `${relativePath}/`;
+      if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
+        return `${repositoryPath}/`;
       }
-      return relativePath;
+      return repositoryPath;
     });
   } catch (error) {
     core.warning(

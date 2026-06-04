@@ -58,13 +58,33 @@ vi.mock('simple-git', () => ({
 
 // Mock auth utilities
 vi.mock('../src/utils/auth');
+vi.mock('../src/utils/cache');
+vi.mock('../src/utils/config');
+vi.mock('../src/utils/fs');
 
 import { handleError, run } from '../src/main';
 import * as auth from '../src/utils/auth';
+import * as cache from '../src/utils/cache';
+import * as config from '../src/utils/config';
+import * as fsUtils from '../src/utils/fs';
 
 const mockAuth = auth as {
   validatePromptfooApiKey: MockedFunction<typeof auth.validatePromptfooApiKey>;
   getApiHost: MockedFunction<typeof auth.getApiHost>;
+};
+const mockCache = cache as {
+  cleanupOldCache: MockedFunction<typeof cache.cleanupOldCache>;
+  createCacheManifest: MockedFunction<typeof cache.createCacheManifest>;
+  logCacheMetrics: MockedFunction<typeof cache.logCacheMetrics>;
+  setupCacheEnvironment: MockedFunction<typeof cache.setupCacheEnvironment>;
+};
+const mockConfig = config as {
+  extractFileDependencies: MockedFunction<
+    typeof config.extractFileDependencies
+  >;
+};
+const mockFsUtils = fsUtils as {
+  isDirectory: MockedFunction<typeof fsUtils.isDirectory>;
 };
 
 // Note: @actions/core, @actions/github, and @actions/exec are already mocked via vitest.config.ts aliases
@@ -109,6 +129,7 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
+  unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
 // Import glob after mocking to get the mocked version
@@ -144,6 +165,11 @@ function setupCommonMocks(): MockOctokit {
   mockGitInterface.diff.mockResolvedValue(
     'prompts/prompt1.txt\npromptfooconfig.yaml',
   );
+  mockCache.cleanupOldCache.mockResolvedValue(0);
+  mockCache.createCacheManifest.mockResolvedValue();
+  mockCache.logCacheMetrics.mockResolvedValue();
+  mockConfig.extractFileDependencies.mockReturnValue([]);
+  mockFsUtils.isDirectory.mockReturnValue(false);
 
   // Setup octokit mock
   const mockOctokit: MockOctokit = {
@@ -380,6 +406,61 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should resolve prompt changes relative to working-directory', async () => {
+      withInputs({
+        'working-directory': 'evals',
+        prompts: 'prompts/*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          'promptfoo@latest',
+          'eval',
+          '--prompts',
+          'prompts/prompt1.txt',
+        ]),
+        expect.objectContaining({
+          cwd: path.join(process.cwd(), 'evals'),
+        }),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.join(process.cwd(), 'evals', 'promptfooconfig.yaml'),
+      );
+    });
+
+    test('should preserve legacy resolution for absolute working-directory inputs', async () => {
+      withInputs({
+        'working-directory': '/evals',
+        prompts: 'prompts/*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          'promptfoo@latest',
+          'eval',
+          '--prompts',
+          'prompts/prompt1.txt',
+        ]),
+        expect.objectContaining({
+          cwd: path.join(process.cwd(), 'evals'),
+        }),
+      );
+    });
+
     test('should handle API keys correctly', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
@@ -412,6 +493,47 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should pass every supported API key input to promptfoo', async () => {
+      const keyInputs = {
+        'openai-api-key': 'openai-input',
+        'azure-api-key': 'azure-input',
+        'anthropic-api-key': 'anthropic-input',
+        'huggingface-api-key': 'huggingface-input',
+        'aws-access-key-id': 'aws-id-input',
+        'aws-secret-access-key': 'aws-secret-input',
+        'replicate-api-key': 'replicate-input',
+        'palm-api-key': 'palm-input',
+        'vertex-api-key': 'vertex-input',
+        'cohere-api-key': 'cohere-input',
+        'mistral-api-key': 'mistral-input',
+        'groq-api-key': 'groq-input',
+      };
+      withInputs(keyInputs);
+
+      await run();
+
+      const execOptions = mockExec.exec.mock.calls[0][2];
+      expect(execOptions?.env).toEqual(
+        expect.objectContaining({
+          OPENAI_API_KEY: 'openai-input',
+          AZURE_OPENAI_API_KEY: 'azure-input',
+          ANTHROPIC_API_KEY: 'anthropic-input',
+          HF_API_TOKEN: 'huggingface-input',
+          AWS_ACCESS_KEY_ID: 'aws-id-input',
+          AWS_SECRET_ACCESS_KEY: 'aws-secret-input',
+          REPLICATE_API_KEY: 'replicate-input',
+          PALM_API_KEY: 'palm-input',
+          VERTEX_API_KEY: 'vertex-input',
+          COHERE_API_KEY: 'cohere-input',
+          MISTRAL_API_KEY: 'mistral-input',
+          GROQ_API_KEY: 'groq-input',
+        }),
+      );
+      for (const key of Object.values(keyInputs)) {
+        expect(mockCore.setSecret).toHaveBeenCalledWith(key);
+      }
+    });
+
     test('should load environment files when specified', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
@@ -436,6 +558,38 @@ describe('GitHub Action Main', () => {
       expect(mockCore.info).toHaveBeenCalledWith(
         expect.stringContaining('Loading environment variables from'),
       );
+    });
+
+    test('should fail when an environment file cannot be loaded', async () => {
+      withInputs({ 'env-files': '.env' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockReturnValue({
+        error: new Error('invalid env syntax'),
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to load'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail when an environment file does not exist', async () => {
+      withInputs({ 'env-files': '.env.missing' });
+      mockFs.existsSync.mockReturnValue(false);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Environment file'),
+      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('not found'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should handle push events', async () => {
@@ -470,6 +624,76 @@ describe('GitHub Action Main', () => {
           '--',
         ]);
       }
+    });
+
+    test('should process all prompts when push diff fails', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'a'.repeat(40),
+          after: 'b'.repeat(40),
+        },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockRejectedValueOnce(new Error('shallow clone'));
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('Could not compare commits'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should process all prompts on an initial push', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: '0'.repeat(40),
+          after: 'b'.repeat(40),
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        expect.stringContaining('Unable to determine changed files'),
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should use context SHA when a push payload omits after', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'a'.repeat(40),
+        },
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'sha', {
+        value: 'b'.repeat(40),
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockGitInterface.diff).toHaveBeenCalledWith([
+        '--name-only',
+        'a'.repeat(40),
+        'b'.repeat(40),
+        '--',
+      ]);
     });
 
     test('should handle workflow_dispatch events with default behavior', async () => {
@@ -680,6 +904,166 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should run when a direct config dependency changes', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when a file inside a dependency directory changes', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/nested/context.json' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should detect dependency directories without a trailing slash', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data']);
+      mockFsUtils.isDirectory.mockReturnValue(true);
+
+      await run();
+
+      expect(mockFsUtils.isDirectory).toHaveBeenCalledWith('data');
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should skip when config dependencies do not match changed files', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should force evaluation when no relevant files changed', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Force run enabled - running evaluation regardless of changes',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should clean old cache entries in CI', async () => {
+      process.env.CI = 'true';
+      process.env.PROMPTFOO_CACHE_PATH = '/tmp/promptfoo-cache';
+      mockCache.cleanupOldCache.mockResolvedValue(2);
+
+      await run();
+
+      expect(mockCache.cleanupOldCache).toHaveBeenCalledWith(
+        '/tmp/promptfoo-cache',
+        7 * 24 * 60 * 60,
+      );
+      expect(mockCore.info).toHaveBeenCalledWith('Cleaned 2 old cache entries');
+
+      delete process.env.CI;
+      delete process.env.PROMPTFOO_CACHE_PATH;
+    });
+
+    test('should resolve a relative cache path from working-directory', async () => {
+      process.env.CI = 'true';
+      delete process.env.PROMPTFOO_CACHE_PATH;
+      withInputs({
+        'working-directory': 'evals',
+        'cache-path': '.cache',
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+      const expectedCachePath = path.join(process.cwd(), 'evals', '.cache');
+
+      await run();
+
+      expect(mockCache.setupCacheEnvironment).toHaveBeenCalledWith(
+        expectedCachePath,
+      );
+      expect(mockCache.cleanupOldCache).toHaveBeenCalledWith(
+        expectedCachePath,
+        7 * 24 * 60 * 60,
+      );
+      expect(mockCache.logCacheMetrics).toHaveBeenCalledWith(expectedCachePath);
+
+      delete process.env.CI;
+    });
+
+    test('should use the default cache path in CI', async () => {
+      process.env.CI = 'true';
+      delete process.env.PROMPTFOO_CACHE_PATH;
+      const expectedCachePath = path.join(
+        process.env.HOME || '/tmp',
+        '.promptfoo',
+        'cache',
+      );
+
+      await run();
+
+      expect(mockCache.setupCacheEnvironment).toHaveBeenCalledWith(undefined);
+      expect(mockCache.cleanupOldCache).toHaveBeenCalledWith(
+        expectedCachePath,
+        7 * 24 * 60 * 60,
+      );
+      expect(mockCache.logCacheMetrics).toHaveBeenCalledWith(expectedCachePath);
+
+      delete process.env.CI;
+    });
+
+    test('should fall back to /tmp when HOME is unavailable', async () => {
+      process.env.CI = 'true';
+      delete process.env.PROMPTFOO_CACHE_PATH;
+      const originalHome = process.env.HOME;
+      delete process.env.HOME;
+
+      await run();
+
+      expect(mockCache.cleanupOldCache).toHaveBeenCalledWith(
+        '/tmp/.promptfoo/cache',
+        7 * 24 * 60 * 60,
+      );
+      expect(mockCache.logCacheMetrics).toHaveBeenCalledWith(
+        '/tmp/.promptfoo/cache',
+      );
+
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      delete process.env.CI;
+    });
+
     test('should handle missing pull request data', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {},
@@ -774,6 +1158,15 @@ describe('GitHub Action Main', () => {
       expect(args).not.toContain('--no-cache');
     });
 
+    test('should include max concurrency when configured', async () => {
+      withInputs({ 'max-concurrency': '7' });
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(expect.arrayContaining(['--max-concurrency', '7']));
+    });
+
     test('should include --share flag when no-share is false and auth is present', async () => {
       process.env.PROMPTFOO_API_KEY = 'test-api-key';
 
@@ -799,7 +1192,7 @@ describe('GitHub Action Main', () => {
       expect(evalArgs).toContain('--share');
     });
 
-    test('should not include --share flag when no-share is true', async () => {
+    test('should override config sharing when no-share is true', async () => {
       mockCore.getBooleanInput.mockImplementation((name: string) => {
         if (name === 'no-share') return true;
         return false;
@@ -810,6 +1203,7 @@ describe('GitHub Action Main', () => {
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--share');
+      expect(args).toContain('--no-share');
     });
 
     test('should skip sharing when no auth is present', async () => {
@@ -821,6 +1215,7 @@ describe('GitHub Action Main', () => {
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--share');
+      expect(args).toContain('--no-share');
       expect(mockCore.info).toHaveBeenCalledWith(
         expect.stringContaining(
           'Sharing is enabled but no authentication found',
@@ -914,10 +1309,110 @@ describe('GitHub Action Main', () => {
       expect(args).toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
       expect(args).toContain('--no-cache');
+      expect(args).toContain('--no-share');
 
       // Should NOT have these
       expect(args).not.toContain('--share');
       expect(args).not.toContain('--prompts'); // because use-config-prompts is true
+    });
+
+    test('should use console guidance in PR comments without a share URL', async () => {
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          results: {
+            stats: { successes: 1, failures: 0 },
+          },
+        }),
+      );
+
+      await run();
+
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(commentBody).toContain('View eval results in CI console');
+    });
+
+    test('should write repeat results to a non-PR workflow summary', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: 'prompts/prompt1.txt',
+          },
+        },
+        configurable: true,
+      });
+      withInputs({ repeat: '2', 'repeat-min-pass': '1' });
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          results: {
+            results: [
+              {
+                testIdx: 0,
+                promptIdx: 0,
+                success: true,
+                description: 'Test A',
+              },
+              {
+                testIdx: 1,
+                promptIdx: 0,
+                success: false,
+                description: 'Test A',
+              },
+            ],
+            stats: { successes: 1, failures: 1 },
+          },
+        }),
+      );
+
+      await run();
+
+      expect(mockCore.summary.addHeading).toHaveBeenCalledWith(
+        'Repeat Check',
+        3,
+      );
+      expect(mockCore.summary.addRaw).toHaveBeenCalledWith(
+        expect.stringContaining('Repeat check'),
+      );
+      expect(mockCore.summary.addRaw).toHaveBeenCalledWith(
+        'View eval results in CI console',
+      );
+      expect(mockCore.summary.write).toHaveBeenCalled();
+    });
+
+    test('should omit evaluated files when a non-PR run uses config prompts', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {},
+        },
+        configurable: true,
+      });
+      withInputs({ prompts: '' });
+
+      await run();
+
+      expect(mockCore.summary.addHeading).not.toHaveBeenCalledWith(
+        'Evaluated Files',
+        3,
+      );
+      expect(mockCore.summary.write).toHaveBeenCalled();
+    });
+
+    test('should handle non-Error failures', async () => {
+      mockExec.exec.mockRejectedValue('subprocess unavailable');
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: subprocess unavailable',
+      );
     });
   });
 
@@ -1589,6 +2084,96 @@ describe('repeat-min-pass feature', () => {
       expect.stringContaining('failed the repeat check'),
     );
   });
+
+  test('should reject repeat output when results is not an array', async () => {
+    withInputs({ repeat: '2', 'repeat-min-pass': '1' });
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: 'invalid',
+          stats: { successes: 1, failures: 0 },
+        },
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('expected output.results.results to be an array'),
+    );
+  });
+
+  test('should reject non-object repeat results', async () => {
+    withInputs({ repeat: '2', 'repeat-min-pass': '1' });
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [null],
+          stats: { successes: 0, failures: 1 },
+        },
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid result at index 0: expected object'),
+    );
+  });
+
+  test('should reject repeat results without promptIdx', async () => {
+    withInputs({ repeat: '2', 'repeat-min-pass': '1' });
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [{ success: true }],
+          stats: { successes: 1, failures: 0 },
+        },
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining("missing or invalid 'promptIdx' field"),
+    );
+  });
+
+  test('should reject repeat results without success', async () => {
+    withInputs({ repeat: '2', 'repeat-min-pass': '1' });
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [{ promptIdx: 0 }],
+          stats: { successes: 0, failures: 1 },
+        },
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining("missing or invalid 'success' field"),
+    );
+  });
+
+  test('should reject empty repeat results', async () => {
+    withInputs({ repeat: '2', 'repeat-min-pass': '1' });
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          results: [],
+          stats: { successes: 0, failures: 0 },
+        },
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('No test results found'),
+    );
+  });
 });
 
 describe('exec error handling with repeat-min-pass', () => {
@@ -1743,6 +2328,140 @@ describe('exec error handling with repeat-min-pass', () => {
     expect(mockCore.setFailed).toHaveBeenCalledWith(
       expect.stringContaining('unexpected code 1'),
     );
+  });
+
+  test('should report missing output after a test-failure exit', async () => {
+    mockExec.exec.mockResolvedValue(100);
+    mockFs.readFileSync.mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Promptfoo tests failed (exit code 100) but no output was generated',
+      ),
+    );
+  });
+
+  test('should report invalid output after a successful exit', async () => {
+    mockExec.exec.mockResolvedValue(0);
+    mockFs.readFileSync.mockReturnValue('{not-json');
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to read or parse output file'),
+    );
+  });
+
+  test('should format non-Error output read failures', async () => {
+    mockExec.exec.mockResolvedValue(0);
+    mockFs.readFileSync.mockImplementation(() => {
+      throw 'read failed';
+    });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Failed to read or parse output file: read failed',
+      ),
+    );
+  });
+
+  test('should fail thresholds when no tests were run', async () => {
+    withInputs({ 'fail-on-threshold': '80' });
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          stats: { successes: 0, failures: 0 },
+        },
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('No tests were run'),
+    );
+  });
+
+  test('should log when PROMPTFOO_PASS_RATE_THRESHOLD passes', async () => {
+    process.env.PROMPTFOO_PASS_RATE_THRESHOLD = '50';
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          stats: { successes: 3, failures: 1 },
+        },
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.info).toHaveBeenCalledWith(
+      'Promptfoo pass-rate threshold passed: 75.00% >= 50%',
+    );
+
+    delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
+  });
+
+  test.each([
+    '',
+    'Infinity',
+  ])('should normalize PROMPTFOO_PASS_RATE_THRESHOLD=%j to 100%%', async (threshold) => {
+    process.env.PROMPTFOO_PASS_RATE_THRESHOLD = threshold;
+    mockFs.readFileSync.mockReturnValue(
+      JSON.stringify({
+        results: {
+          stats: { successes: 3, failures: 1 },
+        },
+      }),
+    );
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('PROMPTFOO_PASS_RATE_THRESHOLD (100%)'),
+    );
+
+    delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
+  });
+
+  test('should honor a valid custom failed-test exit code', async () => {
+    process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = '42';
+    mockExec.exec.mockImplementation((_command, _args, options) => {
+      expect(options?.env?.PROMPTFOO_FAILED_TEST_EXIT_CODE).toBe('42');
+      return Promise.resolve(42);
+    });
+
+    await run();
+
+    expect(mockCore.setFailed).toHaveBeenCalledWith(
+      expect.stringContaining('Promptfoo evaluation failed (exit code 42)'),
+    );
+
+    delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;
+  });
+
+  test.each([
+    '130',
+    '300',
+  ])('should normalize invalid failed-test exit code %s', async (exitCode) => {
+    process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = exitCode;
+    mockExec.exec.mockImplementation((_command, _args, options) => {
+      expect(options?.env?.PROMPTFOO_FAILED_TEST_EXIT_CODE).toBe('100');
+      return Promise.resolve(100);
+    });
+
+    await run();
+
+    expect(mockCore.warning).toHaveBeenCalledWith(
+      expect.stringContaining('reserved or invalid'),
+    );
+
+    delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;
   });
 
   test('should normalize reserved PROMPTFOO_FAILED_TEST_EXIT_CODE before invoking promptfoo', async () => {

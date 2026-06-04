@@ -17,6 +17,7 @@ import {
   generateCacheKey,
   getCacheStats,
   getDefaultCacheConfig,
+  logCacheMetrics,
   setupCacheEnvironment,
 } from '../../src/utils/cache';
 
@@ -26,6 +27,7 @@ vi.mock('@actions/core', () => ({
   debug: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
+  setOutput: vi.fn(),
   setFailed: vi.fn(),
 }));
 vi.mock('fs', async () => {
@@ -48,7 +50,12 @@ vi.mock('fs', async () => {
   };
 });
 
-const mockCore = core as { info: Mock; debug: Mock };
+const mockCore = core as {
+  info: Mock;
+  debug: Mock;
+  setOutput: Mock;
+  warning: Mock;
+};
 const mockFs = fs as unknown as {
   existsSync: Mock;
   mkdirSync: Mock;
@@ -98,6 +105,19 @@ describe('Cache Utilities', () => {
         maxFiles: 1000,
       });
     });
+
+    it('should fall back to /tmp when HOME is unavailable', () => {
+      const originalHome = process.env.HOME;
+      delete process.env.HOME;
+
+      expect(getDefaultCacheConfig().path).toBe('/tmp/.promptfoo/cache');
+
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+    });
   });
 
   describe('setupCacheEnvironment', () => {
@@ -145,6 +165,14 @@ describe('Cache Utilities', () => {
     it('should not create directory if it exists', () => {
       mockFs.existsSync.mockReturnValue(true);
       setupCacheEnvironment('/existing/cache');
+
+      expect(mockFs.mkdirSync).not.toHaveBeenCalled();
+    });
+
+    it('should not create the default directory if it exists', () => {
+      mockFs.existsSync.mockReturnValue(true);
+
+      setupCacheEnvironment();
 
       expect(mockFs.mkdirSync).not.toHaveBeenCalled();
     });
@@ -219,6 +247,14 @@ describe('Cache Utilities', () => {
 
       expect(key).toMatch(/^promptfoo-\w+-2025-W\d+-[a-f0-9]{16}$/);
     });
+
+    it('does not mutate the caller prompt file order', () => {
+      const promptFiles = ['z.txt', 'a.txt'];
+
+      generateCacheKey('config.yaml', promptFiles);
+
+      expect(promptFiles).toEqual(['z.txt', 'a.txt']);
+    });
   });
 
   describe('getCacheStats', () => {
@@ -241,7 +277,7 @@ describe('Cache Utilities', () => {
         if (dirStr.endsWith('subdir')) {
           return []; // Empty subdirectory to stop recursion
         }
-        return ['file1.json', 'file2.json', 'subdir'];
+        return ['file1.json', 'file2.json', 'file3.json', 'subdir'];
       });
       mockFs.statSync.mockImplementation((filePath: unknown) => {
         const filePathStr = String(filePath);
@@ -252,20 +288,117 @@ describe('Cache Utilities', () => {
             mtime: new Date('2025-01-01'),
           } as fs.Stats;
         }
+        const fileDate = filePathStr.endsWith('file1.json')
+          ? '2025-01-20'
+          : filePathStr.endsWith('file2.json')
+            ? '2025-01-10'
+            : '2025-01-15';
         return {
           isDirectory: () => false,
           size: 1024,
-          mtime: new Date('2025-01-15'),
+          mtime: new Date(fileDate),
         } as fs.Stats;
       });
 
       const stats = await getCacheStats('/cache/path');
 
       expect(stats.exists).toBe(true);
-      expect(stats.sizeBytes).toBe(2048); // 2 files * 1024 bytes
-      expect(stats.fileCount).toBe(2);
-      expect(stats.oldestFile).toEqual(new Date('2025-01-15'));
-      expect(stats.newestFile).toEqual(new Date('2025-01-15'));
+      expect(stats.sizeBytes).toBe(3072); // 3 files * 1024 bytes
+      expect(stats.fileCount).toBe(3);
+      expect(stats.oldestFile).toEqual(new Date('2025-01-10'));
+      expect(stats.newestFile).toEqual(new Date('2025-01-20'));
+    });
+
+    it('handles files whose timestamp is the Unix epoch', async () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readdirSync.mockReturnValue(['epoch.json', 'newer.json']);
+      mockFs.statSync.mockImplementation((filePath: unknown) => ({
+        isDirectory: () => false,
+        size: 1,
+        mtime: new Date(String(filePath).endsWith('epoch.json') ? 0 : 1000),
+      }));
+
+      const stats = await getCacheStats('/cache/path');
+
+      expect(stats.oldestFile).toEqual(new Date(0));
+      expect(stats.newestFile).toEqual(new Date(1000));
+    });
+
+    it('should return no timestamps for an empty cache', async () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readdirSync.mockReturnValue([]);
+
+      await expect(getCacheStats('/cache/path')).resolves.toEqual({
+        exists: true,
+        sizeBytes: 0,
+        fileCount: 0,
+        oldestFile: undefined,
+        newestFile: undefined,
+      });
+    });
+  });
+
+  describe('logCacheMetrics', () => {
+    it('logs statistics and sets action outputs', async () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readdirSync.mockReturnValue(['file.json']);
+      mockFs.statSync.mockReturnValue({
+        isDirectory: () => false,
+        size: 2 * 1048576,
+        mtime: new Date('2025-01-15T12:00:00.000Z'),
+      } as fs.Stats);
+
+      await logCacheMetrics('/cache/path');
+
+      expect(mockCore.info).toHaveBeenCalledWith('Cache Statistics:');
+      expect(mockCore.info).toHaveBeenCalledWith('  Size: 2.00MB');
+      expect(mockCore.info).toHaveBeenCalledWith('  Files: 1');
+      expect(mockCore.info).toHaveBeenCalledWith(
+        '  Oldest: 2025-01-15T12:00:00.000Z',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        '  Newest: 2025-01-15T12:00:00.000Z',
+      );
+      expect(mockCore.setOutput).toHaveBeenCalledWith('cache-size-mb', '2.00');
+      expect(mockCore.setOutput).toHaveBeenCalledWith('cache-file-count', '1');
+    });
+
+    it('reports when the cache directory does not exist', async () => {
+      mockFs.existsSync.mockReturnValue(false);
+
+      await logCacheMetrics('/missing/cache');
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Cache directory does not exist yet',
+      );
+      expect(mockCore.setOutput).not.toHaveBeenCalled();
+    });
+
+    it('logs an empty cache without timestamp lines', async () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readdirSync.mockReturnValue([]);
+
+      await logCacheMetrics('/cache/path');
+
+      expect(mockCore.info).toHaveBeenCalledWith('  Files: 0');
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('Oldest:'),
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('Newest:'),
+      );
+    });
+
+    it('warns instead of failing when statistics cannot be read', async () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readdirSync.mockImplementation(() => {
+        throw new Error('permission denied');
+      });
+
+      await expect(logCacheMetrics('/cache/path')).resolves.toBeUndefined();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Failed to get cache metrics: Error: permission denied',
+      );
     });
   });
 
@@ -347,6 +480,42 @@ describe('Cache Utilities', () => {
       );
       expect(mockFs.rmdirSync).toHaveBeenCalledWith(
         expect.stringContaining('subdir'),
+      );
+    });
+
+    it('should keep directories that remain non-empty', async () => {
+      const recentDate = new Date();
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readdirSync
+        .mockReturnValueOnce(['subdir'])
+        .mockReturnValueOnce(['recent.json'])
+        .mockReturnValueOnce(['recent.json']);
+      mockFs.statSync.mockImplementation((filePath: unknown) => {
+        if (String(filePath).endsWith('subdir')) {
+          return {
+            isDirectory: () => true,
+            mtime: recentDate,
+          } as fs.Stats;
+        }
+        return {
+          isDirectory: () => false,
+          mtime: recentDate,
+        } as fs.Stats;
+      });
+
+      await expect(cleanupOldCache('/cache/path')).resolves.toBe(0);
+      expect(mockFs.rmdirSync).not.toHaveBeenCalled();
+    });
+
+    it('warns and returns the partial count when cleanup fails', async () => {
+      mockFs.existsSync.mockReturnValue(true);
+      mockFs.readdirSync.mockImplementation(() => {
+        throw new Error('permission denied');
+      });
+
+      await expect(cleanupOldCache('/cache/path')).resolves.toBe(0);
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Cache cleanup failed: Error: permission denied',
       );
     });
   });

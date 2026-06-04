@@ -4,7 +4,7 @@ runs:
   using: 'node20'
   main: 'dist/index.js'
 # For workflow_dispatch events, you can use the following inputs in your workflow:
-# - inputs.files: Newline-separated list of files to evaluate (optional)
+# - inputs.files: Newline-separated changed-file list to consider (optional)
 # - inputs.base: Base branch/commit to compare against (default: HEAD~1) (optional)
 #
 # Example workflow_dispatch configuration:
@@ -12,7 +12,7 @@ runs:
 #   workflow_dispatch:
 #     inputs:
 #       files:
-#         description: 'Files to evaluate (leave empty to auto-detect)'
+#         description: 'Changed files to consider (leave empty to auto-detect)'
 #         required: false
 #         type: string
 #       base:
@@ -22,16 +22,16 @@ runs:
 #         type: string
 inputs:
   github-token:
-    description: 'Github Token, used to add comments to PRs and write workflow summaries'
+    description: 'GitHub token used to list pull request files and post pull request comments'
     required: true
   prompts:
     description: 'List of prompt files to watch (glob patterns supported, one per line)'
     required: false
   config:
-    description: 'Path to a promptfoo config file'
+    description: 'Path to a Promptfoo config file'
     required: true
   cache-path:
-    description: 'Path to cache directory'
+    description: 'Path to the Promptfoo disk cache directory'
     required: false
   openai-api-key:
     description: 'OpenAI API Key. Falls back to OPENAI_API_KEY environment variable if not provided.'
@@ -78,7 +78,7 @@ inputs:
     required: false
     default: '.'
   no-share:
-    description: 'Do not share the promptfoo result'
+    description: 'Pass --no-share and override config-level sharing'
     required: false
     default: 'false'
   use-config-prompts:
@@ -94,7 +94,7 @@ inputs:
     required: false
     default: ''
   debug:
-    description: 'Enable debug logging for troubleshooting'
+    description: 'Reserved compatibility input; use GitHub Actions step debug logging to display debug messages'
     required: false
     default: 'false'
   max-concurrency:
@@ -118,7 +118,7 @@ inputs:
     required: false
     default: 'false'
   workflow-files:
-    description: 'Files to evaluate in workflow_dispatch mode (newline-separated list). If not specified, falls back to workflow inputs or auto-detection.'
+    description: 'Changed-file list for workflow_dispatch mode (newline-separated). If not specified, falls back to workflow inputs or auto-detection.'
     required: false
     default: ''
   workflow-base:
@@ -140,6 +140,11 @@ inputs:
     description: 'Force evaluation to run even if no files changed'
     required: false
     default: 'false'
+outputs:
+  cache-size-mb:
+    description: 'Promptfoo cache size in megabytes after the latest metrics check'
+  cache-file-count:
+    description: 'Number of files in the Promptfoo cache after the latest metrics check'
 branding:
   icon: 'box'
   color: 'yellow'

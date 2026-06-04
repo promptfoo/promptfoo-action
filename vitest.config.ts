@@ -13,6 +13,9 @@ export default defineConfig({
       reportsDirectory: 'coverage',
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.d.ts', 'src/**/__tests__/**', 'src/**/index.ts'],
+      thresholds: {
+        100: true,
+      },
     },
     alias: {
       // Use path.resolve for robust alias resolution regardless of cwd
