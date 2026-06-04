@@ -74,7 +74,7 @@ The repository also includes a local copy of Promptfoo source under `/promptfoo/
 
 ### Tests
 
-- Jest is used for tests.
+- Vitest is used for tests.
 - Mock external boundaries such as GitHub, filesystem, and git execution.
 - Coverage output is written to `/coverage/`.
 

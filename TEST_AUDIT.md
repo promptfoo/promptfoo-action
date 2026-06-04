@@ -92,8 +92,8 @@ All 228 tests passed.
 | BUG-005 | Bug | Resolved | Cache timestamp tracking used truthiness, so an epoch timestamp could be replaced as the oldest file by a newer timestamp. Sentinel checks now use `undefined`. |
 | GAP-001 | Coverage | Resolved | Added direct tests for every `Logger` method and both group modes. |
 | GAP-002 | Coverage | Resolved | Added direct tests for error formatting and filesystem fallback paths. |
-| GAP-003 | Quality | Open | Coverage is reported but no minimum threshold prevents regressions. |
-| GAP-004 | Documentation | Open | `AGENTS.md` says Jest, but the repository uses Vitest. |
+| GAP-003 | Quality | Resolved | Vitest now enforces 100% global coverage across statements, branches, functions, and lines. |
+| GAP-004 | Documentation | Resolved | Updated `AGENTS.md` to identify Vitest as the test runner. |
 | GAP-005 | Coverage | Resolved | Added event, cache, dependency, malformed-output, threshold, and summary branch tests; `src/main.ts` is at 100%. |
 | GAP-006 | Quality | Resolved | Authentication error tests now capture one rejection and assert one request per case. |
 
