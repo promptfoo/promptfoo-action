@@ -34,6 +34,10 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 
+function toRepositoryPath(filePath: string): string {
+  return filePath.split(path.sep).join('/');
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -193,9 +197,14 @@ export async function run(): Promise<void> {
     const version: string =
       core.getInput('promptfoo-version', { required: false }) || 'latest';
     validatePromptfooVersion(version);
-    const workingDirectory: string = path.join(
-      process.cwd(),
-      core.getInput('working-directory', { required: false }),
+    const workspaceRoot = process.cwd();
+    const workingDirectory = path.resolve(
+      workspaceRoot,
+      core.getInput('working-directory', { required: false }) || '.',
+    );
+    const configAbsolutePath = path.resolve(workingDirectory, configPath);
+    const configRepositoryPath = toRepositoryPath(
+      path.relative(workspaceRoot, configAbsolutePath),
     );
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
@@ -437,28 +446,44 @@ export async function run(): Promise<void> {
     const changedFilesList = changedFiles.split('\n').filter((f) => f);
 
     for (const globPattern of promptFilesGlobs) {
-      const matches = glob.sync(globPattern);
+      const matches = glob.sync(globPattern, {
+        cwd: workingDirectory,
+        nodir: true,
+      });
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matches.filter(
-          (file) => file !== configPath && changedFilesList.includes(file),
-        );
+        const changedMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          );
+          return (
+            repositoryFile !== configRepositoryPath &&
+            changedFilesList.includes(repositoryFile)
+          );
+        });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => file !== configPath);
+        const allMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          );
+          return repositoryFile !== configRepositoryPath;
+        });
         promptFiles.push(...allMatches);
       }
     }
 
     const configChanged =
-      changedFilesList.length > 0 && changedFilesList.includes(configPath);
+      changedFilesList.length > 0 &&
+      changedFilesList.includes(configRepositoryPath);
 
     // Extract dependencies from config file
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(configPath);
+      const dependencies =
+        extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
@@ -514,13 +539,16 @@ export async function run(): Promise<void> {
 
     // Set up caching environment for optimal performance
     core.startGroup('Setting up cache');
-    setupCacheEnvironment(cachePath);
+    const resolvedCachePath = cachePath
+      ? path.resolve(workingDirectory, cachePath)
+      : undefined;
+    setupCacheEnvironment(resolvedCachePath);
 
     // Clean up old cache entries in CI to prevent unbounded growth
     if (process.env.CI === 'true') {
       const cleanedCount = await cleanupOldCache(
         process.env.PROMPTFOO_CACHE_PATH ||
-          cachePath ||
+          resolvedCachePath ||
           path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache'),
         7 * 24 * 60 * 60, // 7 days
       );
@@ -532,7 +560,7 @@ export async function run(): Promise<void> {
     // Log initial cache metrics
     const cacheDir =
       process.env.PROMPTFOO_CACHE_PATH ||
-      cachePath ||
+      resolvedCachePath ||
       path.join(process.env.HOME || '/tmp', '.promptfoo', 'cache');
     await logCacheMetrics(cacheDir);
     core.endGroup();

@@ -160,11 +160,12 @@ export function extractFileDependencies(configPath: string): string[] {
     const cwd = process.cwd();
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
+      const repositoryPath = relativePath.split(path.sep).join('/');
       // Preserve trailing slash for directories
-      if (dep.endsWith('/') && !relativePath.endsWith('/')) {
-        return `${relativePath}/`;
+      if (dep.endsWith('/') && !repositoryPath.endsWith('/')) {
+        return `${repositoryPath}/`;
       }
-      return relativePath;
+      return repositoryPath;
     });
   } catch (error) {
     core.warning(

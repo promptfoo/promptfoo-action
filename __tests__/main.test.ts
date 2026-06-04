@@ -380,6 +380,36 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should resolve prompt changes relative to working-directory', async () => {
+      withInputs({
+        'working-directory': 'evals',
+        prompts: 'prompts/*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          'promptfoo@latest',
+          'eval',
+          '--prompts',
+          'prompts/prompt1.txt',
+        ]),
+        expect.objectContaining({
+          cwd: path.join(process.cwd(), 'evals'),
+        }),
+      );
+      expect(mockFs.readFileSync).toHaveBeenCalledWith(
+        path.join(process.cwd(), 'evals', 'promptfooconfig.yaml'),
+        'utf8',
+      );
+    });
+
     test('should handle API keys correctly', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
