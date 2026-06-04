@@ -64,11 +64,10 @@ export function extractFileDependencies(configPath: string): string[] {
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
-        if (fileUrl.endsWith('/') && !absolutePath.endsWith('/')) {
-          dependencies.add(`${absolutePath}/`);
-        } else {
-          dependencies.add(absolutePath);
-        }
+        const directoryPath = fileUrl.endsWith('/')
+          ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
+          : absolutePath;
+        dependencies.add(directoryPath);
       } else {
         // It's a regular file path
         dependencies.add(absolutePath);

@@ -158,8 +158,8 @@ export async function getCacheStats(cachePath: string): Promise<{
         fileCount++;
 
         const mtime = stat.mtime.getTime();
-        if (!oldestTime || mtime < oldestTime) oldestTime = mtime;
-        if (!newestTime || mtime > newestTime) newestTime = mtime;
+        if (oldestTime === undefined || mtime < oldestTime) oldestTime = mtime;
+        if (newestTime === undefined || mtime > newestTime) newestTime = mtime;
       }
     }
   }
@@ -170,8 +170,8 @@ export async function getCacheStats(cachePath: string): Promise<{
     exists: true,
     sizeBytes: totalSize,
     fileCount,
-    oldestFile: oldestTime ? new Date(oldestTime) : undefined,
-    newestFile: newestTime ? new Date(newestTime) : undefined,
+    oldestFile: oldestTime === undefined ? undefined : new Date(oldestTime),
+    newestFile: newestTime === undefined ? undefined : new Date(newestTime),
   };
 }
 

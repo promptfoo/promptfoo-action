@@ -203,6 +203,156 @@ describe('groupResultsByTest', () => {
       expect(group.label).toContain('prompt');
     }
   });
+
+  test('normalizes nested arrays and object key order for grouping', () => {
+    const results = [
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        vars: { payload: [{ b: 2, a: 1, omitted: undefined }] },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: false,
+        vars: { payload: [{ a: 1, b: 2 }] },
+      }),
+    ];
+
+    const groups = groupResultsByTest(results);
+
+    expect(groups.size).toBe(1);
+    expect(Array.from(groups.values())[0].total).toBe(2);
+  });
+
+  test('truncates long variable summaries in labels', () => {
+    const groups = groupResultsByTest([
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        vars: { query: 'x'.repeat(100) },
+      }),
+    ]);
+
+    expect(Array.from(groups.values())[0].label).toContain('...');
+  });
+
+  test('uses test case ids and metadata ids to disambiguate labels', () => {
+    const groups = groupResultsByTest([
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        description: 'Shared label',
+        testCase: { id: 'case-a', description: 'Shared label' },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        description: 'Shared label',
+        testCase: {
+          description: 'Shared label',
+          metadata: { testCaseId: 'case-b' },
+        },
+      }),
+    ]);
+
+    expect(Array.from(groups.values()).map((group) => group.label)).toEqual([
+      'Shared label [test] (id=case-a)',
+      'Shared label [test] (id=case-b)',
+    ]);
+  });
+
+  test('leaves duplicate labels unchanged without a disambiguator', () => {
+    const groups = groupResultsByTest([
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        description: 'Shared label',
+        testCase: { description: 'Shared label', metadata: { source: 'a' } },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        description: 'Shared label',
+        testCase: { description: 'Shared label', metadata: { source: 'b' } },
+      }),
+    ]);
+
+    expect(groups.size).toBe(2);
+    expect(Array.from(groups.values()).map((group) => group.label)).toEqual([
+      'Shared label [test]',
+      'Shared label [test]',
+    ]);
+  });
+
+  test('handles missing providers, result vars, and test case vars', () => {
+    const groups = groupResultsByTest([
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        provider: undefined,
+        vars: undefined,
+        testCase: {
+          description: 'Test case description',
+          vars: { query: 'hello' },
+        },
+      }),
+      makeResult({
+        promptIdx: 0,
+        success: true,
+        provider: undefined,
+        vars: undefined,
+        description: undefined,
+        testCase: undefined,
+      }),
+    ]);
+
+    expect(Array.from(groups.values()).map((group) => group.label)).toEqual([
+      'Test case description',
+      'test({})',
+    ]);
+  });
+
+  test('does not split providers when repeat indexes are incomplete', () => {
+    const results = Array.from({ length: 4 }, () =>
+      makeResult({
+        testIdx: 0,
+        promptIdx: 0,
+        success: true,
+        description: 'Test A',
+      }),
+    );
+
+    const groups = groupResultsByTest(results, 2);
+
+    expect(groups.size).toBe(1);
+    expect(Array.from(groups.values())[0].total).toBe(4);
+  });
+
+  test('does not split providers when repeat occurrences are unbalanced', () => {
+    const results = [
+      ...Array.from({ length: 2 }, () =>
+        makeResult({
+          testIdx: 0,
+          promptIdx: 0,
+          success: true,
+          description: 'Test A',
+        }),
+      ),
+      ...Array.from({ length: 4 }, () =>
+        makeResult({
+          testIdx: 1,
+          promptIdx: 0,
+          success: true,
+          description: 'Test A',
+        }),
+      ),
+    ];
+
+    const groups = groupResultsByTest(results, 2);
+
+    expect(groups.size).toBe(1);
+    expect(Array.from(groups.values())[0].total).toBe(6);
+  });
 });
 
 describe('validateGroups', () => {
@@ -475,6 +625,20 @@ describe('formatRepeatFailureMessage', () => {
     expect(msg).toContain('unexpected result counts');
     expect(msg).toContain('Test A: 4 results');
     expect(msg).toContain('description collision');
+  });
+
+  test('formats partial grouping error guidance', () => {
+    const msg = formatRepeatFailureMessage({
+      totalGroups: 1,
+      failures: [],
+      groupingErrors: [
+        { label: 'Test A', actual: 2, expected: 3, kind: 'partial' },
+      ],
+      minPass: 2,
+      repeatCount: 3,
+    });
+
+    expect(msg).toContain('missing repeat runs');
   });
 });
 

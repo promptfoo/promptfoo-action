@@ -70,6 +70,17 @@ After the orchestration branch pass:
 
 All 210 tests passed. `src/main.ts` reached 100% coverage.
 
+After the utility branch pass:
+
+| Metric | Coverage |
+| --- | ---: |
+| Statements | 100.00% |
+| Branches | 100.00% |
+| Functions | 100.00% |
+| Lines | 100.00% |
+
+All 228 tests passed.
+
 ## Findings
 
 | ID | Type | Status | Finding |
@@ -78,6 +89,7 @@ All 210 tests passed. `src/main.ts` reached 100% coverage.
 | BUG-002 | Bug | Resolved | Authentication only recognized `AbortError`, but `AbortSignal.timeout()` produces `TimeoutError` on Node 20. Both are now handled as timeouts. |
 | BUG-003 | Bug | Resolved | Authentication accepted incomplete user/organization objects and logged undefined identity fields. Response fields are now validated. |
 | BUG-004 | Bug | Resolved | `working-directory` was ignored for prompt globbing, config dependency extraction, and relative cache paths, causing changed prompts in subdirectories to be skipped. |
+| BUG-005 | Bug | Resolved | Cache timestamp tracking used truthiness, so an epoch timestamp could be replaced as the oldest file by a newer timestamp. Sentinel checks now use `undefined`. |
 | GAP-001 | Coverage | Resolved | Added direct tests for every `Logger` method and both group modes. |
 | GAP-002 | Coverage | Resolved | Added direct tests for error formatting and filesystem fallback paths. |
 | GAP-003 | Quality | Open | Coverage is reported but no minimum threshold prevents regressions. |
@@ -99,3 +111,5 @@ All 210 tests passed. `src/main.ts` reached 100% coverage.
 - Isolated orchestration helpers and expanded `main.ts` from 86.64% statements
   to 100%, bringing repository coverage to 98.96% statements and 95.74%
   branches.
+- Closed the remaining cache, config, and threshold branches, reaching 100%
+  repository coverage across all four metrics.

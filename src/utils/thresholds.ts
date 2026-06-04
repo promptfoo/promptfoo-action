@@ -148,7 +148,8 @@ function disambiguateLabels(groups: Map<string, TestGroup>): void {
   }
 
   for (const group of groups.values()) {
-    if ((labelCounts.get(group.label) || 0) > 1 && group.disambiguator) {
+    const labelCount = labelCounts.get(group.label) as number;
+    if (labelCount > 1 && group.disambiguator) {
       group.label = `${group.label} (${group.disambiguator})`;
     }
   }
