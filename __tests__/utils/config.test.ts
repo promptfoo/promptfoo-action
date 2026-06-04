@@ -156,6 +156,86 @@ defaultTest:
     expect(deps).toHaveLength(0);
   });
 
+  it('should ignore dependencies that escape the config directory', () => {
+    const configContent = `
+providers:
+  - file://providers/custom.py
+  - file://../secrets/provider.py
+prompts:
+  - file: ../secrets/prompt.txt
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.py']);
+  });
+
+  it('should keep sibling dependencies inside the workspace', () => {
+    const configContent = `
+providers:
+  - file://../providers/custom.py
+prompts:
+  - file: ../prompts/prompt.txt
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/custom.py', 'prompts/prompt.txt']);
+  });
+
+  it('should keep dependencies whose names begin with two dots', () => {
+    const configContent = `
+providers:
+  - file://..fixtures/custom.py
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/..fixtures/custom.py']);
+  });
+
+  it('should preserve whitespace in quoted dependency paths', () => {
+    const configContent = `
+providers:
+  - "file:// prompts/custom.py "
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/ prompts/custom.py ']);
+  });
+
+  it('should ignore expanded glob matches that escape the dependency root', () => {
+    const configContent = `
+providers:
+  - file://{../secrets,providers}/*.py
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    mockGlob.hasMagic.mockImplementation(
+      (path: string) =>
+        path.includes('*') || path.includes('{') || path.includes('}'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/secrets/leaked.py',
+      '/test/config/providers/custom.py',
+    ]);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.py']);
+  });
+
   it('should extract all file types from complex config', () => {
     const configContent = `
 providers:

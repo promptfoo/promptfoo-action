@@ -270,7 +270,10 @@ export async function run(): Promise<void> {
 
     // Load .env files if specified
     if (envFiles) {
-      const envFileList = envFiles.split(',').map((f) => f.trim());
+      const envFileList = envFiles
+        .split(',')
+        .map((f) => f.trim())
+        .filter(Boolean);
       for (const envFile of envFileList) {
         const envFilePath = path.join(workingDirectory, envFile);
         if (fs.existsSync(envFilePath)) {
@@ -313,6 +316,7 @@ export async function run(): Promise<void> {
       cohereApiKey,
       mistralApiKey,
       groqApiKey,
+      process.env.PROMPTFOO_API_KEY,
     ];
     for (const key of apiKeys) {
       if (key) {
