@@ -91,7 +91,7 @@ export function generateCacheKey(
 ): string {
   const factors = [
     configPath,
-    ...promptFiles.sort(),
+    ...[...promptFiles].sort(),
     ...(additionalFactors || []),
   ];
 

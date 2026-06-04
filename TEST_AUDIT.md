@@ -26,11 +26,22 @@ After the first utility-test pass:
 
 All 165 tests passed.
 
+After the cache regression pass:
+
+| Metric | Coverage |
+| --- | ---: |
+| Statements | 92.57% |
+| Branches | 83.67% |
+| Functions | 95.77% |
+| Lines | 92.43% |
+
+All 170 tests passed.
+
 ## Findings
 
 | ID | Type | Status | Finding |
 | --- | --- | --- | --- |
-| BUG-001 | Bug | Open | `generateCacheKey` sorts `promptFiles` in place, mutating caller-owned input. |
+| BUG-001 | Bug | Resolved | `generateCacheKey` sorted `promptFiles` in place. It now sorts a copy, with a regression test preserving caller order. |
 | GAP-001 | Coverage | Resolved | Added direct tests for every `Logger` method and both group modes. |
 | GAP-002 | Coverage | Resolved | Added direct tests for error formatting and filesystem fallback paths. |
 | GAP-003 | Quality | Open | Coverage is reported but no minimum threshold prevents regressions. |
@@ -43,3 +54,5 @@ All 165 tests passed.
 - Established the baseline and mapped uncovered source lines.
 - Added 16 direct utility tests; coverage increased to 90.93% statements and
   83.11% branches.
+- Confirmed `generateCacheKey` reordered its caller's array, fixed the mutation,
+  and added cache metrics and failure-path coverage.
