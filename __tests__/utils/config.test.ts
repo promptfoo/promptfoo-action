@@ -187,6 +187,27 @@ prompts:
     expect(deps).toEqual(['providers/custom.py', 'prompts/prompt.txt']);
   });
 
+  it('should ignore expanded glob matches that escape the dependency root', () => {
+    const configContent = `
+providers:
+  - file://{../secrets,providers}/*.py
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    mockGlob.hasMagic.mockImplementation(
+      (path: string) =>
+        path.includes('*') || path.includes('{') || path.includes('}'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/secrets/leaked.py',
+      '/test/config/providers/custom.py',
+    ]);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.py']);
+  });
+
   it('should extract all file types from complex config', () => {
     const configContent = `
 providers:

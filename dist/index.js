@@ -36394,7 +36394,14 @@ function extractFileDependencies(configPath) {
       if (le(filePath)) {
         const matches = Ui(absolutePath, { nodir: true });
         for (const match of matches) {
-          dependencies.add(match);
+          const absoluteMatch = path5.resolve(match);
+          if (isPathInside(dependencyRoot, absoluteMatch)) {
+            dependencies.add(absoluteMatch);
+          } else {
+            warning(
+              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`
+            );
+          }
         }
         const pathParts = filePath.split("/");
         let basePath = "";

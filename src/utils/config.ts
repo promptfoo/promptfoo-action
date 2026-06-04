@@ -95,7 +95,14 @@ export function extractFileDependencies(configPath: string): string[] {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, { nodir: true });
         for (const match of matches) {
-          dependencies.add(match);
+          const absoluteMatch = path.resolve(match);
+          if (isPathInside(dependencyRoot, absoluteMatch)) {
+            dependencies.add(absoluteMatch);
+          } else {
+            core.warning(
+              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+            );
+          }
         }
 
         // Also add the base directory for watching
