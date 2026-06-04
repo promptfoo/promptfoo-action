@@ -59,6 +59,17 @@ After the working-directory regression pass:
 
 All 175 tests passed.
 
+After the orchestration branch pass:
+
+| Metric | Coverage |
+| --- | ---: |
+| Statements | 98.96% |
+| Branches | 95.74% |
+| Functions | 100.00% |
+| Lines | 98.94% |
+
+All 210 tests passed. `src/main.ts` reached 100% coverage.
+
 ## Findings
 
 | ID | Type | Status | Finding |
@@ -71,7 +82,7 @@ All 175 tests passed.
 | GAP-002 | Coverage | Resolved | Added direct tests for error formatting and filesystem fallback paths. |
 | GAP-003 | Quality | Open | Coverage is reported but no minimum threshold prevents regressions. |
 | GAP-004 | Documentation | Open | `AGENTS.md` says Jest, but the repository uses Vitest. |
-| GAP-005 | Coverage | Open | `src/main.ts` has untested event, cache, malformed-output, and summary branches. |
+| GAP-005 | Coverage | Resolved | Added event, cache, dependency, malformed-output, threshold, and summary branch tests; `src/main.ts` is at 100%. |
 | GAP-006 | Quality | Resolved | Authentication error tests now capture one rejection and assert one request per case. |
 
 ## Work Log
@@ -85,3 +96,6 @@ All 175 tests passed.
   acceptance; expanded auth failure tests without duplicate network calls.
 - Confirmed and fixed `working-directory` change detection so repository-relative
   GitHub paths map to Promptfoo paths relative to the configured directory.
+- Isolated orchestration helpers and expanded `main.ts` from 86.64% statements
+  to 100%, bringing repository coverage to 98.96% statements and 95.74%
+  branches.

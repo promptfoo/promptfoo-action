@@ -94,7 +94,11 @@ function normalizeFailedTestExitCode(raw: string | undefined): {
   value: number;
   warning?: string;
 } {
-  const parsed = Number.parseInt(raw || '100', 10);
+  if (!raw) {
+    return { value: 100 };
+  }
+
+  const parsed = Number.parseInt(raw, 10);
   const isValid =
     Number.isInteger(parsed) &&
     parsed >= 3 &&
@@ -103,10 +107,6 @@ function normalizeFailedTestExitCode(raw: string | undefined): {
 
   if (isValid) {
     return { value: parsed };
-  }
-
-  if (!raw) {
-    return { value: 100 };
   }
 
   return {
@@ -732,16 +732,8 @@ export async function run(): Promise<void> {
     let repeatCheckResult:
       | ReturnType<typeof evaluateRepeatThreshold>
       | undefined;
-    if (repeatMinPass !== undefined) {
+    if (repeatMinPass !== undefined && repeat !== undefined) {
       const repeatCount = repeat;
-      if (repeatCount === undefined) {
-        throw new PromptfooActionError(
-          'repeat-min-pass requires repeat to be set (e.g., repeat: 3)',
-          ErrorCodes.INVALID_CONFIGURATION,
-          'Set repeat to the number of times each test should run',
-        );
-      }
-
       // Runtime validation: extract and validate output.results structure
       const rawResults = (output.results as { results?: unknown }).results;
 
@@ -978,6 +970,7 @@ export function handleError(error: Error): void {
   core.setFailed(formatErrorMessage(error));
 }
 
+/* v8 ignore next 3 -- packaged action bootstrap */
 if (require.main === module) {
   run();
 }
