@@ -156,6 +156,21 @@ defaultTest:
     expect(deps).toHaveLength(0);
   });
 
+  it('should ignore dependencies that escape the config directory', () => {
+    const configContent = `
+providers:
+  - file://providers/custom.py
+  - file://../secrets/provider.py
+prompts:
+  - file: ../secrets/prompt.txt
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.py']);
+  });
+
   it('should extract all file types from complex config', () => {
     const configContent = `
 providers:

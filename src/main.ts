@@ -20,7 +20,12 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
-import { isDirectory } from './utils/fs';
+import {
+  isDirectory,
+  normalizePathWithin,
+  normalizeSafeGlobPattern,
+  resolvePathWithin,
+} from './utils/fs';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -184,19 +189,34 @@ export async function run(): Promise<void> {
     });
     const promptsInput = core.getInput('prompts', { required: false });
     const promptFilesGlobs: string[] = promptsInput
-      ? promptsInput.split('\n').filter((line) => line.trim())
+      ? promptsInput
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line) => normalizeSafeGlobPattern(line, 'prompts'))
       : [];
-    const configPath: string = core.getInput('config', {
-      required: true,
-    });
+    const workingDirectory: string = resolvePathWithin(
+      process.cwd(),
+      core.getInput('working-directory', { required: false }) || '.',
+      'working-directory',
+      { allowEmpty: true },
+    );
+    const configPath: string = normalizePathWithin(
+      workingDirectory,
+      core.getInput('config', {
+        required: true,
+      }),
+      'config',
+    );
+    const absoluteConfigPath = path.resolve(workingDirectory, configPath);
+    const configPathForChangeDetection = path
+      .relative(process.cwd(), absoluteConfigPath)
+      .split(path.sep)
+      .join('/');
     const cachePath: string = core.getInput('cache-path', { required: false });
     const version: string =
       core.getInput('promptfoo-version', { required: false }) || 'latest';
     validatePromptfooVersion(version);
-    const workingDirectory: string = path.join(
-      process.cwd(),
-      core.getInput('working-directory', { required: false }),
-    );
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
     });
@@ -270,9 +290,16 @@ export async function run(): Promise<void> {
 
     // Load .env files if specified
     if (envFiles) {
-      const envFileList = envFiles.split(',').map((f) => f.trim());
+      const envFileList = envFiles
+        .split(',')
+        .map((f) => f.trim())
+        .filter(Boolean);
       for (const envFile of envFileList) {
-        const envFilePath = path.join(workingDirectory, envFile);
+        const envFilePath = resolvePathWithin(
+          workingDirectory,
+          envFile,
+          'env-files',
+        );
         if (fs.existsSync(envFilePath)) {
           core.info(`Loading environment variables from ${envFilePath}`);
           // Use override: true to allow later files to override earlier ones
@@ -313,6 +340,7 @@ export async function run(): Promise<void> {
       cohereApiKey,
       mistralApiKey,
       groqApiKey,
+      process.env.PROMPTFOO_API_KEY,
     ];
     for (const key of apiKeys) {
       if (key) {
@@ -360,13 +388,27 @@ export async function run(): Promise<void> {
       // 3. Run on all prompt files
 
       // Priority: action inputs > workflow inputs > defaults
-      const filesInput = workflowFiles || github.context.payload.inputs?.files;
+      const workflowPayloadFiles = github.context.payload.inputs?.files;
+      const workflowPayloadBase = github.context.payload.inputs?.base;
+      const filesInput: string | undefined =
+        workflowFiles ||
+        (typeof workflowPayloadFiles === 'string'
+          ? workflowPayloadFiles
+          : undefined);
       const compareBase: string =
-        workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
+        workflowBase ||
+        (typeof workflowPayloadBase === 'string'
+          ? workflowPayloadBase
+          : 'HEAD~1');
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
+        changedFiles = filesInput
+          .split('\n')
+          .map((file) => file.trim())
+          .filter(Boolean)
+          .map((file) => normalizeSafeGlobPattern(file, 'workflow-files'))
+          .join('\n');
         core.info(`Using manually specified files: ${changedFiles}`);
       } else {
         // Option 2: Compare against base (default to previous commit)
@@ -442,23 +484,28 @@ export async function run(): Promise<void> {
       if (changedFilesList.length > 0) {
         // Filter to only changed files
         const changedMatches = matches.filter(
-          (file) => file !== configPath && changedFilesList.includes(file),
+          (file) =>
+            file !== configPathForChangeDetection &&
+            changedFilesList.includes(file),
         );
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => file !== configPath);
+        const allMatches = matches.filter(
+          (file) => file !== configPathForChangeDetection,
+        );
         promptFiles.push(...allMatches);
       }
     }
 
     const configChanged =
-      changedFilesList.length > 0 && changedFilesList.includes(configPath);
+      changedFilesList.length > 0 &&
+      changedFilesList.includes(configPathForChangeDetection);
 
     // Extract dependencies from config file
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(configPath);
+      const dependencies = extractFileDependencies(absoluteConfigPath);
       if (dependencies.length > 0) {
         core.debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
