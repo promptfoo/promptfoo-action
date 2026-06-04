@@ -1,4 +1,37 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>promptfoo/renovate-config"]
+  "extends": ["local>promptfoo/renovate-config"],
+  "rebaseWhen": "behind-base-branch",
+  "separateMajorMinor": true,
+  "rangeStrategy": "auto",
+  "postUpdateOptions": [],
+  "constraints": {
+    "npm": ">= 11"
+  },
+  "gitIgnoredAuthors": ["github-actions[bot]@users.noreply.github.com"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 3am on the first day of the month",
+      "before 3am on the 15th day of the month"
+    ]
+  },
+  "packageRules": [
+    {
+      "description": "Group GitHub Actions toolkit packages together",
+      "matchPackageNames": ["/^@actions\\//"],
+      "groupName": "GitHub Actions"
+    },
+    {
+      "description": "All npm packages: wait 10 days, a buffer above the 7-day Socket minimum release age floor",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "10 days"
+    },
+    {
+      "description": "Biome: weekly updates",
+      "matchPackageNames": ["@biomejs/biome"],
+      "schedule": ["before 6am on Monday"],
+      "minimumReleaseAge": "10 days"
+    }
+  ]
 }
