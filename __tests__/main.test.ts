@@ -1165,7 +1165,7 @@ describe('GitHub Action Main', () => {
       expect(evalArgs).toContain('--share');
     });
 
-    test('should not include --share flag when no-share is true', async () => {
+    test('should override config sharing when no-share is true', async () => {
       mockCore.getBooleanInput.mockImplementation((name: string) => {
         if (name === 'no-share') return true;
         return false;
@@ -1176,6 +1176,7 @@ describe('GitHub Action Main', () => {
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--share');
+      expect(args).toContain('--no-share');
     });
 
     test('should skip sharing when no auth is present', async () => {
@@ -1187,6 +1188,7 @@ describe('GitHub Action Main', () => {
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--share');
+      expect(args).toContain('--no-share');
       expect(mockCore.info).toHaveBeenCalledWith(
         expect.stringContaining(
           'Sharing is enabled but no authentication found',
@@ -1280,6 +1282,7 @@ describe('GitHub Action Main', () => {
       expect(args).toContain('--no-table');
       expect(args).toContain('--no-progress-bar');
       expect(args).toContain('--no-cache');
+      expect(args).toContain('--no-share');
 
       // Should NOT have these
       expect(args).not.toContain('--share');

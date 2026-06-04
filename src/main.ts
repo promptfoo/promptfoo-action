@@ -576,7 +576,10 @@ export async function run(): Promise<void> {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
     // Check if sharing is enabled and validate authentication upfront
-    if (!noShare) {
+    if (noShare) {
+      // Override config-level sharing as well as the action's default behavior.
+      promptfooArgs.push('--no-share');
+    } else {
       const promptfooApiKey = process.env.PROMPTFOO_API_KEY;
       const hasRemoteConfig = process.env.PROMPTFOO_REMOTE_API_BASE_URL;
 
@@ -598,6 +601,8 @@ export async function run(): Promise<void> {
           'Sharing is enabled but no authentication found (PROMPTFOO_API_KEY or PROMPTFOO_REMOTE_API_BASE_URL). ' +
             'Skipping share step. To enable sharing, set PROMPTFOO_API_KEY as an environment variable.',
         );
+        // Prevent a config-level share setting from bypassing this guard.
+        promptfooArgs.push('--no-share');
       }
     }
     if (maxConcurrency !== undefined) {
