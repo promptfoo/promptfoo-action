@@ -171,6 +171,22 @@ prompts:
     expect(deps).toEqual(['../config/providers/custom.py']);
   });
 
+  it('should keep sibling dependencies inside the workspace', () => {
+    const configContent = `
+providers:
+  - file://../providers/custom.py
+prompts:
+  - file: ../prompts/prompt.txt
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/custom.py', 'prompts/prompt.txt']);
+  });
+
   it('should extract all file types from complex config', () => {
     const configContent = `
 providers:

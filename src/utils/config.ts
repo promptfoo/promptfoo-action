@@ -19,6 +19,14 @@ export interface PromptfooConfig {
   };
 }
 
+function isPathInside(baseDir: string, targetPath: string): boolean {
+  const relativePath = path.relative(baseDir, targetPath);
+  return (
+    relativePath === '' ||
+    (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
+  );
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -26,6 +34,8 @@ export interface PromptfooConfig {
 export function extractFileDependencies(configPath: string): string[] {
   const dependencies = new Set<string>();
   const configDir = path.dirname(configPath);
+  const cwd = process.cwd();
+  const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -40,8 +50,22 @@ export function extractFileDependencies(configPath: string): string[] {
       filePath: string,
       source: string,
     ): string | undefined => {
+      const trimmedFilePath = filePath.trim();
       try {
-        return resolvePathWithin(configDir, filePath, source);
+        if (!trimmedFilePath || trimmedFilePath.includes('\0')) {
+          return resolvePathWithin(configDir, trimmedFilePath, source);
+        }
+
+        const absolutePath = path.resolve(
+          path.join(configDir, trimmedFilePath),
+        );
+        if (!isPathInside(dependencyRoot, absolutePath)) {
+          throw new Error(
+            `${source} must stay within the repository workspace`,
+          );
+        }
+
+        return absolutePath;
       } catch (error) {
         core.warning(
           `Ignoring unsafe config dependency "${filePath}": ${
@@ -200,7 +224,6 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Convert absolute paths back to relative paths from working directory
-    const cwd = process.cwd();
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
       // Preserve trailing slash for directories
