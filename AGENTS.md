@@ -4,7 +4,9 @@ Canonical guidance for AI agents working in this repository.
 
 ## Overview
 
-This repository contains a GitHub Action that evaluates prompt changes with Promptfoo, compares before/after behavior on pull requests, and posts the results as PR comments.
+This repository contains a GitHub Action that evaluates the current checkout
+with Promptfoo when monitored files change. Pull request runs post the results
+as PR comments; push and manual runs write workflow summaries.
 
 The repository also includes a local copy of Promptfoo source under `/promptfoo/` for development/reference. That copy is not included in the distributed action package.
 
@@ -37,8 +39,8 @@ The repository also includes a local copy of Promptfoo source under `/promptfoo/
 
 1. Parses inputs from `action.yml`
 2. Loads `.env` files if requested
-3. Validates the GitHub event is a pull request
-4. Detects changed files between base and head refs
+3. Determines whether the event is a pull request, push, or manual run
+4. Detects changed files from the event payload or a configured git comparison
 5. Filters for changed prompt/config files
 6. Runs Promptfoo evaluation on those files
 7. Posts a PR comment with the results

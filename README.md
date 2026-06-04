@@ -381,7 +381,7 @@ between fresh GitHub-hosted runners unless the workflow also uses
 
 The action:
 
-1. Enables Promptfoo's disk cache and configures its path and limits.
+1. Enables Promptfoo's disk cache and configures its path and TTL.
 2. Logs cache size and file-count metrics before and after evaluation.
 3. Removes cache entries older than seven days when `CI=true`.
 4. Writes a `.cache-manifest.json` file into the cache directory.
@@ -449,8 +449,10 @@ For better cache freshness while maintaining efficiency:
 
 ### Environment Variables for Cache Control
 
-The action sets these Promptfoo cache variables. Existing TTL and size
-environment variables are respected:
+The action sets these Promptfoo cache variables. Existing values are respected.
+Promptfoo currently consumes the path and TTL settings; the size and file-count
+variables are exported for compatibility but are not enforced by the current
+Promptfoo CLI:
 
 ```yaml
 - name: Run evaluation with custom cache limits
