@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.2...promptfoo-action-v1.3.3) (2026-06-04)
+
+
+### Bug Fixes
+
+* harden action path inputs ([#951](https://github.com/promptfoo/promptfoo-action/issues/951)) ([b206d76](https://github.com/promptfoo/promptfoo-action/commit/b206d765a878e1eb1d522d3ca393bf33616d3cf5))
+
 ## [1.3.2](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.1...promptfoo-action-v1.3.2) (2026-05-26)
 
 
