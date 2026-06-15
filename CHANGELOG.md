@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.4](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.3...promptfoo-action-v1.3.4) (2026-06-15)
+
+
+### Bug Fixes
+
+* migrate action runtime to Node 24 ([#958](https://github.com/promptfoo/promptfoo-action/issues/958)) ([99fe943](https://github.com/promptfoo/promptfoo-action/commit/99fe9431b55d620e26dd42edb7a1e9a5bf53724b))
+
 ## [1.3.3](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.2...promptfoo-action-v1.3.3) (2026-06-04)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "promptfoo-action",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "GitHub Action for evaluating LLM outputs with promptfoo",
   "author": "Ian Webster",
   "license": "MIT",
