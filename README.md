@@ -15,9 +15,8 @@ The web viewer lets you inspect the evaluation results:
 
 ## Requirements
 
-This action runs on the Node 24 JavaScript Actions runtime, which requires
-GitHub Actions runner **v2.327.1 or newer**. GitHub-hosted runners already
-satisfy this; self-hosted runners may need to be updated to a current release.
+Runs on the Node 24 Actions runtime, which needs GitHub Actions runner
+**v2.327.1+** (self-hosted runners may need updating).
 
 ## Supported Events
 
