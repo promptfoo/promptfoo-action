@@ -13,11 +13,6 @@ The web viewer lets you inspect the evaluation results:
 
 <img width="650" alt="promptfoo web viewer" src="https://github.com/typpo/promptfoo-action/assets/310310/d0ef0497-0c1a-4886-b115-1ee92680891b"/>
 
-## Requirements
-
-Runs on the Node 24 Actions runtime, which needs GitHub Actions runner
-**v2.327.1+** (self-hosted runners may need updating).
-
 ## Supported Events
 
 This action supports multiple GitHub event types:
