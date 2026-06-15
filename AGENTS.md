@@ -126,6 +126,8 @@ git push origin feature/branch-name
 
 ## Notes
 
-- The action runs on the Node 20 runtime (see `action.yml`).
+- The action runs on the Node 24 runtime (see `action.yml`). This requires
+  GitHub Actions runner v2.327.1 or newer; GitHub-hosted runners already meet
+  this, but self-hosted runners may need updating.
 - Bundle size is around 1.5 MB; avoid unnecessary growth.
 - Review `TODO.md` before planning larger improvements.

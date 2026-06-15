@@ -21,4 +21,4 @@ content-type/dist/index.js:
   /* v8 ignore else -- @preserve */
 
 js-yaml/dist/js-yaml.mjs:
-  /*! js-yaml 4.2.0 https://github.com/nodeca/js-yaml @license MIT */
+  /*! js-yaml 4.1.1 https://github.com/nodeca/js-yaml @license MIT */
