@@ -1,6 +1,17 @@
 import * as dotenv from 'dotenv';
 import { ErrorCodes, PromptfooActionError } from './errors';
 
+// Process-control variables that let a repository-controlled env file run code
+// in, or redirect the trust of, the action's own process (`npx`/node, `git`) or
+// any interpreter promptfoo later spawns — before the reviewed config is graded.
+// Kept as an explicit, alphabetized blocklist so additions are easy to audit.
+//
+// Interpreter *option/relocation* controls (PERL5OPT, PYTHON{HOME,EXECUTABLE,
+// STARTUP}, RUBYOPT) are rejected because they inject code with no legitimate
+// reason to live in an application env file. Module *search-path* controls
+// (PYTHONPATH, RUBYLIB, PERL5LIB) are intentionally NOT rejected: real
+// promptfoo python/ruby providers rely on them, and pointing them at repo code
+// grants nothing beyond what such a provider already runs during evaluation.
 const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'ALL_PROXY',
   'APPDATA',
@@ -22,6 +33,11 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'NO_PROXY',
   'PATH',
   'PATHEXT',
+  'PERL5OPT',
+  'PYTHONEXECUTABLE',
+  'PYTHONHOME',
+  'PYTHONSTARTUP',
+  'RUBYOPT',
   'SHELL',
   'SSL_CERT_DIR',
   'SSL_CERT_FILE',
@@ -29,7 +45,11 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'XDG_CONFIG_HOME',
 ]);
 
-const FORBIDDEN_ENV_FILE_PREFIXES = ['NPM_CONFIG_'];
+// `GIT_` covers git process controls (GIT_SSH_COMMAND, GIT_EXTERNAL_DIFF,
+// GIT_PROXY_COMMAND, GIT_CONFIG_COUNT/KEY_n/VALUE_n, ...). The action shells out
+// to `git` via simple-git after loading these files, and that child inherits
+// process.env, so git controls belong in the same trust boundary as Node/npm.
+const FORBIDDEN_ENV_FILE_PREFIXES = ['GIT_', 'NPM_CONFIG_'];
 
 export function findForbiddenEnvFileKey(
   environment: Record<string, string>,
@@ -72,11 +92,18 @@ export function loadEnvironmentFile(
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      'Remove Node, npm, executable-resolution, dynamic-loader, and proxy control variables from repository environment files. Configure trusted process controls in the workflow environment instead.',
+      'Remove Node, npm, git, executable-resolution, dynamic-loader, and proxy control variables from repository environment files. Configure trusted process controls in the workflow environment instead.',
     );
   }
 
-  // Preserve the documented later-file-wins behavior after validation.
+  // Merge into the shared environment (process.env by default) only after the
+  // file has fully passed the process-control check. This is deliberate: the
+  // action itself reads env-file values such as PROMPTFOO_API_KEY (auth check,
+  // secret masking), cache paths, and thresholds from process.env, and it also
+  // forwards process.env to the promptfoo child. Validation therefore has to
+  // happen here, at the untrusted-file boundary — not on the final child
+  // environment, which legitimately inherits the trusted runner's own PATH,
+  // NODE_OPTIONS, etc. Preserves the documented later-file-wins ordering.
   for (const [key, value] of Object.entries(fileEnvironment)) {
     targetEnvironment[key] = value;
   }

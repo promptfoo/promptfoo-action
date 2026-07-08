@@ -6,7 +6,11 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -36524,13 +36528,18 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "NO_PROXY",
   "PATH",
   "PATHEXT",
+  "PERL5OPT",
+  "PYTHONEXECUTABLE",
+  "PYTHONHOME",
+  "PYTHONSTARTUP",
+  "RUBYOPT",
   "SHELL",
   "SSL_CERT_DIR",
   "SSL_CERT_FILE",
   "USERPROFILE",
   "XDG_CONFIG_HOME"
 ]);
-var FORBIDDEN_ENV_FILE_PREFIXES = ["NPM_CONFIG_"];
+var FORBIDDEN_ENV_FILE_PREFIXES = ["GIT_", "NPM_CONFIG_"];
 function findForbiddenEnvFileKey(environment) {
   return Object.keys(environment).find((key) => {
     const normalizedKey = key.toUpperCase();
@@ -36559,7 +36568,7 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      "Remove Node, npm, executable-resolution, dynamic-loader, and proxy control variables from repository environment files. Configure trusted process controls in the workflow environment instead."
+      "Remove Node, npm, git, executable-resolution, dynamic-loader, and proxy control variables from repository environment files. Configure trusted process controls in the workflow environment instead."
     );
   }
   for (const [key, value] of Object.entries(fileEnvironment)) {

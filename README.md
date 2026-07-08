@@ -276,6 +276,17 @@ jobs:
 
 This is particularly useful for Next.js applications or other frameworks that use `.env` files for configuration. The environment variables from these files will be available to promptfoo during evaluation.
 
+> **Security note:** `env-files` is for _application_ configuration only. Because these files are part of the checked-out repository, a pull request could otherwise use them to hijack the action's own process. The action therefore rejects process-control variables — Node/npm (`NODE_OPTIONS`, `NODE_PATH`, `NPM_CONFIG_*`), git (`GIT_*`), interpreter injection (`RUBYOPT`, `PERL5OPT`, `PYTHONHOME`, ...), executable resolution (`PATH`), dynamic loaders (`LD_PRELOAD`, `DYLD_*`), config-home redirection (`HOME`, `XDG_CONFIG_HOME`, ...), and proxy/TLS controls (`HTTP_PROXY`, `NODE_EXTRA_CA_CERTS`, ...) — and fails the run if any selected file sets one. Ordinary application variables (`NODE_ENV`, provider settings, API keys, `PYTHONPATH` for a Python provider, ...) still pass through. If your evaluation genuinely needs one of these (for example, an outbound proxy or a custom CA for LLM API calls), set it in the trusted workflow `env:` block instead of an `env-files` file:
+>
+> ```yaml
+>       - name: Run promptfoo evaluation
+>         uses: promptfoo/promptfoo-action@v1
+>         env:
+>           HTTPS_PROXY: ${{ vars.HTTPS_PROXY }}
+>         with:
+>           config: 'promptfooconfig.yaml'
+> ```
+
 ## Custom Provider Detection
 
 When `prompts` is configured, the action also checks file dependencies referenced

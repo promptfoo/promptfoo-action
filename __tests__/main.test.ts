@@ -575,6 +575,11 @@ describe('GitHub Action Main', () => {
       'XDG_CONFIG_HOME',
       'APPDATA',
       'LOCALAPPDATA',
+      'GIT_SSH_COMMAND',
+      'git_external_diff',
+      'GIT_CONFIG_COUNT',
+      'RUBYOPT',
+      'PYTHONHOME',
     ])('should reject process startup variable %s from environment files', async (variableName) => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
@@ -634,6 +639,40 @@ describe('GitHub Action Main', () => {
       } finally {
         delete process.env.CUSTOM_PROVIDER_SETTING;
         delete process.env.NODE_ENV;
+      }
+    });
+
+    test('should reject a forbidden variable introduced by a later env file', async () => {
+      withInputs({ 'env-files': '.env,.env.local' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      const originalNodeOptions = process.env.NODE_OPTIONS;
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { NODE_OPTIONS: '--require /tmp/evil.js' }
+            : { CUSTOM_PROVIDER_SETTING: 'first' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('NODE_OPTIONS'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.NODE_OPTIONS).toBe(originalNodeOptions);
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalNodeOptions === undefined) {
+          delete process.env.NODE_OPTIONS;
+        } else {
+          process.env.NODE_OPTIONS = originalNodeOptions;
+        }
       }
     });
 
