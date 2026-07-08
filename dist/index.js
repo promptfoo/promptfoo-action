@@ -6,11 +6,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -36434,7 +36430,8 @@ function extractFileDependencies(configPath) {
       }
     }
     if (config2.prompts) {
-      for (const prompt of config2.prompts) {
+      const prompts = typeof config2.prompts === "string" ? [config2.prompts] : config2.prompts;
+      for (const prompt of prompts) {
         if (typeof prompt === "string" && prompt.startsWith("file://")) {
           processFileUrl(prompt);
         } else if (typeof prompt === "object" && prompt.file) {

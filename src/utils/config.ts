@@ -5,9 +5,11 @@ import * as yaml from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
+type PromptEntry = string | { file?: string; [key: string]: unknown };
+
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: Array<string | { file?: string; [key: string]: unknown }>;
+  prompts?: string | PromptEntry[];
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -145,7 +147,9 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Extract prompt files
     if (config.prompts) {
-      for (const prompt of config.prompts) {
+      const prompts =
+        typeof config.prompts === 'string' ? [config.prompts] : config.prompts;
+      for (const prompt of prompts) {
         if (typeof prompt === 'string' && prompt.startsWith('file://')) {
           processFileUrl(prompt);
         } else if (typeof prompt === 'object' && prompt.file) {

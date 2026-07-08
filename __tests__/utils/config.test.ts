@@ -75,6 +75,35 @@ prompts:
     expect(deps).toContain('../config/prompts/prompt2.txt');
   });
 
+  it('should extract a scalar file prompt', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: file://prompts/main.txt\n');
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/prompts/main.txt']);
+  });
+
+  it('should expand a scalar file prompt glob', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: file://prompts/*.txt\n');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/prompts/main.txt']);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toContain('../config/prompts/main.txt');
+    expect(deps).toContain('../config/prompts');
+  });
+
+  it('should ignore an inline scalar prompt', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: hello world\n');
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
   it('should extract test variable files', () => {
     const configContent = `
 tests:
