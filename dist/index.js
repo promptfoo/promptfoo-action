@@ -36839,6 +36839,22 @@ async function run() {
         getInput("working-directory", { required: false }) || "."
       )
     );
+    const matchesPromptGlob = (repositoryFile) => {
+      if (!repositoryFile) {
+        return false;
+      }
+      const relativePath = path6.relative(
+        workingDirectory,
+        path6.resolve(workspaceRoot, repositoryFile)
+      );
+      if (relativePath.split(path6.sep)[0] === "..") {
+        return false;
+      }
+      const workingDirectoryPath = toRepositoryPath(relativePath);
+      return promptFilesGlobs.some(
+        (pattern) => path6.matchesGlob(workingDirectoryPath, pattern)
+      );
+    };
     const configAbsolutePath = path6.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
       path6.relative(workspaceRoot, configAbsolutePath)
@@ -36986,7 +37002,16 @@ async function run() {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join("\n");
+        const monitoredPromptRemovedOrRenamedOut = pullRequestFiles.some(
+          (file) => file.status === "removed" && matchesPromptGlob(file.filename) || file.status === "renamed" && matchesPromptGlob(file.previous_filename) && !matchesPromptGlob(file.filename)
+        );
+        if (monitoredPromptRemovedOrRenamedOut) {
+          warning(
+            "A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files."
+          );
+        } else {
+          changedFiles = pullRequestFiles.map((file) => file.filename).join("\n");
+        }
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");

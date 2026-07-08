@@ -204,6 +204,24 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    const matchesPromptGlob = (repositoryFile?: string): boolean => {
+      if (!repositoryFile) {
+        return false;
+      }
+
+      const relativePath = path.relative(
+        workingDirectory,
+        path.resolve(workspaceRoot, repositoryFile),
+      );
+      if (relativePath.split(path.sep)[0] === '..') {
+        return false;
+      }
+
+      const workingDirectoryPath = toRepositoryPath(relativePath);
+      return promptFilesGlobs.some((pattern) =>
+        path.matchesGlob(workingDirectoryPath, pattern),
+      );
+    };
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
@@ -364,7 +382,22 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
+        const monitoredPromptRemovedOrRenamedOut = pullRequestFiles.some(
+          (file) =>
+            (file.status === 'removed' && matchesPromptGlob(file.filename)) ||
+            (file.status === 'renamed' &&
+              matchesPromptGlob(file.previous_filename) &&
+              !matchesPromptGlob(file.filename)),
+        );
+        if (monitoredPromptRemovedOrRenamedOut) {
+          core.warning(
+            'A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files.',
+          );
+        } else {
+          changedFiles = pullRequestFiles
+            .map((file) => file.filename)
+            .join('\n');
+        }
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
