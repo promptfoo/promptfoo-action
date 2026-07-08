@@ -44,12 +44,11 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.1",
     "@swc/core": "^1.15.11",
-    "@types/js-yaml": "^4.0.9",
     "@types/node": "^25.3.0",
     "@vercel/ncc": "^0.44.0",
     "@vitest/coverage-v8": "^4.0.18",
     "esbuild": "^0.28.1",
-    "js-yaml": "^5.2.1",
+    "js-yaml": "^5.0.0",
     "promptfoo": "0.121.17",
     "typescript": "^6.0.0",
     "vitest": "^4.0.18"
