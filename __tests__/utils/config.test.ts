@@ -59,6 +59,45 @@ providers:
     expect(deps).toContain('../config/another_provider.js');
   });
 
+  it('should extract a scalar file provider', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: file://provider.js
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/provider.js']);
+  });
+
+  it('should expand a scalar file provider glob', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: file://providers/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/config/providers/first.js',
+      '/test/config/providers/second.js',
+    ]);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toContain('../config/providers/first.js');
+    expect(deps).toContain('../config/providers/second.js');
+    expect(deps).toContain('../config/providers');
+  });
+
+  it('should ignore a scalar non-file provider', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: openai:gpt-4
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
   it('should extract prompt files', () => {
     const configContent = `
 prompts:
