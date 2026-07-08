@@ -19,6 +19,3 @@ content-type/dist/index.js:
 @octokit/request/dist-bundle/index.js:
   /* v8 ignore next -- @preserve */
   /* v8 ignore else -- @preserve */
-
-js-yaml/dist/js-yaml.mjs:
-  /*! js-yaml 4.2.0 https://github.com/nodeca/js-yaml @license MIT */
