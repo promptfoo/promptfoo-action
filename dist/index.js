@@ -6,11 +6,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -36385,12 +36381,8 @@ function extractFileDependencies(configPath) {
         return void 0;
       }
     };
-    const processFileUrl = (fileUrl) => {
-      const filePath = fileUrl.replace("file://", "");
-      const absolutePath = resolveConfigDependency(
-        filePath,
-        "config file dependency"
-      );
+    const processFilePath = (filePath, source = "config file dependency") => {
+      const absolutePath = resolveConfigDependency(filePath, source);
       if (!absolutePath) {
         return;
       }
@@ -36402,7 +36394,7 @@ function extractFileDependencies(configPath) {
             dependencies.add(absoluteMatch);
           } else {
             warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`
+              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`
             );
           }
         }
@@ -36418,11 +36410,31 @@ function extractFileDependencies(configPath) {
           dependencies.add(path5.resolve(path5.join(configDir, basePath)));
         }
       } else if (isDirectory2(absolutePath)) {
-        const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
+        const directoryPath = filePath.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
         dependencies.add(directoryPath);
       } else {
         dependencies.add(absolutePath);
       }
+    };
+    const processFileUrl = (fileUrl) => {
+      processFilePath(fileUrl.replace(/^file:\/\//, ""));
+    };
+    const processTestFile = (testSource) => {
+      let filePath = testSource;
+      if (filePath.startsWith("file://")) {
+        filePath = filePath.slice("file://".length);
+      } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
+        return;
+      }
+      const sheetIndex = filePath.indexOf("#");
+      if (sheetIndex !== -1) {
+        filePath = filePath.slice(0, sheetIndex);
+      }
+      const functionIndex = filePath.lastIndexOf(":");
+      if (functionIndex > 1) {
+        filePath = filePath.slice(0, functionIndex);
+      }
+      processFilePath(filePath, "test file dependency");
     };
     if (config2.providers) {
       for (const provider of config2.providers) {
@@ -36485,7 +36497,16 @@ function extractFileDependencies(configPath) {
       extractAssertFiles(config2.defaultTest.assert);
     }
     if (config2.tests) {
-      for (const test of config2.tests) {
+      const tests = Array.isArray(config2.tests) ? config2.tests : [config2.tests];
+      for (const test of tests) {
+        if (typeof test === "string") {
+          processTestFile(test);
+          continue;
+        }
+        if (test.path) {
+          processTestFile(test.path);
+          continue;
+        }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
       }

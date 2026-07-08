@@ -5,14 +5,17 @@ import * as yaml from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
+interface PromptfooTestConfig {
+  path?: string;
+  vars?: { [key: string]: string | { file?: string } };
+  assert?: Array<{ type?: string; value?: string | { file?: string } }>;
+  [key: string]: unknown;
+}
+
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
-  tests?: Array<{
-    vars?: { [key: string]: string | { file?: string } };
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
-    [key: string]: unknown;
-  }>;
+  tests?: string | PromptfooTestConfig | Array<string | PromptfooTestConfig>;
   defaultTest?: {
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -78,13 +81,12 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
-    // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): void => {
-      const filePath = fileUrl.replace('file://', '');
-      const absolutePath = resolveConfigDependency(
-        filePath,
-        'config file dependency',
-      );
+    // Helper function to process local paths with glob support
+    const processFilePath = (
+      filePath: string,
+      source = 'config file dependency',
+    ): void => {
+      const absolutePath = resolveConfigDependency(filePath, source);
       if (!absolutePath) {
         return;
       }
@@ -99,7 +101,7 @@ export function extractFileDependencies(configPath: string): string[] {
             dependencies.add(absoluteMatch);
           } else {
             core.warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`,
             );
           }
         }
@@ -119,7 +121,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
-        const directoryPath = fileUrl.endsWith('/')
+        const directoryPath = filePath.endsWith('/')
           ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
           : absolutePath;
         dependencies.add(directoryPath);
@@ -127,6 +129,31 @@ export function extractFileDependencies(configPath: string): string[] {
         // It's a regular file path
         dependencies.add(absolutePath);
       }
+    };
+
+    const processFileUrl = (fileUrl: string): void => {
+      processFilePath(fileUrl.replace(/^file:\/\//, ''));
+    };
+
+    const processTestFile = (testSource: string): void => {
+      let filePath = testSource;
+      if (filePath.startsWith('file://')) {
+        filePath = filePath.slice('file://'.length);
+      } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
+        return;
+      }
+
+      const sheetIndex = filePath.indexOf('#');
+      if (sheetIndex !== -1) {
+        filePath = filePath.slice(0, sheetIndex);
+      }
+
+      const functionIndex = filePath.lastIndexOf(':');
+      if (functionIndex > 1) {
+        filePath = filePath.slice(0, functionIndex);
+      }
+
+      processFilePath(filePath, 'test file dependency');
     };
 
     // Extract provider files
@@ -219,7 +246,16 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Process tests
     if (config.tests) {
-      for (const test of config.tests) {
+      const tests = Array.isArray(config.tests) ? config.tests : [config.tests];
+      for (const test of tests) {
+        if (typeof test === 'string') {
+          processTestFile(test);
+          continue;
+        }
+        if (test.path) {
+          processTestFile(test.path);
+          continue;
+        }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
       }

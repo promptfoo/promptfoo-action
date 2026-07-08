@@ -1,3 +1,4 @@
+import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import type { Mock } from 'vitest';
@@ -91,6 +92,95 @@ tests:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/data/context.txt');
     expect(deps).toContain('../config/data/examples.json');
+  });
+
+  it('should extract scalar file-backed tests', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests: file://tests.yaml
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/tests.yaml']);
+  });
+
+  it('should extract bare file-backed tests', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests: tests.jsonl
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/tests.jsonl']);
+  });
+
+  it('should extract array file-backed tests and inline dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - file://cases/*.yaml
+  - vars:
+      context: file://data/context.txt
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/config/cases/safety.yaml',
+      '/test/config/cases/quality.yaml',
+    ]);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toContain('../config/cases/safety.yaml');
+    expect(deps).toContain('../config/cases/quality.yaml');
+    expect(deps).toContain('../config/cases');
+    expect(deps).toContain('../config/data/context.txt');
+  });
+
+  it('should extract object-form file-backed tests', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: file://generators/tests.js:generate_tests
+  config:
+    dataset: safety
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/generators/tests.js']);
+  });
+
+  it('should extract sheet-qualified file-backed tests', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests: file://cases.xlsx#Safety
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/cases.xlsx']);
+  });
+
+  it('should ignore remote file-backed tests', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests: https://docs.google.com/spreadsheets/d/example
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
+  it('should reject file-backed tests outside the repository', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - ../secrets/tests.yaml
+  - file://../../outside/tests.json
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledTimes(2);
   });
 
   it('should extract assert files', () => {
