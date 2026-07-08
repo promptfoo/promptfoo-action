@@ -34061,7 +34061,6 @@ function defineScalarTag(tagName, options) {
   };
 }
 function defineSequenceTag(tagName, options) {
-  const carrierIsResult = options.finalize === void 0;
   return {
     tagName,
     nodeKind: "sequence",
@@ -34069,15 +34068,12 @@ function defineSequenceTag(tagName, options) {
     matchByTagPrefix: options.matchByTagPrefix ?? false,
     create: options.create,
     addItem: options.addItem,
-    finalize: options.finalize ?? ((carrier) => carrier),
-    carrierIsResult,
     identify: options.identify ?? null,
     represent: options.represent ?? ((data) => data),
     representTagName: options.representTagName ?? null
   };
 }
 function defineMappingTag(tagName, options) {
-  const carrierIsResult = options.finalize === void 0;
   return {
     tagName,
     nodeKind: "mapping",
@@ -34088,8 +34084,6 @@ function defineMappingTag(tagName, options) {
     has: options.has,
     keys: options.keys,
     get: options.get,
-    finalize: options.finalize ?? ((carrier) => carrier),
-    carrierIsResult,
     identify: options.identify ?? null,
     represent: options.represent ?? ((data) => data),
     representTagName: options.representTagName ?? null
@@ -34269,7 +34263,7 @@ var intCoreTag = defineScalarTag("tag:yaml.org,2002:int", {
     ..."0123456789"
   ],
   resolve: resolveYamlInteger$2,
-  identify: (object) => Number.isInteger(object) && !Object.is(object, -0) && object.toString(10).indexOf("e") < 0,
+  identify: (object) => Object.prototype.toString.call(object) === "[object Number]" && object % 1 === 0 && !Object.is(object, -0),
   represent: (object) => object.toString(10)
 });
 var YAML_INTEGER_IMPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^-?(?:0|[1-9][0-9]*)$");
@@ -34297,7 +34291,7 @@ var intJsonTag = defineScalarTag("tag:yaml.org,2002:int", {
   implicit: true,
   implicitFirstChars: ["-", ..."0123456789"],
   resolve: resolveYamlInteger$1,
-  identify: (object) => Number.isInteger(object) && !Object.is(object, -0) && object.toString(10).indexOf("e") < 0,
+  identify: (object) => Object.prototype.toString.call(object) === "[object Number]" && object % 1 === 0 && !Object.is(object, -0),
   represent: (object) => object.toString(10)
 });
 var YAML_INTEGER_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?0b[0-1_]+|[-+]?0[0-7_]+|[-+]?0x[0-9a-fA-F_]+|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+|[-+]?(?:0|[1-9][0-9_]*))$");
@@ -34331,7 +34325,7 @@ var intYaml11Tag = defineScalarTag("tag:yaml.org,2002:int", {
     ..."0123456789"
   ],
   resolve: resolveYamlInteger,
-  identify: (object) => Number.isInteger(object) && !Object.is(object, -0) && object.toString(10).indexOf("e") < 0,
+  identify: (object) => Object.prototype.toString.call(object) === "[object Number]" && object % 1 === 0 && !Object.is(object, -0),
   represent: (object) => object.toString(10)
 });
 var YAML_FLOAT_PATTERN$1 = /* @__PURE__ */ new RegExp("^(?:[-+]?[0-9]+(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?|[-+]?\\.[0-9]+(?:[eE][-+]?[0-9]+)?|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
@@ -34364,7 +34358,7 @@ var floatCoreTag = defineScalarTag("tag:yaml.org,2002:float", {
     ..."0123456789"
   ],
   resolve: resolveYamlFloat$2,
-  identify: (object) => typeof object === "number" && (!Number.isInteger(object) || Object.is(object, -0) || object.toString(10).indexOf("e") >= 0),
+  identify: (object) => Object.prototype.toString.call(object) === "[object Number]" && (object % 1 !== 0 || Object.is(object, -0)),
   represent: representYamlFloat$2
 });
 var YAML_FLOAT_IMPLICIT_PATTERN = /* @__PURE__ */ new RegExp("^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$");
@@ -34397,7 +34391,7 @@ var floatJsonTag = defineScalarTag("tag:yaml.org,2002:float", {
   implicit: true,
   implicitFirstChars: ["-", ..."0123456789"],
   resolve: resolveYamlFloat$1,
-  identify: (object) => typeof object === "number" && (!Number.isInteger(object) || Object.is(object, -0) || object.toString(10).indexOf("e") >= 0),
+  identify: (object) => Object.prototype.toString.call(object) === "[object Number]" && (object % 1 !== 0 || Object.is(object, -0)),
   represent: representYamlFloat$1
 });
 var YAML_FLOAT_PATTERN = /* @__PURE__ */ new RegExp("^(?:[-+]?(?:(?:[0-9][0-9_]*)?\\.[0-9_]*)(?:[eE][-+][0-9]+)?|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\\.[0-9_]*|[-+]?\\.(?:inf|Inf|INF)|\\.(?:nan|NaN|NAN))$");
@@ -34434,7 +34428,7 @@ var floatYaml11Tag = defineScalarTag("tag:yaml.org,2002:float", {
     ..."0123456789"
   ],
   resolve: resolveYamlFloat,
-  identify: (object) => typeof object === "number" && (!Number.isInteger(object) || Object.is(object, -0) || object.toString(10).indexOf("e") >= 0),
+  identify: (object) => Object.prototype.toString.call(object) === "[object Number]" && (object % 1 !== 0 || Object.is(object, -0)),
   represent: representYamlFloat
 });
 var mergeTag = defineScalarTag("tag:yaml.org,2002:merge", {
@@ -34513,37 +34507,17 @@ var seqTag = defineSequenceTag("tag:yaml.org,2002:seq", {
   },
   identify: Array.isArray
 });
-function isPlainObject3(data) {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
-  const prototype = Object.getPrototypeOf(data);
-  return prototype === null || prototype === Object.prototype;
-}
-function pick2(object, keys) {
-  const result = {};
-  for (const key of keys) if (object[key] !== void 0) result[key] = object[key];
-  return result;
-}
 var omapTag = defineSequenceTag("tag:yaml.org,2002:omap", {
-  create: () => ({
-    list: [],
-    seen: /* @__PURE__ */ new Set()
-  }),
-  addItem: (carrier, item) => {
-    let key;
-    if (item instanceof Map) {
-      if (item.size !== 1) return "cannot resolve an ordered map item";
-      key = item.keys().next().value;
-    } else if (isPlainObject3(item)) {
-      const itemKeys = Object.keys(item);
-      if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
-      key = itemKeys[0];
-    } else return "cannot resolve an ordered map item";
-    if (carrier.seen.has(key)) return "duplicate key in ordered map";
-    carrier.seen.add(key);
-    carrier.list.push(item);
+  create: () => [],
+  addItem: (container, item) => {
+    if (Object.prototype.toString.call(item) !== "[object Object]") return "cannot resolve an ordered map item";
+    const object = item;
+    const itemKeys = Object.keys(object);
+    if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
+    for (const existing of container) if (Object.prototype.hasOwnProperty.call(existing, itemKeys[0])) return "cannot resolve an ordered map item";
+    container.push(object);
     return "";
-  },
-  finalize: (carrier) => carrier.list
+  }
 });
 var pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
   create: () => [],
@@ -34561,6 +34535,16 @@ var pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
     return "";
   }
 });
+function isPlainObject3(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+  const prototype = Object.getPrototypeOf(data);
+  return prototype === null || prototype === Object.prototype;
+}
+function pick2(object, keys) {
+  const result = {};
+  for (const key of keys) if (object[key] !== void 0) result[key] = object[key];
+  return result;
+}
 var mapTag = defineMappingTag("tag:yaml.org,2002:map", {
   create: () => ({}),
   identify: isPlainObject3,
@@ -35131,8 +35115,7 @@ var DEFAULT_CONSTRUCTOR_OPTIONS = {
   filename: "",
   schema: CORE_SCHEMA,
   json: false,
-  maxTotalMergeKeys: 1e4,
-  maxAliases: -1
+  maxMergeSeqLength: 20
 };
 function eventPosition$1(event) {
   if ("tagStart" in event && event.tagStart !== NO_RANGE$2) return event.tagStart;
@@ -35143,14 +35126,6 @@ function eventPosition$1(event) {
 }
 function throwError$1(state, message) {
   throwErrorAt(state.source, state.position, message, state.filename);
-}
-function finalizeCollection(state, position, tag, carrier) {
-  try {
-    return tag.finalize(carrier);
-  } catch (error2) {
-    if (error2 instanceof YAMLException) throw error2;
-    throwErrorAt(state.source, position, error2 instanceof Error ? error2.message : String(error2), state.filename);
-  }
 }
 function lookupTag(exact, prefix, tagName) {
   const exactTag = exact[tagName];
@@ -35184,9 +35159,8 @@ function constructScalar(state, event) {
     const collectionTagDef = lookupTag(state.schema.exact.mapping, state.schema.prefix.mapping, tagName) ?? lookupTag(state.schema.exact.sequence, state.schema.prefix.sequence, tagName);
     if (collectionTagDef) {
       if (source !== "") throwError$1(state, `cannot resolve a node with !<${tagName}> explicit tag`);
-      const carrier = collectionTagDef.create(tagName);
       return {
-        value: collectionTagDef.carrierIsResult ? carrier : finalizeCollection(state, state.position, collectionTagDef, carrier),
+        value: collectionTagDef.create(tagName),
         tag: collectionTagDef
       };
     }
@@ -35220,7 +35194,6 @@ function isMappingTag(tag) {
 }
 function mergeKeys(state, frame, source, sourceTag) {
   for (const sourceKey of sourceTag.keys(source)) {
-    if (state.maxTotalMergeKeys !== -1 && ++state.totalMergeKeys > state.maxTotalMergeKeys) throwError$1(state, `merge keys exceeded maxTotalMergeKeys (${state.maxTotalMergeKeys})`);
     if (frame.tag.has(frame.value, sourceKey)) continue;
     const err = frame.tag.addPair(frame.value, sourceKey, sourceTag.get(source, sourceKey));
     if (err) throwError$1(state, err);
@@ -35230,8 +35203,14 @@ function mergeKeys(state, frame, source, sourceTag) {
 function mergeSource(state, frame, source, sourceTag) {
   state.position = frame.keyPosition;
   if (isMappingTag(sourceTag)) mergeKeys(state, frame, source, sourceTag);
-  else if (sourceTag.nodeKind === "sequence" && Array.isArray(source)) for (const element of source) mergeKeys(state, frame, element, frame.tag);
-  else throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
+  else if (sourceTag.nodeKind === "sequence" && Array.isArray(source)) {
+    const seen = /* @__PURE__ */ new Set();
+    for (const element of source) {
+      if (seen.has(element)) continue;
+      seen.add(element);
+      mergeKeys(state, frame, element, frame.tag);
+    }
+  } else throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
 }
 function addMappingValue(state, frame, key, value, tag) {
   state.position = frame.keyPosition;
@@ -35252,6 +35231,7 @@ function addValue(state, value, tag) {
   } else if (frame.kind === "sequence") {
     if (frame.merge) {
       if (!isMappingTag(tag)) throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
+      if (frame.index >= state.maxMergeSeqLength) throwError$1(state, `merge sequence length exceeded maxMergeSeqLength (${state.maxMergeSeqLength})`);
     }
     const err = frame.tag.addItem(frame.value, value, frame.index++);
     if (err) throwError$1(state, err);
@@ -35266,17 +35246,11 @@ function addValue(state, value, tag) {
     frame.hasKey = true;
   }
 }
-function storeAnchor(state, event, value, tag, isValueFinal) {
-  if (event.anchorStart !== NO_RANGE$2) {
-    const anchor = {
-      value,
-      tag,
-      isValueFinal
-    };
-    state.anchors.set(state.source.slice(event.anchorStart, event.anchorEnd), anchor);
-    return anchor;
-  }
-  return null;
+function storeAnchor(state, event, value, tag) {
+  if (event.anchorStart !== NO_RANGE$2) state.anchors.set(state.source.slice(event.anchorStart, event.anchorEnd), {
+    value,
+    tag
+  });
 }
 function constructFromEvents(events2, options) {
   const state = {
@@ -35288,9 +35262,7 @@ function constructFromEvents(events2, options) {
     position: 0,
     frames: [],
     anchors: /* @__PURE__ */ new Map(),
-    tagHandlers: /* @__PURE__ */ Object.create(null),
-    totalMergeKeys: 0,
-    aliasCount: 0
+    tagHandlers: /* @__PURE__ */ Object.create(null)
   };
   while (state.eventIndex < state.events.length) {
     const event = state.events[state.eventIndex++];
@@ -35298,7 +35270,6 @@ function constructFromEvents(events2, options) {
     switch (event.type) {
       case 1:
         state.anchors = /* @__PURE__ */ new Map();
-        state.aliasCount = 0;
         state.tagHandlers = /* @__PURE__ */ Object.create(null);
         for (const directive of event.directives) if (directive.kind === "tag") state.tagHandlers[directive.handle] = directive.prefix;
         state.frames.push({
@@ -35310,14 +35281,14 @@ function constructFromEvents(events2, options) {
         break;
       case 4: {
         const { value, tag } = constructScalar(state, event);
-        storeAnchor(state, event, value, tag, true);
+        storeAnchor(state, event, value, tag);
         addValue(state, value, tag);
         break;
       }
       case 2: {
         const definition = collectionTag(state, event, state.schema.exact.sequence, state.schema.prefix.sequence, "tag:yaml.org,2002:seq", "sequence");
         const value = definition.tag.create(definition.tagName);
-        const anchor = storeAnchor(state, event, value, definition.tag, definition.tag.carrierIsResult);
+        storeAnchor(state, event, value, definition.tag);
         const parent = state.frames[state.frames.length - 1];
         const merge2 = parent !== void 0 && parent.kind === "mapping" && parent.hasKey && parent.key === MERGE_KEY;
         state.frames.push({
@@ -35325,7 +35296,6 @@ function constructFromEvents(events2, options) {
           position: state.position,
           value,
           tag: definition.tag,
-          anchor,
           index: 0,
           merge: merge2
         });
@@ -35334,13 +35304,12 @@ function constructFromEvents(events2, options) {
       case 3: {
         const definition = collectionTag(state, event, state.schema.exact.mapping, state.schema.prefix.mapping, "tag:yaml.org,2002:map", "mapping");
         const value = definition.tag.create(definition.tagName);
-        const anchor = storeAnchor(state, event, value, definition.tag, definition.tag.carrierIsResult);
+        storeAnchor(state, event, value, definition.tag);
         state.frames.push({
           kind: "mapping",
           position: state.position,
           value,
           tag: definition.tag,
-          anchor,
           key: void 0,
           keyPosition: state.position,
           hasKey: false,
@@ -35349,25 +35318,16 @@ function constructFromEvents(events2, options) {
         break;
       }
       case 5: {
-        if (state.maxAliases !== -1 && ++state.aliasCount > state.maxAliases) throwError$1(state, `aliases exceeded maxAliases (${state.maxAliases})`);
         const name = state.source.slice(event.anchorStart, event.anchorEnd);
         const anchor = state.anchors.get(name);
         if (!anchor) throwError$1(state, `unidentified alias "${name}"`);
-        if (!anchor.isValueFinal) throwError$1(state, `recursive alias "${name}" is not supported for tag ${anchor.tag.tagName} because it uses finalize()`);
         addValue(state, anchor.value, anchor.tag);
         break;
       }
       case 6: {
         const frame = state.frames.pop();
         if (frame.kind === "document") state.documents.push(frame.value);
-        else {
-          const value = frame.tag.carrierIsResult ? frame.value : finalizeCollection(state, frame.position, frame.tag, frame.value);
-          if (frame.anchor) {
-            frame.anchor.value = value;
-            frame.anchor.isValueFinal = true;
-          }
-          addValue(state, value, frame.tag);
-        }
+        else addValue(state, frame.value, frame.tag);
         break;
       }
     }
@@ -36239,8 +36199,7 @@ var DEFAULT_PRESENTER_OPTIONS = {
   flowSkipCommaSpace: false,
   flowSkipColonSpace: false,
   quoteFlowKeys: false,
-  quoteStyle: "single",
-  forceQuotes: false,
+  quoteStyle: "auto",
   tagBeforeAnchor: false
 };
 var DEFAULT_DUMP_SCHEMA = YAML11_SCHEMA.withTags({
@@ -36291,7 +36250,13 @@ function extractFileDependencies(configPath) {
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
-    const config2 = load(configContent);
+    if (!configContent.trim()) {
+      debug("Config file is empty or invalid");
+      return [];
+    }
+    const config2 = load(configContent, {
+      schema: CORE_SCHEMA.withTags(mergeTag)
+    });
     if (!config2) {
       debug("Config file is empty or invalid");
       return [];
