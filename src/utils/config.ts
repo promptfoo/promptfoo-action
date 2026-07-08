@@ -13,10 +13,12 @@ export interface PromptfooConfig {
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
     [key: string]: unknown;
   }>;
-  defaultTest?: {
-    vars?: { [key: string]: string | { file?: string } };
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
-  };
+  defaultTest?:
+    | string
+    | {
+        vars?: { [key: string]: string | { file?: string } };
+        assert?: Array<{ type?: string; value?: string | { file?: string } }>;
+      };
 }
 
 function isPathInside(baseDir: string, targetPath: string): boolean {
@@ -213,8 +215,14 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Process defaultTest
     if (config.defaultTest) {
-      extractVarFiles(config.defaultTest.vars);
-      extractAssertFiles(config.defaultTest.assert);
+      if (typeof config.defaultTest === 'string') {
+        if (config.defaultTest.startsWith('file://')) {
+          processFileUrl(config.defaultTest);
+        }
+      } else {
+        extractVarFiles(config.defaultTest.vars);
+        extractAssertFiles(config.defaultTest.assert);
+      }
     }
 
     // Process tests

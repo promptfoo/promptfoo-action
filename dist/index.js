@@ -37177,8 +37177,14 @@ function extractFileDependencies(configPath) {
       }
     };
     if (config2.defaultTest) {
-      extractVarFiles(config2.defaultTest.vars);
-      extractAssertFiles(config2.defaultTest.assert);
+      if (typeof config2.defaultTest === "string") {
+        if (config2.defaultTest.startsWith("file://")) {
+          processFileUrl(config2.defaultTest);
+        }
+      } else {
+        extractVarFiles(config2.defaultTest.vars);
+        extractAssertFiles(config2.defaultTest.assert);
+      }
     }
     if (config2.tests) {
       for (const test of config2.tests) {

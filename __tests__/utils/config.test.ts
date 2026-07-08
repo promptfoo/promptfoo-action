@@ -1,3 +1,4 @@
+import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import type { Mock } from 'vitest';
@@ -128,6 +129,39 @@ defaultTest:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/templates/default.txt');
     expect(deps).toContain('../config/expected/default.txt');
+  });
+
+  it('should extract a file-backed defaultTest', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest: file://default.yaml
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/default.yaml']);
+  });
+
+  it('should reject a file-backed defaultTest outside the repository', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest: file://../secrets/default.yaml
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
+  it('should ignore unsupported defaultTest strings', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest: default.yaml
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
   });
 
   it('should handle empty config', () => {
