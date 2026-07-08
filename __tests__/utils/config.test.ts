@@ -1,3 +1,4 @@
+import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import type { Mock } from 'vitest';
@@ -128,6 +129,54 @@ defaultTest:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/templates/default.txt');
     expect(deps).toContain('../config/expected/default.txt');
+  });
+
+  it('should extract extension hook files', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/setup.js:beforeAll
+  - file://hooks/case.py:beforeEach
+  - file://hooks/result.js:afterEach
+  - file://hooks/report.py:afterAll
+  - file://hooks/setup.js:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/hooks/setup.js',
+      '../config/hooks/case.py',
+      '../config/hooks/result.js',
+      '../config/hooks/report.py',
+    ]);
+  });
+
+  it('should ignore remote and malformed extension entries', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - https://example.com/hook.js:beforeAll
+  - file://hooks/no-hook.js
+  - inline-extension
+  - 42
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
+  it('should reject extension hook files outside the repository', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://../secrets/hook.js:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
   });
 
   it('should handle empty config', () => {

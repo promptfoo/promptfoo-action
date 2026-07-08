@@ -6,6 +6,7 @@ import * as path from 'path';
 import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
+  extensions?: string[] | null;
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
@@ -223,6 +224,20 @@ export function extractFileDependencies(configPath: string): string[] {
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
       }
+    }
+
+    // Process extension hook files
+    for (const extension of config.extensions ?? []) {
+      if (typeof extension !== 'string' || !extension.startsWith('file://')) {
+        continue;
+      }
+
+      const hookSeparator = extension.lastIndexOf(':');
+      if (hookSeparator <= 'file://'.length) {
+        continue;
+      }
+
+      processFileUrl(extension.slice(0, hookSeparator));
     }
 
     // Convert absolute paths back to relative paths from working directory

@@ -919,6 +919,19 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should run when an extension dependency changes', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'hooks/policy.js' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/policy.js']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should run when a file inside a dependency directory changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },
