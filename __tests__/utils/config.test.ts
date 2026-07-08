@@ -75,6 +75,32 @@ prompts:
     expect(deps).toContain('../config/prompts/prompt2.txt');
   });
 
+  it('should preserve dependencies when prompts use the supported map form', () => {
+    const configContent = `
+providers:
+  - file://providers/provider.py
+prompts:
+  mapped-prompt: mapping input
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/provider.py']);
+  });
+
+  it('should extract file prompt keys from the supported map form', () => {
+    const configContent = `
+prompts:
+  file://prompts/mapped.txt: mapped prompt
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/prompts/mapped.txt']);
+  });
+
   it('should extract test variable files', () => {
     const configContent = `
 tests:
@@ -138,32 +164,32 @@ defaultTest:
     expect(deps).toHaveLength(0);
   });
 
-  it('should handle invalid YAML gracefully', () => {
+  it('should fail closed for invalid YAML', () => {
     mockFs.readFileSync.mockReturnValue('invalid: yaml: content:');
 
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toHaveLength(0);
+    expect(() =>
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toThrow('Failed to extract dependencies from config');
   });
 
-  it('should handle file read errors gracefully', () => {
+  it('should fail closed for file read errors', () => {
     mockFs.readFileSync.mockImplementation(() => {
       throw new Error('File not found');
     });
 
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toHaveLength(0);
+    expect(() =>
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toThrow('Failed to extract dependencies from config: File not found');
   });
 
-  it('should handle non-Error file read failures gracefully', () => {
+  it('should fail closed for non-Error file read failures', () => {
     mockFs.readFileSync.mockImplementation(() => {
       throw 'permission denied';
     });
 
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toEqual([]);
+    expect(() =>
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toThrow('Failed to extract dependencies from config: permission denied');
   });
 
   it('should ignore dependencies that escape the config directory', () => {

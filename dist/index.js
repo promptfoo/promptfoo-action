@@ -6,11 +6,7 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -36433,18 +36429,27 @@ function extractFileDependencies(configPath) {
         }
       }
     }
+    const extractPromptFile = (prompt) => {
+      if (typeof prompt === "string" && prompt.startsWith("file://")) {
+        processFileUrl(prompt);
+      } else if (typeof prompt === "object" && typeof prompt.file === "string") {
+        const absolutePath = resolveConfigDependency(
+          prompt.file,
+          "prompt file dependency"
+        );
+        if (absolutePath) {
+          dependencies.add(absolutePath);
+        }
+      }
+    };
     if (config2.prompts) {
-      for (const prompt of config2.prompts) {
-        if (typeof prompt === "string" && prompt.startsWith("file://")) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === "object" && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            "prompt file dependency"
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
+      if (Array.isArray(config2.prompts)) {
+        for (const prompt of config2.prompts) {
+          extractPromptFile(prompt);
+        }
+      } else {
+        for (const prompt of Object.keys(config2.prompts)) {
+          extractPromptFile(prompt);
         }
       }
     }
@@ -36499,10 +36504,8 @@ function extractFileDependencies(configPath) {
       return repositoryPath;
     });
   } catch (error2) {
-    warning(
-      `Failed to extract dependencies from config: ${error2 instanceof Error ? error2.message : String(error2)}`
-    );
-    return [];
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    throw new Error(`Failed to extract dependencies from config: ${message}`);
   }
 }
 

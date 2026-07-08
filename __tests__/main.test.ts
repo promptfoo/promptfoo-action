@@ -919,6 +919,23 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should fail closed when dependency extraction fails', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/provider.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockImplementation(() => {
+        throw new Error('Failed to extract dependencies from config: invalid');
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to extract dependencies from config'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should run when a file inside a dependency directory changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },

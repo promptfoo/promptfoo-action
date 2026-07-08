@@ -5,9 +5,11 @@ import * as yaml from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
+type PromptEntry = string | { file?: string; [key: string]: unknown };
+
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: Array<string | { file?: string; [key: string]: unknown }>;
+  prompts?: PromptEntry[] | Record<string, string>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -143,19 +145,33 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     }
 
-    // Extract prompt files
+    const extractPromptFile = (prompt: PromptEntry): void => {
+      if (typeof prompt === 'string' && prompt.startsWith('file://')) {
+        processFileUrl(prompt);
+      } else if (
+        typeof prompt === 'object' &&
+        typeof prompt.file === 'string'
+      ) {
+        const absolutePath = resolveConfigDependency(
+          prompt.file,
+          'prompt file dependency',
+        );
+        if (absolutePath) {
+          dependencies.add(absolutePath);
+        }
+      }
+    };
+
+    // Extract prompt files. Promptfoo supports an array and a mapping form
+    // whose keys contain prompt content and whose values are labels.
     if (config.prompts) {
-      for (const prompt of config.prompts) {
-        if (typeof prompt === 'string' && prompt.startsWith('file://')) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === 'object' && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            'prompt file dependency',
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
+      if (Array.isArray(config.prompts)) {
+        for (const prompt of config.prompts) {
+          extractPromptFile(prompt);
+        }
+      } else {
+        for (const prompt of Object.keys(config.prompts)) {
+          extractPromptFile(prompt);
         }
       }
     }
@@ -236,9 +252,7 @@ export function extractFileDependencies(configPath: string): string[] {
       return repositoryPath;
     });
   } catch (error) {
-    core.warning(
-      `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return [];
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to extract dependencies from config: ${message}`);
   }
 }
