@@ -170,16 +170,14 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Extract prompt files. Promptfoo supports an array and a mapping form
-    // whose keys contain prompt content and whose values are labels.
+    // whose keys contain prompt content and whose values are labels; the map
+    // keys flow through the same visitor as array entries.
     if (config.prompts) {
-      if (Array.isArray(config.prompts)) {
-        for (const prompt of config.prompts) {
-          extractPromptFile(prompt);
-        }
-      } else {
-        for (const prompt of Object.keys(config.prompts)) {
-          extractPromptFile(prompt);
-        }
+      const promptEntries = Array.isArray(config.prompts)
+        ? config.prompts
+        : Object.keys(config.prompts);
+      for (const prompt of promptEntries) {
+        extractPromptFile(prompt);
       }
     }
 
