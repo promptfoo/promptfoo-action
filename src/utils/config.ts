@@ -29,6 +29,22 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function providerFilePath(fileUrl: string): string {
+  const encodedPath = fileUrl.slice('file://'.length);
+  const rawPath =
+    process.platform === 'win32' && /^\/[A-Za-z]:[\\/]/.test(encodedPath)
+      ? encodedPath.slice(1)
+      : encodedPath;
+  const functionSeparator = rawPath.lastIndexOf(':');
+  if (
+    functionSeparator > 1 &&
+    rawPath.slice(0, functionSeparator).endsWith('.py')
+  ) {
+    return rawPath.slice(0, functionSeparator);
+  }
+  return rawPath;
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -51,6 +67,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const resolveConfigDependency = (
       filePath: string,
       source: string,
+      preserveAbsolute = false,
     ): string | undefined => {
       try {
         if (!filePath) {
@@ -60,7 +77,10 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath =
+          preserveAbsolute && path.isAbsolute(filePath)
+            ? path.normalize(filePath)
+            : path.resolve(path.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -79,11 +99,14 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): void => {
-      const filePath = fileUrl.replace('file://', '');
+    const processFileUrl = (fileUrl: string, isProvider = false): void => {
+      const filePath = isProvider
+        ? providerFilePath(fileUrl)
+        : fileUrl.slice('file://'.length);
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
+        isProvider,
       );
       if (!absolutePath) {
         return;
@@ -133,12 +156,12 @@ export function extractFileDependencies(configPath: string): string[] {
     if (config.providers) {
       for (const provider of config.providers) {
         if (typeof provider === 'string' && provider.startsWith('file://')) {
-          processFileUrl(provider);
+          processFileUrl(provider, true);
         } else if (
           typeof provider === 'object' &&
           provider.id?.startsWith('file://')
         ) {
-          processFileUrl(provider.id);
+          processFileUrl(provider.id, true);
         }
       }
     }
