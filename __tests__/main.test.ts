@@ -560,6 +560,83 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      'NODE_OPTIONS',
+      'nOdE_oPtIoNs',
+      'PATH',
+      'Node_Path',
+      'NPM_CONFIG_USERCONFIG',
+      'npm_config_script_shell',
+      'LD_PRELOAD',
+      'DYLD_INSERT_LIBRARIES',
+      'HTTPS_PROXY',
+      'HOME',
+      'USERPROFILE',
+      'XDG_CONFIG_HOME',
+      'APPDATA',
+      'LOCALAPPDATA',
+    ])('should reject process startup variable %s from environment files', async (variableName) => {
+      withInputs({ 'env-files': '.env' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      const originalValue = process.env[variableName];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { [variableName]: 'attacker-controlled' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining(variableName),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env[variableName]).toBe(originalValue);
+      } finally {
+        if (originalValue === undefined) {
+          delete process.env[variableName];
+        } else {
+          process.env[variableName] = originalValue;
+        }
+      }
+    });
+
+    test('should preserve later-file-wins behavior for application variables', async () => {
+      withInputs({ 'env-files': '.env,.env.local' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { CUSTOM_PROVIDER_SETTING: 'second', NODE_ENV: 'test' }
+            : { CUSTOM_PROVIDER_SETTING: 'first' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({
+            CUSTOM_PROVIDER_SETTING: 'second',
+            NODE_ENV: 'test',
+          }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        delete process.env.NODE_ENV;
+      }
+    });
+
     test('should fail when an environment file cannot be loaded', async () => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);

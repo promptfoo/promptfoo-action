@@ -45,7 +45,7 @@ The action can be configured using the following inputs:
 | `promptfoo-version` | Version or dist-tag used by `npx promptfoo@<version>`. Defaults to `latest`. | No |
 | `no-share` | Pass `--no-share`, overriding config-level sharing. Defaults to `false`. | No |
 | `use-config-prompts` | Do not override config prompts with changed files matched by `prompts`. Defaults to `false`. | No |
-| `env-files` | Comma-separated `.env` paths loaded in order from `working-directory`. Later files override earlier files. | No |
+| `env-files` | Comma-separated application `.env` paths loaded in order from `working-directory`. Later files override earlier files; process-control variables are rejected. | No |
 | `fail-on-threshold` | Required suite pass percentage from 0 to 100. | No |
 | `max-concurrency` | Value passed to Promptfoo's `--max-concurrency`. Defaults to `4`. | No |
 | `no-table` | Pass `--no-table`. Defaults to `false`. | No |

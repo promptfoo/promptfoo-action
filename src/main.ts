@@ -1,7 +1,6 @@
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as github from '@actions/github';
-import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import * as path from 'path';
@@ -15,6 +14,7 @@ import {
   setupCacheEnvironment,
 } from './utils/cache';
 import { extractFileDependencies } from './utils/config';
+import { loadEnvironmentFile } from './utils/env';
 import {
   ErrorCodes,
   formatErrorMessage,
@@ -289,21 +289,8 @@ export async function run(): Promise<void> {
         const envFilePath = path.join(workingDirectory, envFile);
         if (fs.existsSync(envFilePath)) {
           core.info(`Loading environment variables from ${envFilePath}`);
-          // Use override: true to allow later files to override earlier ones
-          const result = dotenv.config({
-            path: envFilePath,
-            override: true,
-            quiet: true,
-          });
-          if (result.error) {
-            throw new PromptfooActionError(
-              `Failed to load ${envFilePath}: ${result.error.message}`,
-              ErrorCodes.ENV_FILE_LOAD_ERROR,
-              `Check that the file exists and has valid .env format`,
-            );
-          } else {
-            core.info(`Successfully loaded ${envFilePath}`);
-          }
+          loadEnvironmentFile(envFilePath);
+          core.info(`Successfully loaded ${envFilePath}`);
         } else {
           throw new PromptfooActionError(
             `Environment file ${envFilePath} not found`,
