@@ -29,8 +29,15 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+// Resolve the underlying file for a `file://` provider reference. Promptfoo
+// qualifies Python providers with a function selector (`...py:custom_call`);
+// only that `.py:function` form is stripped, so an invalid JavaScript suffix
+// (`...js:callApi`, which Promptfoo rejects) is left untouched rather than
+// silently reinterpreted.
 function providerFilePath(fileUrl: string): string {
   const encodedPath = fileUrl.slice('file://'.length);
+  // On Windows a `file:///C:/...` URL yields a leading slash before the drive
+  // letter; drop it so the drive colon is not mistaken for a function selector.
   const rawPath =
     process.platform === 'win32' && /^\/[A-Za-z]:[\\/]/.test(encodedPath)
       ? encodedPath.slice(1)
