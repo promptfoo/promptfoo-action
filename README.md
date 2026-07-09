@@ -563,3 +563,9 @@ The PR comment or workflow summary contains aggregate results and a viewer link
 when sharing succeeds. Workflows that require a persistent raw result file
 should run the Promptfoo CLI directly with `--output <path>` and upload that
 file separately.
+
+## Security
+
+To report a suspected vulnerability, follow the private disclosure process in
+[`SECURITY.md`](SECURITY.md). Do not open a public issue, discussion, or pull
+request for security reports.
