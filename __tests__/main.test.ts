@@ -3,7 +3,7 @@ import * as core from '@actions/core';
 import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
-import * as yaml from 'js-yaml';
+import { load as loadYaml } from 'js-yaml';
 import {
   afterEach,
   beforeEach,
@@ -1684,7 +1684,7 @@ describe('disable-comment feature', () => {
   test('should have disable-comment parameter in action.yml', () => {
     const actionYmlPath = path.join(__dirname, '..', 'action.yml');
     const actionYml = actualFs.readFileSync(actionYmlPath, 'utf8');
-    const action = yaml.load(actionYml) as {
+    const action = loadYaml(actionYml) as {
       inputs: Record<
         string,
         { description: string; default: string; required: boolean }
@@ -2513,7 +2513,7 @@ describe('environment variable documentation', () => {
   test('action.yml should mention environment variable fallback in descriptions', () => {
     const actionYmlPath = path.join(__dirname, '..', 'action.yml');
     const actionYml = actualFs.readFileSync(actionYmlPath, 'utf8');
-    const action = yaml.load(actionYml) as {
+    const action = loadYaml(actionYml) as {
       inputs: Record<string, { description: string }>;
     };
 
