@@ -1,7 +1,7 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import * as yaml from 'js-yaml';
+import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
@@ -43,7 +43,14 @@ export function extractFileDependencies(configPath: string): string[] {
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
-    const config = yaml.load(configContent) as PromptfooConfig;
+    if (!configContent.trim()) {
+      core.debug('Config file is empty or invalid');
+      return [];
+    }
+
+    const config = loadYaml(configContent, {
+      schema: CORE_SCHEMA.withTags(mergeTag),
+    }) as PromptfooConfig;
 
     if (!config) {
       core.debug('Config file is empty or invalid');

@@ -1,3 +1,4 @@
+import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import type { Mock } from 'vitest';
@@ -169,12 +170,39 @@ defaultTest:
     expect(deps).toContain('../config/expected/default.txt');
   });
 
+  it('should extract dependencies inherited through YAML merge keys', () => {
+    const configContent = `
+shared: &shared
+  providers:
+    - file://providers/inherited.py
+  prompts:
+    - file://prompts/inherited.txt
+<<: *shared
+`;
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/inherited.py', 'prompts/inherited.txt']);
+  });
+
   it('should handle empty config', () => {
     mockFs.readFileSync.mockReturnValue('');
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toHaveLength(0);
+    expect(core.debug).toHaveBeenCalledWith('Config file is empty or invalid');
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should handle an explicit null config', () => {
+    mockFs.readFileSync.mockReturnValue('null');
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.debug).toHaveBeenCalledWith('Config file is empty or invalid');
   });
 
   it('should handle invalid YAML gracefully', () => {
