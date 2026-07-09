@@ -91,6 +91,10 @@ Use Conventional Commits format:
   overrides generic publishing templates.
 - Describe the primary change, for example: `docs: add security policy`.
 
+The title feeds release-please, which derives the changelog and next version
+from the conventional type (`fix` → patch, `feat` → minor), so choose the type
+that matches the change.
+
 ## Release Workflow
 
 1. Make changes and test locally
