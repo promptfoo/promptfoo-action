@@ -34514,37 +34514,17 @@ var seqTag = defineSequenceTag("tag:yaml.org,2002:seq", {
   },
   identify: Array.isArray
 });
-function isPlainObject3(data) {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
-  const prototype = Object.getPrototypeOf(data);
-  return prototype === null || prototype === Object.prototype;
-}
-function pick2(object, keys) {
-  const result = {};
-  for (const key of keys) if (object[key] !== void 0) result[key] = object[key];
-  return result;
-}
 var omapTag = defineSequenceTag("tag:yaml.org,2002:omap", {
-  create: () => ({
-    list: [],
-    seen: /* @__PURE__ */ new Set()
-  }),
-  addItem: (carrier, item) => {
-    let key;
-    if (item instanceof Map) {
-      if (item.size !== 1) return "cannot resolve an ordered map item";
-      key = item.keys().next().value;
-    } else if (isPlainObject3(item)) {
-      const itemKeys = Object.keys(item);
-      if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
-      key = itemKeys[0];
-    } else return "cannot resolve an ordered map item";
-    if (carrier.seen.has(key)) return "duplicate key in ordered map";
-    carrier.seen.add(key);
-    carrier.list.push(item);
+  create: () => [],
+  addItem: (container, item) => {
+    if (Object.prototype.toString.call(item) !== "[object Object]") return "cannot resolve an ordered map item";
+    const object = item;
+    const itemKeys = Object.keys(object);
+    if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
+    for (const existing of container) if (Object.prototype.hasOwnProperty.call(existing, itemKeys[0])) return "cannot resolve an ordered map item";
+    container.push(object);
     return "";
-  },
-  finalize: (carrier) => carrier.list
+  }
 });
 var pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
   create: () => [],
@@ -34562,6 +34542,16 @@ var pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
     return "";
   }
 });
+function isPlainObject3(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+  const prototype = Object.getPrototypeOf(data);
+  return prototype === null || prototype === Object.prototype;
+}
+function pick2(object, keys) {
+  const result = {};
+  for (const key of keys) if (object[key] !== void 0) result[key] = object[key];
+  return result;
+}
 var mapTag = defineMappingTag("tag:yaml.org,2002:map", {
   create: () => ({}),
   identify: isPlainObject3,
@@ -36301,7 +36291,13 @@ function extractFileDependencies(configPath) {
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
-    const config2 = load(configContent);
+    if (!configContent.trim()) {
+      debug("Config file is empty or invalid");
+      return [];
+    }
+    const config2 = load(configContent, {
+      schema: CORE_SCHEMA.withTags(mergeTag)
+    });
     if (!config2) {
       debug("Config file is empty or invalid");
       return [];
