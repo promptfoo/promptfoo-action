@@ -147,14 +147,18 @@ export function extractFileDependencies(configPath: string): string[] {
       if (filePath.startsWith('file://')) {
         filePath = filePath.slice('file://'.length);
       } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
+        // Remote source (https://, s3://, ...) — not a local file dependency.
         return;
       }
 
+      // Drop a spreadsheet sheet reference, e.g. `tests.csv#Sheet1`.
       const sheetIndex = filePath.indexOf('#');
       if (sheetIndex !== -1) {
         filePath = filePath.slice(0, sheetIndex);
       }
 
+      // Drop a function qualifier, e.g. `tests.py:generate_tests`. Require the
+      // colon past index 1 so a Windows drive letter (`C:\...`) is not stripped.
       const functionIndex = filePath.lastIndexOf(':');
       if (functionIndex > 1) {
         filePath = filePath.slice(0, functionIndex);
