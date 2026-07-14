@@ -141,6 +141,128 @@ defaultTest: file://default.yaml
     expect(deps).toEqual(['../config/default.yaml']);
   });
 
+  it('should extract nested dependencies from a file-backed YAML defaultTest', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('defaults/default.yaml')) {
+        return `
+vars:
+  context: file://../fixtures/context.txt
+assert:
+  - type: javascript
+    value: file://validators/check.js
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/fixtures/context.txt',
+      'evals/defaults/validators/check.js',
+    ]);
+  });
+
+  it('should extract nested object-form dependencies from a file-backed JSON defaultTest', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.json';
+      }
+      if (String(filePath).endsWith('defaults/default.json')) {
+        return JSON.stringify({
+          vars: { context: { file: '../fixtures/context.json' } },
+          assert: [
+            { type: 'javascript', value: { file: 'validators/check.js' } },
+          ],
+        });
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.json',
+      'evals/fixtures/context.json',
+      'evals/defaults/validators/check.js',
+    ]);
+  });
+
+  it('should keep other dependencies when a file-backed defaultTest cannot be loaded', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return `
+providers:
+  - file://providers/custom.py
+defaultTest: file://defaults/default.yaml
+`;
+      }
+      throw new Error('Permission denied');
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/providers/custom.py',
+      'evals/defaults/default.yaml',
+    ]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to inspect file-backed defaultTest'),
+    );
+  });
+
+  it('should report a non-Error file-backed defaultTest read failure', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      throw 'Permission denied';
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Permission denied'),
+    );
+  });
+
+  it('should reject nested defaultTest dependencies outside the repository', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('defaults/default.yaml')) {
+        return `
+vars:
+  context: file://../../../secrets/context.txt
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
   it('should reject a file-backed defaultTest outside the repository', () => {
     mockFs.readFileSync.mockReturnValue(`
 defaultTest: file://../secrets/default.yaml
@@ -162,6 +284,19 @@ defaultTest: default.yaml
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([]);
+  });
+
+  it('should ignore an invalid non-object defaultTest without dropping other dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.py
+defaultTest: true
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.py']);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should extract dependencies inherited through YAML merge keys', () => {

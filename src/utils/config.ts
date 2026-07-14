@@ -60,6 +60,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const resolveConfigDependency = (
       filePath: string,
       source: string,
+      baseDir = configDir,
     ): string | undefined => {
       try {
         if (!filePath) {
@@ -69,7 +70,7 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.resolve(baseDir, filePath);
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -88,11 +89,12 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): void => {
+    const processFileUrl = (fileUrl: string, baseDir = configDir): void => {
       const filePath = fileUrl.replace('file://', '');
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
+        baseDir,
       );
       if (!absolutePath) {
         return;
@@ -170,11 +172,14 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Extract test variable files
-    const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
+    const extractVarFiles = (
+      vars?: { [key: string]: unknown },
+      baseDir = configDir,
+    ): void => {
       if (!vars) return;
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(value);
+          processFileUrl(value, baseDir);
         } else if (
           typeof value === 'object' &&
           value !== null &&
@@ -184,6 +189,7 @@ export function extractFileDependencies(configPath: string): string[] {
           const absolutePath = resolveConfigDependency(
             value.file,
             'test variable file dependency',
+            baseDir,
           );
           if (absolutePath) {
             dependencies.add(absolutePath);
@@ -195,6 +201,7 @@ export function extractFileDependencies(configPath: string): string[] {
     // Extract assert files
     const extractAssertFiles = (
       asserts?: Array<{ type?: string; value?: unknown }>,
+      baseDir = configDir,
     ): void => {
       if (!asserts) return;
       for (const assert of asserts) {
@@ -202,7 +209,7 @@ export function extractFileDependencies(configPath: string): string[] {
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
-          processFileUrl(assert.value);
+          processFileUrl(assert.value, baseDir);
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&
@@ -212,6 +219,7 @@ export function extractFileDependencies(configPath: string): string[] {
           const absolutePath = resolveConfigDependency(
             assert.value.file,
             'assertion file dependency',
+            baseDir,
           );
           if (absolutePath) {
             dependencies.add(absolutePath);
@@ -224,9 +232,39 @@ export function extractFileDependencies(configPath: string): string[] {
     if (config.defaultTest) {
       if (typeof config.defaultTest === 'string') {
         if (config.defaultTest.startsWith('file://')) {
-          processFileUrl(config.defaultTest);
+          const defaultTestPath = resolveConfigDependency(
+            config.defaultTest.slice('file://'.length),
+            'defaultTest file dependency',
+          );
+          if (defaultTestPath) {
+            processFileUrl(config.defaultTest);
+          }
+          if (defaultTestPath && !glob.hasMagic(defaultTestPath)) {
+            try {
+              const defaultTest = loadYaml(
+                fs.readFileSync(defaultTestPath, 'utf8'),
+                { schema: CORE_SCHEMA.withTags(mergeTag) },
+              ) as PromptfooConfig['defaultTest'];
+              if (
+                defaultTest &&
+                typeof defaultTest === 'object' &&
+                !Array.isArray(defaultTest)
+              ) {
+                const defaultTestDir = path.dirname(defaultTestPath);
+                extractVarFiles(defaultTest.vars, defaultTestDir);
+                extractAssertFiles(defaultTest.assert, defaultTestDir);
+              }
+            } catch (error) {
+              core.warning(
+                `Failed to inspect file-backed defaultTest "${defaultTestPath}": ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+          }
         }
-      } else {
+      } else if (
+        typeof config.defaultTest === 'object' &&
+        !Array.isArray(config.defaultTest)
+      ) {
         extractVarFiles(config.defaultTest.vars);
         extractAssertFiles(config.defaultTest.assert);
       }
