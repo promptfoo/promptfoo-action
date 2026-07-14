@@ -37097,11 +37097,15 @@ async function run() {
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
-      const filesInput = workflowFiles || context2.payload.inputs?.files;
+      const filesInput = workflowFiles || context2.payload.inputs?.files || "";
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        changedFiles = filesInput;
-        info(`Using manually specified files: ${changedFiles}`);
+        const manualFiles = filesInput.split("\n").filter((file) => file).map((file) => ({
+          filename: file,
+          status: matchesPromptGlob(file) && !fs7.existsSync(path6.resolve(workspaceRoot, file)) ? "removed" : "modified"
+        }));
+        changedFiles = selectChangedFiles(manualFiles);
+        info(`Using manually specified files: ${filesInput}`);
       } else {
         validateGitRevision(compareBase);
         try {

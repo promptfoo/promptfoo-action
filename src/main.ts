@@ -465,14 +465,26 @@ export async function run(): Promise<void> {
       // 3. Run on all prompt files
 
       // Priority: action inputs > workflow inputs > defaults
-      const filesInput = workflowFiles || github.context.payload.inputs?.files;
+      const filesInput: string =
+        workflowFiles || github.context.payload.inputs?.files || '';
       const compareBase: string =
         workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
-        core.info(`Using manually specified files: ${changedFiles}`);
+        const manualFiles = filesInput
+          .split('\n')
+          .filter((file) => file)
+          .map((file) => ({
+            filename: file,
+            status:
+              matchesPromptGlob(file) &&
+              !fs.existsSync(path.resolve(workspaceRoot, file))
+                ? 'removed'
+                : 'modified',
+          }));
+        changedFiles = selectChangedFiles(manualFiles);
+        core.info(`Using manually specified files: ${filesInput}`);
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);

@@ -1084,6 +1084,57 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
 
+    test('should process remaining prompts when a manually specified prompt is missing', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'prompts/removed.txt' } },
+        configurable: true,
+      });
+      mockFs.existsSync.mockReturnValue(false);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should select an existing manually specified prompt', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'prompts/changed.txt' } },
+        configurable: true,
+      });
+      mockFs.existsSync.mockReturnValue(true);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/remaining.txt',
+      ]);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+      );
+      expect(args).not.toContain('prompts/remaining.txt');
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
     test('should handle workflow_dispatch with custom base comparison', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
