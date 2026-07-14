@@ -5,11 +5,13 @@ import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
-type PromptEntry = string | { file?: string; [key: string]: unknown };
+type PromptEntry =
+  | string
+  | { file?: string; id?: string; raw?: string; [key: string]: unknown };
 
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: string | PromptEntry[];
+  prompts?: string | PromptEntry[] | Record<string, string>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -155,17 +157,82 @@ export function extractFileDependencies(configPath: string): string[] {
     // Extract prompt files
     if (config.prompts) {
       const prompts =
-        typeof config.prompts === 'string' ? [config.prompts] : config.prompts;
-      for (const prompt of prompts) {
-        if (typeof prompt === 'string' && prompt.startsWith('file://')) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === 'object' && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            'prompt file dependency',
+        typeof config.prompts === 'string'
+          ? [config.prompts]
+          : Array.isArray(config.prompts)
+            ? config.prompts
+            : Object.keys(config.prompts);
+
+      const visitedPromptFiles = new Set<string>();
+      const processPromptReference = (
+        reference: string,
+        declaredFile = false,
+      ): void => {
+        const isExecutable = reference.startsWith('exec:');
+        const isFileUrl = reference.startsWith('file://');
+        const looksLikePath =
+          declaredFile ||
+          isExecutable ||
+          isFileUrl ||
+          glob.hasMagic(reference) ||
+          /[\\/]/.test(reference) ||
+          /\.(?:cjs|cts|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[\w.]+)?$/i.test(
+            reference,
           );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
+
+        if (!looksLikePath) {
+          return;
+        }
+
+        const promptPath = reference
+          .replace(/^exec:/, '')
+          .replace(/^file:\/\//, '')
+          .replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[\w.]+$/i, '$1');
+        processFileUrl(`file://${promptPath}`);
+
+        if (!/\.(?:json|ya?ml)$/i.test(promptPath)) {
+          return;
+        }
+
+        const absolutePath = resolveConfigDependency(
+          promptPath,
+          'prompt file dependency',
+        );
+        if (!absolutePath || visitedPromptFiles.has(absolutePath)) {
+          return;
+        }
+        visitedPromptFiles.add(absolutePath);
+
+        try {
+          const nestedConfig = loadYaml(fs.readFileSync(absolutePath, 'utf8'));
+          const visitNestedReferences = (value: unknown): void => {
+            if (typeof value === 'string' && value.startsWith('file://')) {
+              processPromptReference(value);
+            } else if (Array.isArray(value)) {
+              for (const nestedValue of value) {
+                visitNestedReferences(nestedValue);
+              }
+            } else if (typeof value === 'object' && value !== null) {
+              for (const nestedValue of Object.values(value)) {
+                visitNestedReferences(nestedValue);
+              }
+            }
+          };
+          visitNestedReferences(nestedConfig);
+        } catch (error) {
+          core.warning(
+            `Failed to inspect prompt file dependency "${promptPath}": ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      };
+
+      for (const prompt of prompts) {
+        if (typeof prompt === 'string') {
+          processPromptReference(prompt);
+        } else if (typeof prompt === 'object' && prompt !== null) {
+          const promptReference = prompt.file ?? prompt.raw ?? prompt.id;
+          if (typeof promptReference === 'string') {
+            processPromptReference(promptReference, Boolean(prompt.file));
           }
         }
       }

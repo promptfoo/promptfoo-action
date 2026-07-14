@@ -105,6 +105,152 @@ prompts:
     expect(deps).toEqual([]);
   });
 
+  it('should extract scalar prompt functions without the function suffix', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: file://prompts/build.py:create_prompt\n',
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/prompts/build.py']);
+  });
+
+  it('should extract a scalar prompt path without a file prefix', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: prompts/main.txt\n');
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/prompts/main.txt']);
+  });
+
+  it('should extract executable scalar prompts', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: exec:./prompts/generate.sh\n',
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/prompts/generate.sh']);
+  });
+
+  it('should extract file-backed prompt object ids and raw values', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - id: file://prompts/from-id.txt
+    label: From id
+  - raw: exec:./prompts/from-raw.sh
+    label: From raw
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/prompts/from-id.txt',
+      '../config/prompts/from-raw.sh',
+    ]);
+  });
+
+  it('should extract nested file references in a scalar prompt file', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('configs/prompts.yaml')) {
+        return `
+content:
+  - file://prompts/system.txt
+  - file://configs/prompts.yaml
+ignored: 1
+`;
+      }
+      return 'prompts: file://configs/prompts.yaml\n';
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/configs/prompts.yaml',
+      '../config/prompts/system.txt',
+    ]);
+  });
+
+  it('should retain other dependencies when a prompt file cannot be inspected', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('configs/prompts.yaml')) {
+        throw new Error('permission denied');
+      }
+      return `
+providers:
+  - file://providers/provider.py
+prompts: file://configs/prompts.yaml
+`;
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.py',
+      '../config/configs/prompts.yaml',
+    ]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to inspect prompt file dependency "configs/prompts.yaml": permission denied',
+    );
+  });
+
+  it('should handle non-Error prompt file read failures', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('configs/prompts.json')) {
+        throw 'permission denied';
+      }
+      return 'prompts: file://configs/prompts.json\n';
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/configs/prompts.json']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to inspect prompt file dependency "configs/prompts.json": permission denied',
+    );
+  });
+
+  it('should ignore an unsafe file-backed scalar prompt', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: file://../outside/prompts.yaml\n',
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
+  it('should retain provider dependencies when prompts use mapping form', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.py
+prompts:
+  file://prompts/main.txt: Main
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.py',
+      '../config/prompts/main.txt',
+    ]);
+  });
+
+  it('should ignore prompt entries without a usable file reference', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.py
+prompts:
+  - true
+  - null
+  - label: Inline
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/provider.py']);
+  });
+
   it('should extract test variable files', () => {
     const configContent = `
 tests:
