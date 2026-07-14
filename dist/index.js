@@ -36316,7 +36316,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = path5.resolve(configDir, filePath);
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36333,7 +36333,7 @@ function extractFileDependencies(configPath) {
       }
     };
     const processFileUrl = (fileUrl) => {
-      const filePath = fileUrl.replace("file://", "").replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\:]+$/i, "$1");
+      const filePath = fileUrl.replace("file://", "").replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, "$1");
       const absolutePath = resolveConfigDependency(
         filePath,
         "config file dependency"
@@ -36459,8 +36459,10 @@ function extractFileDependencies(configPath) {
           }
           continue;
         }
-        if (typeof test.path === "string" && test.path.startsWith("file://")) {
-          processFileUrl(test.path);
+        if (typeof test.path === "string") {
+          processFileUrl(
+            test.path.startsWith("file://") ? test.path : `file://${test.path}`
+          );
           extractNestedFileUrls(test.config);
         }
         extractVarFiles(test.vars);

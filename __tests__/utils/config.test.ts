@@ -113,6 +113,17 @@ prompts:
     expect(deps).toEqual(['../config/prompts/build.py']);
   });
 
+  it('should extract Ruby prompt-map keys with namespaced selectors', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://prompts/build.rb:MyModule::Nested.method: generated prompt
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/prompts/build.rb']);
+  });
+
   it('should extract file-backed prompt ids', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
@@ -129,6 +140,22 @@ prompts:
     mockFs.readFileSync.mockReturnValue(`
 tests:
   path: file://tests/generate.py:create_tests
+  config:
+    dataset: file://data/cases.json
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/tests/generate.py',
+      '../config/data/cases.json',
+    ]);
+  });
+
+  it('should extract nested config files from a bare-path test generator', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: tests/generate.py:create_tests
   config:
     dataset: file://data/cases.json
 `);
@@ -357,6 +384,19 @@ prompts:
     );
 
     expect(deps).toEqual(['providers/custom.py', 'prompts/prompt.txt']);
+  });
+
+  it('should preserve absolute file URLs that stay inside the workspace', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file:///test/working/prompts/absolute.txt: absolute prompt
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['prompts/absolute.txt']);
   });
 
   it('should keep dependencies whose names begin with two dots', () => {

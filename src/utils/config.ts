@@ -82,7 +82,7 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.resolve(configDir, filePath);
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -104,7 +104,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const processFileUrl = (fileUrl: string): void => {
       const filePath = fileUrl
         .replace('file://', '')
-        .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\:]+$/i, '$1');
+        .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1');
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
@@ -284,8 +284,10 @@ export function extractFileDependencies(configPath: string): string[] {
           continue;
         }
 
-        if (typeof test.path === 'string' && test.path.startsWith('file://')) {
-          processFileUrl(test.path);
+        if (typeof test.path === 'string') {
+          processFileUrl(
+            test.path.startsWith('file://') ? test.path : `file://${test.path}`,
+          );
           extractNestedFileUrls(test.config);
         }
         extractVarFiles(test.vars);
