@@ -7,6 +7,9 @@ import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
   extensions?: string[] | null;
+  commandLineOptions?: {
+    extension?: string[] | null;
+  };
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
@@ -68,7 +71,7 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.resolve(configDir, filePath);
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -234,13 +237,17 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Process extension hook files
-    for (const extension of config.extensions ?? []) {
+    const extensions = [
+      ...(config.extensions ?? []),
+      ...(config.commandLineOptions?.extension ?? []),
+    ];
+    for (const extension of extensions) {
       if (typeof extension !== 'string' || !extension.startsWith('file://')) {
         continue;
       }
 
       const hookSeparator = extension.lastIndexOf(':');
-      if (hookSeparator <= 'file://'.length) {
+      if (hookSeparator <= 8 || hookSeparator === extension.length - 1) {
         continue;
       }
 

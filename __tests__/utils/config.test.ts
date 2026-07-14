@@ -151,11 +151,38 @@ extensions:
     ]);
   });
 
+  it('should extract extension hooks from commandLineOptions', () => {
+    mockFs.readFileSync.mockReturnValue(`
+commandLineOptions:
+  extension:
+    - file://hooks/policy.js:beforeAll
+    - file://hooks/result.py:afterEach
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['hooks/policy.js', 'hooks/result.py']);
+  });
+
+  it('should extract absolute extension hooks and preserve path colons', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/setup.js:beforeAll
+  - file:///test/working/hooks/team:blue/result.py:afterEach
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['hooks/setup.js', 'hooks/team:blue/result.py']);
+  });
+
   it('should ignore remote and malformed extension entries', () => {
     mockFs.readFileSync.mockReturnValue(`
 extensions:
   - https://example.com/hook.js:beforeAll
   - file://hooks/no-hook.js
+  - file://hooks/empty-hook.js:
+  - file://C:/hooks/no-hook.js
   - inline-extension
   - 42
 `);
@@ -169,6 +196,7 @@ extensions:
     mockFs.readFileSync.mockReturnValue(`
 extensions:
   - file://../secrets/hook.js:beforeAll
+  - file:///test/secrets/hook.js:beforeAll
 `);
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
