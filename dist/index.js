@@ -36471,6 +36471,10 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "XDG_CONFIG_HOME"
 ]);
 var FORBIDDEN_ENV_FILE_PREFIXES = ["GIT_", "NPM_CONFIG_"];
+var FORBIDDEN_AUTH_KEYS = /* @__PURE__ */ new Set([
+  "PROMPTFOO_API_KEY",
+  "PROMPTFOO_REMOTE_API_BASE_URL"
+]);
 function findForbiddenEnvFileKey(environment) {
   return Object.keys(environment).find((key) => {
     const normalizedKey = key.toUpperCase();
@@ -36478,6 +36482,11 @@ function findForbiddenEnvFileKey(environment) {
       (prefix) => normalizedKey.startsWith(prefix)
     );
   });
+}
+function findForbiddenAuthKey(environment) {
+  return Object.keys(environment).find(
+    (key) => FORBIDDEN_AUTH_KEYS.has(key.toUpperCase())
+  );
 }
 function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
   const fileEnvironment = {};
@@ -36500,6 +36509,14 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
       "Remove Node, npm, git, executable-resolution, dynamic-loader, and proxy control variables from repository environment files. Configure trusted process controls in the workflow environment instead."
+    );
+  }
+  const forbiddenAuthKey = findForbiddenAuthKey(fileEnvironment);
+  if (forbiddenAuthKey) {
+    throw new PromptfooActionError(
+      `Environment file ${envFilePath} sets protected authentication variable ${forbiddenAuthKey}`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Configure Promptfoo authentication variables only in the trusted workflow environment."
     );
   }
   for (const [key, value] of Object.entries(fileEnvironment)) {

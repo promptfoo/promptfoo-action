@@ -2,7 +2,11 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import { findForbiddenEnvFileKey, loadEnvironmentFile } from '../src/utils/env';
+import {
+  findForbiddenAuthKey,
+  findForbiddenEnvFileKey,
+  loadEnvironmentFile,
+} from '../src/utils/env';
 import { ErrorCodes, PromptfooActionError } from '../src/utils/errors';
 
 // These tests exercise the real `dotenv` parser and real files on disk, unlike
@@ -52,6 +56,25 @@ describe('findForbiddenEnvFileKey', () => {
     'npm_config_script_shell',
   ])('flags forbidden key %s and returns the original-case key', (key) => {
     expect(findForbiddenEnvFileKey({ [key]: 'x' })).toBe(key);
+  });
+});
+
+describe('findForbiddenAuthKey', () => {
+  test('returns undefined for benign and non-auth PROMPTFOO_ variables', () => {
+    expect(
+      findForbiddenAuthKey({
+        OPENAI_API_KEY: 'sk-test',
+        PROMPTFOO_CACHE_PATH: '/tmp/cache',
+      }),
+    ).toBeUndefined();
+  });
+
+  test.each([
+    'PROMPTFOO_API_KEY',
+    'PROMPTFOO_REMOTE_API_BASE_URL',
+    'promptfoo_remote_api_base_url',
+  ])('flags authentication key %s case-insensitively', (key) => {
+    expect(findForbiddenAuthKey({ [key]: 'x' })).toBe(key);
   });
 });
 
@@ -108,6 +131,29 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
   test('detects forbidden keys case-insensitively', () => {
     const file = writeEnv('.env', 'nOdE_oPtIoNs=--inspect\n');
     expect(() => loadEnvironmentFile(file, {})).toThrow(/nOdE_oPtIoNs/);
+  });
+
+  test('rejects a protected auth variable without leaking any value', () => {
+    const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
+    const file = writeEnv(
+      '.env',
+      'SAFE=ok\nPROMPTFOO_REMOTE_API_BASE_URL=https://capture.example\n',
+    );
+
+    let error: unknown;
+    try {
+      loadEnvironmentFile(file, target);
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).toBeInstanceOf(PromptfooActionError);
+    expect((error as PromptfooActionError).message).toContain(
+      'PROMPTFOO_REMOTE_API_BASE_URL',
+    );
+    // Isolation: nothing from the rejected file leaks, so a workflow-set key
+    // and host cannot be paired with an attacker value.
+    expect(target).toEqual({ EXISTING: 'keep' });
   });
 
   test('rejects GIT_ and NPM_CONFIG_ prefixed controls', () => {

@@ -676,6 +676,111 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test.each([
+      'PROMPTFOO_API_KEY',
+      'PROMPTFOO_REMOTE_API_BASE_URL',
+      'promptfoo_remote_api_base_url',
+    ])('should reject authentication variable %s from environment files', async (variableName) => {
+      withInputs({ 'env-files': '.env' });
+      mockFs.existsSync.mockReturnValue(true);
+      process.env.PROMPTFOO_API_KEY = 'trusted-workflow-key';
+
+      const dotenv = await import('dotenv');
+      const originalValue = process.env[variableName];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = {
+            [variableName]:
+              variableName.toUpperCase() === 'PROMPTFOO_API_KEY'
+                ? 'repository-key'
+                : 'https://capture.example',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining(variableName),
+        );
+        expect(mockAuth.validatePromptfooApiKey).not.toHaveBeenCalled();
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env[variableName]).toBe(originalValue);
+      } finally {
+        if (originalValue === undefined) {
+          delete process.env[variableName];
+        } else {
+          process.env[variableName] = originalValue;
+        }
+        delete process.env.PROMPTFOO_API_KEY;
+      }
+    });
+
+    test('should forward non-auth PROMPTFOO_ variables from environment files', async () => {
+      // The block list is exactly the two auth variables, not a PROMPTFOO_
+      // prefix — benign settings such as cache paths must still pass through.
+      withInputs({ 'env-files': '.env' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { PROMPTFOO_CACHE_PATH: '/tmp/pf-cache' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+        expect(mockExec.exec.mock.calls[0][2]?.env).toEqual(
+          expect.objectContaining({ PROMPTFOO_CACHE_PATH: '/tmp/pf-cache' }),
+        );
+      } finally {
+        delete process.env.PROMPTFOO_CACHE_PATH;
+      }
+    });
+
+    test('should preserve trusted workflow authentication while loading application variables', async () => {
+      withInputs({ 'env-files': '.env' });
+      mockFs.existsSync.mockReturnValue(true);
+      process.env.PROMPTFOO_API_KEY = 'trusted-workflow-key';
+      process.env.PROMPTFOO_REMOTE_API_BASE_URL = 'https://trusted.example';
+      mockAuth.getApiHost.mockReturnValue('https://trusted.example');
+      mockAuth.validatePromptfooApiKey.mockResolvedValue({
+        user: { id: '1', name: 'Test', email: 'test@example.com' },
+        organization: { id: '1', name: 'Test Org' },
+      });
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { CUSTOM_PROVIDER_SETTING: 'allowed' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockAuth.validatePromptfooApiKey).toHaveBeenCalledWith(
+          'trusted-workflow-key',
+          'https://trusted.example',
+        );
+        expect(mockExec.exec).toHaveBeenCalledOnce();
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        delete process.env.PROMPTFOO_API_KEY;
+        delete process.env.PROMPTFOO_REMOTE_API_BASE_URL;
+      }
+    });
+
     test('should fail when an environment file cannot be loaded', async () => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
