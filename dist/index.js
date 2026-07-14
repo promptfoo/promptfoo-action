@@ -36302,7 +36302,7 @@ function extractFileDependencies(configPath) {
       debug("Config file is empty or invalid");
       return [];
     }
-    const resolveConfigDependency = (filePath, source, baseDir = configDir) => {
+    const resolveConfigDependency = (filePath, source) => {
       try {
         if (!filePath) {
           throw new Error(`${source} is empty`);
@@ -36310,7 +36310,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(baseDir, filePath);
+        const absolutePath = path5.resolve(path5.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36326,12 +36326,11 @@ function extractFileDependencies(configPath) {
         return void 0;
       }
     };
-    const processFileUrl = (fileUrl, baseDir = configDir) => {
+    const processFileUrl = (fileUrl) => {
       const filePath = fileUrl.replace("file://", "");
       const absolutePath = resolveConfigDependency(
         filePath,
-        "config file dependency",
-        baseDir
+        "config file dependency"
       );
       if (!absolutePath) {
         return;
@@ -36390,16 +36389,15 @@ function extractFileDependencies(configPath) {
         }
       }
     }
-    const extractVarFiles = (vars, baseDir = configDir) => {
+    const extractVarFiles = (vars) => {
       if (!vars) return;
       for (const value of Object.values(vars)) {
         if (typeof value === "string" && value.startsWith("file://")) {
-          processFileUrl(value, baseDir);
+          processFileUrl(value);
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
           const absolutePath = resolveConfigDependency(
             value.file,
-            "test variable file dependency",
-            baseDir
+            "test variable file dependency"
           );
           if (absolutePath) {
             dependencies.add(absolutePath);
@@ -36407,16 +36405,15 @@ function extractFileDependencies(configPath) {
         }
       }
     };
-    const extractAssertFiles = (asserts, baseDir = configDir) => {
+    const extractAssertFiles = (asserts) => {
       if (!asserts) return;
       for (const assert of asserts) {
         if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
-          processFileUrl(assert.value, baseDir);
+          processFileUrl(assert.value);
         } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
           const absolutePath = resolveConfigDependency(
             assert.value.file,
-            "assertion file dependency",
-            baseDir
+            "assertion file dependency"
           );
           if (absolutePath) {
             dependencies.add(absolutePath);
@@ -36441,9 +36438,8 @@ function extractFileDependencies(configPath) {
                 { schema: CORE_SCHEMA.withTags(mergeTag) }
               );
               if (defaultTest && typeof defaultTest === "object" && !Array.isArray(defaultTest)) {
-                const defaultTestDir = path5.dirname(defaultTestPath);
-                extractVarFiles(defaultTest.vars, defaultTestDir);
-                extractAssertFiles(defaultTest.assert, defaultTestDir);
+                extractVarFiles(defaultTest.vars);
+                extractAssertFiles(defaultTest.assert);
               }
             } catch (error2) {
               warning(

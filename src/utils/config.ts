@@ -60,7 +60,6 @@ export function extractFileDependencies(configPath: string): string[] {
     const resolveConfigDependency = (
       filePath: string,
       source: string,
-      baseDir = configDir,
     ): string | undefined => {
       try {
         if (!filePath) {
@@ -70,7 +69,7 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(baseDir, filePath);
+        const absolutePath = path.resolve(path.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -89,12 +88,11 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string, baseDir = configDir): void => {
+    const processFileUrl = (fileUrl: string): void => {
       const filePath = fileUrl.replace('file://', '');
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
-        baseDir,
       );
       if (!absolutePath) {
         return;
@@ -172,14 +170,11 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Extract test variable files
-    const extractVarFiles = (
-      vars?: { [key: string]: unknown },
-      baseDir = configDir,
-    ): void => {
+    const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
       if (!vars) return;
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(value, baseDir);
+          processFileUrl(value);
         } else if (
           typeof value === 'object' &&
           value !== null &&
@@ -189,7 +184,6 @@ export function extractFileDependencies(configPath: string): string[] {
           const absolutePath = resolveConfigDependency(
             value.file,
             'test variable file dependency',
-            baseDir,
           );
           if (absolutePath) {
             dependencies.add(absolutePath);
@@ -201,7 +195,6 @@ export function extractFileDependencies(configPath: string): string[] {
     // Extract assert files
     const extractAssertFiles = (
       asserts?: Array<{ type?: string; value?: unknown }>,
-      baseDir = configDir,
     ): void => {
       if (!asserts) return;
       for (const assert of asserts) {
@@ -209,7 +202,7 @@ export function extractFileDependencies(configPath: string): string[] {
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
-          processFileUrl(assert.value, baseDir);
+          processFileUrl(assert.value);
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&
@@ -219,7 +212,6 @@ export function extractFileDependencies(configPath: string): string[] {
           const absolutePath = resolveConfigDependency(
             assert.value.file,
             'assertion file dependency',
-            baseDir,
           );
           if (absolutePath) {
             dependencies.add(absolutePath);
@@ -250,9 +242,8 @@ export function extractFileDependencies(configPath: string): string[] {
                 typeof defaultTest === 'object' &&
                 !Array.isArray(defaultTest)
               ) {
-                const defaultTestDir = path.dirname(defaultTestPath);
-                extractVarFiles(defaultTest.vars, defaultTestDir);
-                extractAssertFiles(defaultTest.assert, defaultTestDir);
+                extractVarFiles(defaultTest.vars);
+                extractAssertFiles(defaultTest.assert);
               }
             } catch (error) {
               core.warning(

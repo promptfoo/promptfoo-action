@@ -164,8 +164,8 @@ assert:
 
     expect(deps).toEqual([
       'evals/defaults/default.yaml',
-      'evals/fixtures/context.txt',
-      'evals/defaults/validators/check.js',
+      'fixtures/context.txt',
+      'evals/validators/check.js',
     ]);
   });
 
@@ -191,8 +191,8 @@ assert:
 
     expect(deps).toEqual([
       'evals/defaults/default.json',
-      'evals/fixtures/context.json',
-      'evals/defaults/validators/check.js',
+      'fixtures/context.json',
+      'evals/validators/check.js',
     ]);
   });
 
@@ -247,7 +247,7 @@ defaultTest: file://defaults/default.yaml
       if (String(filePath).endsWith('defaults/default.yaml')) {
         return `
 vars:
-  context: file://../../../secrets/context.txt
+  context: file://../../secrets/context.txt
 `;
       }
       throw new Error(`Unexpected file: ${String(filePath)}`);
@@ -261,6 +261,34 @@ vars:
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('must stay within the repository workspace'),
     );
+  });
+
+  it('should resolve file-backed defaultTest dependencies from the main config directory', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+vars:
+  context: file://context.txt
+assert:
+  - type: javascript
+    value: file://check.js
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/context.txt',
+      'evals/check.js',
+    ]);
   });
 
   it('should reject a file-backed defaultTest outside the repository', () => {
