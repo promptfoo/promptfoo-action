@@ -5,16 +5,22 @@ import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
-type PromptEntry = string | { file?: string; [key: string]: unknown };
+type PromptEntry =
+  | string
+  | { file?: string; id?: string; [key: string]: unknown };
+
+type TestEntry = {
+  path?: string;
+  config?: Record<string, unknown>;
+  vars?: { [key: string]: string | { file?: string } };
+  assert?: Array<{ type?: string; value?: string | { file?: string } }>;
+  [key: string]: unknown;
+};
 
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: PromptEntry[] | Record<string, string>;
-  tests?: Array<{
-    vars?: { [key: string]: string | { file?: string } };
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
-    [key: string]: unknown;
-  }>;
+  tests?: string | TestEntry | Array<string | TestEntry>;
   defaultTest?: {
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -42,6 +48,13 @@ export function extractFileDependencies(configPath: string): string[] {
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
 
   try {
+    if (/\.(?:[cm]?[jt]s)$/i.test(configPath)) {
+      core.warning(
+        'JavaScript/TypeScript config dependencies cannot be extracted statically; watching all repository changes',
+      );
+      return ['.'];
+    }
+
     const configContent = fs.readFileSync(configPath, 'utf8');
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
@@ -89,7 +102,9 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Helper function to process file:// paths with glob support
     const processFileUrl = (fileUrl: string): void => {
-      const filePath = fileUrl.replace('file://', '');
+      const filePath = fileUrl
+        .replace('file://', '')
+        .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\:]+$/i, '$1');
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
@@ -166,6 +181,12 @@ export function extractFileDependencies(configPath: string): string[] {
         if (absolutePath) {
           dependencies.add(absolutePath);
         }
+      } else if (
+        typeof prompt === 'object' &&
+        typeof prompt.id === 'string' &&
+        prompt.id.startsWith('file://')
+      ) {
+        processFileUrl(prompt.id);
       }
     };
 
@@ -240,7 +261,33 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Process tests
     if (config.tests) {
-      for (const test of config.tests) {
+      const tests = Array.isArray(config.tests) ? config.tests : [config.tests];
+      const extractNestedFileUrls = (value: unknown): void => {
+        if (typeof value === 'string' && value.startsWith('file://')) {
+          processFileUrl(value);
+        } else if (Array.isArray(value)) {
+          for (const entry of value) {
+            extractNestedFileUrls(entry);
+          }
+        } else if (typeof value === 'object' && value !== null) {
+          for (const entry of Object.values(value)) {
+            extractNestedFileUrls(entry);
+          }
+        }
+      };
+
+      for (const test of tests) {
+        if (typeof test === 'string') {
+          if (test.startsWith('file://')) {
+            processFileUrl(test);
+          }
+          continue;
+        }
+
+        if (typeof test.path === 'string' && test.path.startsWith('file://')) {
+          processFileUrl(test.path);
+          extractNestedFileUrls(test.config);
+        }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
       }

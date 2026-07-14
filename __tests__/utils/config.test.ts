@@ -102,6 +102,69 @@ prompts:
     expect(deps).toEqual(['../config/prompts/mapped.txt']);
   });
 
+  it('should extract function-backed prompt keys from the supported map form', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://prompts/build.py:create_prompt: generated prompt
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/prompts/build.py']);
+  });
+
+  it('should extract file-backed prompt ids', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - id: file://prompts/main.txt
+    label: main prompt
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/prompts/main.txt']);
+  });
+
+  it('should extract dependencies from a singleton test generator', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: file://tests/generate.py:create_tests
+  config:
+    dataset: file://data/cases.json
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/tests/generate.py',
+      '../config/data/cases.json',
+    ]);
+  });
+
+  it('should extract nested generator config files and string test references', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - file://tests/cases.yaml
+  - inline test reference
+  - path: file://tests/build.ts:create_tests
+    config:
+      datasets:
+        - file://data/first.json
+        - nested:
+            source: file://data/second.json
+            enabled: true
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/tests/cases.yaml',
+      '../config/tests/build.ts',
+      '../config/data/first.json',
+      '../config/data/second.json',
+    ]);
+  });
+
   it('should extract test variable files', () => {
     const configContent = `
 tests:
@@ -198,6 +261,18 @@ shared: &shared
     expect(() =>
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toThrow('Failed to extract dependencies from config');
+  });
+
+  it('should conservatively watch all changes for JavaScript and TypeScript configs', () => {
+    mockFs.readFileSync.mockReturnValue('export default { prompts: [] };');
+
+    expect(extractFileDependencies('/test/working/promptfooconfig.ts')).toEqual(
+      ['.'],
+    );
+    expect(mockFs.readFileSync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('JavaScript/TypeScript config dependencies'),
+    );
   });
 
   it('should fail closed for file read errors', () => {
