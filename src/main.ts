@@ -52,13 +52,13 @@ function parseGitDiffFiles(diff: string): ChangedFile[] {
     const status = tokens[index++];
     const firstPath = tokens[index++];
     if (!status || !firstPath) {
-      break;
+      return [];
     }
 
     if (status.startsWith('R')) {
       const renamedPath = tokens[index++];
       if (!renamedPath) {
-        break;
+        return [];
       }
       files.push({
         filename: renamedPath,
@@ -71,7 +71,7 @@ function parseGitDiffFiles(diff: string): ChangedFile[] {
     if (status.startsWith('C')) {
       const copiedPath = tokens[index++];
       if (!copiedPath) {
-        break;
+        return [];
       }
       files.push({ filename: copiedPath, status: 'added' });
       continue;

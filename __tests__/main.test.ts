@@ -946,6 +946,10 @@ describe('GitHub Action Main', () => {
       ['an empty path', 'M\0\0'],
       ['an incomplete rename', 'R100\0prompts/old.txt\0'],
       ['an incomplete copy', 'C100\0archive/template.txt\0'],
+      [
+        'a truncated rename after a valid prefix',
+        'M\0docs/readme.md\0R100\0prompts/old.txt\0',
+      ],
     ])('should process all prompts when a push diff contains %s', async (_case, diff) => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',
