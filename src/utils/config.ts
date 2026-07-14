@@ -71,6 +71,12 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
+        if (path.win32.isAbsolute(filePath) && !path.isAbsolute(filePath)) {
+          throw new Error(
+            `${source} must stay within the repository workspace`,
+          );
+        }
+
         const absolutePath = path.resolve(configDir, filePath);
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
@@ -247,11 +253,9 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       const hookSeparator = extension.lastIndexOf(':');
-      if (hookSeparator <= 8 || hookSeparator === extension.length - 1) {
-        continue;
-      }
-
-      processFileUrl(extension.slice(0, hookSeparator));
+      processFileUrl(
+        hookSeparator > 8 ? extension.slice(0, hookSeparator) : extension,
+      );
     }
 
     // Convert absolute paths back to relative paths from working directory

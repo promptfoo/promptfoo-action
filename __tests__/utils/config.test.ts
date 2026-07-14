@@ -176,13 +176,31 @@ extensions:
     expect(deps).toEqual(['hooks/setup.js', 'hooks/team:blue/result.py']);
   });
 
+  it('should extract default-export extensions without a hook suffix', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/default.js
+  - file:///test/working/hooks/absolute-default.js
+  - "file://hooks/trailing-default.js:"
+commandLineOptions:
+  extension:
+    - file://hooks/cli-default.js
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'hooks/default.js',
+      'hooks/absolute-default.js',
+      'hooks/trailing-default.js',
+      'hooks/cli-default.js',
+    ]);
+  });
+
   it('should ignore remote and malformed extension entries', () => {
     mockFs.readFileSync.mockReturnValue(`
 extensions:
   - https://example.com/hook.js:beforeAll
-  - file://hooks/no-hook.js
-  - file://hooks/empty-hook.js:
-  - file://C:/hooks/no-hook.js
   - inline-extension
   - 42
 `);
@@ -197,6 +215,7 @@ extensions:
 extensions:
   - file://../secrets/hook.js:beforeAll
   - file:///test/secrets/hook.js:beforeAll
+  - file://C:/secrets/hook.js
 `);
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
