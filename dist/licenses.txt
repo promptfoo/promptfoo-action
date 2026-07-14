@@ -1,3 +1,5 @@
+/*! js-yaml 5.2.1 https://github.com/nodeca/js-yaml @license MIT */
+
 Bundled license information:
 
 undici/lib/web/fetch/body.js:
@@ -19,6 +21,3 @@ content-type/dist/index.js:
 @octokit/request/dist-bundle/index.js:
   /* v8 ignore next -- @preserve */
   /* v8 ignore else -- @preserve */
-
-js-yaml/dist/js-yaml.mjs:
-  /*! js-yaml 5.2.0 https://github.com/nodeca/js-yaml @license MIT */

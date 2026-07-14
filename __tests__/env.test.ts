@@ -20,31 +20,36 @@ describe('findForbiddenEnvFileKey', () => {
     ).toBeUndefined();
   });
 
-  test('intentionally allows interpreter module-path variables', () => {
-    // PYTHONPATH/RUBYLIB/PERL5LIB are needed by real promptfoo providers and
-    // grant nothing beyond what such a provider already runs during evaluation.
-    expect(
-      findForbiddenEnvFileKey({
-        PYTHONPATH: '/repo/lib',
-        RUBYLIB: '/repo/rb',
-        PERL5LIB: '/repo/pl',
-      }),
-    ).toBeUndefined();
-  });
-
   test.each([
     'NODE_OPTIONS',
     'nOdE_oPtIoNs',
     'PATH',
     'LD_PRELOAD',
+    'LD_AUDIT',
+    'ld_debug_output',
     'DYLD_INSERT_LIBRARIES',
+    'dyld_image_suffix',
     'HTTPS_PROXY',
     'HOME',
     'XDG_CONFIG_HOME',
     'NODE_EXTRA_CA_CERTS',
+    'NODE_TLS_REJECT_UNAUTHORIZED',
     'PERL5OPT',
+    'PERL5LIB',
     'PYTHONHOME',
+    'PYTHONPATH',
+    'PROMPTFOO_PYTHON',
     'RUBYOPT',
+    'RUBYLIB',
+    'PROMPTFOO_RUBY',
+    'OPENAI_BASE_URL',
+    'openai_api_base_url',
+    'OPENAI_API_HOST',
+    'ANTHROPIC_BASE_URL',
+    'AZURE_OPENAI_API_HOST',
+    'PROMPTFOO_CACHE_PATH',
+    'PROMPTFOO_CONFIG_DIR',
+    'PROMPTFOO_PASS_RATE_THRESHOLD',
     'GIT_SSH_COMMAND',
     'git_config_count',
     'GIT_EXTERNAL_DIFF',
@@ -130,6 +135,26 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
 
     expect(target.SETTING).toBe('second');
     expect(target.ONLY_FIRST).toBe('1');
+  });
+
+  test('preserves process controls that came from the trusted workflow environment', () => {
+    const target: NodeJS.ProcessEnv = {
+      PYTHONPATH: '/trusted/provider-lib',
+      OPENAI_BASE_URL: 'https://trusted.example/v1',
+      PROMPTFOO_CACHE_PATH: '/trusted/cache',
+      PROMPTFOO_PASS_RATE_THRESHOLD: '90',
+    };
+    const file = writeEnv('.env', 'CUSTOM_PROVIDER_SETTING=allowed\n');
+
+    loadEnvironmentFile(file, target);
+
+    expect(target).toEqual({
+      PYTHONPATH: '/trusted/provider-lib',
+      OPENAI_BASE_URL: 'https://trusted.example/v1',
+      PROMPTFOO_CACHE_PATH: '/trusted/cache',
+      PROMPTFOO_PASS_RATE_THRESHOLD: '90',
+      CUSTOM_PROVIDER_SETTING: 'allowed',
+    });
   });
 
   test('throws ENV_FILE_LOAD_ERROR when the file cannot be read', () => {
