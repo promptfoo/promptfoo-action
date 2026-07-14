@@ -46,7 +46,7 @@ const { mockGitInterface } = vi.hoisted(() => ({
     }),
     revparse: vi.fn(() => Promise.resolve('mock-commit-hash\n')),
     diff: vi.fn(() =>
-      Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+      Promise.resolve('M\0prompts/prompt1.txt\0M\0promptfooconfig.yaml\0'),
     ),
   },
 }));
@@ -163,7 +163,7 @@ function setupCommonMocks(): MockOctokit {
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
-    'prompts/prompt1.txt\npromptfooconfig.yaml',
+    'M\0prompts/prompt1.txt\0M\0promptfooconfig.yaml\0',
   );
   mockCache.cleanupOldCache.mockResolvedValue(0);
   mockCache.createCacheManifest.mockResolvedValue();
@@ -368,6 +368,86 @@ describe('GitHub Action Main', () => {
       expect(args).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
       );
+    });
+
+    test('should detect a removed prompt with a leading-dot glob', async () => {
+      withInputs({ prompts: './prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should detect a removed prompt in a repository sibling directory', async () => {
+      withInputs({
+        prompts: '../shared/*.txt',
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'packages/shared/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../shared/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', '../shared/remaining.txt']),
+      );
+    });
+
+    test('should detect a removed prompt with an absolute in-workspace glob', async () => {
+      const promptPattern = path.join(process.cwd(), 'prompts/*.txt');
+      const remainingPrompt = path.join(process.cwd(), 'prompts/remaining.txt');
+      withInputs({ prompts: promptPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([remainingPrompt]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', remainingPrompt]),
+      );
+    });
+
+    test('should ignore a removed prompt path outside the workspace', async () => {
+      withInputs({
+        prompts: '../../../outside/*.txt',
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: path.join(
+            path.dirname(process.cwd()),
+            'outside/secret.txt',
+          ),
+          status: 'removed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should process all remaining prompts when a prompt is renamed out of scope', async () => {
@@ -781,12 +861,108 @@ describe('GitHub Action Main', () => {
       >;
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
-          '--name-only',
+          '--name-status',
+          '--find-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
         ]);
       }
+    });
+
+    test('should process remaining prompts when a push deletes a monitored prompt', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce('D\0prompts/removed.txt\0');
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should process remaining prompts when a push renames a prompt out of scope', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'R100\0prompts/old.txt\0archive/new.txt\0',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should select a copied prompt from a push comparison', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'C100\0archive/template.txt\0prompts/copied.txt\0',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/copied.txt']);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/copied.txt']),
+      );
+    });
+
+    test.each([
+      ['an empty status', '\0prompts/changed.txt\0'],
+      ['an empty path', 'M\0\0'],
+      ['an incomplete rename', 'R100\0prompts/old.txt\0'],
+      ['an incomplete copy', 'C100\0archive/template.txt\0'],
+    ])('should process all prompts when a push diff contains %s', async (_case, diff) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(diff);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
     });
 
     test('should process all prompts when push diff fails', async () => {
@@ -852,7 +1028,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
-        '--name-only',
+        '--name-status',
+        '--find-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -927,6 +1105,52 @@ describe('GitHub Action Main', () => {
         'npx',
         expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
+      );
+    });
+
+    test('should process remaining prompts when a manual comparison deletes a prompt', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { base: 'main' } },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce('D\0prompts/removed.txt\0');
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should process remaining prompts when a manual comparison renames a prompt out of scope', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { base: 'main' } },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'R096\0prompts/old.txt\0archive/new.txt\0',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
       );
     });
 
@@ -1044,7 +1268,9 @@ describe('GitHub Action Main', () => {
       >;
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
-          '--name-only',
+          '--name-status',
+          '--find-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -1694,7 +1920,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
-        '--name-only',
+        '--name-status',
+        '--find-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',

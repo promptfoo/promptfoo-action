@@ -34,8 +34,56 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 
+type ChangedFile = {
+  filename: string;
+  previous_filename?: string;
+  status?: string;
+};
+
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
+}
+
+function parseGitDiffFiles(diff: string): ChangedFile[] {
+  const tokens = diff.split('\0');
+  const files: ChangedFile[] = [];
+
+  for (let index = 0; index < tokens.length - 1; ) {
+    const status = tokens[index++];
+    const firstPath = tokens[index++];
+    if (!status || !firstPath) {
+      break;
+    }
+
+    if (status.startsWith('R')) {
+      const renamedPath = tokens[index++];
+      if (!renamedPath) {
+        break;
+      }
+      files.push({
+        filename: renamedPath,
+        previous_filename: firstPath,
+        status: 'renamed',
+      });
+      continue;
+    }
+
+    if (status.startsWith('C')) {
+      const copiedPath = tokens[index++];
+      if (!copiedPath) {
+        break;
+      }
+      files.push({ filename: copiedPath, status: 'added' });
+      continue;
+    }
+
+    files.push({
+      filename: firstPath,
+      status: status === 'D' ? 'removed' : 'modified',
+    });
+  }
+
+  return files;
 }
 
 /**
@@ -209,18 +257,42 @@ export async function run(): Promise<void> {
         return false;
       }
 
-      const relativePath = path.relative(
-        workingDirectory,
-        path.resolve(workspaceRoot, repositoryFile),
-      );
-      if (relativePath.split(path.sep)[0] === '..') {
+      const absolutePath = path.resolve(workspaceRoot, repositoryFile);
+      const repositoryRelativePath = path.relative(workspaceRoot, absolutePath);
+      if (
+        path.isAbsolute(repositoryRelativePath) ||
+        repositoryRelativePath.split(path.sep)[0] === '..'
+      ) {
         return false;
       }
 
-      const workingDirectoryPath = toRepositoryPath(relativePath);
-      return promptFilesGlobs.some((pattern) =>
-        path.matchesGlob(workingDirectoryPath, pattern),
+      const workingDirectoryPath = toRepositoryPath(
+        path.relative(workingDirectory, absolutePath),
       );
+      return promptFilesGlobs.some((pattern) => {
+        const normalizedPattern = toRepositoryPath(path.normalize(pattern));
+        const candidatePath = path.isAbsolute(pattern)
+          ? toRepositoryPath(absolutePath)
+          : workingDirectoryPath;
+        return path.matchesGlob(candidatePath, normalizedPattern);
+      });
+    };
+    const selectChangedFiles = (files: ChangedFile[]): string => {
+      const monitoredPromptRemovedOrRenamedOut = files.some(
+        (file) =>
+          (file.status === 'removed' && matchesPromptGlob(file.filename)) ||
+          (file.status === 'renamed' &&
+            matchesPromptGlob(file.previous_filename) &&
+            !matchesPromptGlob(file.filename)),
+      );
+      if (monitoredPromptRemovedOrRenamedOut) {
+        core.warning(
+          'A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files.',
+        );
+        return '';
+      }
+
+      return files.map((file) => file.filename).join('\n');
     };
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
@@ -382,22 +454,7 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        const monitoredPromptRemovedOrRenamedOut = pullRequestFiles.some(
-          (file) =>
-            (file.status === 'removed' && matchesPromptGlob(file.filename)) ||
-            (file.status === 'renamed' &&
-              matchesPromptGlob(file.previous_filename) &&
-              !matchesPromptGlob(file.filename)),
-        );
-        if (monitoredPromptRemovedOrRenamedOut) {
-          core.warning(
-            'A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files.',
-          );
-        } else {
-          changedFiles = pullRequestFiles
-            .map((file) => file.filename)
-            .join('\n');
-        }
+        changedFiles = selectChangedFiles(pullRequestFiles);
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -420,12 +477,15 @@ export async function run(): Promise<void> {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
         try {
-          changedFiles = await gitInterface.diff([
-            '--name-only',
+          const diff = await gitInterface.diff([
+            '--name-status',
+            '--find-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
+          changedFiles = selectChangedFiles(parseGitDiffFiles(diff));
           core.info(
             `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
           );
@@ -452,12 +512,15 @@ export async function run(): Promise<void> {
         validateCommitSha(beforeSha, 'before commit');
         validateCommitSha(afterSha, 'after commit');
         try {
-          changedFiles = await gitInterface.diff([
-            '--name-only',
+          const diff = await gitInterface.diff([
+            '--name-status',
+            '--find-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
+          changedFiles = selectChangedFiles(parseGitDiffFiles(diff));
           core.info(
             `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
           );

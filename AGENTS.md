@@ -80,6 +80,17 @@ The repository also includes a local copy of Promptfoo source under `/promptfoo/
 - Mock external boundaries such as GitHub, filesystem, and git execution.
 - Coverage output is written to `/coverage/`.
 
+### Pull Request Titles
+
+Use Conventional Commits format:
+`<type>(<optional-scope>): <short description>`.
+
+- Begin with a lowercase conventional type such as `feat`, `fix`, `docs`,
+  `test`, `refactor`, `build`, `ci`, or `chore`.
+- Do not add agent or tool prefixes such as `[codex]`. This repository rule
+  overrides generic publishing templates.
+- Describe the primary change, for example: `docs: add security policy`.
+
 ## Release Workflow
 
 1. Make changes and test locally
