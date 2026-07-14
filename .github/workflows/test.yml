@@ -1,8 +1,7 @@
 name: 'build-test'
 on:
   pull_request:
-    paths:
-      - 'prompts/**'
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read

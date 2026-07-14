@@ -1,11 +1,4 @@
 name: codeql-config
-paths:
-  - src
-  - esbuild.config.mjs
-  - vitest.config.ts
 paths-ignore:
-  # Generated or vendored files should not drive CodeQL quality findings.
+  # dist/ is the generated action bundle; scan the TypeScript source instead.
   - dist/**
-  - lib/**
-  - coverage/**
-  - node_modules/**
