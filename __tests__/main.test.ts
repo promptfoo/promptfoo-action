@@ -965,6 +965,19 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should conservatively run when dependency extraction watches the workspace', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should skip when config dependencies do not match changed files', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);
