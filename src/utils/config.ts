@@ -7,7 +7,7 @@ import { isDirectory } from './fs';
 
 interface PromptfooTestConfig {
   path?: string;
-  vars?: { [key: string]: string | { file?: string } };
+  vars?: string | string[] | { [key: string]: string | { file?: string } };
   assert?: Array<{ type?: string; value?: string | { file?: string } }>;
   [key: string]: unknown;
 }
@@ -92,20 +92,23 @@ export function extractFileDependencies(configPath: string): string[] {
     const processFilePath = (
       filePath: string,
       source = 'config file dependency',
-    ): void => {
+      preserveGlobRoot = false,
+    ): string[] => {
       const absolutePath = resolveConfigDependency(filePath, source);
       if (!absolutePath) {
-        return;
+        return [];
       }
 
       // Check if the path contains glob patterns
       if (glob.hasMagic(filePath)) {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, { nodir: true });
+        const safeMatches: string[] = [];
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
           if (isPathInside(dependencyRoot, absoluteMatch)) {
             dependencies.add(absoluteMatch);
+            safeMatches.push(absoluteMatch);
           } else {
             core.warning(
               `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`,
@@ -115,7 +118,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathParts = filePath.split('/');
+        const pathParts = filePath.split(/[\\/]/);
         let basePath = '';
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
@@ -123,9 +126,15 @@ export function extractFileDependencies(configPath: string): string[] {
           }
           basePath = basePath ? path.join(basePath, part) : part;
         }
-        if (basePath) {
-          dependencies.add(path.resolve(path.join(configDir, basePath)));
+        if (basePath || preserveGlobRoot) {
+          const globRoot = path.resolve(configDir, basePath || '.');
+          dependencies.add(
+            preserveGlobRoot
+              ? `${globRoot.replace(/[\\/]+$/, '')}${path.sep}`
+              : globRoot,
+          );
         }
+        return safeMatches;
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = filePath.endsWith('/')
@@ -136,35 +145,12 @@ export function extractFileDependencies(configPath: string): string[] {
         // It's a regular file path
         dependencies.add(absolutePath);
       }
+
+      return [absolutePath];
     };
 
     const processFileUrl = (fileUrl: string): void => {
       processFilePath(fileUrl.replace(/^file:\/\//, ''));
-    };
-
-    const processTestFile = (testSource: string): void => {
-      let filePath = testSource;
-      if (filePath.startsWith('file://')) {
-        filePath = filePath.slice('file://'.length);
-      } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
-        // Remote source (https://, s3://, ...) — not a local file dependency.
-        return;
-      }
-
-      // Drop a spreadsheet sheet reference, e.g. `tests.csv#Sheet1`.
-      const sheetIndex = filePath.indexOf('#');
-      if (sheetIndex !== -1) {
-        filePath = filePath.slice(0, sheetIndex);
-      }
-
-      // Drop a function qualifier, e.g. `tests.py:generate_tests`. Require the
-      // colon past index 1 so a Windows drive letter (`C:\...`) is not stripped.
-      const functionIndex = filePath.lastIndexOf(':');
-      if (functionIndex > 1) {
-        filePath = filePath.slice(0, functionIndex);
-      }
-
-      processFilePath(filePath, 'test file dependency');
     };
 
     // Extract provider files
@@ -199,8 +185,31 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Extract test variable files
-    const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
+    const extractVarFiles = (
+      vars?: string | string[] | { [key: string]: unknown },
+      baseDir = configDir,
+    ): void => {
       if (!vars) return;
+      if (typeof vars === 'string' || Array.isArray(vars)) {
+        const varFiles = Array.isArray(vars) ? vars : [vars];
+        for (let varFile of varFiles) {
+          if (varFile.startsWith('file://')) {
+            varFile = varFile.slice('file://'.length);
+          } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(varFile)) {
+            continue;
+          }
+          const relativeVarFile = path.relative(
+            configDir,
+            path.resolve(baseDir, varFile),
+          );
+          processFilePath(
+            relativeVarFile,
+            'test variable file dependency',
+            true,
+          );
+        }
+        return;
+      }
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
@@ -249,6 +258,93 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
+    const extractNestedFileUrls = (value: unknown): void => {
+      if (typeof value === 'string') {
+        if (value.startsWith('file://')) {
+          processFileUrl(value);
+        }
+        return;
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          extractNestedFileUrls(item);
+        }
+        return;
+      }
+      if (typeof value === 'object' && value !== null) {
+        for (const item of Object.values(value)) {
+          extractNestedFileUrls(item);
+        }
+      }
+    };
+
+    const inspectedTestFiles = new Set<string>();
+    const inspectTestFile = (testFile: string): void => {
+      if (
+        inspectedTestFiles.has(testFile) ||
+        !/\.(?:ya?ml|json)$/i.test(testFile) ||
+        !fs.existsSync(testFile)
+      ) {
+        return;
+      }
+      inspectedTestFiles.add(testFile);
+
+      try {
+        const testContent = fs.readFileSync(testFile, 'utf8');
+        const parsedTests = loadYaml(testContent, {
+          schema: CORE_SCHEMA.withTags(mergeTag),
+        }) as PromptfooTestConfig | PromptfooTestConfig[] | null;
+        const nestedTests = Array.isArray(parsedTests)
+          ? parsedTests
+          : parsedTests
+            ? [parsedTests]
+            : [];
+
+        for (const nestedTest of nestedTests) {
+          if (typeof nestedTest !== 'object' || nestedTest === null) {
+            continue;
+          }
+          extractVarFiles(nestedTest.vars, path.dirname(testFile));
+          extractAssertFiles(nestedTest.assert);
+        }
+      } catch (error) {
+        core.warning(
+          `Failed to inspect test file dependency "${testFile}": ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    };
+
+    const processTestFile = (testSource: string): void => {
+      let filePath = testSource;
+      if (filePath.startsWith('file://')) {
+        filePath = filePath.slice('file://'.length);
+      } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
+        // Remote source (https://, s3://, ...) — not a local file dependency.
+        return;
+      }
+
+      // Drop a spreadsheet sheet reference, e.g. `tests.csv#Sheet1`.
+      const sheetIndex = filePath.indexOf('#');
+      if (sheetIndex !== -1) {
+        filePath = filePath.slice(0, sheetIndex);
+      }
+
+      // Drop a function qualifier, e.g. `tests.py:generate_tests`. Require the
+      // colon past index 1 so a Windows drive letter (`C:\...`) is not stripped.
+      const functionIndex = filePath.lastIndexOf(':');
+      if (functionIndex > 1) {
+        filePath = filePath.slice(0, functionIndex);
+      }
+
+      for (const testFile of processFilePath(
+        filePath,
+        'test file dependency',
+        true,
+      )) {
+        inspectTestFile(testFile);
+      }
+    };
+
     // Process defaultTest
     if (config.defaultTest) {
       extractVarFiles(config.defaultTest.vars);
@@ -265,6 +361,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         if (test.path) {
           processTestFile(test.path);
+          extractNestedFileUrls(test.config);
           continue;
         }
         extractVarFiles(test.vars);
