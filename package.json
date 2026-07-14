@@ -5,7 +5,7 @@
   "author": "Ian Webster",
   "license": "MIT",
   "main": "lib/main.js",
-  "packageManager": "npm@11.17.0",
+  "packageManager": "npm@11.18.0",
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
@@ -42,7 +42,7 @@
     "uuid": "^14.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.1",
+    "@biomejs/biome": "2.5.2",
     "@swc/core": "^1.15.11",
     "@types/node": "^25.3.0",
     "@vercel/ncc": "^0.44.0",

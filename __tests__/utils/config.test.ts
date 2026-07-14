@@ -70,6 +70,160 @@ providers: file://provider.js
     expect(deps).toEqual(['../config/provider.js']);
   });
 
+  it('should strip a function selector from a scalar file provider', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: file://providers/custom.py:call_api
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.py']);
+  });
+
+  it('should strip a function selector from an object file provider', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: file://providers/custom.ts:callApi
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.ts']);
+  });
+
+  it('should preserve an invalid provider function selector as part of the path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: file://providers/custom.py:not-a-function
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.py:not-a-function']);
+  });
+
+  it('should preserve a selector on a non-executable provider path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: file://providers/custom.yaml:call_api
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.yaml:call_api']);
+  });
+
+  it('should extract scalar file targets', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets: file://targets/custom.py:call_api
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/targets/custom.py']);
+  });
+
+  it('should extract nested references from a provider config file', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'providers: file://providers.yaml';
+      }
+      if (filePath.endsWith('providers.yaml')) {
+        return `
+- id: file://providers/custom.py:call_api
+  config:
+    tools: file://fixtures/tools.yaml
+`;
+      }
+      if (filePath.endsWith('tools.yaml')) {
+        return 'schema: file://fixtures/schema.json';
+      }
+      return '{}';
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers.yaml',
+      '../config/providers/custom.py',
+      '../config/fixtures/tools.yaml',
+      '../config/fixtures/schema.json',
+    ]);
+  });
+
+  it('should extract provider-map keys and nested references', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.py:call_api:
+      config:
+        tools: file://fixtures/tools.txt
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/custom.py',
+      '../config/fixtures/tools.txt',
+    ]);
+  });
+
+  it('should ignore unsafe nested references in a provider config file', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'providers: file://providers.yaml'
+        : 'config:\n  secret: file://../outside/secret.txt',
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers.yaml']);
+  });
+
+  it('should handle repeated and empty nested provider config files', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return `
+targets:
+  - file://providers.yaml
+  - file://providers.yaml
+`;
+      }
+      return 'null';
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('should keep a provider config dependency when nested extraction fails', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return `
+providers:
+  - file://invalid.yaml
+  - file://unreadable.json
+`;
+      }
+      if (filePath.endsWith('invalid.yaml')) {
+        throw new Error('invalid provider config');
+      }
+      throw 'permission denied';
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/invalid.yaml',
+      '../config/unreadable.json',
+    ]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract nested provider dependencies from "invalid.yaml": invalid provider config',
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract nested provider dependencies from "unreadable.json": permission denied',
+    );
+  });
+
   it('should expand a scalar file provider glob', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers: file://providers/*.js

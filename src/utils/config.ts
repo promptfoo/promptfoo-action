@@ -9,6 +9,7 @@ type ProviderEntry = string | { id?: string; [key: string]: unknown };
 
 export interface PromptfooConfig {
   providers?: string | ProviderEntry[];
+  targets?: string | ProviderEntry[];
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
@@ -88,14 +89,14 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): void => {
+    const processFileUrl = (fileUrl: string): string | undefined => {
       const filePath = fileUrl.replace('file://', '');
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
       );
       if (!absolutePath) {
-        return;
+        return undefined;
       }
 
       // Check if the path contains glob patterns
@@ -136,25 +137,75 @@ export function extractFileDependencies(configPath: string): string[] {
         // It's a regular file path
         dependencies.add(absolutePath);
       }
+
+      return absolutePath;
     };
 
     // Extract provider files
-    if (config.providers) {
-      const providers =
-        typeof config.providers === 'string'
-          ? [config.providers]
-          : config.providers;
-      for (const provider of providers) {
-        if (typeof provider === 'string' && provider.startsWith('file://')) {
-          processFileUrl(provider);
-        } else if (
-          typeof provider === 'object' &&
-          provider.id?.startsWith('file://')
+    const visitedProviderConfigs = new Set<string>();
+    const processProviderValue = (value: unknown): void => {
+      if (typeof value === 'string') {
+        if (!value.startsWith('file://')) {
+          return;
+        }
+
+        const providerPath = value.slice('file://'.length);
+        const selectorIndex = providerPath.lastIndexOf(':');
+        const candidatePath = providerPath.slice(0, selectorIndex);
+        const selector = providerPath.slice(selectorIndex + 1);
+        const cleanPath =
+          selectorIndex > 1 &&
+          /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i.test(candidatePath) &&
+          /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(selector)
+            ? candidatePath
+            : providerPath;
+
+        const absolutePath = processFileUrl(`file://${cleanPath}`);
+        if (
+          !absolutePath ||
+          glob.hasMagic(cleanPath) ||
+          !/\.(?:ya?ml|json)$/i.test(cleanPath) ||
+          visitedProviderConfigs.has(absolutePath)
         ) {
-          processFileUrl(provider.id);
+          return;
+        }
+
+        visitedProviderConfigs.add(absolutePath);
+        try {
+          const providerConfig = loadYaml(
+            fs.readFileSync(absolutePath, 'utf8'),
+            {
+              schema: CORE_SCHEMA.withTags(mergeTag),
+            },
+          );
+          processProviderValue(providerConfig);
+        } catch (error) {
+          core.warning(
+            `Failed to extract nested provider dependencies from "${cleanPath}": ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        return;
+      }
+
+      if (Array.isArray(value)) {
+        for (const entry of value) {
+          processProviderValue(entry);
+        }
+        return;
+      }
+
+      if (typeof value === 'object' && value !== null) {
+        for (const [key, nestedValue] of Object.entries(value)) {
+          if (key.startsWith('file://')) {
+            processProviderValue(key);
+          }
+          processProviderValue(nestedValue);
         }
       }
-    }
+    };
+
+    processProviderValue(config.providers);
+    processProviderValue(config.targets);
 
     // Extract prompt files
     if (config.prompts) {
