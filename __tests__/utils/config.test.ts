@@ -996,6 +996,29 @@ prompts:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
+  it('should not treat wildcard prose in an inline prompt as a dependency', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - Return * when unknown
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should retain path-shaped prompt globs that contain spaces', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - prompts/team prompt*.txt
+  - team prompt*.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/', 'evals/']);
+  });
+
   it('should extract prompt selectors, exec paths, and object raw/id references', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:

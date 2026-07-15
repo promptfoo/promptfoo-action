@@ -1693,6 +1693,54 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      '\0',
+      '\r',
+      '\n',
+    ])('should reject an environment-file path containing %j before any output sink', async (control) => {
+      withInputs({
+        'env-files': `.env${control}::error::forged`,
+      });
+      mockFs.existsSync.mockReturnValue(true);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid environment file path: control characters are not allowed.\n\nHelp: Choose an environment file path without NUL, CR, or LF characters.',
+      );
+      const output = [
+        ...mockCore.info.mock.calls,
+        ...mockCore.warning.mock.calls,
+        ...mockCore.setFailed.mock.calls,
+      ]
+        .flat()
+        .join('\n');
+      expect(output).not.toContain('::error::forged');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      '\r',
+      '\n',
+    ])('should preserve and reject a trailing %j in the environment-file input', async (control) => {
+      const unsafePath = `.env${control}`;
+      mockCore.getInput.mockImplementation(
+        (name: string, options?: { trimWhitespace?: boolean }) => {
+          const value =
+            name === 'env-files' ? unsafePath : DEFAULT_INPUTS[name] || '';
+          return options?.trimWhitespace === false ? value : value.trim();
+        },
+      );
+      mockFs.existsSync.mockReturnValue(true);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid environment file path: control characters are not allowed.\n\nHelp: Choose an environment file path without NUL, CR, or LF characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
       { envFiles: '', file: '.env', dotenvKey: undefined },
       {
         envFiles: '',

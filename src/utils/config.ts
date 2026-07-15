@@ -757,11 +757,7 @@ export function extractFileDependencies(configPath: string): string[] {
       if (reference.includes('{{') || reference.includes('{%')) {
         return reference.includes('file://');
       }
-      if (
-        reference.startsWith('file://') ||
-        reference.startsWith('exec:') ||
-        /[\\/*?{}[\]]/.test(reference)
-      ) {
+      if (reference.startsWith('file://') || reference.startsWith('exec:')) {
         return true;
       }
       const selectorIndex = reference.lastIndexOf(':');
@@ -770,7 +766,12 @@ export function extractFileDependencies(configPath: string): string[] {
       const extensionIndex = candidate.lastIndexOf('.');
       const extension =
         extensionIndex > -1 ? candidate.slice(extensionIndex + 1) : '';
-      return extension.length > 0 && /^[A-Za-z0-9]+$/.test(extension);
+      const hasExtension =
+        extension.length > 0 && /^[A-Za-z0-9]+$/.test(extension);
+      if (/[\\/*?{}[\]]/.test(reference)) {
+        return !/\s/.test(reference) || /[\\/]/.test(reference) || hasExtension;
+      }
+      return hasExtension;
     };
 
     if (typeof config.prompts === 'string') {

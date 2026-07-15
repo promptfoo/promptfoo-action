@@ -300,7 +300,10 @@ export async function run(): Promise<void> {
       'use-config-prompts',
       { required: false },
     );
-    const envFiles: string = core.getInput('env-files', { required: false });
+    const envFiles: string = core.getInput('env-files', {
+      required: false,
+      trimWhitespace: false,
+    });
     const failOnThreshold = parseOptionalPercentage(
       core.getInput('fail-on-threshold', { required: false }),
       'fail-on-threshold',
@@ -366,7 +369,17 @@ export async function run(): Promise<void> {
     }
 
     const loadEnvironmentFiles = (): void => {
+      const validateEnvFilePath = (envFilePath: string): void => {
+        if (/[\0\r\n]/.test(envFilePath)) {
+          throw new PromptfooActionError(
+            'Invalid environment file path: control characters are not allowed.',
+            ErrorCodes.INVALID_CONFIGURATION,
+            'Choose an environment file path without NUL, CR, or LF characters.',
+          );
+        }
+      };
       const resolveContainedEnvFile = (envFilePath: string): string => {
+        validateEnvFilePath(envFilePath);
         const resolvedPath = path.resolve(envFilePath);
         const relativePath = path.relative(workingDirectory, resolvedPath);
         if (
@@ -418,7 +431,10 @@ export async function run(): Promise<void> {
       );
       const explicitEnvFiles = envFiles
         .split(',')
-        .map((envFile) => envFile.trim())
+        .map((envFile) => {
+          validateEnvFilePath(envFile);
+          return envFile.trim();
+        })
         .filter(Boolean)
         .map((envFile) => path.resolve(path.join(workingDirectory, envFile)))
         .map((envFilePath) => {

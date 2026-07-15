@@ -489,3 +489,31 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     );
   });
 });
+test.each([
+  '\0',
+  '\r',
+  '\n',
+])('rejects an environment-file path containing %j with a constant error', (control) => {
+  const target = { EXISTING: 'keep' };
+  const unsafePath = `.env${control}::error::forged`;
+  let error: unknown;
+
+  try {
+    loadEnvironmentFile(unsafePath, target);
+  } catch (caught) {
+    error = caught;
+  }
+
+  expect(error).toBeInstanceOf(PromptfooActionError);
+  expect((error as PromptfooActionError).code).toBe(
+    ErrorCodes.INVALID_CONFIGURATION,
+  );
+  expect((error as PromptfooActionError).message).toBe(
+    'Invalid environment file path: control characters are not allowed.',
+  );
+  expect((error as PromptfooActionError).helpText).toBe(
+    'Choose an environment file path without NUL, CR, or LF characters.',
+  );
+  expect(String(error)).not.toContain('::error::forged');
+  expect(target).toEqual({ EXISTING: 'keep' });
+});

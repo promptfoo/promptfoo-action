@@ -342,6 +342,13 @@ export function loadEnvironmentFile(
   targetEnvironment: NodeJS.ProcessEnv = process.env,
   override = true,
 ): void {
+  if (/[\0\r\n]/.test(envFilePath)) {
+    throw new PromptfooActionError(
+      'Invalid environment file path: control characters are not allowed.',
+      ErrorCodes.INVALID_CONFIGURATION,
+      'Choose an environment file path without NUL, CR, or LF characters.',
+    );
+  }
   // Parse into an isolated object so untrusted values cannot affect this action
   // or a child process before they have passed the process-control check.
   const fileEnvironment: Record<string, string> = Object.create(null);
