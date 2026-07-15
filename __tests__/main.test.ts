@@ -559,6 +559,42 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should deduplicate overlapping prompt globs with relative and absolute matches', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts/shared.txt');
+      withInputs({
+        prompts: `prompts/*.txt\n${path.dirname(absolutePrompt)}/*.txt`,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml', status: 'modified' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/*.txt'
+          ? ['promptfooconfig.yaml', 'prompts/shared.txt']
+          : [absolutePrompt],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(
+        args.filter(
+          (value) => value === 'prompts/shared.txt' || value === absolutePrompt,
+        ),
+      ).toEqual(['prompts/shared.txt']);
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluated prompt files: prompts/shared.txt',
+          ),
+        }),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.not.stringContaining(absolutePrompt),
+        }),
+      );
+    });
+
     test('should process all remaining prompts when a monitored prompt is deleted', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'prompts/removed.txt', status: 'removed' },

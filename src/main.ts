@@ -768,6 +768,7 @@ export async function run(): Promise<void> {
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
     const allPromptFiles: string[] = [];
+    const seenPromptFiles = new Set<string>();
     let realWorkspaceRoot: string | undefined;
 
     for (const globPattern of validPromptFilesGlobs) {
@@ -805,7 +806,14 @@ export async function run(): Promise<void> {
         const repositoryFile = toRepositoryPath(
           path.relative(workspaceRoot, absolutePrompt),
         );
-        return repositoryFile !== configRepositoryPath;
+        if (repositoryFile === configRepositoryPath) return false;
+        const promptKey =
+          process.platform === 'win32'
+            ? repositoryFile.toLowerCase()
+            : repositoryFile;
+        if (seenPromptFiles.has(promptKey)) return false;
+        seenPromptFiles.add(promptKey);
+        return true;
       });
       allPromptFiles.push(...allMatches);
 
