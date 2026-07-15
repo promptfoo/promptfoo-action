@@ -3416,6 +3416,56 @@ scenarios:
     ]);
   });
 
+  it('should extract inline, external-test, default-test, and scenario assertion grader providers', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('tests/cases.yaml'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return `
+defaultTest:
+  assert:
+    - type: llm-rubric
+      value: default
+      provider: file://graders/default.cjs:callApi
+tests:
+  - assert:
+      - type: llm-rubric
+        value: inline
+        provider:
+          id: python:graders/inline.py:call_api
+  - file://tests/cases.yaml
+scenarios:
+  - config:
+      - assert:
+          - type: assert-set
+            assert:
+              - type: llm-rubric
+                value: scenario
+                provider: ruby:graders/scenario.rb:call_api
+`;
+      }
+      return `
+- vars:
+    input: example
+  assert:
+    - type: llm-rubric
+      value: external
+      provider: golang:graders/external.go:CallApi
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/graders/default.cjs',
+      'evals/graders/inline.py',
+      'evals/tests/cases.yaml',
+      'evals/graders/external.go',
+      'evals/graders/scenario.rb',
+    ]);
+  });
+
   it('should normalize object and absolute per-test provider references while ignoring non-file providers', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:

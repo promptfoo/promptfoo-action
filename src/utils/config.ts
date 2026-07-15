@@ -12,6 +12,7 @@ type AssertionEntry = {
   type?: string;
   value?: unknown;
   assert?: AssertionEntry[];
+  provider?: unknown;
   transform?: unknown;
   contextTransform?: unknown;
 };
@@ -1152,6 +1153,16 @@ export function extractFileDependencies(configPath: string): string[] {
                 transformValue.replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1'),
               );
             }
+          }
+          if (assert.provider !== undefined && assert.provider !== null) {
+            processProviderValue(
+              assert.provider,
+              false,
+              configEnv,
+              false,
+              false,
+              true,
+            );
           }
           if (
             !nested &&
