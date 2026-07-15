@@ -360,6 +360,33 @@ extensions:
     );
   });
 
+  it('should preserve checkout extension hooks from an external config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/policy.js:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['hooks/policy.js']);
+  });
+
+  it('should preserve checkout extension glob matches from an external config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/hooks/policy.js']);
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toContain('hooks/policy.js');
+    expect(deps).toContain('hooks');
+  });
+
   it('should conservatively watch the workspace for referenced commandLineOptions', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:

@@ -834,6 +834,30 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should preserve spaces in a manually specified dependency path', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: ' hooks/policy.js \r\nREADME.md\r\n',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([' hooks/policy.js ']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should handle workflow_dispatch with custom base comparison', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -1052,6 +1076,44 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should not narrow evaluation when a prompt and extension dependency change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'hooks/policy.js' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/policy.js']);
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(args).not.toContain('--prompts');
+    });
+
+    test('should not narrow evaluation when a prompt and config change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+
+      await run();
+
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--prompts');
     });
 
     test('should run when an extension dependency is renamed in a pull request', async () => {

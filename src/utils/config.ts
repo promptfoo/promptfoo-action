@@ -42,6 +42,8 @@ export function extractFileDependencies(configPath: string): string[] {
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const isSafeDependency = (targetPath: string): boolean =>
+    isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
 
   try {
     if (/\.(?:[cm]?js|[cm]?ts)$/i.test(configPath)) {
@@ -85,7 +87,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }
 
         const absolutePath = path.resolve(configDir, filePath);
-        if (!isPathInside(dependencyRoot, absolutePath)) {
+        if (!isSafeDependency(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
           );
@@ -133,7 +135,7 @@ export function extractFileDependencies(configPath: string): string[] {
         const matches = glob.sync(absolutePath, { nodir: true });
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
+          if (isSafeDependency(absoluteMatch)) {
             dependencies.add(absoluteMatch);
           } else {
             core.warning(
@@ -144,8 +146,9 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathParts = filePath.split('/');
-        let basePath = '';
+        const filePathRoot = path.parse(filePath).root;
+        const pathParts = filePath.slice(filePathRoot.length).split(/[\\/]/);
+        let basePath = filePathRoot;
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
             break;
@@ -153,7 +156,7 @@ export function extractFileDependencies(configPath: string): string[] {
           basePath = basePath ? path.join(basePath, part) : part;
         }
         if (basePath) {
-          dependencies.add(path.resolve(path.join(configDir, basePath)));
+          dependencies.add(path.resolve(configDir, basePath));
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there

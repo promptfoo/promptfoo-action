@@ -390,8 +390,13 @@ export async function run(): Promise<void> {
         // Option 1: Use provided file list
         changedFiles = String(filesInput)
           .split(/\r?\n/)
-          .map((file) => file.trim())
-          .filter((file) => file)
+          .flatMap((file) => {
+            const trimmedFile = file.trim();
+            if (!trimmedFile) {
+              return [];
+            }
+            return trimmedFile === file ? [file] : [file, trimmedFile];
+          })
           .join('\n');
         core.info(
           `Using manually specified files: ${JSON.stringify(changedFiles)}`,
@@ -605,7 +610,12 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (!useConfigPrompts && promptFiles.length > 0) {
+    if (
+      !useConfigPrompts &&
+      !configChanged &&
+      !dependencyChanged &&
+      promptFiles.length > 0
+    ) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
     // Check if sharing is enabled and validate authentication upfront
