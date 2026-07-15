@@ -650,6 +650,56 @@ tests:
     ]);
   });
 
+  it('ignores inactive config refs when the trusted ref parser is disabled', () => {
+    const originalValue = process.env.PROMPTFOO_DISABLE_REF_PARSER;
+    process.env.PROMPTFOO_DISABLE_REF_PARSER = 'YePpErS';
+    mockConfigFiles({
+      '/test/working/evals/promptfooconfig.yaml': "$ref: './ignored.yaml'\n",
+      '/test/working/ignored.yaml':
+        'commandLineOptions:\n  envPath: .env.ignored\n',
+    });
+
+    try {
+      expect(
+        extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+      ).toEqual(implicitConfigDependencies('evals/promptfooconfig.yaml'));
+    } finally {
+      if (originalValue === undefined) {
+        delete process.env.PROMPTFOO_DISABLE_REF_PARSER;
+      } else {
+        process.env.PROMPTFOO_DISABLE_REF_PARSER = originalValue;
+      }
+    }
+  });
+
+  it('tracks a local envPath while ignoring its inactive commandLineOptions ref', () => {
+    const originalValue = process.env.PROMPTFOO_DISABLE_REF_PARSER;
+    process.env.PROMPTFOO_DISABLE_REF_PARSER = 'yes';
+    mockConfigFiles({
+      '/test/working/evals/promptfooconfig.yaml': [
+        'commandLineOptions:',
+        "  $ref: './ignored.yaml'",
+        '  envPath: .env.safe',
+      ].join('\n'),
+      '/test/working/ignored.yaml': 'envPath: .env.ignored\n',
+    });
+
+    try {
+      expect(
+        extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+      ).toEqual([
+        'evals/.env.safe',
+        ...implicitConfigDependencies('evals/promptfooconfig.yaml'),
+      ]);
+    } finally {
+      if (originalValue === undefined) {
+        delete process.env.PROMPTFOO_DISABLE_REF_PARSER;
+      } else {
+        process.env.PROMPTFOO_DISABLE_REF_PARSER = originalValue;
+      }
+    }
+  });
+
   it('tracks refs nested under tests that Promptfoo dereferences', () => {
     mockConfigFiles({
       '/test/working/evals/promptfooconfig.yaml': [

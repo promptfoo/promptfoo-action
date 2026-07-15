@@ -36428,6 +36428,9 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
     };
     addSafeDependency(lexicalConfigPath, configDir, "Promptfoo config", false);
     const config2 = loadConfig(lexicalConfigPath);
+    const refsDisabled = ["1", "true", "yes", "yup", "yeppers"].includes(
+      (process.env.PROMPTFOO_DISABLE_REF_PARSER ?? "").toLowerCase()
+    );
     if (!config2) {
       debug("Config file is empty or invalid");
       return [];
@@ -36511,10 +36514,10 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       if (typeof record.file === "string") {
         nestedFilePaths.push(record.file);
       }
-      if ("$id" in record) {
+      if (!refsDisabled && "$id" in record) {
         throw new Error("Promptfoo config refs using $id are unsupported");
       }
-      if ("$ref" in record) {
+      if (!refsDisabled && "$ref" in record) {
         if (typeof record.$ref !== "string") {
           throw new Error("Invalid Promptfoo config ref");
         }
@@ -36547,11 +36550,11 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         return false;
       }
       const record = value;
-      if (!isCommandLineOptions && typeof record.$ref === "string" && typeof record.commandLineOptions === "object" && record.commandLineOptions !== null && ("$ref" in record.commandLineOptions || "envPath" in record.commandLineOptions)) {
+      if (!refsDisabled && !isCommandLineOptions && typeof record.$ref === "string" && typeof record.commandLineOptions === "object" && record.commandLineOptions !== null && ("$ref" in record.commandLineOptions || "envPath" in record.commandLineOptions)) {
         throw new Error("Ambiguous extended Promptfoo config envPath refs");
       }
       if (isCommandLineOptions && "envPath" in record) {
-        if ("$ref" in record) {
+        if (!refsDisabled && "$ref" in record) {
           throw new Error("Ambiguous extended Promptfoo config envPath refs");
         }
         const envPath = record.envPath;
@@ -36597,7 +36600,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       )) {
         return true;
       }
-      if (typeof record.$ref === "string") {
+      if (!refsDisabled && typeof record.$ref === "string") {
         const inspectionKey = `${sourceFile}\0${record.$ref}\0${isCommandLineOptions}`;
         if (inspectedRefs.has(inspectionKey)) {
           return false;
@@ -37238,6 +37241,7 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
     );
   }
   const lexicalConfigPath = path6.resolve(configPath);
+  const realSelectedConfigPath = fs7.realpathSync(lexicalConfigPath);
   for (const configName of ["promptfooconfig", "redteam"]) {
     for (const extension of [
       "yaml",
@@ -37262,7 +37266,7 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
         }
         throw error2;
       }
-      if (defaultConfigPath !== lexicalConfigPath) {
+      if (defaultConfigPath !== lexicalConfigPath && fs7.realpathSync(defaultConfigPath) !== realSelectedConfigPath) {
         throw new PromptfooActionError(
           `Implicit Promptfoo config ${defaultConfigPath} cannot be safely preflighted alongside ${configPath}`,
           ErrorCodes.INVALID_CONFIGURATION,
@@ -37358,6 +37362,9 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
   const config2 = readConfigFile(realConfigPath);
   const inspectedRefs = /* @__PURE__ */ new Set();
   const configuredPaths = [];
+  const refsDisabled = ["1", "true", "yes", "yup", "yeppers"].includes(
+    (targetEnvironment.PROMPTFOO_DISABLE_REF_PARSER ?? "").toLowerCase()
+  );
   const resolveRef = (ref, sourceFile) => {
     const hashIndex = ref.indexOf("#");
     const refPath = hashIndex === -1 ? ref : ref.slice(0, hashIndex);
@@ -37475,14 +37482,14 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
       );
     }
     const record = value;
-    if ("$id" in record) {
+    if (!refsDisabled && "$id" in record) {
       throw new PromptfooActionError(
         `Promptfoo config ${configPath} uses $id and cannot be safely preflighted for commandLineOptions.envPath`,
         ErrorCodes.INVALID_CONFIGURATION,
         "Remove $id from the Promptfoo config ref chain."
       );
     }
-    if (!isCommandLineOptions && typeof record.$ref === "string" && typeof record.commandLineOptions === "object" && record.commandLineOptions !== null && ("$ref" in record.commandLineOptions || "envPath" in record.commandLineOptions)) {
+    if (!refsDisabled && !isCommandLineOptions && typeof record.$ref === "string" && typeof record.commandLineOptions === "object" && record.commandLineOptions !== null && ("$ref" in record.commandLineOptions || "envPath" in record.commandLineOptions)) {
       throw new PromptfooActionError(
         `Promptfoo config ${configPath} combines root and commandLineOptions refs and cannot be safely preflighted for commandLineOptions.envPath`,
         ErrorCodes.INVALID_CONFIGURATION,
@@ -37491,7 +37498,7 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
     }
     if (isCommandLineOptions && "envPath" in record) {
       const envPath = record.envPath;
-      if (typeof record.$ref === "string") {
+      if (!refsDisabled && typeof record.$ref === "string") {
         throw new PromptfooActionError(
           `Promptfoo config ${configPath} combines a commandLineOptions ref with a local envPath and cannot be safely preflighted`,
           ErrorCodes.INVALID_CONFIGURATION,
@@ -37529,7 +37536,7 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
         return true;
       }
     }
-    if (typeof record.$ref === "string") {
+    if (!refsDisabled && typeof record.$ref === "string") {
       const referenced = resolveRef(record.$ref, sourceFile);
       const inspectionKey = `${referenced.file}\0${referenced.fragment}\0${isCommandLineOptions}`;
       if (inspectedRefs.has(inspectionKey)) {

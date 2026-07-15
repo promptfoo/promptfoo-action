@@ -749,6 +749,44 @@ describe('loadConfigEnvironmentFiles', () => {
     );
   });
 
+  test('ignores inactive config refs when the trusted ref parser is disabled', () => {
+    const target: NodeJS.ProcessEnv = {
+      PROMPTFOO_DISABLE_REF_PARSER: 'YePpErS',
+    };
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      "$ref: './ignored.yaml'\n",
+    );
+    writeFile('ignored.yaml', 'commandLineOptions:\n  envPath: .env.late\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() =>
+      loadConfigEnvironmentFiles(configPath, tmpDir, target),
+    ).not.toThrow();
+    expect(target).toEqual({ PROMPTFOO_DISABLE_REF_PARSER: 'YePpErS' });
+  });
+
+  test('loads a local envPath while ignoring its inactive commandLineOptions ref', () => {
+    const target: NodeJS.ProcessEnv = {
+      PROMPTFOO_DISABLE_REF_PARSER: 'yes',
+    };
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        'commandLineOptions:',
+        "  $ref: './ignored.yaml'",
+        '  envPath: .env.safe',
+      ].join('\n'),
+    );
+    writeFile('ignored.yaml', 'envPath: .env.late\n');
+    writeFile('.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('safe');
+  });
+
   test('rejects encoded slash characters in config ref paths', () => {
     const configPath = writeFile(
       'promptfooconfig.yaml',
@@ -1204,6 +1242,20 @@ describe('loadConfigEnvironmentFiles', () => {
     expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
       /PROMPTFOO_CLOUD_API_URL/,
     );
+  });
+
+  test('preflights a selected symlink to the effective implicit config', () => {
+    const implicitConfig = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+    const selectedConfig = path.join(tmpDir, 'selected.yaml');
+    fs.symlinkSync(implicitConfig, selectedConfig);
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() =>
+      loadConfigEnvironmentFiles(selectedConfig, tmpDir, {}),
+    ).toThrow(/PROMPTFOO_CLOUD_API_URL/);
   });
 
   test('resolves nested refs from the lexical path of a symlinked ref', () => {

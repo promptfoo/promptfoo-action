@@ -263,6 +263,9 @@ export function extractFileDependencies(
 
     addSafeDependency(lexicalConfigPath, configDir, 'Promptfoo config', false);
     const config = loadConfig(lexicalConfigPath) as PromptfooConfig;
+    const refsDisabled = ['1', 'true', 'yes', 'yup', 'yeppers'].includes(
+      (process.env.PROMPTFOO_DISABLE_REF_PARSER ?? '').toLowerCase(),
+    );
 
     if (!config) {
       core.debug('Config file is empty or invalid');
@@ -388,10 +391,10 @@ export function extractFileDependencies(
       if (typeof record.file === 'string') {
         nestedFilePaths.push(record.file);
       }
-      if ('$id' in record) {
+      if (!refsDisabled && '$id' in record) {
         throw new Error('Promptfoo config refs using $id are unsupported');
       }
-      if ('$ref' in record) {
+      if (!refsDisabled && '$ref' in record) {
         if (typeof record.$ref !== 'string') {
           throw new Error('Invalid Promptfoo config ref');
         }
@@ -434,6 +437,7 @@ export function extractFileDependencies(
       }
       const record = value as Record<string, unknown>;
       if (
+        !refsDisabled &&
         !isCommandLineOptions &&
         typeof record.$ref === 'string' &&
         typeof record.commandLineOptions === 'object' &&
@@ -445,7 +449,7 @@ export function extractFileDependencies(
       }
 
       if (isCommandLineOptions && 'envPath' in record) {
-        if ('$ref' in record) {
+        if (!refsDisabled && '$ref' in record) {
           throw new Error('Ambiguous extended Promptfoo config envPath refs');
         }
         const envPath = record.envPath;
@@ -510,7 +514,7 @@ export function extractFileDependencies(
         return true;
       }
 
-      if (typeof record.$ref === 'string') {
+      if (!refsDisabled && typeof record.$ref === 'string') {
         const inspectionKey = `${sourceFile}\0${record.$ref}\0${isCommandLineOptions}`;
         if (inspectedRefs.has(inspectionKey)) {
           return false;
