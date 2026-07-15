@@ -134,7 +134,6 @@ const mockFs = fs as unknown as {
   realpathSync: MockedFunction<typeof fs.realpathSync>;
   statSync: MockedFunction<typeof fs.statSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
-  realpathSync: MockedFunction<typeof fs.realpathSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
@@ -320,7 +319,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
     });
 
@@ -1341,6 +1340,54 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      '\0',
+      '\r',
+      '\n',
+    ])('should reject an environment-file path containing %j before any output sink', async (control) => {
+      withInputs({
+        'env-files': `.env${control}::error::forged`,
+      });
+      mockFs.existsSync.mockReturnValue(true);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid environment file path: control characters are not allowed.\n\nHelp: Choose an environment file path without NUL, CR, or LF characters.',
+      );
+      const output = [
+        ...mockCore.info.mock.calls,
+        ...mockCore.warning.mock.calls,
+        ...mockCore.setFailed.mock.calls,
+      ]
+        .flat()
+        .join('\n');
+      expect(output).not.toContain('::error::forged');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      '\r',
+      '\n',
+    ])('should preserve and reject a trailing %j in the environment-file input', async (control) => {
+      const unsafePath = `.env${control}`;
+      mockCore.getInput.mockImplementation(
+        (name: string, options?: { trimWhitespace?: boolean }) => {
+          const value =
+            name === 'env-files' ? unsafePath : DEFAULT_INPUTS[name] || '';
+          return options?.trimWhitespace === false ? value : value.trim();
+        },
+      );
+      mockFs.existsSync.mockReturnValue(true);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid environment file path: control characters are not allowed.\n\nHelp: Choose an environment file path without NUL, CR, or LF characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
       { envFiles: '', file: '.env', dotenvKey: undefined },
       {
         envFiles: '',
@@ -2000,7 +2047,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        'Error: Invalid environment file path: null bytes and line breaks are not allowed.\n\nHelp: Remove null bytes and line breaks from environment file paths.',
+        'Error: Invalid environment file path: control characters are not allowed.\n\nHelp: Choose an environment file path without NUL, CR, or LF characters.',
       );
       expect(
         mockCore.info.mock.calls.map(([message]) => message).join('\n'),
@@ -2658,6 +2705,25 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should describe a dependency-triggered PR run as evaluated prompt files', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/first.txt',
+        'prompts/second.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain(
+        'Evaluated prompt files: prompts/first.txt, prompts/second.txt',
+      );
+      expect(comment.body).not.toContain('LLM prompt was modified');
+    });
+
     test.each([
       {
         changedFile: 'promptfooconfig.yaml',
@@ -3250,7 +3316,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
 
       // Should still fail the action after posting the comment
@@ -3497,6 +3563,22 @@ describe('GitHub Action Main', () => {
         'Evaluated Files',
         3,
       );
+    });
+
+    test('should describe a PR run using config-defined prompts accurately', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain(
+        'Evaluation used prompts defined in the Promptfoo config.',
+      );
+      expect(comment.body).not.toContain('LLM prompt was modified');
     });
 
     test('should use console guidance in PR comments without a share URL', async () => {

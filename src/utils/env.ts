@@ -383,9 +383,9 @@ export function loadEnvironmentFile(
   const filePaths = Array.isArray(envFilePath) ? envFilePath : [envFilePath];
   if (filePaths.some((filePath) => /[\0\r\n]/.test(filePath))) {
     throw new PromptfooActionError(
-      'Invalid environment file path: null bytes and line breaks are not allowed.',
+      'Invalid environment file path: control characters are not allowed.',
       ErrorCodes.INVALID_CONFIGURATION,
-      'Remove null bytes and line breaks from environment file paths.',
+      'Choose an environment file path without NUL, CR, or LF characters.',
     );
   }
   // Parse into an isolated object so untrusted values cannot affect this action

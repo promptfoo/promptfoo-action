@@ -1361,38 +1361,21 @@ export function extractFileDependencies(
       ) {
         return false;
       }
-      if (
-        reference.includes('*') &&
-        /\s/.test(reference) &&
-        !/[\\/]/.test(reference) &&
-        !/\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)(?::[^:]*)?$/.test(
-          reference,
-        )
-      ) {
-        return false;
-      }
-      if (
-        reference.startsWith('file://') ||
-        reference.startsWith('exec:') ||
-        reference.includes('*') ||
-        reference.includes('/') ||
-        reference.includes('\\')
-      ) {
+      if (reference.startsWith('file://') || reference.startsWith('exec:')) {
         return true;
       }
-      const tokens = reference.split(':');
-      const lastToken = tokens[tokens.length - 1];
-      const pathToken = tokens[tokens.length - 2] ?? '';
-      return (
-        /\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)$/.test(
-          lastToken,
-        ) ||
-        /\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)$/.test(
-          pathToken,
-        ) ||
-        reference.charAt(reference.length - 3) === '.' ||
-        reference.charAt(reference.length - 4) === '.'
-      );
+      const selectorIndex = reference.lastIndexOf(':');
+      const candidate =
+        selectorIndex > -1 ? reference.slice(0, selectorIndex) : reference;
+      const extensionIndex = candidate.lastIndexOf('.');
+      const extension =
+        extensionIndex > -1 ? candidate.slice(extensionIndex + 1) : '';
+      const hasExtension =
+        extension.length > 0 && /^[A-Za-z0-9]+$/.test(extension);
+      if (/[\\/*?{}[\]]/.test(reference)) {
+        return !/\s/.test(reference) || /[\\/]/.test(reference) || hasExtension;
+      }
+      return hasExtension;
     };
 
     const processPromptReference = (reference: string): void => {

@@ -474,7 +474,7 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
 
     expect(() => loadEnvironmentFile(filePath, target)).toThrow(
-      'Invalid environment file path: null bytes and line breaks are not allowed.',
+      'Invalid environment file path: control characters are not allowed.',
     );
     expect(target).toEqual({ EXISTING: 'keep' });
   });
