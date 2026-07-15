@@ -39055,7 +39055,13 @@ async function run() {
       const monitoredPromptRemovedOrRenamedOut = files.some(
         (file) => file.status === "removed" && matchesPromptGlob(file.filename) || file.status === "renamed" && matchesPromptGlob(file.previous_filename) && !matchesPromptGlob(file.filename)
       );
-      if (promptGlobMatchingCapped || monitoredPromptRemovedOrRenamedOut) {
+      if (promptGlobMatchingCapped) {
+        warning(
+          "Prompt glob matching exceeded its safety limits. Processing all remaining matching prompt files."
+        );
+        return "";
+      }
+      if (monitoredPromptRemovedOrRenamedOut) {
         warning(
           "A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files."
         );
