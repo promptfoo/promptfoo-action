@@ -74,10 +74,6 @@ const JS_EXTENSION_CASE_INSENSITIVE = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
 function hasGlobMagic(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const character = value[index];
-    if (path.sep === '/' && character === '\\') {
-      index++;
-      continue;
-    }
     if ('*?[]{}'.includes(character)) {
       return true;
     }
@@ -123,10 +119,6 @@ function hasUnsafeGroupedGlob(value: string): boolean {
   const closingDelimiters: string[] = [];
   for (let index = 0; index < value.length; index++) {
     const character = value[index];
-    if (path.sep === '/' && character === '\\') {
-      index++;
-      continue;
-    }
     if (character === '{') {
       closingDelimiters.push('}');
       continue;
@@ -146,19 +138,15 @@ function hasUnsafeGroupedGlob(value: string): boolean {
     if (
       closingDelimiters.length > 0 &&
       (character === '/' ||
-        (path.sep !== '/' && character === '\\') ||
-        (character === '.' && value[index + 1] === '.'))
+        (character === '.' &&
+          value[index + 1] === '.' &&
+          (index === 0 || '/{(,|'.includes(value[index - 1])) &&
+          (index + 2 === value.length || '/}),|'.includes(value[index + 2]))))
     ) {
       return true;
     }
   }
   return closingDelimiters.length > 0;
-}
-
-function unescapePosixGlobLiterals(value: string): string {
-  return path.sep === '/'
-    ? value.replace(/\\([*?[\]{}()@+!\\])/g, '$1')
-    : value;
 }
 
 function isPathInside(baseDir: string, targetPath: string): boolean {
@@ -304,11 +292,16 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
-      if (hasGlobMagic(filePath)) {
+      const runtimeFilePath = filePath.replace(/\\/g, '/');
+
+      if (hasGlobMagic(runtimeFilePath)) {
         const pathParts =
-          path.sep === '/' ? filePath.split('/') : filePath.split(/[\\/]/);
+          path.sep === '/'
+            ? runtimeFilePath.split('/')
+            : runtimeFilePath.split(/[\\/]/);
         const firstMagicPart = pathParts.findIndex(hasGlobMagic);
-        const hasCrossDirectoryAlternative = hasUnsafeGroupedGlob(filePath);
+        const hasCrossDirectoryAlternative =
+          hasUnsafeGroupedGlob(runtimeFilePath);
         const hasParentAfterMagic = pathParts
           .slice(firstMagicPart)
           .some((part) => part === '..');
@@ -332,9 +325,7 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
-      const absolutePath = resolveConfigDependency(
-        unescapePosixGlobLiterals(filePath),
-      );
+      const absolutePath = resolveConfigDependency(runtimeFilePath);
       if (!absolutePath) {
         return;
       }
@@ -436,11 +427,12 @@ export function extractFileDependencies(configPath: string): string[] {
         markUnsafeDependency();
         return;
       }
-      const selectorIndex = rawPath.lastIndexOf(':');
+      const runtimePath = rawPath.replace(/\\/g, '/');
+      const selectorIndex = runtimePath.lastIndexOf(':');
       const candidatePath =
-        selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
-      const filePath = TRANSITIVE_CONFIG_EXTENSION.test(rawPath)
-        ? rawPath
+        selectorIndex > -1 ? runtimePath.slice(0, selectorIndex) : runtimePath;
+      const filePath = TRANSITIVE_CONFIG_EXTENSION.test(runtimePath)
+        ? runtimePath
         : TRANSITIVE_CONFIG_EXTENSION.test(candidatePath)
           ? candidatePath
           : undefined;

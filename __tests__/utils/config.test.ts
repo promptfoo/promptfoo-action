@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -451,6 +452,38 @@ providers:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
+  it('should match runtime no-escape semantics for a backslash-prefixed numeric brace range', () => {
+    const reference = 'providers/\\{1..16}.py';
+    expect(
+      new Minimatch(reference, { windowsPathsNoEscape: true }).globSet,
+    ).toEqual(
+      Array.from({ length: 16 }, (_, index) => `providers//${index + 1}.py`),
+    );
+    mockFs.readFileSync.mockReturnValue(
+      `providers:\n  - 'file://${reference}'`,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should conservatively root a no-escape brace glob with a traversing branch', () => {
+    const reference = 'providers/\\{safe,../../outside}/*.yaml';
+    expect(
+      new Minimatch(reference, { windowsPathsNoEscape: true }).globSet,
+    ).toEqual(['providers//safe/*.yaml', 'providers//../../outside/*.yaml']);
+    mockFs.readFileSync.mockReturnValue(
+      `tests:\n  - vars:\n      documents: 'file://${reference}'`,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it.each([
     '{../providers,providers}',
     '{../../outside,providers}',
@@ -489,14 +522,26 @@ providers:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
-  it('should safely ignore escaped magic inside a grouped POSIX glob', () => {
+  it('should conservatively root magic separated by a POSIX backslash inside a grouped glob', () => {
     mockFs.readFileSync.mockReturnValue(
       `providers:\n  - 'file://providers/{literal\\*,other}/*.py'`,
     );
 
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
-    ).toEqual(['evals/providers/']);
+    ).toEqual(['./']);
+  });
+
+  it('should match standard file-loader no-escape semantics for backslash globs', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'file://providers\\nested\\*.py'
+  - 'file://providers/\\{1..16}.py'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/nested/', 'evals/providers/']);
   });
 
   it('should handle Windows separators for grouped and ordinary globs', () => {
@@ -528,10 +573,10 @@ providers:
   });
 
   it.each([
-    ['literal\\*.js', 'literal*.js'],
-    ['literal\\[id\\].js', 'literal[id].js'],
-    ['literal\\\\name.js', 'literal\\name.js'],
-  ])('should preserve an escaped POSIX glob literal %s as a direct dependency', (escapedName, literalName) => {
+    ['literal\\*.js', 'evals/providers/literal/'],
+    ['literal\\[id\\].js', 'evals/providers/literal/'],
+    ['literal\\\\name.js', 'evals/providers/literal/name.js'],
+  ])('should match no-escape POSIX path semantics for %s', (escapedName, dependency) => {
     mockFs.readFileSync.mockReturnValue(
       `providers:\n  - 'file://providers/${escapedName}'`,
     );
@@ -540,7 +585,7 @@ providers:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual([`evals/providers/${literalName}`]);
+    expect(deps).toEqual([dependency]);
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
@@ -1918,6 +1963,25 @@ tests:
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['./']);
+  });
+
+  it('should inspect the runtime-normalized transitive config instead of a backslash-named decoy', () => {
+    const configPath = '/test/working/evals/promptfooconfig.yaml';
+    const runtimePath = '/test/working/evals/test-data/cases.yaml';
+    const decoyPath = '/test/working/evals/test-data\\cases.yaml';
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) => {
+      const candidate = filePath.toString();
+      if (candidate === configPath) return `tests: 'test-data\\cases.yaml'`;
+      if (candidate === runtimePath) {
+        return 'nested: file://validators/check.py:run';
+      }
+      if (candidate === decoyPath) return 'plain: safe';
+      throw new Error('unexpected transitive path');
+    });
+
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledWith(runtimePath, 'utf8');
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(decoyPath, 'utf8');
   });
 
   it('should conservatively handle an unreadable transitive file with a selector suffix', () => {
