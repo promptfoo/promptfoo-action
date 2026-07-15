@@ -805,6 +805,35 @@ providers:
     ]);
   });
 
+  it('should preserve literal POSIX backslashes in direct HTTP file paths', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(String.raw`
+providers:
+  - id: https
+    config:
+      url: https://example.test
+      tls:
+        caPath: './credentials/tls\ca.pem'
+      signatureAuth:
+        privateKeyPath: './credentials/signature\key.pem'
+      multipart:
+        parts:
+          - kind: file
+            name: attachment
+            source:
+              type: path
+              path: './assets/multipart\payload.bin'
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([
+      String.raw`credentials/tls\ca.pem`,
+      String.raw`credentials/signature\key.pem`,
+      String.raw`assets/multipart\payload.bin`,
+    ]);
+  });
+
   it('should redact an escaping env-templated HTTP credential path', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     vi.stubEnv('PRIVATE_KEY_PATH', '../PRIVATE_KEY_SECRET_CANARY_019F62C3.pem');
