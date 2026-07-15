@@ -279,7 +279,17 @@ export async function run(): Promise<void> {
       }
     }
 
-    // Load .env files if specified
+    // Promptfoo also loads workingDirectory/.env implicitly during startup.
+    // Validate it first so selected env-files can still override application
+    // values while no repository-controlled process setting reaches the child.
+    const implicitEnvFilePath = path.join(workingDirectory, '.env');
+    if (fs.existsSync(implicitEnvFilePath)) {
+      core.info(`Loading environment variables from ${implicitEnvFilePath}`);
+      loadEnvironmentFile(implicitEnvFilePath);
+      core.info(`Successfully loaded ${implicitEnvFilePath}`);
+    }
+
+    // Load explicitly selected .env files after the implicit default.
     if (envFiles) {
       const envFileList = envFiles
         .split(',')
