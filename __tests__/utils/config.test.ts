@@ -1117,4 +1117,22 @@ tests:
     mockConfigFiles(refs);
     expect(extractFileDependencies(configPath)).toEqual(['./']);
   });
+
+  it('does not expand atomic YAML values while extracting dependencies', () => {
+    const configPath = '/test/working/promptfooconfig.yaml';
+    mockConfigFiles({
+      [configPath]: [
+        `payload: !!binary ${Buffer.alloc(128 * 1024).toString('base64')}`,
+        'createdAt: 2024-01-01T00:00:00Z',
+        'labels: !!set { safe: null }',
+        'commandLineOptions:',
+        '  envPath: .env.safe',
+      ].join('\n'),
+    });
+
+    expect(extractFileDependencies(configPath)).toEqual([
+      '.env.safe',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
 });

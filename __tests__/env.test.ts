@@ -1215,6 +1215,25 @@ describe('loadConfigEnvironmentFiles', () => {
     );
   });
 
+  test('does not expand atomic YAML values during config traversal', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        `payload: !!binary ${Buffer.alloc(128 * 1024).toString('base64')}`,
+        'createdAt: 2024-01-01T00:00:00Z',
+        'labels: !!set { safe: null }',
+        'commandLineOptions:',
+        '  envPath: .env.safe',
+      ].join('\n'),
+    );
+    writeFile('.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    const target: NodeJS.ProcessEnv = {};
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('safe');
+  });
+
   test('rejects a remote protocol config ref', () => {
     const configPath = writeFile(
       'promptfooconfig.yaml',

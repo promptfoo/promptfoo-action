@@ -36401,7 +36401,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       let nodeCount = 0;
       while (pending2.length > 0) {
         const value = pending2.pop();
-        if (typeof value !== "object" || value === null || inspected.has(value)) {
+        if (typeof value !== "object" || value === null || !Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype || inspected.has(value)) {
           continue;
         }
         inspected.add(value);
@@ -36490,7 +36490,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         }
         continue;
       }
-      if (typeof next.value !== "object" || next.value === null) {
+      if (typeof next.value !== "object" || next.value === null || !Array.isArray(next.value) && Object.getPrototypeOf(next.value) !== Object.prototype) {
         continue;
       }
       if (excludedParameters.has(next.value)) {
@@ -37300,7 +37300,7 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
     let inspectedNodeCount = 0;
     while (pendingValues.length > 0) {
       const value = pendingValues.pop();
-      if (typeof value !== "object" || value === null || inspectedObjects.has(value)) {
+      if (typeof value !== "object" || value === null || !Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype || inspectedObjects.has(value)) {
         continue;
       }
       inspectedObjects.add(value);

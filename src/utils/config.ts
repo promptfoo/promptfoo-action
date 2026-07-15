@@ -230,6 +230,8 @@ export function extractFileDependencies(
         if (
           typeof value !== 'object' ||
           value === null ||
+          (!Array.isArray(value) &&
+            Object.getPrototypeOf(value) !== Object.prototype) ||
           inspected.has(value)
         ) {
           continue;
@@ -357,7 +359,12 @@ export function extractFileDependencies(
         }
         continue;
       }
-      if (typeof next.value !== 'object' || next.value === null) {
+      if (
+        typeof next.value !== 'object' ||
+        next.value === null ||
+        (!Array.isArray(next.value) &&
+          Object.getPrototypeOf(next.value) !== Object.prototype)
+      ) {
         continue;
       }
       if (excludedParameters.has(next.value)) {

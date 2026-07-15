@@ -594,6 +594,8 @@ export function loadConfigEnvironmentFiles(
       if (
         typeof value !== 'object' ||
         value === null ||
+        (!Array.isArray(value) &&
+          Object.getPrototypeOf(value) !== Object.prototype) ||
         inspectedObjects.has(value)
       ) {
         continue;
