@@ -1,4 +1,5 @@
 import * as core from '@actions/core';
+import { parse as parseCsv } from 'csv-parse/sync';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import {
@@ -317,6 +318,7 @@ export function extractFileDependencies(
       refBaseDir = refResolutionRoot,
       includeFileUrls = true,
       testBaseDir = configDir,
+      localRefFile = configPath,
     ): void => {
       if (typeof value === 'string') {
         if (includeFileUrls && value.startsWith('file://')) {
@@ -336,7 +338,13 @@ export function extractFileDependencies(
       inspectedValues.add(value);
       if (Array.isArray(value)) {
         for (const item of value) {
-          extractNestedFileUrls(item, refBaseDir, includeFileUrls, testBaseDir);
+          extractNestedFileUrls(
+            item,
+            refBaseDir,
+            includeFileUrls,
+            testBaseDir,
+            localRefFile,
+          );
         }
         return;
       }
@@ -349,6 +357,15 @@ export function extractFileDependencies(
           let refPath = hashIndex === -1 ? item : item.slice(0, hashIndex);
           const fragment = hashIndex === -1 ? undefined : item.slice(hashIndex);
           if (!refPath) {
+            if (fragment?.startsWith('#/')) {
+              inspectTestFile(
+                localRefFile,
+                refResolutionRoot,
+                testBaseDir,
+                fragment,
+                true,
+              );
+            }
             continue;
           }
           if (refPath.startsWith('file://')) {
@@ -384,7 +401,13 @@ export function extractFileDependencies(
           }
           continue;
         }
-        extractNestedFileUrls(item, refBaseDir, includeFileUrls, testBaseDir);
+        extractNestedFileUrls(
+          item,
+          refBaseDir,
+          includeFileUrls,
+          testBaseDir,
+          localRefFile,
+        );
       }
     };
 
@@ -418,8 +441,18 @@ export function extractFileDependencies(
 
         const testContent = fs.readFileSync(realTestFile, 'utf8');
         if (/\.csv$/i.test(realTestFile)) {
-          for (const value of testContent.match(/file:\/\/[^,\r\n]+/g) ?? []) {
-            processFileUrl(value.trim().replace(/["']+$/, ''));
+          const rows = parseCsv(testContent, {
+            bom: true,
+            delimiter: process.env.PROMPTFOO_CSV_DELIMITER || ',',
+            relax_quotes: true,
+          }) as string[][];
+          for (const row of rows) {
+            for (const value of row) {
+              const fileUrlIndex = value.indexOf('file://');
+              if (fileUrlIndex !== -1) {
+                processFileUrl(value.slice(fileUrlIndex).trim());
+              }
+            }
           }
           return;
         }
@@ -448,7 +481,15 @@ export function extractFileDependencies(
                 if (typeof value !== 'object' || value === null) {
                   return undefined;
                 }
-                const key = token.replace(/~1/g, '/').replace(/~0/g, '~');
+                let decodedToken = token;
+                try {
+                  decodedToken = decodeURIComponent(token);
+                } catch {
+                  // Keep malformed percent-encoded tokens literal.
+                }
+                const key = decodedToken
+                  .replace(/~1/g, '/')
+                  .replace(/~0/g, '~');
                 return (value as Record<string, unknown>)[key];
               }, parsedTests)
           : parsedTests;
@@ -473,7 +514,13 @@ export function extractFileDependencies(
           }
           extractVarFiles(nestedTest.vars, testBaseDir);
           extractAssertFiles(nestedTest.assert);
-          extractNestedFileUrls(nestedTest, refBaseDir, true, testBaseDir);
+          extractNestedFileUrls(
+            nestedTest,
+            refBaseDir,
+            true,
+            testBaseDir,
+            realTestFile,
+          );
         }
       } catch {
         core.warning(`Failed to inspect test file dependency "${testFile}"`);

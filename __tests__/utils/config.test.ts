@@ -460,6 +460,48 @@ tests:
     ).toEqual(['suite index.yaml']);
   });
 
+  it('should decode URI-encoded JSON pointer tokens before selecting tests', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        const target = String(filePath);
+        if (target.endsWith('tests-index.yaml')) {
+          return 'active cases:\n  - tests/cases.yaml';
+        }
+        if (target.endsWith('tests/cases.yaml')) {
+          return '- vars:\n    value: tracked';
+        }
+        return 'tests:\n  $ref: tests-index.yaml#/active%20cases';
+      },
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['tests-index.yaml', 'tests/cases.yaml']);
+  });
+
+  it('should inspect bare test paths selected by a local JSON pointer', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('tests/cases.yaml')
+          ? '- vars:\n    value: tracked'
+          : [
+              'tests:',
+              '  $ref: "#/suites/active"',
+              'suites:',
+              '  active:',
+              '    - tests/cases.yaml',
+            ].join('\n'),
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['tests/cases.yaml']);
+  });
+
   it('should retain a ref dependency when its JSON pointer crosses a scalar', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
     mockFs.readFileSync.mockImplementation(
@@ -512,6 +554,7 @@ tests:
       (filePath: fs.PathOrFileDescriptor) =>
         String(filePath).endsWith('cases.yaml')
           ? [
+              '- $ref: ""',
               '- $ref: "#/definitions/case"',
               '- $ref: https://example.test/case.yaml#/case',
               '- $ref: data:application/json,%7B%7D',
@@ -666,6 +709,34 @@ tests:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/tests/cases.csv', '../config/data/value.txt']);
+  });
+
+  it('should preserve commas in quoted file URLs from a file-backed CSV test', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.csv')
+          ? 'value,expected\n"file://data/value,prod.txt",ok\n'
+          : 'tests: file://tests/cases.csv',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.csv', '../config/data/value,prod.txt']);
+  });
+
+  it('should retain a file-backed CSV test without embedded file URLs', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.csv')
+          ? 'value,expected\ninline,ok\n'
+          : 'tests: file://tests/cases.csv',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.csv']);
   });
 
   it('should warn when reading a file-backed test throws a non-Error', () => {
