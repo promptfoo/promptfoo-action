@@ -6,6 +6,10 @@ const NUMERIC_BRACE_RANGE_PATTERN = /\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g;
 const ZERO = BigInt(0);
 const ONE = BigInt(1);
 
+export function normalizeRuntimeGlobPattern(pattern: string): string {
+  return pattern.replace(/\\/g, '/');
+}
+
 export function hasUnsafeNumericGlobRange(pattern: string): boolean {
   for (const match of pattern.matchAll(NUMERIC_BRACE_RANGE_PATTERN)) {
     if (process.platform !== 'win32') {
@@ -52,9 +56,11 @@ export function hasBalancedGlobDelimiters(pattern: string): boolean {
     ']': 0,
   };
   let inCharacterClass = false;
+  let inPosixCharacterClass = false;
   let escaped = false;
 
-  for (const character of pattern) {
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
     if (escaped) {
       if (character in closers) {
         escapedOpeningClosers[closers[character]]++;
@@ -67,6 +73,22 @@ export function hasBalancedGlobDelimiters(pattern: string): boolean {
       continue;
     }
     if (inCharacterClass) {
+      if (
+        !inPosixCharacterClass &&
+        character === '[' &&
+        pattern[index + 1] === ':'
+      ) {
+        inPosixCharacterClass = true;
+        index++;
+        continue;
+      }
+      if (inPosixCharacterClass) {
+        if (character === ':' && pattern[index + 1] === ']') {
+          inPosixCharacterClass = false;
+          index++;
+        }
+        continue;
+      }
       if (character === ']') {
         inCharacterClass = false;
       }
@@ -87,5 +109,7 @@ export function hasBalancedGlobDelimiters(pattern: string): boolean {
     }
   }
 
-  return expectedClosers.length === 0 && !inCharacterClass;
+  return (
+    expectedClosers.length === 0 && !inCharacterClass && !inPosixCharacterClass
+  );
 }

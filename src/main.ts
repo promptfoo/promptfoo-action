@@ -27,6 +27,7 @@ import {
   hasUnsafeNumericGlobRange,
   MAX_BRACE_EXPANSIONS,
   MAX_GLOB_PATTERN_LENGTH,
+  normalizeRuntimeGlobPattern,
 } from './utils/glob';
 import {
   parseOptionalPercentage,
@@ -589,12 +590,14 @@ export async function run(): Promise<void> {
               return true;
             }
 
+            const runtimeDep = normalizeRuntimeGlobPattern(dep);
+
             if (
-              dep.length > MAX_GLOB_PATTERN_LENGTH ||
-              dep.includes('\0') ||
-              !hasBalancedGlobDelimiters(dep) ||
-              hasUnsafeNumericGlobRange(dep) ||
-              braceExpand(dep, {
+              runtimeDep.length > MAX_GLOB_PATTERN_LENGTH ||
+              runtimeDep.includes('\0') ||
+              !hasBalancedGlobDelimiters(runtimeDep) ||
+              hasUnsafeNumericGlobRange(runtimeDep) ||
+              braceExpand(runtimeDep, {
                 braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
               }).length > MAX_BRACE_EXPANSIONS
             ) {
@@ -605,14 +608,16 @@ export async function run(): Promise<void> {
             }
 
             if (
-              glob.hasMagic(dep, {
+              glob.hasMagic(runtimeDep, {
                 magicalBraces: true,
                 braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+                windowsPathsNoEscape: true,
               })
             ) {
-              const matcher = new Minimatch(dep, {
+              const matcher = new Minimatch(runtimeDep, {
                 platform: 'linux',
                 braceExpandMax: MAX_BRACE_EXPANSIONS,
+                windowsPathsNoEscape: true,
               });
               if (
                 changedFilesList.some((changedFile) =>

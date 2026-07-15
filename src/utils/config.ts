@@ -10,6 +10,7 @@ import {
   hasUnsafeNumericGlobRange,
   MAX_BRACE_EXPANSIONS,
   MAX_GLOB_PATTERN_LENGTH,
+  normalizeRuntimeGlobPattern,
 } from './glob';
 
 type ProviderEntry = string | { id?: string; [key: string]: unknown };
@@ -29,11 +30,18 @@ type TestEntry = {
   assertScoringFunction?: string;
   [key: string]: unknown;
 };
+type ScenarioEntry =
+  | string
+  | {
+      tests?: string | TestEntry | Array<string | TestEntry>;
+      config?: TestEntry[];
+    };
 const MAX_STRUCTURED_DEPENDENCY_BYTES = 10 * 1024 * 1024;
 const MAX_TEST_PATH_LENGTH = 4096;
 const GLOB_MAGIC_OPTIONS = {
   magicalBraces: true,
   braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+  windowsPathsNoEscape: true,
 };
 const FILE_BEARING_PROVIDER_KEYS = new Set([
   'file',
@@ -75,13 +83,7 @@ export interface PromptfooConfig {
     | Array<string | { file?: string; [key: string]: unknown }>;
   tests?: string | TestEntry | Array<string | TestEntry>;
   defaultTest?: string | TestEntry;
-  scenarios?: Array<
-    | string
-    | {
-        tests?: string | TestEntry | Array<string | TestEntry>;
-        config?: TestEntry[];
-      }
-  >;
+  scenarios?: ScenarioEntry | ScenarioEntry[];
   nunjucksFilters?: Record<string, string>;
   extensions?: string | string[];
 }
@@ -303,12 +305,12 @@ export function extractFileDependencies(configPath: string): string[] {
     // Helper function to process file:// paths with glob support
     const processFileUrlUnchecked = (fileUrl: string): string[] | undefined => {
       const encodedFilePath = fileUrl.replace('file://', '');
-      const filePath =
+      const rawFilePath =
         process.platform === 'win32' &&
         /^\/[A-Za-z]:[\\/]/.test(encodedFilePath)
           ? encodedFilePath.slice(1)
           : encodedFilePath;
-      if (isForeignWindowsPath(filePath)) {
+      if (isForeignWindowsPath(rawFilePath)) {
         if (!dependencyRootWarningEmitted) {
           core.warning(
             'Skipping unsafe config dependency content; its path may still be tracked for change detection',
@@ -317,6 +319,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         return [];
       }
+      const filePath = normalizeRuntimeGlobPattern(rawFilePath);
       if (filePath.includes('\0')) {
         if (!dependencyRootWarningEmitted) {
           core.warning(
@@ -384,6 +387,7 @@ export function extractFileDependencies(configPath: string): string[] {
         const matches = glob.sync(safePatterns, {
           nodir: true,
           braceExpandMax: MAX_BRACE_EXPANSIONS,
+          windowsPathsNoEscape: true,
         });
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
@@ -431,7 +435,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
         if (isDirectory(absolutePath)) {
           // It's a directory, preserve trailing slash if it was there
-          const directoryPath = fileUrl.endsWith('/')
+          const directoryPath = filePath.endsWith('/')
             ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
             : absolutePath;
           addDependencyPath(directoryPath);
@@ -440,6 +444,16 @@ export function extractFileDependencies(configPath: string): string[] {
           // It's a regular file path
           addDependencyPath(absolutePath);
           resolvedPaths.push(absolutePath);
+          if (rawFilePath !== filePath) {
+            const literalPath = resolveConfigDependency(
+              rawFilePath,
+              'literal config file dependency',
+            );
+            if (literalPath) {
+              addDependencyPath(literalPath);
+              resolvedPaths.push(literalPath);
+            }
+          }
         }
       }
 
@@ -459,17 +473,41 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     const hasGlobMagicSafely = (filePath: string): boolean => {
+      const runtimePattern = normalizeRuntimeGlobPattern(filePath);
       if (
-        filePath.length > MAX_GLOB_PATTERN_LENGTH ||
-        filePath.includes('\0') ||
-        hasUnsafeNumericGlobRange(filePath)
+        runtimePattern.length > MAX_GLOB_PATTERN_LENGTH ||
+        runtimePattern.includes('\0') ||
+        hasUnsafeNumericGlobRange(runtimePattern)
       ) {
         return true;
       }
       try {
-        return glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS);
+        return glob.hasMagic(runtimePattern, GLOB_MAGIC_OPTIONS);
       } catch {
         return true;
+      }
+    };
+
+    const trackLiteralHttpDependency = (
+      filePath: string,
+      stripFunctionSelector: boolean = false,
+    ): void => {
+      const rawFilePath = filePath.startsWith('file://')
+        ? filePath.slice('file://'.length)
+        : filePath;
+      if (/\{\{|\}\}|\{%|\{#/.test(rawFilePath)) {
+        watchDependencyRoots();
+        return;
+      }
+      const cleanFilePath = stripFunctionSelector
+        ? rawFilePath.replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1')
+        : rawFilePath;
+      const absolutePath = resolveConfigDependency(
+        cleanFilePath,
+        'HTTP file dependency',
+      );
+      if (absolutePath) {
+        addDependencyPath(absolutePath);
       }
     };
 
@@ -726,7 +764,10 @@ export function extractFileDependencies(configPath: string): string[] {
           !cleanPath.includes('\0') &&
           !isForeignWindowsPath(cleanPath)
         ) {
-          const lexicalPath = path.resolve(configDir, cleanPath);
+          const lexicalPath = path.resolve(
+            configDir,
+            normalizeRuntimeGlobPattern(cleanPath),
+          );
           if (getContainingDependencyRoot(lexicalPath)) {
             dependencies.add(lexicalPath);
           }
@@ -880,15 +921,7 @@ export function extractFileDependencies(configPath: string): string[] {
               })
             : undefined;
         if (fileAuthPath !== undefined) {
-          processProviderValue(
-            fileAuthPath.startsWith('file://')
-              ? fileAuthPath
-              : `file://${fileAuthPath}`,
-            true,
-            providerEnv,
-            false,
-            true,
-          );
+          trackLiteralHttpDependency(fileAuthPath, true);
         }
         for (const [key, nestedValue] of Object.entries(value)) {
           if (key === 'env' || (key === 'path' && fileAuthPath !== undefined)) {
@@ -927,15 +960,7 @@ export function extractFileDependencies(configPath: string): string[] {
               ...process.env,
               ...providerEnv,
             });
-            processProviderValue(
-              multipartPath.startsWith('file://')
-                ? multipartPath
-                : `file://${multipartPath}`,
-              true,
-              providerEnv,
-              false,
-              true,
-            );
+            trackLiteralHttpDependency(multipartPath);
             continue;
           }
           if (
@@ -949,13 +974,7 @@ export function extractFileDependencies(configPath: string): string[] {
               ...process.env,
               ...providerEnv,
             });
-            processProviderValue(
-              `file://${credentialPath}`,
-              true,
-              providerEnv,
-              false,
-              true,
-            );
+            trackLiteralHttpDependency(credentialPath);
             continue;
           }
           if (
@@ -1029,7 +1048,7 @@ export function extractFileDependencies(configPath: string): string[] {
     );
     processProviderValue(config.targets, false, configEnv, false, false, true);
 
-    const structuredPromptFiles: string[] = [];
+    const structuredPromptFiles = new Set<string>();
     // Extract prompt files
     if (config.prompts) {
       const prompts = Array.isArray(config.prompts)
@@ -1063,12 +1082,17 @@ export function extractFileDependencies(configPath: string): string[] {
               watchDependencyRoots();
               continue;
             }
-            processFileUrl(
+            const resolvedPromptFiles = processFileUrl(
               (renderedPromptPath.startsWith('file://')
                 ? renderedPromptPath
                 : `file://${renderedPromptPath}`
               ).replace(PROMPT_FILE_SELECTOR_PATTERN, '$1'),
             );
+            for (const resolvedPromptFile of resolvedPromptFiles ?? []) {
+              if (/\.(?:ya?ml|json)$/i.test(resolvedPromptFile)) {
+                structuredPromptFiles.add(resolvedPromptFile);
+              }
+            }
           }
         } else if (typeof prompt === 'object' && prompt.file) {
           const absolutePath = resolveConfigDependency(
@@ -1078,7 +1102,7 @@ export function extractFileDependencies(configPath: string): string[] {
           if (absolutePath) {
             addDependencyPath(absolutePath);
             if (/\.(?:ya?ml|json)$/i.test(absolutePath)) {
-              structuredPromptFiles.push(absolutePath);
+              structuredPromptFiles.add(absolutePath);
             }
           }
         }
@@ -1211,9 +1235,21 @@ export function extractFileDependencies(configPath: string): string[] {
     const visitedTestEntries = new WeakMap<object, Set<string>>();
     const visitedTestFiles = new Set<string>();
     let testTraversalCount = 0;
-    const extractGeneratorConfigReferences = (value: unknown): void => {
+    const extractGeneratorConfigReferences = (
+      value: unknown,
+      collectStructuredPrompts: boolean = false,
+    ): void => {
       if (typeof value === 'string' && value.startsWith('file://')) {
-        processFileUrl(value.replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1'));
+        const resolvedPaths = processFileUrl(
+          value.replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1'),
+        );
+        if (collectStructuredPrompts) {
+          for (const resolvedPath of resolvedPaths ?? []) {
+            if (/\.(?:ya?ml|json)$/i.test(resolvedPath)) {
+              structuredPromptFiles.add(resolvedPath);
+            }
+          }
+        }
         return;
       }
       if (typeof value !== 'object' || value === null) {
@@ -1229,11 +1265,20 @@ export function extractFileDependencies(configPath: string): string[] {
       testTraversalCount += 1;
       visitedGeneratorConfigs.add(value);
       for (const entry of Array.isArray(value) ? value : Object.values(value)) {
-        extractGeneratorConfigReferences(entry);
+        extractGeneratorConfigReferences(entry, collectStructuredPrompts);
       }
     };
 
+    let structuredPromptTraversalCount = 0;
     for (const promptFile of structuredPromptFiles) {
+      if (structuredPromptTraversalCount >= 1024) {
+        watchDependencyRoots();
+        core.warning(
+          'Nested prompt dependency traversal stopped; conservatively watching the dependency root',
+        );
+        break;
+      }
+      structuredPromptTraversalCount += 1;
       if (!fs.existsSync(promptFile)) {
         continue;
       }
@@ -1245,6 +1290,7 @@ export function extractFileDependencies(configPath: string): string[] {
           loadYaml(fs.readFileSync(promptFile, 'utf8'), {
             schema: CORE_SCHEMA.withTags(mergeTag),
           }),
+          true,
         );
       } catch {
         watchDependencyRoots();
@@ -1469,10 +1515,53 @@ export function extractFileDependencies(configPath: string): string[] {
     extractTests(config.defaultTest);
     extractTests(config.tests);
 
-    if (config.scenarios) {
-      for (const scenario of config.scenarios) {
+    const visitedScenarioFiles = new Set<string>();
+    let scenarioTraversalCount = 0;
+    const extractScenarios = (scenarios: ScenarioEntry[]): void => {
+      for (const scenario of scenarios) {
         if (typeof scenario === 'string') {
-          extractTests(scenario);
+          const resolvedScenarioFiles = processFileUrl(scenario);
+          for (const scenarioFile of resolvedScenarioFiles ?? []) {
+            if (
+              !/\.(?:ya?ml|json)$/i.test(scenarioFile) ||
+              visitedScenarioFiles.has(scenarioFile) ||
+              !fs.existsSync(scenarioFile)
+            ) {
+              continue;
+            }
+            if (scenarioTraversalCount >= 1024) {
+              watchDependencyRoots();
+              core.warning(
+                'Nested scenario dependency traversal stopped; conservatively watching the dependency root',
+              );
+              return;
+            }
+            scenarioTraversalCount += 1;
+            visitedScenarioFiles.add(scenarioFile);
+            try {
+              if (
+                fs.statSync(scenarioFile).size > MAX_STRUCTURED_DEPENDENCY_BYTES
+              ) {
+                throw new Error('nested scenario dependency is too large');
+              }
+              const loadedScenarios = loadYaml(
+                fs.readFileSync(scenarioFile, 'utf8'),
+                {
+                  schema: CORE_SCHEMA.withTags(mergeTag),
+                },
+              ) as ScenarioEntry | ScenarioEntry[];
+              extractScenarios(
+                Array.isArray(loadedScenarios)
+                  ? loadedScenarios
+                  : [loadedScenarios],
+              );
+            } catch {
+              watchDependencyRoots();
+              core.warning(
+                'Failed to extract nested scenario dependencies; conservatively watching the dependency root',
+              );
+            }
+          }
           continue;
         }
         extractTests(scenario.tests, configDir, true);
@@ -1482,6 +1571,12 @@ export function extractFileDependencies(configPath: string): string[] {
           }
         }
       }
+    };
+
+    if (config.scenarios) {
+      extractScenarios(
+        Array.isArray(config.scenarios) ? config.scenarios : [config.scenarios],
+      );
     }
 
     if (config.nunjucksFilters) {

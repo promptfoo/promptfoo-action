@@ -1522,6 +1522,24 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should run when a literal-backslash config dependency changes on POSIX', async () => {
+      if (process.platform === 'win32') return;
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/certs\\ca.pem' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/certs\\ca.pem',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should run when a workspace-root dependency sentinel is present', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'deleted_provider_one.yaml' },
@@ -1592,6 +1610,57 @@ describe('GitHub Action Main', () => {
 
       expect(posixMatchesGlob).not.toHaveBeenCalled();
       expect(minimatchMatch).toHaveBeenCalledWith('evals/providers/deleted.py');
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should match config dependency globs with runtime no-escape semantics', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/providers/one/deleted.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/providers/\\{one,two}/*.py',
+      ]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('*'),
+      );
+
+      await run();
+
+      expect(mockGlob.hasMagic).toHaveBeenCalledWith(
+        'evals/providers//{one,two}/*.py',
+        expect.objectContaining({ windowsPathsNoEscape: true }),
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should match POSIX character classes in config dependency globs', async () => {
+      const minimatchMatch = vi.spyOn(Minimatch.prototype, 'match');
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/providers/provider.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/providers/[[:alpha:]]*.py',
+      ]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('*'),
+      );
+
+      await run();
+
+      expect(minimatchMatch).toHaveBeenCalledWith(
+        'evals/providers/provider.py',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        'Failed to validate config dependency glob; conservatively running evaluation',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
@@ -1698,6 +1767,25 @@ describe('GitHub Action Main', () => {
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue([
         'prompts/{1..1000000000}.txt',
+      ]);
+      mockGlob.hasMagic.mockImplementation(() => {
+        throw new Error('dependency glob parser should not run');
+      });
+
+      await run();
+
+      expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should conservatively run before parsing an oversized runtime no-escape numeric config dependency glob', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'prompts/\\{1..1000000000}.txt',
       ]);
       mockGlob.hasMagic.mockImplementation(() => {
         throw new Error('dependency glob parser should not run');
@@ -2364,6 +2452,26 @@ describe('GitHub Action Main', () => {
         expect.objectContaining({ nodir: true, braceExpandMax: 1024 }),
       );
       expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should preserve POSIX character classes in action prompt globs', async () => {
+      const patterns = [
+        'prompts/[[:alpha:]]*.txt',
+        'prompts/[[:digit:][:space:]]*.txt',
+      ];
+      withInputs({ prompts: patterns.join('\n') });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(patterns.length);
+      for (const pattern of patterns) {
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          pattern,
+          expect.objectContaining({ braceExpandMax: 1024 }),
+        );
+      }
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 

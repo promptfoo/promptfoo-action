@@ -1286,6 +1286,88 @@ providers:
     ]);
   });
 
+  it('should preserve literal backslashes in plain HTTP file paths on POSIX', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/upload
+    config:
+      auth:
+        type: file
+        path: 'auth\\get-token.ts'
+      tls:
+        caPath: 'certs\\ca.pem'
+      signatureAuth:
+        privateKeyPath: 'keys\\signing.pem'
+      multipart:
+        parts:
+          - kind: file
+            source:
+              type: path
+              path: 'uploads\\payload.bin'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/auth\\get-token.ts',
+      'evals/certs\\ca.pem',
+      'evals/keys\\signing.pem',
+      'evals/uploads\\payload.bin',
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should track both literal and runtime-normalized non-glob file references on POSIX', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'file://providers\\custom.py'
+  - id: https://example.test/transform
+    config:
+      validateStatus: 'file://validators\\status.js:validate'
+      transformResponse: 'file://transforms\\response.js:transform'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/providers/custom.py',
+      'evals/providers\\custom.py',
+      'evals/validators/status.js',
+      'evals/validators\\status.js',
+      'evals/transforms/response.js',
+      'evals/transforms\\response.js',
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should reject an unsafe literal-backslash alias while preserving its normalized dependency', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue(
+      "providers: 'file://providers\\custom.py'",
+    );
+    mockFs.realpathSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('providers\\custom.py')
+        ? '/private/outside/LITERAL_ALIAS_SECRET_MARKER.py'
+        : filePath,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/custom.py', 'evals/providers\\custom.py']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping unsafe config dependency content; its path may still be tracked for change detection',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) =>
+          String(call[0]).includes('LITERAL_ALIAS_SECRET_MARKER'),
+        ),
+    ).toBe(false);
+  });
+
   it('should revisit an aliased HTTP file-auth value in its auth context', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -2042,6 +2124,64 @@ providers:
     ]);
   });
 
+  it('should normalize runtime no-escape brace alternatives before containment checks', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "providers: 'file://providers/\\{safe,../../outside}/*.yaml'",
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/safe/provider.yaml',
+    ]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      './',
+      'providers/safe/provider.yaml',
+      'providers/safe/',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      ['/test/working/providers/safe/*.yaml'],
+      expect.objectContaining({
+        braceExpandMax: 1024,
+        nodir: true,
+        windowsPathsNoEscape: true,
+      }),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
+    );
+  });
+
+  it('should expand bounded runtime no-escape provider braces', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "providers: 'file://providers/\\{one,two}.py'",
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/one.py',
+      '/test/working/providers/two.py',
+    ]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/one.py',
+      'providers/two.py',
+      'providers/',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      ['/test/working/providers/one.py', '/test/working/providers/two.py'],
+      expect.objectContaining({ windowsPathsNoEscape: true }),
+    );
+  });
+
   it('should reject mismatched glob delimiters before enumerating unsafe brace alternatives', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -2091,6 +2231,24 @@ providers:
     expect(mockGlob.sync).toHaveBeenCalledTimes(2);
   });
 
+  it('should preserve POSIX character classes in config dependency globs', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "providers: 'file://providers/[[:alpha:]]*.py'",
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/providers/provider.py']);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['providers/provider.py', 'providers/']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      ['/test/working/providers/[[:alpha:]]*.py'],
+      expect.objectContaining({ windowsPathsNoEscape: true }),
+    );
+  });
+
   it('should reject foreign Windows absolute dependency paths on POSIX without leaking them', () => {
     if (process.platform === 'win32') return;
     mockFs.readFileSync.mockReturnValue(`
@@ -2138,6 +2296,21 @@ prompts:
   it('should reject a huge numeric dependency brace range before glob parsing', () => {
     mockFs.readFileSync.mockReturnValue(
       'providers: file://providers/{1..1000000000}.py',
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
+  it('should reject a huge runtime no-escape numeric dependency brace range before glob parsing', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "providers: 'file://providers/\\{1..1000000000}.py'",
     );
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
@@ -3851,6 +4024,104 @@ tests:
     ).toEqual(['evals/prompts/missing.yaml']);
   });
 
+  it('should extract nested references from string YAML prompts', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('prompts/chat.yaml'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'prompts:\n  - file://prompts/chat.yaml'
+        : 'messages:\n  - file://shared/context.txt',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/chat.yaml', 'evals/shared/context.txt']);
+  });
+
+  it('should extract nested references from a literal-backslash YAML prompt on POSIX', () => {
+    if (process.platform === 'win32') return;
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('prompts\\chat.yaml'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? "prompts:\n  - 'file://prompts\\chat.yaml'"
+        : 'messages:\n  - file://shared/context.txt',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/prompts/chat.yaml',
+      'evals/prompts\\chat.yaml',
+      'evals/shared/context.txt',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+  });
+
+  it('should follow nested YAML prompt references once when they are cyclic', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      /prompts\/(?:one|two)\.yaml$/.test(filePath),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  - file://prompts/one.yaml';
+      }
+      if (filePath.endsWith('one.yaml')) {
+        return 'messages:\n  - file://prompts/two.yaml';
+      }
+      return 'messages:\n  - file://prompts/one.yaml\n  - file://shared/context.txt';
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/prompts/one.yaml',
+      'evals/prompts/two.yaml',
+      'evals/shared/context.txt',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(3);
+  });
+
+  it('should skip unsafe nested prompt and scenario references without reading them', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('prompts/chat.yaml'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'prompts:\n  - file://prompts/chat.yaml\nscenarios:\n  - file://../../outside/scenario.yaml'
+        : 'messages:\n  - file://../../outside/context.txt',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/chat.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping unsafe config dependency content; its path may still be tracked for change detection',
+    );
+  });
+
+  it('should stop after 1024 structured prompt files', () => {
+    const promptPaths = Array.from(
+      { length: 1025 },
+      (_, index) => `  - file://prompts/prompt-${index}.yaml`,
+    ).join('\n');
+    mockFs.readFileSync.mockReturnValue(`prompts:\n${promptPaths}`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toHaveLength(1026);
+    expect(deps).toContain('./');
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Nested prompt dependency traversal stopped; conservatively watching the dependency root',
+    );
+  });
+
   it('should not read oversized structured provider, prompt, or test dependencies', () => {
     mockFs.existsSync.mockImplementation((filePath: string) =>
       /(?:prompt|cases)\.ya?ml$/.test(filePath),
@@ -4075,6 +4346,184 @@ nunjucksFilters:
       'evals/filters/filter_pretty.js',
       'evals/filters/',
     ]);
+  });
+
+  it('should extract nested dependencies from external scenario globs', () => {
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/evals/scenarios/cases.yaml']);
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      /(?:scenarios\/cases|tests\/cases)\.yaml$/.test(filePath),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return "scenarios:\n  - 'file://scenarios/*.yaml'";
+      }
+      if (filePath.endsWith('scenarios/cases.yaml')) {
+        return `
+- tests: file://tests/cases.yaml
+  config:
+    - vars:
+        context: file://fixtures/scenario-context.txt
+      assert:
+        - type: llm-rubric
+          provider: python:graders/scenario.py:grade
+`;
+      }
+      return `
+- vars:
+    input: file://fixtures/test-input.txt
+  provider: ruby:providers/scenario.rb:call_api
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/scenarios/cases.yaml',
+      'evals/scenarios/',
+      'evals/tests/cases.yaml',
+      'evals/providers/scenario.rb',
+      'evals/fixtures/test-input.txt',
+      'evals/fixtures/scenario-context.txt',
+      'evals/graders/scenario.py',
+    ]);
+  });
+
+  it('should extract nested dependencies from a scalar external scenario reference', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      /scenarios\/(?:scenario|cases)\.yaml$/.test(filePath),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'scenarios: file://scenarios/scenario.yaml';
+      }
+      if (filePath.endsWith('scenarios/scenario.yaml')) {
+        return `
+- config:
+    - assert:
+        - type: equals
+          value: scenario-handled
+  tests: file://scenarios/cases.yaml
+`;
+      }
+      return `
+- vars: vars/context.yaml
+  provider: python:providers/scenario.py:call_api
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/scenarios/scenario.yaml',
+      'evals/scenarios/cases.yaml',
+      'evals/providers/scenario.py',
+      'evals/vars/context.yaml',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should follow external scenario files once when they are cyclic', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      /scenarios\/(?:one|two)\.yaml$/.test(filePath),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'scenarios:\n  - file://scenarios/one.yaml';
+      }
+      if (filePath.endsWith('one.yaml')) {
+        return '- file://scenarios/two.yaml';
+      }
+      return `
+- file://scenarios/one.yaml
+- tests:
+    - vars:
+        input: file://fixtures/cyclic-input.txt
+  config:
+    - assertScoringFunction: file://graders/cyclic.cjs:score
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/scenarios/one.yaml',
+      'evals/scenarios/two.yaml',
+      'evals/fixtures/cyclic-input.txt',
+      'evals/graders/cyclic.cjs',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(3);
+  });
+
+  it('should extract a single scenario object from an external file', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('scenarios/single.yaml'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'scenarios:\n  - file://scenarios/single.yaml'
+        : 'tests:\n  - vars:\n      input: file://fixtures/single.txt\nconfig:\n  - assertScoringFunction: file://graders/single.cjs:score',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/scenarios/single.yaml',
+      'evals/fixtures/single.txt',
+      'evals/graders/single.cjs',
+    ]);
+  });
+
+  it('should not read an oversized external scenario file', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('scenarios/large.yaml'),
+    );
+    mockFs.statSync.mockImplementation(
+      (filePath: string) =>
+        ({
+          isDirectory: () => false,
+          size: filePath.endsWith('scenarios/large.yaml')
+            ? 11 * 1024 * 1024
+            : 0,
+        }) as fs.Stats,
+    );
+    mockFs.readFileSync.mockReturnValue(
+      'scenarios:\n  - file://scenarios/large.yaml',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/scenarios/large.yaml', './']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract nested scenario dependencies; conservatively watching the dependency root',
+    );
+  });
+
+  it('should stop after 1024 external scenario files', () => {
+    const scenarioPaths = Array.from(
+      { length: 1025 },
+      (_, index) => `  - file://scenarios/scenario-${index}.yaml`,
+    ).join('\n');
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? `scenarios:\n${scenarioPaths}`
+        : '[]',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toHaveLength(1026);
+    expect(deps).toContain('./');
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1025);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Nested scenario dependency traversal stopped; conservatively watching the dependency root',
+    );
   });
 
   it('should preserve literal variable and Go assertion selectors while stripping Ruby assertion selectors', () => {
