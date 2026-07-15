@@ -769,6 +769,10 @@ export async function run(): Promise<void> {
     const promptFiles: string[] = [];
     const allPromptFiles: string[] = [];
     const seenPromptFiles = new Set<string>();
+    const repositoryKey = (file: string): string =>
+      process.platform === 'win32' ? file.toLowerCase() : file;
+    const configKey = repositoryKey(configRepositoryPath);
+    const changedFileKeys = new Set(changedFilesList.map(repositoryKey));
     let realWorkspaceRoot: string | undefined;
 
     for (const globPattern of validPromptFilesGlobs) {
@@ -806,11 +810,8 @@ export async function run(): Promise<void> {
         const repositoryFile = toRepositoryPath(
           path.relative(workspaceRoot, absolutePrompt),
         );
-        if (repositoryFile === configRepositoryPath) return false;
-        const promptKey =
-          process.platform === 'win32'
-            ? repositoryFile.toLowerCase()
-            : repositoryFile;
+        const promptKey = repositoryKey(repositoryFile);
+        if (promptKey === configKey) return false;
         if (seenPromptFiles.has(promptKey)) return false;
         seenPromptFiles.add(promptKey);
         return true;
@@ -823,7 +824,7 @@ export async function run(): Promise<void> {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
-          return changedFilesList.includes(repositoryFile);
+          return changedFileKeys.has(repositoryKey(repositoryFile));
         });
         promptFiles.push(...changedMatches);
       } else {

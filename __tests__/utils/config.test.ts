@@ -2309,6 +2309,22 @@ providers:
     );
   });
 
+  it('should emit one containment warning for repeated foreign Windows-absolute dependencies', () => {
+    const providers = Array.from(
+      { length: 32 },
+      (_, index) => `  - 'file://C:/outside/provider-${index}.py'`,
+    ).join('\n');
+    mockFs.readFileSync.mockReturnValue(`providers:\n${providers}`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    const warnings = (core.warning as Mock).mock.calls.filter(([message]) =>
+      String(message).includes('must stay within the repository workspace'),
+    );
+    expect(warnings).toHaveLength(1);
+  });
+
   it('should recognize assertion selectors after a Windows drive prefix', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:

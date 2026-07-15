@@ -595,6 +595,47 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should preserve a changed prompt and exclude config across Windows casing variants', async () => {
+      const currentPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      withInputs({
+        config: 'PromptFooConfig.yaml',
+        prompts: 'PROMPTS/*.txt\nprompts/*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/shared.txt', status: 'modified' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'PROMPTS/*.txt'
+          ? ['promptfooconfig.yaml', 'PROMPTS/Shared.txt']
+          : ['prompts/shared.txt'],
+      );
+
+      try {
+        await run();
+
+        const args = mockExec.exec.mock.calls[0][1] as string[];
+        expect(args).toContain('PROMPTS/Shared.txt');
+        expect(args).not.toContain('prompts/shared.txt');
+        expect(args).not.toContain('promptfooconfig.yaml');
+        expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+          expect.objectContaining({
+            body: expect.stringContaining(
+              'LLM prompt was modified in these files: PROMPTS/Shared.txt',
+            ),
+          }),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
     test('should process all remaining prompts when a monitored prompt is deleted', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'prompts/removed.txt', status: 'removed' },

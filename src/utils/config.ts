@@ -172,6 +172,7 @@ export function extractFileDependencies(configPath: string): string[] {
     dependencies.add(cwd);
   };
   let configParsed = false;
+  let warnedForeignWindowsPath = false;
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -206,6 +207,8 @@ export function extractFileDependencies(configPath: string): string[] {
         }
 
         if (path.win32.isAbsolute(filePath) && !path.isAbsolute(filePath)) {
+          if (warnedForeignWindowsPath) return undefined;
+          warnedForeignWindowsPath = true;
           throw new Error(
             `${source} must stay within the repository workspace`,
           );
