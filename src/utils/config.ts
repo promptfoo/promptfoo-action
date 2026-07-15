@@ -211,6 +211,27 @@ function stripLeadingNunjucksComments(value: string): string {
   return foundComment ? value.slice(index) : value;
 }
 
+function stripNunjucksComments(value: string): string {
+  const uncommented: string[] = [];
+  let index = 0;
+
+  while (index < value.length) {
+    const commentStart = value.indexOf('{#', index);
+    if (commentStart === -1) {
+      break;
+    }
+    const commentEnd = value.indexOf('#}', commentStart + 2);
+    if (commentEnd === -1) {
+      break;
+    }
+    uncommented.push(value.slice(index, commentStart));
+    index = commentEnd + 2;
+  }
+  uncommented.push(value.slice(index));
+
+  return uncommented.join('');
+}
+
 function startsWithEnvExpression(value: string): boolean {
   const candidate = value.trimStart();
   if (!candidate.startsWith('{{')) {
@@ -234,7 +255,7 @@ function mayRenderFileUrl(value: string): boolean {
   return (
     (candidate.includes('file://') && /^\{(?:\{-?|%-?)/.test(candidate)) ||
     (candidate.includes('{#') &&
-      candidate.replace(/\{#[\s\S]*?#\}/g, '').startsWith('file://'))
+      stripNunjucksComments(candidate).startsWith('file://'))
   );
 }
 

@@ -38191,6 +38191,24 @@ function stripLeadingNunjucksComments(value) {
   }
   return foundComment ? value.slice(index) : value;
 }
+function stripNunjucksComments(value) {
+  const uncommented = [];
+  let index = 0;
+  while (index < value.length) {
+    const commentStart = value.indexOf("{#", index);
+    if (commentStart === -1) {
+      break;
+    }
+    const commentEnd = value.indexOf("#}", commentStart + 2);
+    if (commentEnd === -1) {
+      break;
+    }
+    uncommented.push(value.slice(index, commentStart));
+    index = commentEnd + 2;
+  }
+  uncommented.push(value.slice(index));
+  return uncommented.join("");
+}
 function startsWithEnvExpression(value) {
   const candidate = value.trimStart();
   if (!candidate.startsWith("{{")) {
@@ -38207,7 +38225,7 @@ function mayRenderFileUrl(value) {
   if (candidate.startsWith("file://") || startsWithEnvExpression(candidate)) {
     return true;
   }
-  return candidate.includes("file://") && /^\{(?:\{-?|%-?)/.test(candidate) || candidate.includes("{#") && candidate.replace(/\{#[\s\S]*?#\}/g, "").startsWith("file://");
+  return candidate.includes("file://") && /^\{(?:\{-?|%-?)/.test(candidate) || candidate.includes("{#") && stripNunjucksComments(candidate).startsWith("file://");
 }
 function hasGlobMagic(pattern) {
   if (pattern.length > MAX_GLOB_PATTERN_LENGTH) {

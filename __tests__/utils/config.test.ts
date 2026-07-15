@@ -903,7 +903,7 @@ providers:
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     const validPrefix = '{# choose #} '.repeat(2_000);
     const malformedPrefix = `{{#${'#}}{{#'.repeat(2_000)}`;
-    const unclosedComment = `{#${'{{#'.repeat(2_000)}`;
+    const unclosedComment = `{#${'{{#'.repeat(65_537)}`;
     mockFs.readFileSync.mockReturnValue(`
 env:
   PROVIDER_REF: file://providers/current.py
