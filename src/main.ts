@@ -4,6 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -504,15 +505,55 @@ export async function run(): Promise<void> {
       .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
       .filter((file) => file);
 
+    const promptRoots = isPathInside(workspaceRoot, workingDirectory)
+      ? [workspaceRoot]
+      : [workspaceRoot, workingDirectory];
+    let resolvedPromptRoots: string[];
+    try {
+      resolvedPromptRoots = promptRoots.map((root) => fs.realpathSync(root));
+    } catch {
+      throw new Error('Unable to resolve an allowed prompt directory.');
+    }
+
     for (const globPattern of promptFilesGlobs) {
+      for (const pattern of braceExpand(globPattern)) {
+        const absolutePattern = path.resolve(workingDirectory, pattern);
+        if (
+          (path.win32.isAbsolute(pattern) && !path.isAbsolute(pattern)) ||
+          !promptRoots.some((root) => isPathInside(root, absolutePattern))
+        ) {
+          throw new Error(
+            'Prompt file paths must stay within the checkout or working directory.',
+          );
+        }
+      }
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,
       });
 
       const eligibleMatches = matches.filter((file) => {
+        const absoluteFile = path.resolve(workingDirectory, file);
+        if (!promptRoots.some((root) => isPathInside(root, absoluteFile))) {
+          throw new Error(
+            'Prompt file paths must stay within the checkout or working directory.',
+          );
+        }
+        let resolvedFile: string;
+        try {
+          resolvedFile = fs.realpathSync(absoluteFile);
+        } catch {
+          throw new Error('Unable to resolve a matched prompt file.');
+        }
+        if (
+          !resolvedPromptRoots.some((root) => isPathInside(root, resolvedFile))
+        ) {
+          throw new Error(
+            'Prompt file paths must stay within the checkout or working directory.',
+          );
+        }
         const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          path.relative(workspaceRoot, absoluteFile),
         );
         return repositoryFile !== configRepositoryPath;
       });
@@ -531,10 +572,6 @@ export async function run(): Promise<void> {
         // No changed files info available, include all matches
         promptFiles.push(...eligibleMatches);
       }
-    }
-
-    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
-      throw new Error('Prompt file paths must not contain newlines.');
     }
 
     const configChanged =
@@ -593,6 +630,12 @@ export async function run(): Promise<void> {
       return;
     }
 
+    const promptFilesToEvaluate =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (promptFilesToEvaluate.some((file) => /[\r\n]/.test(file))) {
+      throw new Error('Prompt file paths must not contain newlines.');
+    }
+
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');
     }
@@ -638,8 +681,6 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    const promptFilesToEvaluate =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
     if (!useConfigPrompts && promptFilesToEvaluate.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         '--prompts',
@@ -874,7 +915,7 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
+      const modifiedFiles = promptFilesToEvaluate.join(', ');
       let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |

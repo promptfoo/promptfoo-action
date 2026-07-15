@@ -328,6 +328,33 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should skip an unrelated change when an unchanged prompt path contains a newline', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/line\nbreak.txt']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a selected prompt path containing a newline before evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/line\nbreak.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/line\nbreak.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must not contain newlines.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should process all matching prompts when PR file list hits GitHub cap', async () => {
       mockOctokit.paginate.mockResolvedValue(
         Array.from({ length: 3000 }, (_, index) => ({
@@ -1140,6 +1167,23 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should fail closed before evaluation when a changed dependency symlink escapes', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'hooks/policy.js' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockImplementation(() => {
+        throw new Error(
+          'An existing config dependency resolves outside an allowed dependency root.',
+        );
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: An existing config dependency resolves outside an allowed dependency root.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should not narrow evaluation when a prompt and extension dependency change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'prompts/prompt1.txt' },
@@ -1165,6 +1209,156 @@ describe('GitHub Action Main', () => {
           'prompts/prompt2.txt',
         ]),
       );
+    });
+
+    test('should report the full prompt set when only a dependency changes', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'hooks/policy.js' }]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/policy.js']);
+
+      await run();
+
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'prompts/prompt1.txt, prompts/prompt2.txt',
+          ),
+        }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject an escaped prompt glob before dependency-triggered evaluation', async () => {
+      withInputs({ prompts: '../secrets/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../secrets/private.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must stay within the checkout or working directory.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an escaped prompt symlink before dependency-triggered evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/escaped.txt']);
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        return resolved.endsWith('/prompts/escaped.txt')
+          ? '/private/tmp/outside/escaped.txt'
+          : resolved;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must stay within the checkout or working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a glob result that escapes the prompt roots', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../secrets/private.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must stay within the checkout or working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed when a matched prompt cannot be resolved', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/denied.txt']);
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        if (resolved.endsWith('/prompts/denied.txt')) {
+          throw new Error('EACCES: denied\n::error::forged-prompt');
+        }
+        return resolved;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Unable to resolve a matched prompt file.',
+      );
+      expect(
+        mockCore.setFailed.mock.calls.map((call) => String(call[0])).join('\n'),
+      ).not.toContain('::error::forged-prompt');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed when an allowed prompt root cannot be resolved', async () => {
+      withInputs({ config: '/private/tmp/shared/promptfooconfig.yaml' });
+      mockFs.realpathSync.mockImplementation(() => {
+        throw new Error('EACCES: denied\n::error::forged-root');
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Unable to resolve an allowed prompt directory.',
+      );
+      expect(
+        mockCore.setFailed.mock.calls.map((call) => String(call[0])).join('\n'),
+      ).not.toContain('::error::forged-root');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a Windows-absolute prompt glob on a non-Windows runner', async () => {
+      withInputs({ prompts: 'C:\\secrets\\*.txt' });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must stay within the checkout or working directory.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should allow prompts from an explicitly external working directory', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      withInputs({
+        'working-directory': path.relative(
+          process.cwd(),
+          '/private/tmp/shared-evals',
+        ),
+        config: 'promptfooconfig.yaml',
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/external.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should not narrow evaluation when a prompt and config change', async () => {
