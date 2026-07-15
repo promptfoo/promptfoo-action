@@ -36561,6 +36561,9 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         const rawEntries = Array.isArray(envPath) ? envPath : [envPath];
         const envDependencies = [];
         for (const rawEntry of rawEntries) {
+          if (rawEntry.split(",").every((part) => part.trim().length === 0)) {
+            continue;
+          }
           if (rawEntry.includes("{{")) {
             throw new Error(
               "Dynamic commandLineOptions.envPath cannot be safely inspected"
@@ -37504,6 +37507,9 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
       }
       const entries = Array.isArray(envPath) ? envPath : [envPath];
       for (const entry of entries) {
+        if (entry.split(",").every((part) => part.trim().length === 0)) {
+          continue;
+        }
         if (entry.includes("{{")) {
           throw new PromptfooActionError(
             `Computed commandLineOptions.envPath in ${configPath} cannot be safely preflighted`,
@@ -38231,9 +38237,17 @@ async function run() {
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        changedFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter(Boolean).join("\n");
+        const manualFiles = filesInput.split("\n").map((file) => file.replace(/\r$/, ""));
+        const trimmedFiles = manualFiles.map((file) => file.trim()).filter(Boolean);
+        changedFiles = manualFiles.flatMap((file) => {
+          const trimmed2 = file.trim();
+          if (!trimmed2) {
+            return [];
+          }
+          return file === trimmed2 ? [file] : [file, trimmed2];
+        }).join("\0");
         info(
-          `Using manually specified files: ${formatChangedFilesForLog(changedFiles)}`
+          `Using manually specified files: ${JSON.stringify(trimmedFiles)}`
         );
       } else {
         validateGitRevision(compareBase);
@@ -38392,7 +38406,7 @@ async function run() {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
-    if (!useConfigPrompts && promptFiles.length > 0) {
+    if (!useConfigPrompts && !configChanged && !dependencyChanged && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
     }
     if (noShare) {

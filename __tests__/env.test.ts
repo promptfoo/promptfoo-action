@@ -1565,6 +1565,37 @@ describe('loadConfigEnvironmentFiles', () => {
   });
 
   test.each([
+    "''",
+    "'   '",
+    "' , , '",
+    "['', '   ', ' , ']",
+  ])('ignores an empty config-declared envPath: %s', (value) => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      `commandLineOptions:\n  envPath: ${value}\n`,
+    );
+
+    expect(() =>
+      loadConfigEnvironmentFiles(configPath, tmpDir, target),
+    ).not.toThrow();
+    expect(target).toEqual({});
+  });
+
+  test('ignores empty envPath list entries while loading a valid entry', () => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      "commandLineOptions:\n  envPath: ['', '   ', .env.safe, ' , ']\n",
+    );
+    writeFile('.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('safe');
+  });
+
+  test.each([
     '7',
     '[.env.safe, 7]',
   ])('rejects the malformed envPath value %s', (value) => {

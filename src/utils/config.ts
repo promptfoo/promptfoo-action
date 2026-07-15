@@ -461,6 +461,9 @@ export function extractFileDependencies(
           : [envPath];
         const envDependencies: string[] = [];
         for (const rawEntry of rawEntries) {
+          if (rawEntry.split(',').every((part) => part.trim().length === 0)) {
+            continue;
+          }
           if (rawEntry.includes('{{')) {
             throw new Error(
               'Dynamic commandLineOptions.envPath cannot be safely inspected',

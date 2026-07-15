@@ -2500,6 +2500,34 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test.each([
+      {
+        changedFile: 'promptfooconfig.yaml',
+        dependencies: [] as string[],
+        reason: 'the selected config changes',
+      },
+      {
+        changedFile: 'data/context.json',
+        dependencies: ['data/context.json'],
+        reason: 'a config dependency changes',
+      },
+    ])('should evaluate all config prompts when $reason and one prompt changes', async ({
+      changedFile,
+      dependencies,
+    }) => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: changedFile },
+        { filename: 'prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue(dependencies);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
     test('should run when a file inside a dependency directory changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },
@@ -2696,7 +2724,10 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
-    test('should normalize CRLF and whitespace in workflow_dispatch files before preflight', async () => {
+    test.each([
+      'configs/base.yaml',
+      '  configs/base.yaml  ',
+    ])('should preserve raw and trimmed workflow_dispatch file aliases before preflight: %s', async (dependency) => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
         configurable: true,
@@ -2706,7 +2737,7 @@ describe('GitHub Action Main', () => {
         configurable: true,
       });
       mockGlob.sync.mockReturnValue([]);
-      mockConfig.extractFileDependencies.mockReturnValue(['configs/base.yaml']);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
       mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
         const value = String(filePath);
         return (
@@ -2735,6 +2766,9 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Using manually specified files: ["configs/base.yaml"]',
       );
       expect(mockCore.setFailed).toHaveBeenCalledWith(
         expect.stringContaining('PROMPTFOO_REMOTE_API_BASE_URL'),

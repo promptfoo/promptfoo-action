@@ -575,6 +575,35 @@ tests:
     ]);
   });
 
+  it.each([
+    "''",
+    "'   '",
+    "' , , '",
+    "['', '   ', ' , ']",
+  ])('ignores an empty config-declared envPath: %s', (value) => {
+    mockConfigFiles({
+      '/test/working/evals/promptfooconfig.yaml': `commandLineOptions:\n  envPath: ${value}\n`,
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('evals/promptfooconfig.yaml'));
+  });
+
+  it('ignores empty envPath list entries while tracking a valid entry', () => {
+    mockConfigFiles({
+      '/test/working/evals/promptfooconfig.yaml':
+        "commandLineOptions:\n  envPath: ['', '   ', .env.safe, ' , ']\n",
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/.env.safe',
+      ...implicitConfigDependencies('evals/promptfooconfig.yaml'),
+    ]);
+  });
+
   it('tracks external root and local fragment refs using Promptfoo path semantics', () => {
     mockConfigFiles({
       '/test/working/evals/promptfooconfig.yaml':

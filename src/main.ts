@@ -479,13 +479,23 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput
-          .split(/\r?\n/)
+        const manualFiles = filesInput
+          .split('\n')
+          .map((file: string) => file.replace(/\r$/, ''));
+        const trimmedFiles = manualFiles
           .map((file: string) => file.trim())
-          .filter(Boolean)
-          .join('\n');
+          .filter(Boolean);
+        changedFiles = manualFiles
+          .flatMap((file: string) => {
+            const trimmed = file.trim();
+            if (!trimmed) {
+              return [];
+            }
+            return file === trimmed ? [file] : [file, trimmed];
+          })
+          .join('\0');
         core.info(
-          `Using manually specified files: ${formatChangedFilesForLog(changedFiles)}`,
+          `Using manually specified files: ${JSON.stringify(trimmedFiles)}`,
         );
       } else {
         // Option 2: Compare against base (default to previous commit)
@@ -707,7 +717,12 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (!useConfigPrompts && promptFiles.length > 0) {
+    if (
+      !useConfigPrompts &&
+      !configChanged &&
+      !dependencyChanged &&
+      promptFiles.length > 0
+    ) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
     // Check if sharing is enabled and validate authentication upfront

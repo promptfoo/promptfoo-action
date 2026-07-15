@@ -808,6 +808,9 @@ export function loadConfigEnvironmentFiles(
       }
       const entries: string[] = Array.isArray(envPath) ? envPath : [envPath];
       for (const entry of entries) {
+        if (entry.split(',').every((part) => part.trim().length === 0)) {
+          continue;
+        }
         if (entry.includes('{{')) {
           throw new PromptfooActionError(
             `Computed commandLineOptions.envPath in ${configPath} cannot be safely preflighted`,
