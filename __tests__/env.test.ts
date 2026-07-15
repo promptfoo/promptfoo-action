@@ -555,6 +555,18 @@ describe('loadConfigEnvironmentFiles', () => {
     );
   });
 
+  test('rejects OpenSSL startup controls from a config-declared envPath', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+    writeFile('.env.late', 'OPENSSL_MODULES=./capture-provider\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /OPENSSL_MODULES/,
+    );
+  });
+
   test('resolves envPath relative to a nested config directory', () => {
     const target: NodeJS.ProcessEnv = {};
     const configPath = writeFile(
