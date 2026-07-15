@@ -45,7 +45,7 @@ const { mockGitInterface } = vi.hoisted(() => ({
       return Promise.resolve();
     }),
     revparse: vi.fn(() => Promise.resolve('mock-commit-hash\n')),
-    diff: vi.fn(() =>
+    diff: vi.fn((_options: string[]) =>
       Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
     ),
   },
@@ -619,6 +619,8 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -644,6 +646,69 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.warning).toHaveBeenCalledWith(
         expect.stringContaining('Could not compare commits'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when an extension dependency is renamed in a push', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'a'.repeat(40),
+          after: 'b'.repeat(40),
+        },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockImplementation(async (options: string[]) =>
+        options.includes('--no-renames')
+          ? 'archived/policy.js\nhooks/policy.js'
+          : 'archived/policy.js',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/policy.js']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve whitespace and tabs in a renamed push dependency path', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'a'.repeat(40),
+          after: 'b'.repeat(40),
+        },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockImplementation(async (options: string[]) =>
+        options.includes('-z')
+          ? 'archived/policy.js\0 hooks/policy\tone.js\0'
+          : 'archived/policy.js\n" hooks/policy\\tone.js"\n',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' hooks/policy\tone.js',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'found changed files: "archived/policy.js\\u0000 hooks/policy\\tone.js\\u0000"',
+        ),
       );
       expect(mockExec.exec).toHaveBeenCalled();
     });
@@ -690,6 +755,8 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -738,9 +805,33 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using manually specified files: "prompts/file1.txt\\nprompts/file2.txt"',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should run when a manually specified extension dependency uses CRLF and whitespace', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: ' hooks/policy.js \r\n README.md\r\n',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/policy.js']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should handle workflow_dispatch with custom base comparison', async () => {
@@ -793,6 +884,35 @@ describe('GitHub Action Main', () => {
       expect(mockGlob.sync).toHaveBeenCalled();
     });
 
+    test('should run when an extension dependency is renamed from a workflow base', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            base: 'main',
+          },
+        },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockImplementation(async (options: string[]) =>
+        options.includes('--no-renames')
+          ? 'archived/policy.js\nhooks/policy.js'
+          : 'archived/policy.js',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/policy.js']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should prioritize action inputs over workflow inputs', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -833,7 +953,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: action-input-file.txt',
+        'Using manually specified files: "action-input-file.txt"',
       );
       // Since we're providing files directly, diff shouldn't be called
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
@@ -882,6 +1002,8 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -930,6 +1052,70 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when an extension dependency is renamed in a pull request', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archived/policy.js',
+          previous_filename: 'hooks/policy.js',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/policy.js']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve leading whitespace in a pull request dependency path', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' hooks/policy.js' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([' hooks/policy.js']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve a newline in a pull request dependency path', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'hooks/policy\none.js' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'hooks/policy\none.js',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject a changed prompt path that could inject a workflow command', async () => {
+      const unsafePrompt = 'prompts/policy\n::error::forged-annotation.txt';
+      mockOctokit.paginate.mockResolvedValue([{ filename: unsafePrompt }]);
+      mockGlob.sync.mockReturnValue([unsafePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Prompt file paths must not contain'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should run when a file inside a dependency directory changes', async () => {
@@ -1579,6 +1765,8 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',

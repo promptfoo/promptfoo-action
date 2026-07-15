@@ -364,7 +364,14 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
+        changedFiles = pullRequestFiles
+          .flatMap((file) =>
+            file.previous_filename
+              ? [file.filename, file.previous_filename]
+              : [file.filename],
+          )
+          .join('\0')
+          .concat('\0');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -381,20 +388,28 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
-        core.info(`Using manually specified files: ${changedFiles}`);
+        changedFiles = String(filesInput)
+          .split(/\r?\n/)
+          .map((file) => file.trim())
+          .filter((file) => file)
+          .join('\n');
+        core.info(
+          `Using manually specified files: ${JSON.stringify(changedFiles)}`,
+        );
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${JSON.stringify(changedFiles)}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -421,12 +436,14 @@ export async function run(): Promise<void> {
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${JSON.stringify(changedFiles)}`,
           );
         } catch (error) {
           core.warning(
@@ -449,7 +466,9 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split('\n').filter((f) => f);
+    const changedFilesList = changedFiles
+      .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
+      .filter((file) => file);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -479,6 +498,10 @@ export async function run(): Promise<void> {
         });
         promptFiles.push(...allMatches);
       }
+    }
+
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error('Prompt file paths must not contain newlines.');
     }
 
     const configChanged =
