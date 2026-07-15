@@ -39829,7 +39829,7 @@ function validateGlobPattern(globPattern, description) {
   if (globPattern.includes("\0")) {
     throw new Error(`${description} contains an invalid null byte.`);
   }
-  const usesWindowsSeparators = path6.sep === "\\" || path6.win32.isAbsolute(globPattern);
+  const usesWindowsSeparators = path6.sep === "\\" || !path6.isAbsolute(globPattern) && path6.win32.isAbsolute(globPattern);
   let braceDepth = 0;
   let inCharacterClass = false;
   let braceExpansionCount = 1;
@@ -40743,7 +40743,7 @@ function extractFileDependencies(configPath) {
     if (watchWorkspace || watchDynamicDependency) {
       dependencies.add(cwd);
       warning(
-        "Unable to statically resolve all config extension dependencies. Watching the repository workspace for changes."
+        "Unable to statically resolve all config file dependencies. Watching the repository workspace for changes."
       );
     }
     return Array.from(dependencies).map((dep) => {
@@ -41786,8 +41786,8 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const evaluatedPromptFiles = promptFilesToEvaluate.join(", ");
-      let body = `\u26A0\uFE0F Promptfoo evaluated these prompt files: ${evaluatedPromptFiles}
+      const evaluatedPromptSummary = !useConfigPrompts && promptFilesToEvaluate.length > 0 ? `Promptfoo evaluated these prompt files: ${promptFilesToEvaluate.join(", ")}` : "Promptfoo evaluated the prompts configured in the config file.";
+      let body = `\u26A0\uFE0F ${evaluatedPromptSummary}
 
 | Success | Failure |
 |---------|---------|
@@ -41817,7 +41817,7 @@ async function run() {
         ["Success", output.results.stats.successes.toString()],
         ["Failure", output.results.stats.failures.toString()]
       ]);
-      if (promptFilesToEvaluate.length > 0) {
+      if (!useConfigPrompts && promptFilesToEvaluate.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
         summary2.addList(promptFilesToEvaluate);
       }
