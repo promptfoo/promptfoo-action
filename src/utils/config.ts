@@ -34,6 +34,14 @@ const FILE_BEARING_PROVIDER_KEYS = new Set([
   'transformRequest',
   'transformResponse',
 ]);
+const HTTP_CREDENTIAL_PATH_KEYS = new Set([
+  'caPath',
+  'certPath',
+  'keyPath',
+  'keystorePath',
+  'pfxPath',
+  'privateKeyPath',
+]);
 
 const legacySetTag = defineMappingTag<Record<string, unknown>>(
   'tag:yaml.org,2002:set',
@@ -63,12 +71,12 @@ export interface PromptfooConfig {
   targets?: string | Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
-    vars?: { [key: string]: string | { file?: string } };
+    vars?: string | string[] | { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
     [key: string]: unknown;
   }>;
   defaultTest?: {
-    vars?: { [key: string]: string | { file?: string } };
+    vars?: string | string[] | { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
   };
 }
@@ -165,8 +173,9 @@ function mayRenderFileUrl(value: string): boolean {
     return true;
   }
   return (
-    candidate.includes('{#') &&
-    candidate.replace(/\{#[\s\S]*?#\}/g, '').startsWith('file://')
+    (candidate.includes('file://') && /^\{(?:\{-?|%-?)/.test(candidate)) ||
+    (candidate.includes('{#') &&
+      candidate.replace(/\{#[\s\S]*?#\}/g, '').startsWith('file://'))
   );
 }
 
@@ -216,16 +225,21 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     let realDependencyRoot: string | undefined;
+    let dependencyRootResolved = false;
     const isSafeDependencyPath = (absolutePath: string): boolean => {
       if (!isPathInside(dependencyRoot, absolutePath)) {
         return false;
       }
 
       try {
-        if (!realDependencyRoot) {
+        if (!dependencyRootResolved) {
+          dependencyRootResolved = true;
           realDependencyRoot = fs.realpathSync(dependencyRoot);
         }
       } catch {
+        return false;
+      }
+      if (!realDependencyRoot) {
         return false;
       }
 
@@ -559,6 +573,42 @@ export function extractFileDependencies(configPath: string): string[] {
           if (key === 'env' || (key === 'path' && fileAuthPath !== undefined)) {
             continue;
           }
+          if (
+            providerDepth === 2 &&
+            grandparentKey === 'config' &&
+            (parentKey === 'signatureAuth' || parentKey === 'tls') &&
+            HTTP_CREDENTIAL_PATH_KEYS.has(key) &&
+            typeof nestedValue === 'string'
+          ) {
+            const credentialEnvironment = {
+              ...configEnvironment,
+              ...nestedProviderOverrides,
+            };
+            const renderedCredentialPath = renderEnvTemplate(
+              nestedValue,
+              credentialEnvironment,
+            );
+            if (/\{\{|\{%|\{#/.test(renderedCredentialPath)) {
+              dependencies.add(`${dependencyRoot}${path.sep}`);
+              continue;
+            }
+            const credentialPath = renderedCredentialPath.startsWith('file://')
+              ? providerFilePath(renderedCredentialPath, true)
+              : renderedCredentialPath;
+            const absoluteCredentialPath = resolveConfigDependency(
+              credentialPath,
+              'provider HTTP credential dependency',
+              renderedCredentialPath === nestedValue
+                ? '<redacted provider HTTP credential path>'
+                : nestedValue,
+            );
+            if (absoluteCredentialPath) {
+              dependencies.add(absoluteCredentialPath);
+            } else if (renderedCredentialPath !== nestedValue) {
+              dependencies.add(`${dependencyRoot}${path.sep}`);
+            }
+            continue;
+          }
           const mappedProviderOverrides = {
             ...environmentValues(
               nestedValue && typeof nestedValue === 'object'
@@ -592,7 +642,11 @@ export function extractFileDependencies(configPath: string): string[] {
             nestedProviderOverrides,
             false,
             key === 'id',
-            FILE_BEARING_PROVIDER_KEYS.has(key),
+            FILE_BEARING_PROVIDER_KEYS.has(key) ||
+              ((parentKey === 'response_format' ||
+                parentKey === 'responseFormat') &&
+                (key === 'schema' || key === 'json_schema')) ||
+              (parentKey === 'json_schema' && key === 'schema'),
             key,
             parentKey,
             providerDepth + 1,
@@ -744,8 +798,20 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Extract test variable files
-    const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
-      if (!vars) return;
+    const extractVarFiles = (vars: unknown): void => {
+      if (typeof vars === 'string') {
+        processPotentialFileUrl(vars);
+        return;
+      }
+      if (Array.isArray(vars)) {
+        for (const value of vars) {
+          if (typeof value === 'string') {
+            processPotentialFileUrl(value);
+          }
+        }
+        return;
+      }
+      if (!vars || typeof vars !== 'object') return;
       for (const value of Object.values(vars)) {
         if (typeof value === 'string') {
           processPotentialFileUrl(value);

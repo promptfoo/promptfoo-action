@@ -38089,6 +38089,14 @@ var FILE_BEARING_PROVIDER_KEYS = /* @__PURE__ */ new Set([
   "transformRequest",
   "transformResponse"
 ]);
+var HTTP_CREDENTIAL_PATH_KEYS = /* @__PURE__ */ new Set([
+  "caPath",
+  "certPath",
+  "keyPath",
+  "keystorePath",
+  "pfxPath",
+  "privateKeyPath"
+]);
 var legacySetTag = defineMappingTag(
   "tag:yaml.org,2002:set",
   {
@@ -38158,7 +38166,7 @@ function mayRenderFileUrl(value) {
   if (candidate.startsWith("file://") || /^\{\{-?\s*env(?:\.|\[)|^\{%-?[^%]*\benv(?:\.|\[)/.test(candidate)) {
     return true;
   }
-  return candidate.includes("{#") && candidate.replace(/\{#[\s\S]*?#\}/g, "").startsWith("file://");
+  return candidate.includes("file://") && /^\{(?:\{-?|%-?)/.test(candidate) || candidate.includes("{#") && candidate.replace(/\{#[\s\S]*?#\}/g, "").startsWith("file://");
 }
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
@@ -38193,15 +38201,20 @@ function extractFileDependencies(configPath) {
       ...configOverrides
     };
     let realDependencyRoot;
+    let dependencyRootResolved = false;
     const isSafeDependencyPath = (absolutePath) => {
       if (!isPathInside(dependencyRoot, absolutePath)) {
         return false;
       }
       try {
-        if (!realDependencyRoot) {
+        if (!dependencyRootResolved) {
+          dependencyRootResolved = true;
           realDependencyRoot = fs6.realpathSync(dependencyRoot);
         }
       } catch {
+        return false;
+      }
+      if (!realDependencyRoot) {
         return false;
       }
       let existingPath = absolutePath;
@@ -38450,6 +38463,32 @@ function extractFileDependencies(configPath) {
           if (key === "env" || key === "path" && fileAuthPath !== void 0) {
             continue;
           }
+          if (providerDepth === 2 && grandparentKey === "config" && (parentKey === "signatureAuth" || parentKey === "tls") && HTTP_CREDENTIAL_PATH_KEYS.has(key) && typeof nestedValue === "string") {
+            const credentialEnvironment = {
+              ...configEnvironment,
+              ...nestedProviderOverrides
+            };
+            const renderedCredentialPath = renderEnvTemplate(
+              nestedValue,
+              credentialEnvironment
+            );
+            if (/\{\{|\{%|\{#/.test(renderedCredentialPath)) {
+              dependencies.add(`${dependencyRoot}${path6.sep}`);
+              continue;
+            }
+            const credentialPath = renderedCredentialPath.startsWith("file://") ? providerFilePath(renderedCredentialPath, true) : renderedCredentialPath;
+            const absoluteCredentialPath = resolveConfigDependency(
+              credentialPath,
+              "provider HTTP credential dependency",
+              renderedCredentialPath === nestedValue ? "<redacted provider HTTP credential path>" : nestedValue
+            );
+            if (absoluteCredentialPath) {
+              dependencies.add(absoluteCredentialPath);
+            } else if (renderedCredentialPath !== nestedValue) {
+              dependencies.add(`${dependencyRoot}${path6.sep}`);
+            }
+            continue;
+          }
           const mappedProviderOverrides = {
             ...environmentValues(
               nestedValue && typeof nestedValue === "object" ? nestedValue.env : void 0,
@@ -38476,7 +38515,7 @@ function extractFileDependencies(configPath) {
             nestedProviderOverrides,
             false,
             key === "id",
-            FILE_BEARING_PROVIDER_KEYS.has(key),
+            FILE_BEARING_PROVIDER_KEYS.has(key) || (parentKey === "response_format" || parentKey === "responseFormat") && (key === "schema" || key === "json_schema") || parentKey === "json_schema" && key === "schema",
             key,
             parentKey,
             providerDepth + 1
@@ -38594,7 +38633,19 @@ function extractFileDependencies(configPath) {
       }
     }
     const extractVarFiles = (vars) => {
-      if (!vars) return;
+      if (typeof vars === "string") {
+        processPotentialFileUrl(vars);
+        return;
+      }
+      if (Array.isArray(vars)) {
+        for (const value of vars) {
+          if (typeof value === "string") {
+            processPotentialFileUrl(value);
+          }
+        }
+        return;
+      }
+      if (!vars || typeof vars !== "object") return;
       for (const value of Object.values(vars)) {
         if (typeof value === "string") {
           processPotentialFileUrl(value);
