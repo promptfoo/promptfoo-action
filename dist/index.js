@@ -40044,7 +40044,7 @@ async function run() {
           if (dep.length <= MAX_DEPENDENCY_GLOB_LENGTH) {
             try {
               if (le(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS) && changedFilesList.some(
-                (changedFile) => path7.matchesGlob(changedFile, dep)
+                (changedFile) => path7.posix.matchesGlob(changedFile, dep)
               )) {
                 return true;
               }
