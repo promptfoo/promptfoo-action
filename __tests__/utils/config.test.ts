@@ -227,6 +227,54 @@ providers:
     expect(deps).toEqual([]);
   });
 
+  it('should sanitize CRLF in an unsafe dependency warning', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "file://../../secrets/policy\\n::error::forged.py"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('policy\\n::error::forged.py'),
+    );
+    expect(
+      (core.warning as Mock).mock.calls.every(
+        ([message]) => !/[\r\n]/.test(String(message)),
+      ),
+    ).toBe(true);
+  });
+
+  it('should sanitize CRLF from a rendered dependency-glob error', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "file://providers/{{env.NAME}}/*.py"
+`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => value.includes('*') || value.includes('{'),
+    );
+    mockGlob.sync.mockImplementation(() => {
+      throw new Error('permission denied\n::error::forged');
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('permission denied\\n::error::forged'),
+    );
+    expect(
+      (core.warning as Mock).mock.calls.every(
+        ([message]) => !/[\r\n]/.test(String(message)),
+      ),
+    ).toBe(true);
+  });
+
   it('should ignore unsafe object-form variable and assertion dependencies', () => {
     const configContent = `
 tests:
@@ -357,6 +405,32 @@ providers:
     );
   });
 
+  it('should reject a CRLF dependency glob match and preserve safe siblings', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/policy\n::error::forged.py',
+      '/test/working/providers/shared.py',
+    ]);
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/shared.py', 'providers']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob match: resolved path contains an invalid line break',
+    );
+    expect(
+      (core.warning as Mock).mock.calls.every(
+        ([message]) => !/[\r\n]/.test(String(message)),
+      ),
+    ).toBe(true);
+  });
+
   it('should preserve a checkout glob match when the unused external-config root is unverifiable', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -371,6 +445,32 @@ providers:
         throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
       }
       return String(filePath);
+    });
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/shared.py', 'providers']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should preserve a checkout glob match when allowed roots are symlinked', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/providers/shared.py']);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const value = String(filePath);
+      if (value.startsWith('/test/working')) {
+        return value.replace('/test/working', '/real/workspace');
+      }
+      if (value === '/test/shared') {
+        return '/real/shared';
+      }
+      return value;
     });
 
     const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');

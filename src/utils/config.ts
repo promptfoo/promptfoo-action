@@ -29,6 +29,13 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function sanitizeLogText(value: string): string {
+  return value
+    .replace(/\t/g, '\\t')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n');
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -68,6 +75,9 @@ export function extractFileDependencies(configPath: string): string[] {
         if (filePath.includes('\0')) {
           throw new Error(`${source} contains an invalid null byte`);
         }
+        if (/[\r\n]/.test(filePath)) {
+          throw new Error(`${source} contains an invalid line break`);
+        }
 
         const absolutePath = path.resolve(configDir, filePath);
         if (!isSafeDependency(absolutePath)) {
@@ -79,9 +89,9 @@ export function extractFileDependencies(configPath: string): string[] {
         return absolutePath;
       } catch (error) {
         core.warning(
-          `Ignoring unsafe config dependency "${filePath}": ${String(
-            error,
-          ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
+          `Ignoring unsafe config dependency "${sanitizeLogText(filePath)}": ${sanitizeLogText(
+            String(error).replace(/^(?:[A-Za-z]+)?Error: /, ''),
+          )}`,
         );
         return undefined;
       }
@@ -110,6 +120,13 @@ export function extractFileDependencies(configPath: string): string[] {
         }
 
         for (const match of matches) {
+          if (/[\r\n]/.test(match)) {
+            core.warning(
+              'Ignoring unsafe config dependency glob match: resolved path contains an invalid line break',
+            );
+            continue;
+          }
+
           const absoluteMatch = path.resolve(match);
           if (!isSafeDependency(absoluteMatch)) {
             core.warning(
@@ -271,7 +288,9 @@ export function extractFileDependencies(configPath: string): string[] {
     });
   } catch (error) {
     core.warning(
-      `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
+      `Failed to extract dependencies from config: ${sanitizeLogText(
+        error instanceof Error ? error.message : String(error),
+      )}`,
     );
     return [];
   }
