@@ -25,6 +25,15 @@ const FILE_BEARING_PROVIDER_KEYS = new Set([
   'transformRequest',
   'transformResponse',
 ]);
+const HTTP_CREDENTIAL_PATH_KEYS = new Set([
+  'caPath',
+  'certPath',
+  'jksPath',
+  'keyPath',
+  'keystorePath',
+  'pfxPath',
+  'privateKeyPath',
+]);
 
 export interface PromptfooConfig {
   env?: Record<string, unknown>;
@@ -79,34 +88,46 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     let dependencyRootUnavailable = false;
+    let dependencyRootResolved = false;
+    let realDependencyRoot: string | undefined;
     const isSafeDependencyPath = (absolutePath: string): boolean => {
       if (!isPathInside(dependencyRoot, absolutePath)) {
         return false;
       }
 
-      try {
-        const realRoot = fs.realpathSync(dependencyRoot);
-        let existingPath = absolutePath;
-
-        while (true) {
-          try {
-            return isPathInside(realRoot, fs.realpathSync(existingPath));
-          } catch (error) {
-            const code = (error as NodeJS.ErrnoException).code;
-            if (code !== 'ENOENT' && code !== 'ENOTDIR') {
-              return false;
-            }
-
-            const parentPath = path.dirname(existingPath);
-            if (parentPath === existingPath) {
-              return false;
-            }
-            existingPath = parentPath;
-          }
+      if (!dependencyRootResolved) {
+        dependencyRootResolved = true;
+        try {
+          realDependencyRoot = fs.realpathSync(dependencyRoot);
+        } catch {
+          dependencyRootUnavailable = true;
+          return false;
         }
-      } catch {
-        dependencyRootUnavailable = true;
+      }
+      if (!realDependencyRoot) {
         return false;
+      }
+
+      let existingPath = absolutePath;
+
+      while (true) {
+        try {
+          return isPathInside(
+            realDependencyRoot,
+            fs.realpathSync(existingPath),
+          );
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+            return false;
+          }
+
+          const parentPath = path.dirname(existingPath);
+          if (parentPath === existingPath) {
+            return false;
+          }
+          existingPath = parentPath;
+        }
       }
     };
 
@@ -264,6 +285,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const activeProviderConfigs = new Set<string>();
     const visitedProviderValues = new WeakMap<object, Set<string>>();
     const activeProviderValues = new WeakSet<object>();
+    const activeProviderValueEnvs = new WeakMap<object, string>();
     let providerTraversalCount = 0;
     let providerTraversalStopped = false;
     const stopProviderTraversal = (): void => {
@@ -486,21 +508,35 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       const envContextKey = getEnvContextKey(activeEnv);
+      const providerValueContextKey = JSON.stringify([
+        envContextKey,
+        nestedReference,
+        externalProviderConfig,
+        referencedFromProviderObject,
+        isProviderReference,
+        isFileBearingConfigValue,
+        parentKey,
+        grandparentKey,
+      ]);
       const visitedContexts = visitedProviderValues.get(value);
-      if (visitedContexts?.has(envContextKey)) {
+      if (visitedContexts?.has(providerValueContextKey)) {
         return;
       }
       if (activeProviderValues.has(value)) {
+        if (activeProviderValueEnvs.get(value) === envContextKey) {
+          return;
+        }
         stopProviderTraversal();
         return;
       }
       if (visitedContexts) {
-        visitedContexts.add(envContextKey);
+        visitedContexts.add(providerValueContextKey);
       } else {
-        visitedProviderValues.set(value, new Set([envContextKey]));
+        visitedProviderValues.set(value, new Set([providerValueContextKey]));
       }
 
       activeProviderValues.add(value);
+      activeProviderValueEnvs.set(value, envContextKey);
 
       try {
         if (Array.isArray(value)) {
@@ -553,6 +589,25 @@ export function extractFileDependencies(configPath: string): string[] {
             continue;
           }
           if (
+            grandparentKey === 'config' &&
+            (parentKey === 'signatureAuth' || parentKey === 'tls') &&
+            HTTP_CREDENTIAL_PATH_KEYS.has(key) &&
+            typeof nestedValue === 'string'
+          ) {
+            const credentialPath = renderEnvTemplates(nestedValue, {
+              ...process.env,
+              ...providerEnv,
+            });
+            processProviderValue(
+              `file://${credentialPath}`,
+              true,
+              providerEnv,
+              false,
+              true,
+            );
+            continue;
+          }
+          if (
             key.startsWith('file://') ||
             (isProviderReference &&
               (key.includes('{{') || key.includes('{%') || key.includes('{#')))
@@ -579,13 +634,18 @@ export function extractFileDependencies(configPath: string): string[] {
             false,
             true,
             key === 'id',
-            FILE_BEARING_PROVIDER_KEYS.has(key),
+            FILE_BEARING_PROVIDER_KEYS.has(key) ||
+              ((parentKey === 'response_format' ||
+                parentKey === 'responseFormat') &&
+                (key === 'schema' || key === 'json_schema')) ||
+              (parentKey === 'json_schema' && key === 'schema'),
             key,
             parentKey,
           );
         }
       } finally {
         activeProviderValues.delete(value);
+        activeProviderValueEnvs.delete(value);
       }
     };
 

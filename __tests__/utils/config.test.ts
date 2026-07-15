@@ -457,6 +457,92 @@ providers:
     );
   });
 
+  it('should extract plain and env-templated HTTP credential paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/signature
+    env:
+      PRIVATE_KEY_PATH: ./credentials/from-env.pem
+    config:
+      method: GET
+      signatureAuth:
+        privateKeyPath: "{{ env.PRIVATE_KEY_PATH }}"
+        keystorePath: ./credentials/keystore.jks
+        pfxPath: ./credentials/signature.pfx
+        certPath: ./credentials/signature.crt
+        keyPath: ./credentials/signature.key
+  - id: https://example.test/tls
+    config:
+      method: GET
+      tls:
+        caPath: ./credentials/ca.pem
+        certPath: ./credentials/client.crt
+        keyPath: ./credentials/client.key
+        pfxPath: ./credentials/client.pfx
+        jksPath: ./credentials/client.jks
+  - id: https://example.test/tls-env
+    env:
+      TLS_JKS_PATH: ./credentials/from-env.jks
+    config:
+      method: GET
+      tls:
+        jksPath: "{{ env.TLS_JKS_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/credentials/from-env.pem',
+      'evals/credentials/keystore.jks',
+      'evals/credentials/signature.pfx',
+      'evals/credentials/signature.crt',
+      'evals/credentials/signature.key',
+      'evals/credentials/ca.pem',
+      'evals/credentials/client.crt',
+      'evals/credentials/client.key',
+      'evals/credentials/client.pfx',
+      'evals/credentials/client.jks',
+      'evals/credentials/from-env.jks',
+    ]);
+  });
+
+  it('should revisit an aliased HTTP file-auth value in its auth context', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      method: GET
+      other: &file_auth
+        type: file
+        path: ./auth/aliased-token.ts
+      auth: *file_auth
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/auth/aliased-token.ts']);
+  });
+
+  it('should avoid retraversing a repeated provider alias in the same context', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - &provider
+    id: file://providers/custom.py:call_api
+  - *provider
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/custom.py']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should normalize a Windows drive after provider-path templating', () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
@@ -660,6 +746,54 @@ providers:
     );
 
     expect(deps).toEqual(['./']);
+  });
+
+  it('should conservatively watch computed nested response-schema templates', () => {
+    process.env.PROVIDER_FILE = 'current.json';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    config:
+      response_format:
+        type: json_schema
+        schema: "{{ 'file://schemas/' + env.PROVIDER_FILE }}"
+  - id: openai:gpt-4
+    config:
+      response_format:
+        type: json_schema
+        json_schema:
+          schema: "{{ 'file://schemas/' + env.PROVIDER_FILE }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
+  it('should resolve the dependency root real path only once per extraction', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/one.py
+  - file://providers/two.py
+  - file://providers/three.py
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/providers/one.py',
+      'evals/providers/two.py',
+      'evals/providers/three.py',
+    ]);
+    expect(
+      mockFs.realpathSync.mock.calls.filter(
+        (call) => call[0] === '/test/working',
+      ),
+    ).toHaveLength(1);
   });
 
   it('should prefer caller env over external provider-file defaults', () => {
