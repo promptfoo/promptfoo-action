@@ -253,6 +253,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PROMPTFOO_DISABLE_DEBUG_LOG',
   'PROMPTFOO_DISABLE_ERROR_LOG',
   'PROMPTFOO_DISABLE_OBJECT_STRINGIFY',
+  'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
   'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
   'PROMPTFOO_DISABLE_REF_PARSER',
   'PROMPTFOO_DISABLE_REMOTE_GENERATION',
@@ -368,7 +369,7 @@ export function findForbiddenAuthKey(
 }
 
 export function loadEnvironmentFile(
-  envFilePath: string,
+  envFilePath: string | string[],
   targetEnvironment: NodeJS.ProcessEnv = process.env,
   override = true,
 ): void {
@@ -857,13 +858,16 @@ export function loadConfigEnvironmentFiles(
   };
 
   inspectConfig(config, lexicalConfigPath, false, 0);
-  for (const configuredPath of configuredPaths.filter(Boolean)) {
-    const envFilePath = assertWorkspacePath(
-      path.resolve(workingDirectory, configuredPath),
+  const envFilePaths = configuredPaths
+    .filter(Boolean)
+    .map((configuredPath) => path.resolve(workingDirectory, configuredPath));
+  const validateEnvFile = (envFilePath: string): void => {
+    const realEnvFilePath = assertWorkspacePath(
+      envFilePath,
       workingDirectory,
       'Config environment file',
     );
-    const envFileStats = fs.statSync(envFilePath);
+    const envFileStats = fs.statSync(realEnvFilePath);
     if (!envFileStats.isFile()) {
       throw new PromptfooActionError(
         `Config environment file ${envFilePath} must be a regular file`,
@@ -878,6 +882,26 @@ export function loadConfigEnvironmentFiles(
         'Reduce the configured environment-file size.',
       );
     }
-    loadEnvironmentFile(envFilePath, targetEnvironment);
+  };
+
+  for (const envFilePath of envFilePaths) {
+    validateEnvFile(envFilePath);
+  }
+
+  const lastEnvFilePath = envFilePaths[envFilePaths.length - 1];
+  if (process.env.DOTENV_KEY && lastEnvFilePath) {
+    const vaultPath = lastEnvFilePath.endsWith('.vault')
+      ? lastEnvFilePath
+      : `${lastEnvFilePath}.vault`;
+    if (fs.existsSync(vaultPath)) {
+      validateEnvFile(vaultPath);
+    }
+  }
+
+  if (envFilePaths.length > 0) {
+    loadEnvironmentFile(
+      envFilePaths.length === 1 ? envFilePaths[0] : envFilePaths,
+      targetEnvironment,
+    );
   }
 }

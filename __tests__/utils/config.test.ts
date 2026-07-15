@@ -793,6 +793,56 @@ tests:
     );
   });
 
+  it('tracks the effective config envPath vault companion when DOTENV_KEY is set', () => {
+    const originalDotenvKey = process.env.DOTENV_KEY;
+    process.env.DOTENV_KEY = 'trusted-dotenv-key';
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml':
+        'commandLineOptions:\n  envPath: [.env.first, .env.second]\n',
+    });
+
+    try {
+      expect(
+        extractFileDependencies('/test/working/promptfooconfig.yaml'),
+      ).toEqual([
+        '.env.first',
+        '.env.second',
+        '.env.second.vault',
+        ...implicitConfigDependencies('promptfooconfig.yaml'),
+      ]);
+    } finally {
+      if (originalDotenvKey === undefined) {
+        delete process.env.DOTENV_KEY;
+      } else {
+        process.env.DOTENV_KEY = originalDotenvKey;
+      }
+    }
+  });
+
+  it('does not append a second vault suffix to an explicit vault envPath', () => {
+    const originalDotenvKey = process.env.DOTENV_KEY;
+    process.env.DOTENV_KEY = 'trusted-dotenv-key';
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml':
+        'commandLineOptions:\n  envPath: .env.production.vault\n',
+    });
+
+    try {
+      expect(
+        extractFileDependencies('/test/working/promptfooconfig.yaml'),
+      ).toEqual([
+        '.env.production.vault',
+        ...implicitConfigDependencies('promptfooconfig.yaml'),
+      ]);
+    } finally {
+      if (originalDotenvKey === undefined) {
+        delete process.env.DOTENV_KEY;
+      } else {
+        process.env.DOTENV_KEY = originalDotenvKey;
+      }
+    }
+  });
+
   it('fails closed when a referenced config has been deleted', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': "$ref: './deleted.yaml'\n",
@@ -925,6 +975,41 @@ tests:
         ([value]: [string]) => value.length > 65_536,
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    'file://{1..1000000000}',
+    'file://{{a,b},{c,d}}',
+    `file://${'{a,b}'.repeat(11)}`,
+  ])('fails closed before expanding a complex brace dependency %s', (dependency) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': `metadata: ${dependency}\n`,
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('{'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('continues to expand a bounded brace dependency', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': 'metadata: file://{a,b}/*.js\n',
+    });
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => value.includes('{') || value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/a/first.js',
+      '/test/working/b/second.js',
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(expect.arrayContaining(['a/first.js', 'b/second.js']));
   });
 
   it.each([

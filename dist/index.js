@@ -36284,6 +36284,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
   const maxConfigNodes = 1e4;
   const maxConfigRefs = 100;
   const maxGlobPatternLength = 64 * 1024;
+  const maxGlobBraceExpansions = 1024;
   try {
     if (!isPathInside(cwd, resolvedWorkingDirectory)) {
       throw new Error(
@@ -36558,6 +36559,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
           throw new Error("Invalid commandLineOptions.envPath");
         }
         const rawEntries = Array.isArray(envPath) ? envPath : [envPath];
+        const envDependencies = [];
         for (const rawEntry of rawEntries) {
           if (rawEntry.includes("{{")) {
             throw new Error(
@@ -36566,12 +36568,21 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
           }
           const resolvedEntry = path5.isAbsolute(rawEntry) ? rawEntry : path5.resolve(configDir, rawEntry);
           for (const entry of resolvedEntry.split(",").map((part) => part.trim()).filter(Boolean)) {
+            envDependencies.push(entry);
             addSafeDependency(
               entry,
               resolvedWorkingDirectory,
               "commandLineOptions.envPath"
             );
           }
+        }
+        const lastEnvDependency = envDependencies[envDependencies.length - 1];
+        if (process.env.DOTENV_KEY && lastEnvDependency) {
+          addSafeDependency(
+            lastEnvDependency.endsWith(".vault") ? lastEnvDependency : `${lastEnvDependency}.vault`,
+            resolvedWorkingDirectory,
+            "commandLineOptions.envPath vault"
+          );
         }
         return true;
       }
@@ -36637,6 +36648,23 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         return;
       }
       if (le(filePath)) {
+        const braceGroups = filePath.match(/\{[^{}]*\}/g) ?? [];
+        const openBraceCount = (filePath.match(/\{/g) ?? []).length;
+        let braceExpansions = 1;
+        if (openBraceCount !== braceGroups.length) {
+          throw new Error("Nested config dependency brace patterns are unsafe");
+        }
+        for (const braceGroup of braceGroups) {
+          if (/^\{(?:-?\d+|[A-Za-z])\.\.(?:-?\d+|[A-Za-z])(?:\.\.-?\d+)?\}$/.test(
+            braceGroup
+          )) {
+            throw new Error("Config dependency brace ranges are unsafe");
+          }
+          braceExpansions *= braceGroup.split(",").length;
+          if (braceExpansions > maxGlobBraceExpansions) {
+            throw new Error("Config dependency brace expansion is too large");
+          }
+        }
         const matches = Ui(absolutePath, { nodir: true });
         for (const match of matches) {
           const absoluteMatch = path5.resolve(match);
@@ -37026,6 +37054,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_DISABLE_DEBUG_LOG",
   "PROMPTFOO_DISABLE_ERROR_LOG",
   "PROMPTFOO_DISABLE_OBJECT_STRINGIFY",
+  "PROMPTFOO_DISABLE_REDTEAM_MODERATION",
   "PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION",
   "PROMPTFOO_DISABLE_REF_PARSER",
   "PROMPTFOO_DISABLE_REMOTE_GENERATION",
@@ -37518,13 +37547,14 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
     return false;
   };
   inspectConfig(config2, lexicalConfigPath, false, 0);
-  for (const configuredPath of configuredPaths.filter(Boolean)) {
-    const envFilePath = assertWorkspacePath(
-      path6.resolve(workingDirectory, configuredPath),
+  const envFilePaths = configuredPaths.filter(Boolean).map((configuredPath) => path6.resolve(workingDirectory, configuredPath));
+  const validateEnvFile = (envFilePath) => {
+    const realEnvFilePath = assertWorkspacePath(
+      envFilePath,
       workingDirectory,
       "Config environment file"
     );
-    const envFileStats = fs7.statSync(envFilePath);
+    const envFileStats = fs7.statSync(realEnvFilePath);
     if (!envFileStats.isFile()) {
       throw new PromptfooActionError(
         `Config environment file ${envFilePath} must be a regular file`,
@@ -37539,7 +37569,22 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
         "Reduce the configured environment-file size."
       );
     }
-    loadEnvironmentFile(envFilePath, targetEnvironment);
+  };
+  for (const envFilePath of envFilePaths) {
+    validateEnvFile(envFilePath);
+  }
+  const lastEnvFilePath = envFilePaths[envFilePaths.length - 1];
+  if (process.env.DOTENV_KEY && lastEnvFilePath) {
+    const vaultPath = lastEnvFilePath.endsWith(".vault") ? lastEnvFilePath : `${lastEnvFilePath}.vault`;
+    if (fs7.existsSync(vaultPath)) {
+      validateEnvFile(vaultPath);
+    }
+  }
+  if (envFilePaths.length > 0) {
+    loadEnvironmentFile(
+      envFilePaths.length === 1 ? envFilePaths[0] : envFilePaths,
+      targetEnvironment
+    );
   }
 }
 
@@ -38172,7 +38217,9 @@ async function run() {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join("\n");
+        changedFiles = pullRequestFiles.flatMap(
+          (file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]
+        ).join("\n");
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
@@ -38186,6 +38233,7 @@ async function run() {
         try {
           changedFiles = await gitInterface.diff([
             "--name-only",
+            "--no-renames",
             compareBase,
             "HEAD",
             "--"
@@ -38210,6 +38258,7 @@ async function run() {
         try {
           changedFiles = await gitInterface.diff([
             "--name-only",
+            "--no-renames",
             beforeSha,
             afterSha,
             "--"
@@ -38235,7 +38284,7 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const changedFilesList = changedFiles.split("\n").filter((f) => f);
+    const changedFilesList = changedFiles.split(/\r?\n/).map((file) => file.trim()).filter(Boolean);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,

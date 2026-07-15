@@ -937,6 +937,7 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_DISABLE_SHARING',
       'PROMPTFOO_DISABLE_TELEMETRY',
       'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+      'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
       'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
       'PROMPTFOO_DISABLE_ERROR_LOG',
       'PROMPTFOO_DISABLE_DEBUG_LOG',
@@ -1963,8 +1964,16 @@ describe('GitHub Action Main', () => {
 
       const dotenv = await import('dotenv');
       (dotenv.config as Mock).mockImplementation(
-        (options?: { path?: string; processEnv?: Record<string, string> }) => {
-          const parsed = options?.path?.endsWith('.env.second')
+        (options?: {
+          path?: string | string[];
+          processEnv?: Record<string, string>;
+        }) => {
+          const paths = Array.isArray(options?.path)
+            ? options.path
+            : [options?.path ?? ''];
+          const parsed = paths.some((filePath) =>
+            filePath.endsWith('.env.second'),
+          )
             ? {
                 CUSTOM_PROVIDER_SETTING: 'second',
                 OPENAI_API_KEY: 'config-openai-key',
@@ -1987,6 +1996,14 @@ describe('GitHub Action Main', () => {
         await run();
 
         expect(mockCore.setFailed).not.toHaveBeenCalled();
+        expect(dotenv.config).toHaveBeenCalledWith(
+          expect.objectContaining({
+            path: [
+              path.join(process.cwd(), '.env.first'),
+              path.join(process.cwd(), '.env.second'),
+            ],
+          }),
+        );
         expect(mockExec.exec.mock.calls[0][2]?.env).toEqual(
           expect.objectContaining({
             CUSTOM_PROVIDER_SETTING: 'second',
@@ -2026,6 +2043,44 @@ describe('GitHub Action Main', () => {
         delete process.env.HUGGING_FACE_HUB_TOKEN;
         delete process.env.REPLICATE_API_TOKEN;
         delete process.env.OPENAI_MAX_TOKENS;
+      }
+    });
+
+    test('should not leave config-loaded secrets unmasked when a later envPath is missing', async () => {
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        return (
+          value.endsWith('promptfooconfig.yaml') ||
+          value.endsWith(`${path.sep}.env.first`)
+        );
+      });
+      mockFs.readFileSync.mockImplementation(
+        (filePath: fs.PathOrFileDescriptor) =>
+          String(filePath).endsWith('promptfooconfig.yaml')
+            ? 'commandLineOptions:\n  envPath: [.env.first, .env.missing]'
+            : '{}',
+      );
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.first')
+            ? { OPENAI_API_KEY: 'config-first-secret' }
+            : {};
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('.env.missing'),
+        );
+        expect(process.env.OPENAI_API_KEY).not.toBe('config-first-secret');
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.OPENAI_API_KEY;
       }
     });
 
@@ -2119,6 +2174,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -2190,6 +2246,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -2382,6 +2439,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
           'feature-branch',
           'HEAD',
           '--',
@@ -2472,6 +2530,142 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should detect a config dependency renamed away in a pull request', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'configs/renamed.yaml',
+          previous_filename: 'configs/base.yaml',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['configs/base.yaml']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      {
+        eventName: 'push',
+        payload: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        diffArgs: [
+          '--name-only',
+          '--no-renames',
+          'a'.repeat(40),
+          'b'.repeat(40),
+          '--',
+        ],
+      },
+      {
+        eventName: 'workflow_dispatch',
+        payload: { inputs: { base: 'main' } },
+        diffArgs: ['--name-only', '--no-renames', 'main', 'HEAD', '--'],
+      },
+    ])('should preflight a dependency renamed away during $eventName', async ({
+      eventName,
+      payload,
+      diffArgs,
+    }) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: eventName,
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: payload,
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'configs/base.yaml\nconfigs/renamed.yaml',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['configs/base.yaml']);
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        return (
+          value.endsWith('promptfooconfig.yaml') ||
+          value.endsWith(`${path.sep}.env.late`)
+        );
+      });
+      mockFs.readFileSync.mockImplementation(
+        (filePath: fs.PathOrFileDescriptor) =>
+          String(filePath).endsWith('promptfooconfig.yaml')
+            ? 'commandLineOptions:\n  envPath: .env.late'
+            : '{}',
+      );
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.late')
+            ? { PROMPTFOO_REMOTE_API_BASE_URL: 'https://capture.example' }
+            : {};
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      await run();
+
+      expect(mockGitInterface.diff).toHaveBeenCalledWith(diffArgs);
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('PROMPTFOO_REMOTE_API_BASE_URL'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should normalize CRLF and whitespace in workflow_dispatch files before preflight', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: '  configs/base.yaml  \r\n   \r\n' } },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['configs/base.yaml']);
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        return (
+          value.endsWith('promptfooconfig.yaml') ||
+          value.endsWith(`${path.sep}.env.late`)
+        );
+      });
+      mockFs.readFileSync.mockImplementation(
+        (filePath: fs.PathOrFileDescriptor) =>
+          String(filePath).endsWith('promptfooconfig.yaml')
+            ? 'commandLineOptions:\n  envPath: .env.late'
+            : '{}',
+      );
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.late')
+            ? { PROMPTFOO_REMOTE_API_BASE_URL: 'https://capture.example' }
+            : {};
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('PROMPTFOO_REMOTE_API_BASE_URL'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should preflight config envPath when dependency extraction fails closed', async () => {
@@ -3084,6 +3278,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',

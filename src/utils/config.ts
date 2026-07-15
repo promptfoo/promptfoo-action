@@ -63,6 +63,7 @@ export function extractFileDependencies(
   const maxConfigNodes = 10_000;
   const maxConfigRefs = 100;
   const maxGlobPatternLength = 64 * 1024;
+  const maxGlobBraceExpansions = 1024;
 
   try {
     if (!isPathInside(cwd, resolvedWorkingDirectory)) {
@@ -458,6 +459,7 @@ export function extractFileDependencies(
         const rawEntries: string[] = Array.isArray(envPath)
           ? envPath
           : [envPath];
+        const envDependencies: string[] = [];
         for (const rawEntry of rawEntries) {
           if (rawEntry.includes('{{')) {
             throw new Error(
@@ -471,12 +473,23 @@ export function extractFileDependencies(
             .split(',')
             .map((part) => part.trim())
             .filter(Boolean)) {
+            envDependencies.push(entry);
             addSafeDependency(
               entry,
               resolvedWorkingDirectory,
               'commandLineOptions.envPath',
             );
           }
+        }
+        const lastEnvDependency = envDependencies[envDependencies.length - 1];
+        if (process.env.DOTENV_KEY && lastEnvDependency) {
+          addSafeDependency(
+            lastEnvDependency.endsWith('.vault')
+              ? lastEnvDependency
+              : `${lastEnvDependency}.vault`,
+            resolvedWorkingDirectory,
+            'commandLineOptions.envPath vault',
+          );
         }
         return true;
       }
@@ -559,6 +572,25 @@ export function extractFileDependencies(
 
       // Check if the path contains glob patterns
       if (glob.hasMagic(filePath)) {
+        const braceGroups = filePath.match(/\{[^{}]*\}/g) ?? [];
+        const openBraceCount = (filePath.match(/\{/g) ?? []).length;
+        let braceExpansions = 1;
+        if (openBraceCount !== braceGroups.length) {
+          throw new Error('Nested config dependency brace patterns are unsafe');
+        }
+        for (const braceGroup of braceGroups) {
+          if (
+            /^\{(?:-?\d+|[A-Za-z])\.\.(?:-?\d+|[A-Za-z])(?:\.\.-?\d+)?\}$/.test(
+              braceGroup,
+            )
+          ) {
+            throw new Error('Config dependency brace ranges are unsafe');
+          }
+          braceExpansions *= braceGroup.split(',').length;
+          if (braceExpansions > maxGlobBraceExpansions) {
+            throw new Error('Config dependency brace expansion is too large');
+          }
+        }
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, { nodir: true });
         for (const match of matches) {

@@ -1,3 +1,4 @@
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -285,6 +286,7 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_DISABLE_SHARING',
     'PROMPTFOO_DISABLE_TELEMETRY',
     'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
     'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
     'PROMPTFOO_DISABLE_ERROR_LOG',
     'PROMPTFOO_DISABLE_DEBUG_LOG',
@@ -459,6 +461,7 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
   test.each([
     'PROMPTFOO_DISABLE_TELEMETRY',
     'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
     'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
   ])('rejects privacy control %s without leaking sibling values', (key) => {
     const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
@@ -548,13 +551,21 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
 
 describe('loadConfigEnvironmentFiles', () => {
   let tmpDir: string;
+  let originalDotenvKey: string | undefined;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'promptfoo-config-env-'));
+    originalDotenvKey = process.env.DOTENV_KEY;
+    delete process.env.DOTENV_KEY;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    if (originalDotenvKey === undefined) {
+      delete process.env.DOTENV_KEY;
+    } else {
+      process.env.DOTENV_KEY = originalDotenvKey;
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -563,6 +574,20 @@ describe('loadConfigEnvironmentFiles', () => {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, contents);
     return filePath;
+  };
+
+  const writeVault = (name: string, contents: string): string => {
+    const key = Buffer.alloc(32, 7);
+    const nonce = Buffer.alloc(12, 3);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
+    const ciphertext = Buffer.concat([
+      nonce,
+      cipher.update(contents, 'utf8'),
+      cipher.final(),
+      cipher.getAuthTag(),
+    ]).toString('base64');
+    writeFile(name, `DOTENV_VAULT_PRODUCTION="${ciphertext}"\n`);
+    return `dotenv://:${key.toString('hex')}@dotenvx.com/vault/.env.vault?environment=production`;
   };
 
   test.each([
@@ -581,6 +606,7 @@ describe('loadConfigEnvironmentFiles', () => {
     'OPENSSL_MODULES',
     'PROMPTFOO_DISABLE_TELEMETRY',
     'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
     'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
   ])('rejects %s from a config-declared envPath', (variableName) => {
     const configPath = writeFile(
@@ -1221,6 +1247,68 @@ describe('loadConfigEnvironmentFiles', () => {
     }
   });
 
+  test('rejects a config envPath vault symlink that escapes the working directory', () => {
+    const outsideDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'promptfoo-vault-outside-'),
+    );
+    const outsideVault = path.join(outsideDir, '.env.late.vault');
+    writeFile('.env.late', 'CUSTOM_PROVIDER_SETTING=plaintext\n');
+    process.env.DOTENV_KEY = writeVault(
+      path.relative(tmpDir, outsideVault),
+      'CUSTOM_PROVIDER_SETTING=outside\n',
+    );
+    fs.symlinkSync(outsideVault, path.join(tmpDir, '.env.late.vault'));
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+
+    try {
+      expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+        /must stay within the working directory/,
+      );
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects an oversized config envPath vault before parsing it', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+    writeFile('.env.late', 'CUSTOM_PROVIDER_SETTING=plaintext\n');
+    process.env.DOTENV_KEY = writeVault(
+      '.env.late.vault',
+      'CUSTOM_PROVIDER_SETTING=vault\n',
+    );
+    fs.truncateSync(path.join(tmpDir, '.env.late.vault'), 2 * 1024 * 1024 + 1);
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /Config environment file.*exceeds the envPath preflight size limit/,
+    );
+  });
+
+  test('validates the lexical vault companion of a contained envPath symlink', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.linked\n',
+    );
+    const actualPath = writeFile(
+      'configs/actual.env',
+      'CUSTOM_PROVIDER_SETTING=plaintext\n',
+    );
+    fs.symlinkSync(actualPath, path.join(tmpDir, '.env.linked'));
+    process.env.DOTENV_KEY = writeVault(
+      '.env.linked.vault',
+      'PROMPTFOO_REMOTE_API_BASE_URL=https://capture.example\n',
+    );
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /PROMPTFOO_REMOTE_API_BASE_URL/,
+    );
+  });
+
   test('rejects an oversized config before reading it', () => {
     const configPath = writeFile('promptfooconfig.yaml', '');
     fs.truncateSync(configPath, 2 * 1024 * 1024 + 1);
@@ -1502,5 +1590,84 @@ describe('loadConfigEnvironmentFiles', () => {
     loadConfigEnvironmentFiles(configPath, tmpDir, target);
 
     expect(target.CUSTOM_PROVIDER_SETTING).toBe('second');
+  });
+
+  test('matches Promptfoo multi-path vault selection', () => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: [.env.first, .env.second]\n',
+    );
+    writeFile(
+      '.env.first',
+      'PROMPTFOO_CLOUD_API_URL=https://plaintext.invalid\n',
+    );
+    writeFile('.env.second', 'CUSTOM_PROVIDER_SETTING=plaintext\n');
+    writeVault(
+      '.env.first.vault',
+      'PROMPTFOO_CLOUD_API_URL=https://first-vault.invalid\n',
+    );
+    process.env.DOTENV_KEY = writeVault(
+      '.env.second.vault',
+      'CUSTOM_PROVIDER_SETTING=selected-vault\n',
+    );
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('selected-vault');
+    expect(target.PROMPTFOO_CLOUD_API_URL).toBeUndefined();
+  });
+
+  test('loads an explicitly configured vault envPath', () => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.production.vault\n',
+    );
+    process.env.DOTENV_KEY = writeVault(
+      '.env.production.vault',
+      'CUSTOM_PROVIDER_SETTING=explicit-vault\n',
+    );
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('explicit-vault');
+  });
+
+  test('falls back to all plaintext env paths when the last vault is absent', () => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: [.env.first, .env.second]\n',
+    );
+    writeFile('.env.first', 'CUSTOM_PROVIDER_SETTING=first\n');
+    writeFile('.env.second', 'CUSTOM_PROVIDER_SETTING=second\n');
+    process.env.DOTENV_KEY = writeVault(
+      '.env.first.vault',
+      'PROMPTFOO_CLOUD_API_URL=https://ignored-vault.invalid\n',
+    );
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('second');
+    expect(target.PROMPTFOO_CLOUD_API_URL).toBeUndefined();
+  });
+
+  test('does not merge secrets from an earlier config env path when a later path is forbidden', () => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: [.env.first, .env.second]\n',
+    );
+    writeFile('.env.first', 'OPENAI_API_KEY=first-secret\n');
+    writeFile(
+      '.env.second',
+      'PROMPTFOO_CLOUD_API_URL=https://capture.example\n',
+    );
+
+    expect(() =>
+      loadConfigEnvironmentFiles(configPath, tmpDir, target),
+    ).toThrow(/PROMPTFOO_CLOUD_API_URL/);
+    expect(target.OPENAI_API_KEY).toBeUndefined();
   });
 });
