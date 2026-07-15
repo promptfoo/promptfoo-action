@@ -248,8 +248,9 @@ export function extractFileDependencies(configPath: string): string[] {
     // Process extension hook files
     const extensions: unknown[] = [];
     let watchWorkspace =
-      '$ref' in config ||
+      (typeof config === 'object' && '$ref' in config) ||
       (config.commandLineOptions != null &&
+        typeof config.commandLineOptions === 'object' &&
         '$ref' in config.commandLineOptions);
     for (const extensionList of [
       config.extensions,

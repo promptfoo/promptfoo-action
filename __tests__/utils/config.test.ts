@@ -280,6 +280,28 @@ shared:
     );
   });
 
+  it('should preserve dependencies when commandLineOptions is a scalar', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.js
+commandLineOptions: inline-options
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.js']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should ignore a scalar config without throwing during extension extraction', () => {
+    mockFs.readFileSync.mockReturnValue('inline-config');
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should conservatively watch the workspace for a referenced root config', () => {
     mockFs.readFileSync.mockReturnValue(`
 $ref: '#/shared/config'
