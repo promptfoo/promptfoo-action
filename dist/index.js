@@ -38353,6 +38353,13 @@ function extractFileDependencies(configPath) {
   const configDir = path6.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const dependencyRoots = dependencyRoot === cwd ? [dependencyRoot] : [dependencyRoot, cwd];
+  const isInsideDependencyRoots = (targetPath) => dependencyRoots.some((root) => isPathInside(root, targetPath));
+  const addDependencyRootWatchers = () => {
+    for (const root of dependencyRoots) {
+      dependencies.add(`${root}${path6.sep}`);
+    }
+  };
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
     if (!configContent.trim()) {
@@ -38378,7 +38385,7 @@ function extractFileDependencies(configPath) {
           configDir,
           normalizeConfigFilePath(filePath)
         );
-        if (!isPathInside(dependencyRoot, absolutePath)) {
+        if (!isInsideDependencyRoots(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
           );
@@ -38419,7 +38426,7 @@ function extractFileDependencies(configPath) {
     const hasDynamicFilePath = (filePath) => /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}/.test(filePath);
     const watchDynamicFilePath = (filePath) => {
       if (!hasDynamicFilePath(filePath)) return false;
-      dependencies.add(`${dependencyRoot}${path6.sep}`);
+      addDependencyRootWatchers();
       return true;
     };
     const processFileUrl = (fileUrl, resolvedPath) => {
@@ -38443,7 +38450,7 @@ function extractFileDependencies(configPath) {
           return [];
         }
         if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-          dependencies.add(`${dependencyRoot}${path6.sep}`);
+          addDependencyRootWatchers();
           warning(
             "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
           );
@@ -38451,11 +38458,13 @@ function extractFileDependencies(configPath) {
         }
         const safePatterns = [];
         let unsafeAlternative = false;
-        let realDependencyRoot;
+        let realDependencyRoots;
         try {
-          realDependencyRoot = fs6.realpathSync(dependencyRoot);
+          realDependencyRoots = dependencyRoots.map(
+            (root) => fs6.realpathSync(root)
+          );
         } catch {
-          dependencies.add(`${dependencyRoot}${path6.sep}`);
+          addDependencyRootWatchers();
           warning(
             "Skipping config dependency glob whose workspace root cannot be resolved; conservatively watching the dependency root"
           );
@@ -38466,14 +38475,16 @@ function extractFileDependencies(configPath) {
             configDir,
             expandedPath.replace(/[\\/]/g, path6.sep)
           );
-          if (!isPathInside(dependencyRoot, absolutePattern)) {
+          if (!isInsideDependencyRoots(absolutePattern)) {
             unsafeAlternative = true;
             continue;
           }
           let existingPath = absolutePattern;
           while (true) {
             try {
-              if (isPathInside(realDependencyRoot, fs6.realpathSync(existingPath))) {
+              if (realDependencyRoots.some(
+                (root) => isPathInside(root, fs6.realpathSync(existingPath))
+              )) {
                 safePatterns.push(absolutePattern);
               } else {
                 unsafeAlternative = true;
@@ -38515,12 +38526,21 @@ function extractFileDependencies(configPath) {
         const safeMatches = [];
         for (const match2 of matches) {
           const absoluteMatch = path6.resolve(match2);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
+          let realMatch;
+          try {
+            realMatch = fs6.realpathSync(absoluteMatch);
+          } catch {
+            warning(
+              "Ignoring unsafe config dependency glob match: resolved path cannot be verified"
+            );
+            continue;
+          }
+          if (isInsideDependencyRoots(absoluteMatch) && realDependencyRoots.some((root) => isPathInside(root, realMatch))) {
             dependencies.add(absoluteMatch);
             safeMatches.push(absoluteMatch);
           } else {
             warning(
-              `Ignoring unsafe config dependency match "${match2}": config file dependency glob match must stay within the repository workspace`
+              "Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace"
             );
           }
         }
@@ -38584,7 +38604,7 @@ function extractFileDependencies(configPath) {
         }
       }
       if (typeof value === "string" && value.includes("file://") && hasDynamicFilePath(value)) {
-        dependencies.add(`${dependencyRoot}${path6.sep}`);
+        addDependencyRootWatchers();
       } else if (typeof value === "string" && value.startsWith("file://")) {
         const fileUrl = value.replace(
           /(\.(?:[cm]?[jt]s|py|rb|go)):[^/\\:]+$/i,
@@ -38691,9 +38711,11 @@ function extractFileDependencies(configPath) {
       if (!absolutePath) return;
       processFileUrl(fileUrl, absolutePath);
       try {
-        const realDependencyRoot = fs6.realpathSync(dependencyRoot);
+        const realDependencyRoots = dependencyRoots.map(
+          (root) => fs6.realpathSync(root)
+        );
         const realFilePath = fs6.realpathSync(absolutePath);
-        if (!isPathInside(realDependencyRoot, realFilePath)) {
+        if (!realDependencyRoots.some((root) => isPathInside(root, realFilePath))) {
           warning(
             "Ignoring unsafe nested config file: resolved path must stay within the repository workspace"
           );
@@ -38715,9 +38737,10 @@ function extractFileDependencies(configPath) {
         );
       }
     };
-    const configuredProviders = config2.targets || config2.providers;
-    if (configuredProviders) {
-      extractFileReferences(configuredProviders, true, "provider");
+    for (const configuredProviders of [config2.providers, config2.targets]) {
+      if (configuredProviders) {
+        extractFileReferences(configuredProviders, true, "provider");
+      }
     }
     if (config2.prompts) {
       for (const prompt of config2.prompts) {
@@ -38745,7 +38768,7 @@ function extractFileDependencies(configPath) {
       }
       if (!isValidGlobLength(rawFilePath)) return;
       if (watchDynamicFilePath(rawFilePath)) return;
-      const filePath = rawFilePath.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, "$1").replace(/(\.xlsx?)#.*$/i, "$1");
+      const filePath = rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|rb|go)):[^/\\:]+$/i, "$1").replace(/(\.xlsx?)#.*$/i, "$1");
       const fileUrl = `file://${filePath}`;
       const isVarGlob = getGlobMagic(filePath);
       if (isVarGlob === void 0) return;
@@ -38759,9 +38782,11 @@ function extractFileDependencies(configPath) {
         if (inspectedVarFiles.has(varFile)) continue;
         inspectedVarFiles.add(varFile);
         try {
-          const realDependencyRoot = fs6.realpathSync(dependencyRoot);
+          const realDependencyRoots = dependencyRoots.map(
+            (root) => fs6.realpathSync(root)
+          );
           const realVarFile = fs6.realpathSync(varFile);
-          if (!isPathInside(realDependencyRoot, realVarFile)) {
+          if (!realDependencyRoots.some((root) => isPathInside(root, realVarFile))) {
             warning(
               "Ignoring unsafe external vars file: resolved path must stay within the repository workspace"
             );
@@ -38839,16 +38864,20 @@ function extractFileDependencies(configPath) {
             "defaultTest file dependency"
           );
           if (hasDynamicDefaultTestPath) {
-            dependencies.add(`${dependencyRoot}${path6.sep}`);
+            addDependencyRootWatchers();
           }
           if (!hasInvalidDefaultTestPath && isDefaultTestGlob !== void 0 && !hasDynamicDefaultTestPath) {
             processFileUrl(config2.defaultTest);
           }
           if (defaultTestPath && !isDefaultTestGlob) {
             try {
-              const realDependencyRoot = fs6.realpathSync(dependencyRoot);
+              const realDependencyRoots = dependencyRoots.map(
+                (root) => fs6.realpathSync(root)
+              );
               const realDefaultTestPath = fs6.realpathSync(defaultTestPath);
-              if (!isPathInside(realDependencyRoot, realDefaultTestPath)) {
+              if (!realDependencyRoots.some(
+                (root) => isPathInside(root, realDefaultTestPath)
+              )) {
                 warning(
                   "Ignoring unsafe file-backed defaultTest: resolved path must stay within the repository workspace"
                 );
@@ -38884,6 +38913,9 @@ function extractFileDependencies(configPath) {
       for (const test of config2.tests) {
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
+        extractFileReferences(test.assertScoringFunction);
+        extractFileReferences(test.provider, true, "provider");
+        extractOptionsFiles(test.options);
       }
     }
     return Array.from(dependencies).map((dep) => {
@@ -39663,7 +39695,7 @@ async function run() {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
-    if (!useConfigPrompts && promptFiles.length > 0) {
+    if (!useConfigPrompts && !configChanged && !dependencyChanged && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
     }
     if (noShare) {
