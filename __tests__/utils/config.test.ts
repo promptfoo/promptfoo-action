@@ -1293,6 +1293,130 @@ assert:
     ]);
   });
 
+  it('should track contained HTTP file-auth paths in nested provider configs', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+options:
+  provider:
+    text:
+      id: https://example.com/grade
+      config:
+        auth:
+          type: file
+          path: ./auth/get-token.ts
+    embedding:
+      id: https://example.com/embed
+      config:
+        auth:
+          type: file
+          path: file://auth/get-embedding-token.py:get_auth
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/auth/get-token.ts',
+      'evals/auth/get-embedding-token.py',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should safely handle templated and escaping nested HTTP file-auth paths', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+options:
+  provider:
+    text:
+      id: https://example.com/grade
+      config:
+        auth:
+          type: file
+          path: './auth/{{ env.TOKEN_SCRIPT }}.ts'
+    embedding:
+      id: https://example.com/embed
+      config:
+        auth:
+          type: file
+          path: ../../secrets/get-token.ts
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', './']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+    expect(core.warning).toHaveBeenCalledTimes(1);
+  });
+
+  it('should track assertion config references inside defaultTest assert sets', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+assert:
+  - type: assert-set
+    assert:
+      - type: llm-rubric
+        config:
+          rubric: file://rubrics/security.md
+          tools:
+            - file://tools/assert-tools.py:get_tools
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/rubrics/security.md',
+      'evals/tools/assert-tools.py',
+    ]);
+  });
+
+  it('should track assertion config references in regular tests', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert:
+      - type: llm-rubric
+        config:
+          rubric: file://rubrics/test.md
+          transform: file://checks/test.js:score
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/rubrics/test.md', 'evals/checks/test.js']);
+  });
+
   it('should bound cyclic provider-config references while retaining later files', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
