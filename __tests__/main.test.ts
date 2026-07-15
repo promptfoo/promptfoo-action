@@ -499,6 +499,31 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should preserve intentional outer whitespace in prompt glob inputs', async () => {
+      const rawPrompt = ' prompts/policy.txt ';
+      mockCore.getInput.mockImplementation(
+        (name: string, options?: { trimWhitespace?: boolean }) => {
+          const value =
+            name === 'prompts' ? rawPrompt : DEFAULT_INPUTS[name] || '';
+          return options?.trimWhitespace === false ? value : value.trim();
+        },
+      );
+      mockGlob.sync.mockReturnValue([rawPrompt]);
+      mockOctokit.paginate.mockResolvedValue([{ filename: rawPrompt }]);
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('prompts', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        rawPrompt,
+        expect.objectContaining({ nodir: true }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should handle empty prompts input', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
@@ -2456,6 +2481,40 @@ describe('GitHub Action Main', () => {
       );
       // Since we're providing files directly, diff shouldn't be called
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should preserve intentional outer whitespace in workflow-files action input', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      const rawDependency = ' configs/base.yaml ';
+      mockCore.getInput.mockImplementation(
+        (name: string, options?: { trimWhitespace?: boolean }) => {
+          const value =
+            name === 'workflow-files'
+              ? rawDependency
+              : DEFAULT_INPUTS[name] || '';
+          return options?.trimWhitespace === false ? value : value.trim();
+        },
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([rawDependency]);
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('workflow-files', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should use action input base when only base is provided', async () => {

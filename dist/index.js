@@ -36276,6 +36276,22 @@ function isPathInside(baseDir, targetPath) {
 function sanitizeLogText(value) {
   return value.replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
+function normalizeFileUrlSelectors(fileUrl, executableExtensions, requireFunctionName = false) {
+  const rawFilename = fileUrl.slice("file://".length);
+  const lastColonIndex = rawFilename.lastIndexOf(":");
+  if (lastColonIndex <= 1 || requireFunctionName && lastColonIndex === rawFilename.length - 1) {
+    return [fileUrl];
+  }
+  const candidateFilename = rawFilename.slice(0, lastColonIndex);
+  const stripped = `file://${candidateFilename}`;
+  if (executableExtensions.test(candidateFilename)) {
+    return [stripped];
+  }
+  if (/\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(candidateFilename)) {
+    return [fileUrl, stripped];
+  }
+  return [fileUrl];
+}
 function extractFileDependencies(configPath, workspaceRoot = process.cwd(), workingDirectory = workspaceRoot) {
   const dependencies = /* @__PURE__ */ new Set();
   const lexicalConfigPath = path5.resolve(configPath);
@@ -36496,17 +36512,21 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
     const discoveredRefs = /* @__PURE__ */ new Set();
     const inspectedObjects = /* @__PURE__ */ new Map();
     const httpValidateStatusParents = /* @__PURE__ */ new WeakSet();
+    const httpFileAuthParents = /* @__PURE__ */ new WeakSet();
     const nestedFileUrls = [];
     const nestedFilePaths = [];
-    const pending = [
-      { value: config2, file: lexicalConfigPath }
-    ];
+    const pending = [{ value: config2, file: lexicalConfigPath, context: "general" }];
     let inspectedNodeCount = 0;
     while (pending.length > 0) {
       const next = pending.pop();
       if (typeof next.value === "string") {
         if (next.value.startsWith("file://")) {
-          nestedFileUrls.push(next.value);
+          nestedFileUrls.push(
+            ...next.context === "general" ? [next.value] : normalizeFileUrlSelectors(
+              next.value,
+              /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+            )
+          );
         }
         continue;
       }
@@ -36526,8 +36546,11 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         );
       }
       const record = next.value;
-      if (Array.isArray(record.providers)) {
-        for (const entry of record.providers) {
+      for (const providers of [record.providers, record.targets]) {
+        if (!Array.isArray(providers)) {
+          continue;
+        }
+        for (const entry of providers) {
           if (typeof entry !== "object" || entry === null) {
             continue;
           }
@@ -36547,16 +36570,60 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
           }
           const configRecord = providerConfig;
           const validateStatus = configRecord.validateStatus;
-          if (typeof validateStatus !== "string" || !validateStatus.startsWith("file://")) {
-            continue;
+          if (typeof validateStatus === "string" && validateStatus.startsWith("file://")) {
+            nestedFileUrls.push(
+              ...normalizeFileUrlSelectors(
+                validateStatus,
+                /\.(?:js|cjs|mjs|ts|cts|mts)$/,
+                true
+              )
+            );
+            httpValidateStatusParents.add(configRecord);
           }
-          const rawFilename = validateStatus.slice("file://".length);
-          const lastColonIndex = rawFilename.lastIndexOf(":");
-          const candidateFilename = rawFilename.slice(0, lastColonIndex);
-          const candidateFunctionName = rawFilename.slice(lastColonIndex + 1);
-          const filename = lastColonIndex !== -1 && candidateFunctionName && /\.(?:js|cjs|mjs|ts|cts|mts)$/.test(candidateFilename) ? candidateFilename : rawFilename;
-          nestedFileUrls.push(`file://${filename}`);
-          httpValidateStatusParents.add(configRecord);
+          const auth2 = configRecord.auth;
+          if (typeof auth2 === "object" && auth2 !== null && auth2.type === "file") {
+            const authRecord = auth2;
+            if (typeof authRecord.path === "string") {
+              if (authRecord.path.startsWith("file://")) {
+                nestedFileUrls.push(
+                  ...normalizeFileUrlSelectors(
+                    authRecord.path,
+                    /\.(?:js|cjs|mjs|ts|cts|mts|py)$/
+                  )
+                );
+                httpFileAuthParents.add(authRecord);
+              } else {
+                nestedFilePaths.push(authRecord.path);
+              }
+            }
+          }
+          const pathSections = [
+            [
+              configRecord.tls,
+              ["caPath", "certPath", "keyPath", "pfxPath", "jksPath"]
+            ],
+            [
+              configRecord.signatureAuth,
+              [
+                "privateKeyPath",
+                "keystorePath",
+                "pfxPath",
+                "certPath",
+                "keyPath"
+              ]
+            ]
+          ];
+          for (const [section, keys] of pathSections) {
+            if (typeof section !== "object" || section === null) {
+              continue;
+            }
+            for (const key of keys) {
+              const filePath = section[key];
+              if (typeof filePath === "string") {
+                nestedFilePaths.push(filePath);
+              }
+            }
+          }
         }
       }
       if (typeof record.file === "string") {
@@ -36580,16 +36647,18 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
           const referenced = resolveConfigRef(record.$ref, next.file);
           pending.push({
             value: referenced.config,
-            file: referenced.file
+            file: referenced.file,
+            context: next.context
           });
         }
       }
       pending.push(
         ...Object.entries(record).filter(
-          ([key]) => (key !== "parameters" || !excludedParameterParents.has(record)) && (key !== "validateStatus" || !httpValidateStatusParents.has(record))
-        ).map(([, value]) => ({
+          ([key]) => (key !== "parameters" || !excludedParameterParents.has(record)) && (key !== "validateStatus" || !httpValidateStatusParents.has(record)) && (key !== "path" || !httpFileAuthParents.has(record))
+        ).map(([key, value]) => ({
           value,
-          file: next.file
+          file: next.file,
+          context: key === "vars" ? "vars" : key === "assert" ? "assertion" : next.context
         }))
       );
     }
@@ -36826,7 +36895,12 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       if (!vars) return;
       for (const value of Object.values(vars)) {
         if (typeof value === "string" && value.startsWith("file://")) {
-          processFileUrl(value);
+          for (const fileUrl of normalizeFileUrlSelectors(
+            value,
+            /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+          )) {
+            processFileUrl(fileUrl);
+          }
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
           const absolutePath = resolveConfigDependency(
             value.file,
@@ -36842,7 +36916,12 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       if (!asserts) return;
       for (const assert of asserts) {
         if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
-          processFileUrl(assert.value);
+          for (const fileUrl of normalizeFileUrlSelectors(
+            assert.value,
+            /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+          )) {
+            processFileUrl(fileUrl);
+          }
         } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
           const absolutePath = resolveConfigDependency(
             assert.value.file,
@@ -38163,7 +38242,10 @@ async function run() {
     const githubToken = getInput("github-token", {
       required: true
     });
-    const promptsInput = getInput("prompts", { required: false });
+    const promptsInput = getInput("prompts", {
+      required: false,
+      trimWhitespace: false
+    });
     const promptFilesGlobs = promptsInput ? promptsInput.split(/\r?\n/).filter((line) => line.trim()) : [];
     const configPath = getInput("config", {
       required: true
@@ -38211,7 +38293,8 @@ async function run() {
       required: false
     });
     const workflowFiles = getInput("workflow-files", {
-      required: false
+      required: false,
+      trimWhitespace: false
     });
     const workflowBase = getInput("workflow-base", {
       required: false

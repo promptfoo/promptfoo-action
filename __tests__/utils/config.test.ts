@@ -896,7 +896,138 @@ providers:
     ]);
   });
 
-  it('preserves an uppercase validateStatus extension and selector as a literal filename', () => {
+  it.each([
+    'providers',
+    'targets',
+  ])('tracks mapped HTTP %s validator, file auth, TLS, and signature dependencies', (providerKey) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        `${providerKey}:`,
+        "  - 'https://api.example.test/chat':",
+        '      config:',
+        '        validateStatus: file://validators/status.js:validateStatus',
+        '        auth:',
+        '          type: file',
+        '          path: file://auth/get-token.ts:buildAuth',
+        '        tls:',
+        '          caPath: certs/ca.pem',
+        '          certPath: certs/client.pem',
+        '          keyPath: certs/client.key',
+        '          pfxPath: certs/client.pfx',
+        '          jksPath: certs/client.jks',
+        '        signatureAuth:',
+        '          privateKeyPath: signature/private.key',
+        '          keystorePath: signature/keystore.jks',
+        '          pfxPath: signature/client.pfx',
+        '          certPath: signature/client.pem',
+        '          keyPath: signature/client.key',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'validators/status.js',
+      'auth/get-token.ts',
+      'certs/ca.pem',
+      'certs/client.pem',
+      'certs/client.key',
+      'certs/client.pfx',
+      'certs/client.jks',
+      'signature/private.key',
+      'signature/keystore.jks',
+      'signature/client.pfx',
+      'signature/client.pem',
+      'signature/client.key',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('tracks mapped HTTP target dependencies inherited through a local ref', () => {
+    mockConfigFiles({
+      '/test/working/evals/promptfooconfig.yaml':
+        "$ref: './defs.yaml#/suite'\n",
+      '/test/working/defs.yaml': [
+        'suite:',
+        '  targets:',
+        "    - 'https://api.example.test/chat':",
+        '        config:',
+        '          validateStatus: file://validators/status.js:validateStatus',
+        '          auth:',
+        '            type: file',
+        '            path: file://auth/get-token.py:get_auth',
+        '          tls:',
+        '            caPath: certs/ca.pem',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'defs.yaml',
+      'evals/validators/status.js',
+      'evals/auth/get-token.py',
+      'evals/certs/ca.pem',
+      ...implicitConfigDependencies('evals/promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('does not treat non-HTTP auth or TLS path fields as HTTP dependencies', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        "  - 'openai:gpt-4.1-mini':",
+        '      config:',
+        '        auth:',
+        '          type: file',
+        '          path: auth/get-token.ts',
+        '        tls:',
+        '          caPath: certs/ca.pem',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+  });
+
+  it('tracks an HTTP file-auth path without a file URL prefix', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      auth:',
+        '        type: file',
+        '        path: auth/get-token.ts',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'auth/get-token.ts',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('ignores an HTTP file-auth configuration without a path', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      auth:',
+        '        type: file',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+  });
+
+  it('tracks both uppercase validateStatus selector interpretations across Promptfoo versions', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': [
         'providers:',
@@ -910,6 +1041,25 @@ providers:
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([
       'validators/status.JS:validateStatus',
+      'validators/status.JS',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('preserves an empty HTTP validateStatus selector as a literal filename', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        "      validateStatus: 'file://validators/status.js:'",
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'validators/status.js:',
       ...implicitConfigDependencies('promptfooconfig.yaml'),
     ]);
   });
@@ -946,6 +1096,106 @@ providers:
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([
       'validators/status.js:validateStatus',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('tracks executable function files referenced by vars and assertions', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'defaultTest:',
+        '  vars:',
+        '    ruby: file://vars/build.rb:build',
+        '    go: file://vars/build.go:Build',
+        'tests:',
+        '  - vars:',
+        '      js: file://vars/build.js:build',
+        '      python: file://vars/build.py:build',
+        '    assert:',
+        '      - type: javascript',
+        '        value: file://assert/check.go:Check',
+        '      - type: javascript',
+        '        value: file://assert/check.rb:check',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'vars/build.rb',
+      'vars/build.go',
+      'vars/build.js',
+      'vars/build.py',
+      'assert/check.go',
+      'assert/check.rb',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('tracks executable function files inherited through a local ref', () => {
+    mockConfigFiles({
+      '/test/working/evals/promptfooconfig.yaml':
+        "$ref: './defs.yaml#/suite'\n",
+      '/test/working/defs.yaml': [
+        'suite:',
+        '  defaultTest:',
+        '    vars:',
+        '      build: file://vars/build.go:Build',
+        '    assert:',
+        '      - type: javascript',
+        '        value: file://assert/check.rb:check',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'defs.yaml',
+      'evals/assert/check.rb',
+      'evals/vars/build.go',
+      ...implicitConfigDependencies('evals/promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('tracks both uppercase JavaScript selector interpretations while preserving non-JavaScript literals', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'tests:',
+        '  - vars:',
+        '      uppercaseJs: file://vars/build.JS:Build',
+        '      uppercaseGo: file://vars/build.GO:Build',
+        '      data: file://vars/context.json:literal',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'vars/build.JS:Build',
+      'vars/build.JS',
+      'vars/build.GO:Build',
+      'vars/context.json:literal',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('tracks both uppercase HTTP file-auth selector interpretations across Promptfoo versions', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'targets:',
+        '  - id: https',
+        '    config:',
+        '      auth:',
+        '        type: file',
+        '        path: file://auth/get-token.TS:buildAuth',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'auth/get-token.TS:buildAuth',
+      'auth/get-token.TS',
       ...implicitConfigDependencies('promptfooconfig.yaml'),
     ]);
   });
