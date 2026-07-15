@@ -35,6 +35,7 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const MAX_PROMPT_GLOB_VARIANTS = 1000;
+const MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
 
 type ChangedFile = {
   filename: string;
@@ -289,7 +290,11 @@ export async function run(): Promise<void> {
       toRepositoryPath(workingDirectory),
       { windowsPathsNoEscape: false, magicalBraces: true },
     );
-    let promptGlobMatchingCapped = false;
+    const validPromptFilesGlobs = promptFilesGlobs.filter(
+      (pattern) => pattern.length <= MAX_PROMPT_GLOB_LENGTH,
+    );
+    let promptGlobMatchingCapped =
+      validPromptFilesGlobs.length !== promptFilesGlobs.length;
     let promptGlobMatchers:
       | Array<{ matcher: Minimatch; expression?: RegExp }>
       | undefined;
@@ -302,7 +307,7 @@ export async function run(): Promise<void> {
       }
 
       const matchers: Array<{ matcher: Minimatch; expression?: RegExp }> = [];
-      for (const pattern of promptFilesGlobs) {
+      for (const pattern of validPromptFilesGlobs) {
         const traversalPatterns = braceExpand(pattern, {
           braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
         }).map((traversalPattern) =>
@@ -314,7 +319,8 @@ export async function run(): Promise<void> {
         for (const traversalPattern of traversalPatterns) {
           if (
             traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS ||
-            matchers.length >= MAX_PROMPT_GLOB_VARIANTS
+            matchers.length >= MAX_PROMPT_GLOB_VARIANTS ||
+            traversalPattern.length > MAX_PROMPT_GLOB_LENGTH
           ) {
             promptGlobMatchingCapped = true;
             promptGlobMatchers = [];
@@ -685,7 +691,7 @@ export async function run(): Promise<void> {
     const promptFiles: string[] = [];
     const changedFilesList = changedFiles.split('\n').filter((f) => f);
 
-    for (const globPattern of promptFilesGlobs) {
+    for (const globPattern of validPromptFilesGlobs) {
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,

@@ -1039,6 +1039,57 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should fail open when a prompt glob exceeds the minimatch pattern limit', async () => {
+      withInputs({
+        prompts: `prompts/${'a'.repeat(65536)}\nprompts/*.txt`,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern) => {
+        if (typeof pattern === 'string' && pattern.length > 65536) {
+          throw new TypeError('pattern is too long');
+        }
+        return ['prompts/remaining.txt'];
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+      expect(mockGlob.sync).toHaveBeenCalledWith('prompts/*.txt', {
+        cwd: process.cwd(),
+        nodir: true,
+      });
+    });
+
+    test('should fail open when the working-directory prefix exceeds the minimatch pattern limit', async () => {
+      withInputs({
+        prompts: `${'a'.repeat(65520)}\nprompts/*.txt`,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'packages/app/prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
     test('should compile capped brace patterns once when scanning many removed files', async () => {
       withInputs({ prompts: 'prompts/{1..1000}/**/*.txt' });
       mockOctokit.paginate.mockResolvedValue(
