@@ -324,6 +324,26 @@ describe('GitHub Action Main', () => {
       });
     });
 
+    test.each([
+      '\n',
+      '\r',
+    ])('should reject a matched prompt path containing %j before any output sink', async (lineBreak) => {
+      const unsafePrompt = `prompts/policy${lineBreak}::error::forged.txt`;
+      mockOctokit.paginate.mockResolvedValue(
+        lineBreak === '\r' ? [{ filename: unsafePrompt }] : [],
+      );
+      mockGlob.sync.mockReturnValue([unsafePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: line breaks are not allowed.\n\nHelp: Rename the prompt file so its path does not contain CR or LF characters.',
+      );
+      expect(mockCore.info).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
     test('should skip evaluation when no relevant files change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'README.md' },
