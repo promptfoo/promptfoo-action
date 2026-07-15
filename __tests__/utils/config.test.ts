@@ -372,6 +372,17 @@ providers:
     config:
       body: "{{ prompt }}"
       instruction: "{# ordinary comment #}respond to {{ vars.input }}"
+      headers:
+        Authorization: "Bearer {{ env.API_KEY }}"
+        "{{ env.API_KEY }}": literal
+      transformed: "{{ env.API_KEY | upper }}"
+      bodyObject:
+        type: file
+        path: ./not-auth.ts
+        config:
+          auth:
+            type: file
+            path: ./also-not-auth.ts
 `);
 
     const deps = extractFileDependencies(
@@ -379,6 +390,148 @@ providers:
     );
 
     expect(deps).toEqual([]);
+  });
+
+  it('should extract HTTP file-auth dependencies and provider-env paths', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/typescript
+    config:
+      auth:
+        type: file
+        path: ./auth/get-token.ts
+  - id: https://example.test/python
+    config:
+      auth:
+        type: file
+        path: ./auth/get-token.py
+  - id: https://example.test/named
+    config:
+      auth:
+        type: file
+        path: file://auth/named-token.ts:getToken
+  - id: https://example.test/environment
+    env:
+      AUTH_PATH: ./auth/current-token.ts
+    config:
+      auth:
+        type: file
+        path: "{{ env.AUTH_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'auth/get-token.ts',
+      'auth/get-token.py',
+      'auth/named-token.ts',
+      'auth/current-token.ts',
+    ]);
+  });
+
+  it('should conservatively watch and redact an escaping templated file-auth path', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv('AUTH_PATH', '../AUTH_PATH_SECRET_CANARY_019F62C3.ts');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      auth:
+        type: file
+        path: "{{ env.AUTH_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('{{ env.AUTH_PATH }}');
+    expect(warnings).not.toContain('AUTH_PATH_SECRET_CANARY_019F62C3');
+    vi.unstubAllEnvs();
+  });
+
+  it('should conservatively watch an unresolved HTTP file-auth template', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      auth:
+        type: file
+        path: "{{- env['MISSING_AUTH'] | default('./auth/default.ts', true) -}}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should redact an escaping literal HTTP file-auth path', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      auth:
+        type: file
+        path: ../AUTH_PATH_SECRET_CANARY_019F62C3.ts
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'AUTH_PATH_SECRET_CANARY_019F62C3',
+    );
+  });
+
+  it('should resolve bracket and conservatively watch default-filter env templates in nested provider dependencies', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv('PROVIDER_TOOLS_PATH', 'file://tools/current.ts:getTools');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:chat:gpt-4
+    config:
+      tools: "{{ env['PROVIDER_TOOLS_PATH'] }}"
+  - id: openai:chat:gpt-4
+    config:
+      tools: "{{ env.MISSING_PROVIDER | default('file://tools/default.ts:getTools') }}"
+  - id: openai:chat:gpt-4
+    config:
+      tools: "{{- env['MISSING_BRACKET'] | default('file://tools/default-bracket.ts:getTools') -}}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['tools/current.ts', './']);
+    vi.unstubAllEnvs();
+  });
+
+  it('should conservatively watch falsy env values with a Nunjucks default filter', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:chat:gpt-4
+    env:
+      ENABLED: false
+      VERSION: 0
+    config:
+      tools: "{{ env.ENABLED | default('file://tools/enabled.ts:getTools', true) }}"
+      functions: "{{- env['VERSION'] | default('file://tools/version.ts:getTools', true) -}}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
   });
 
   it('should ignore non-file objects and primitives across config sections', () => {
@@ -603,8 +756,11 @@ providers:
       magicalBraces: true,
     });
     expect(mockGlob.sync).toHaveBeenCalledWith(
-      '/test/repository/providers/{one,two}.py',
-      { nodir: true },
+      [
+        '/test/repository/providers/one.py',
+        '/test/repository/providers/two.py',
+      ],
+      { nodir: true, braceExpandMax: 1_024 },
     );
   });
 
@@ -631,7 +787,47 @@ providers:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
-  it('should preserve the workspace watch root for an absolute root-level provider glob', () => {
+  it('should bound brace expansion before scanning provider glob alternatives', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{1..2000}.yaml
+`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        Boolean(options?.magicalBraces && value.includes('{')),
+    );
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should retain safe parent-directory brace alternatives inside the workspace', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://{../shared,tests}/*.py
+`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        Boolean(options?.magicalBraces && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/repository/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['shared/', 'evals/tests/']);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+  });
+
+  it('should preserve the pattern for an absolute root-level provider glob', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -646,7 +842,7 @@ providers:
       '/test/repository/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['./']);
+    expect(deps).toEqual(['*.py']);
   });
 
   it('should extract nested file references from a provider YAML file', () => {
@@ -1105,6 +1301,29 @@ providers:
       '../config/providers/provider.py',
       '../config/providers/schema.json',
     ]);
+  });
+
+  it('should not enumerate binary or other atomic provider config values', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    const encoded = Buffer.alloc(128 * 1024, 1).toString('base64');
+    const entriesSpy = vi.spyOn(Object, 'entries');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:chat:gpt-4
+    config:
+      binary: !!binary ${encoded}
+      timestamp: 2024-01-02
+      ordered: !!omap [{a: 1}, {b: 2}]
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(
+      entriesSpy.mock.calls.some(([value]) => ArrayBuffer.isView(value)),
+    ).toBe(false);
   });
 
   it('should extract providers from the targets alias', () => {

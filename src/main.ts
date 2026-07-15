@@ -499,6 +499,21 @@ export async function run(): Promise<void> {
             return true;
           }
 
+          if (
+            glob.hasMagic(dep, {
+              magicalBraces: true,
+              braceExpandMax: 1_025,
+            }) &&
+            changedFilesList.some((changedFile) =>
+              path.matchesGlob(
+                changedFile.replace(/\\/g, '/'),
+                dep.replace(/\\/g, '/'),
+              ),
+            )
+          ) {
+            return true;
+          }
+
           // Direct file match
           if (changedFilesList.includes(dep)) {
             return true;

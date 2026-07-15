@@ -13,12 +13,27 @@ import {
   setTag,
   timestampTag,
 } from 'js-yaml';
+import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
 const MAX_PROVIDER_VALUES = 1_024;
 const MAX_PROVIDER_CONFIGS = 128;
 const MAX_GLOB_MATCHES = 4_096;
+const MAX_BRACE_EXPANSIONS = 1_024;
+const FILE_BEARING_PROVIDER_KEYS = new Set([
+  'file',
+  'functions',
+  'path',
+  'request',
+  'response_format',
+  'responseFormat',
+  'responseParser',
+  'sessionParser',
+  'tools',
+  'transformRequest',
+  'transformResponse',
+]);
 
 const legacySetTag = defineMappingTag<Record<string, unknown>>(
   'tag:yaml.org,2002:set',
@@ -142,12 +157,16 @@ function environmentValues(
 }
 
 function mayRenderFileUrl(value: string): boolean {
-  if (/\{\{\s*env(?:\.|\[)|\{%[^%]*\benv(?:\.|\[)/.test(value)) {
+  const candidate = value.trimStart();
+  if (
+    candidate.startsWith('file://') ||
+    /^\{\{-?\s*env(?:\.|\[)|^\{%-?[^%]*\benv(?:\.|\[)/.test(candidate)
+  ) {
     return true;
   }
   return (
-    value.includes('{#') &&
-    value.replace(/\{#[\s\S]*?#\}/g, '').startsWith('file://')
+    candidate.includes('{#') &&
+    candidate.replace(/\{#[\s\S]*?#\}/g, '').startsWith('file://')
   );
 }
 
@@ -286,32 +305,40 @@ export function extractFileDependencies(configPath: string): string[] {
           ? providerFilePath(fileUrl, allowJavascript)
           : fileUrl
         : fileUrl.slice('file://'.length);
-      if (
-        filePath.includes('{') &&
-        /(?:^|[\\/{,])\.\.(?:[\\/},]|$)/.test(filePath)
-      ) {
-        dependencies.add(`${dependencyRoot}${path.sep}`);
-        core.warning(
-          'Ignoring unsafe config dependency glob: brace traversal branches must stay within the repository workspace.',
-        );
-        return [];
-      }
-      const absolutePath = resolveConfigDependency(
-        filePath,
-        'config file dependency',
-        displayPath,
-      );
-      if (!absolutePath) {
-        if (renderedFileUrl !== fileUrl) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
-        }
-        return [];
-      }
-
-      // Check if the path contains glob patterns
       if (glob.hasMagic(filePath, { magicalBraces: true })) {
-        // It's a glob pattern, expand it
-        const matches = glob.sync(absolutePath, { nodir: true });
+        const expandedPaths = braceExpand(filePath, {
+          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+        });
+        if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+          core.warning(
+            'Config dependency glob has too many brace alternatives. Watching the repository workspace conservatively.',
+          );
+          return [];
+        }
+
+        const safePatterns: string[] = [];
+        let unsafePattern = false;
+        for (const expandedPath of expandedPaths) {
+          const absolutePattern = path.resolve(configDir, expandedPath);
+          if (isSafeDependencyPath(absolutePattern)) {
+            safePatterns.push(absolutePattern);
+          } else {
+            unsafePattern = true;
+          }
+        }
+        if (unsafePattern) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+          core.warning(
+            'Ignoring unsafe config dependency glob alternative: brace traversal branches must stay within the repository workspace.',
+          );
+          return [];
+        }
+
+        const matches = glob.sync(safePatterns, {
+          nodir: true,
+          braceExpandMax: MAX_BRACE_EXPANSIONS,
+        });
         if (matches.length > MAX_GLOB_MATCHES) {
           dependencies.add(`${dependencyRoot}${path.sep}`);
           core.warning(
@@ -335,13 +362,35 @@ export function extractFileDependencies(configPath: string): string[] {
         }
 
         // Also add the absolute, non-glob prefix for watching deletions.
-        let basePath = absolutePath;
-        while (glob.hasMagic(basePath, { magicalBraces: true })) {
-          basePath = path.dirname(basePath);
+        for (const safePattern of safePatterns) {
+          let basePath = glob.hasMagic(safePattern, { magicalBraces: true })
+            ? safePattern
+            : path.dirname(safePattern);
+          while (glob.hasMagic(basePath, { magicalBraces: true })) {
+            basePath = path.dirname(basePath);
+          }
+          if (path.relative(cwd, basePath) === '') {
+            dependencies.add(safePattern);
+          } else {
+            dependencies.add(`${basePath.replace(/[\\/]+$/, '')}${path.sep}`);
+          }
         }
-        dependencies.add(`${basePath.replace(/[\\/]+$/, '')}${path.sep}`);
         return safeMatches;
-      } else if (isDirectory(absolutePath)) {
+      }
+
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        'config file dependency',
+        displayPath,
+      );
+      if (!absolutePath) {
+        if (renderedFileUrl !== fileUrl) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+        }
+        return [];
+      }
+
+      if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = fileUrl.endsWith('/')
           ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
@@ -368,6 +417,10 @@ export function extractFileDependencies(configPath: string): string[] {
       providerOverrides: Record<string, string | undefined> = {},
       externalProviderConfig = false,
       callerProviderContext = false,
+      isFileBearingConfigValue = false,
+      parentKey?: string,
+      grandparentKey?: string,
+      providerDepth = 0,
     ): void => {
       if (providerValueLimitReached) {
         return;
@@ -383,14 +436,22 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       if (typeof value === 'string') {
+        if (
+          !isProviderReference &&
+          !isFileBearingConfigValue &&
+          !value.trimStart().startsWith('file://')
+        ) {
+          return;
+        }
         const environment = {
           ...configEnvironment,
           ...providerOverrides,
         };
+        if (!mayRenderFileUrl(value)) {
+          return;
+        }
         if (!renderEnvTemplate(value, environment).startsWith('file://')) {
-          if (mayRenderFileUrl(value)) {
-            dependencies.add(`${dependencyRoot}${path.sep}`);
-          }
+          dependencies.add(`${dependencyRoot}${path.sep}`);
           return;
         }
         processProviderReference(
@@ -403,6 +464,15 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       if (!value || typeof value !== 'object') {
+        return;
+      }
+
+      if (
+        ArrayBuffer.isView(value) ||
+        value instanceof Date ||
+        value instanceof Map ||
+        value instanceof Set
+      ) {
         return;
       }
 
@@ -420,6 +490,10 @@ export function extractFileDependencies(configPath: string): string[] {
               providerOverrides,
               externalProviderConfig,
               callerProviderContext,
+              isFileBearingConfigValue,
+              parentKey,
+              grandparentKey,
+              providerDepth,
             );
             if (providerValueLimitReached) {
               break;
@@ -443,8 +517,46 @@ export function extractFileDependencies(configPath: string): string[] {
           ...providerOverrides,
         };
 
+        const fileAuthPath =
+          parentKey === 'auth' &&
+          grandparentKey === 'config' &&
+          providerDepth === 2 &&
+          (value as { type?: unknown }).type === 'file' &&
+          typeof (value as { path?: unknown }).path === 'string'
+            ? (value as { path: string }).path
+            : undefined;
+        if (fileAuthPath !== undefined) {
+          const authEnvironment = {
+            ...configEnvironment,
+            ...nestedProviderOverrides,
+          };
+          const renderedAuthPath = renderEnvTemplate(
+            fileAuthPath,
+            authEnvironment,
+          );
+          if (/\{\{|\{%|\{#/.test(renderedAuthPath)) {
+            dependencies.add(`${dependencyRoot}${path.sep}`);
+          } else {
+            const authPath = renderedAuthPath.startsWith('file://')
+              ? providerFilePath(renderedAuthPath, true)
+              : renderedAuthPath;
+            const absoluteAuthPath = resolveConfigDependency(
+              authPath,
+              'provider file-auth dependency',
+              renderedAuthPath === fileAuthPath
+                ? '<redacted provider file-auth path>'
+                : fileAuthPath,
+            );
+            if (absoluteAuthPath) {
+              dependencies.add(absoluteAuthPath);
+            } else if (renderedAuthPath !== fileAuthPath) {
+              dependencies.add(`${dependencyRoot}${path.sep}`);
+            }
+          }
+        }
+
         for (const [key, nestedValue] of Object.entries(value)) {
-          if (key === 'env') {
+          if (key === 'env' || (key === 'path' && fileAuthPath !== undefined)) {
             continue;
           }
           const mappedProviderOverrides = {
@@ -463,9 +575,15 @@ export function extractFileDependencies(configPath: string): string[] {
             ...configEnvironment,
             ...mappedProviderOverrides,
           };
-          if (renderEnvTemplate(key, environment).startsWith('file://')) {
+          const inspectProviderKey =
+            key.trimStart().startsWith('file://') ||
+            (isProviderReference && mayRenderFileUrl(key));
+          if (
+            inspectProviderKey &&
+            renderEnvTemplate(key, environment).startsWith('file://')
+          ) {
             processProviderReference(key, true, mappedProviderOverrides, true);
-          } else if (mayRenderFileUrl(key)) {
+          } else if (inspectProviderKey) {
             dependencies.add(`${dependencyRoot}${path.sep}`);
           }
           processProviderValue(
@@ -474,6 +592,10 @@ export function extractFileDependencies(configPath: string): string[] {
             nestedProviderOverrides,
             false,
             key === 'id',
+            FILE_BEARING_PROVIDER_KEYS.has(key),
+            key,
+            parentKey,
+            providerDepth + 1,
           );
           if (providerValueLimitReached) {
             break;

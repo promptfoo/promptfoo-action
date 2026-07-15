@@ -104,6 +104,7 @@ vi.mock('fs', async () => {
 });
 vi.mock('glob', () => ({
   sync: vi.fn(),
+  hasMagic: vi.fn(),
 }));
 vi.mock('dotenv');
 
@@ -137,6 +138,7 @@ import * as glob from 'glob';
 
 const mockGlob = glob as unknown as {
   sync: MockedFunction<typeof glob.sync>;
+  hasMagic: MockedFunction<typeof glob.hasMagic>;
 };
 
 const DEFAULT_INPUTS: Record<string, string> = {
@@ -251,6 +253,7 @@ function setupCommonMocks(): MockOctokit {
 
   // Setup glob mock - return files that will match changed files
   mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+  mockGlob.hasMagic.mockImplementation((value: string) => /[*?[{]/.test(value));
 
   return mockOctokit;
 }
@@ -989,6 +992,50 @@ describe('GitHub Action Main', () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should skip a README-only change for a root-level dependency glob', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['*.yaml']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'provider.yaml',
+      'deleted-provider.yaml',
+    ])('should run when %s matches a root-level dependency glob', async (changedFile) => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['*.yaml']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should normalize Windows separators when matching a dependency glob', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers\\deleted-provider.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['providers\\*.yaml']);
 
       await run();
 
