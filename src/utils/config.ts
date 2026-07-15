@@ -38,6 +38,28 @@ type LegacyYamlSet = Record<string, unknown>;
 const MAX_BRACE_EXPANSIONS = 1024;
 const MAX_DEPENDENCY_REFERENCE_LENGTH = 65_536;
 const MAX_STRUCTURED_PROMPT_FILE_SIZE = 10 * 1024 * 1024;
+
+type RegularFileRead =
+  | { status: 'ok'; content: string }
+  | { status: 'non-file' }
+  | { status: 'oversized' };
+
+function readRegularFile(filePath: string): RegularFileRead {
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | fs.constants.O_NONBLOCK,
+  );
+  try {
+    const fileStat = fs.fstatSync(descriptor);
+    if (!fileStat.isFile()) return { status: 'non-file' };
+    if (fileStat.size > MAX_STRUCTURED_PROMPT_FILE_SIZE) {
+      return { status: 'oversized' };
+    }
+    return { status: 'ok', content: fs.readFileSync(descriptor, 'utf8') };
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
 const PROVIDER_SELECTOR_EXTENSIONS = new Set([
   'cjs',
   'cts',
@@ -338,7 +360,11 @@ export function extractFileDependencies(
   };
 
   try {
-    const configContent = fs.readFileSync(configPath, 'utf8');
+    const configFile = readRegularFile(configPath);
+    if (configFile.status !== 'ok') {
+      throw new Error('Config file is not a supported regular file');
+    }
+    const configContent = configFile.content;
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
       return [];
@@ -1163,10 +1189,15 @@ export function extractFileDependencies(
             }
             visitedPromptFiles.add(physicalPromptFile);
 
-            if (
-              fs.statSync(physicalPromptFile).size >
-              MAX_STRUCTURED_PROMPT_FILE_SIZE
-            ) {
+            const promptFileContent = readRegularFile(physicalPromptFile);
+            if (promptFileContent.status === 'non-file') {
+              dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
+              core.warning(
+                'Skipping non-file structured prompt dependency; nested references will not be inspected',
+              );
+              continue;
+            }
+            if (promptFileContent.status === 'oversized') {
               dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
               core.warning(
                 'Skipping oversized structured prompt dependency; nested references will not be inspected',
@@ -1174,10 +1205,9 @@ export function extractFileDependencies(
               continue;
             }
 
-            const nestedConfig = loadYaml(
-              fs.readFileSync(physicalPromptFile, 'utf8'),
-              { schema: CONFIG_YAML_SCHEMA },
-            );
+            const nestedConfig = loadYaml(promptFileContent.content, {
+              schema: CONFIG_YAML_SCHEMA,
+            });
             const visitedNestedValues = new WeakSet<object>();
             const visitNestedReferences = (value: unknown): void => {
               if (typeof value === 'string' && value.startsWith('file://')) {

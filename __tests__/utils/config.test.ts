@@ -14,6 +14,9 @@ vi.mock('fs', async () => {
     lstatSync: vi.fn(),
     realpathSync: vi.fn(),
     statSync: vi.fn(),
+    openSync: vi.fn(),
+    fstatSync: vi.fn(),
+    closeSync: vi.fn(),
     promises: {
       access: vi.fn(),
       writeFile: vi.fn(),
@@ -30,6 +33,9 @@ describe('extractFileDependencies', () => {
     lstatSync: Mock;
     realpathSync: Mock;
     statSync: Mock;
+    openSync: Mock;
+    fstatSync: Mock;
+    closeSync: Mock;
   };
   const mockGlob = glob as unknown as {
     hasMagic: Mock;
@@ -47,7 +53,15 @@ describe('extractFileDependencies', () => {
       isSymbolicLink: () => false,
     } as fs.Stats);
     mockFs.realpathSync.mockImplementation((filePath: unknown) => filePath);
-    mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+    } as fs.Stats);
+    mockFs.openSync.mockImplementation((filePath: unknown) => filePath);
+    mockFs.fstatSync.mockImplementation((descriptor: unknown) =>
+      mockFs.statSync(descriptor),
+    );
+    mockFs.closeSync.mockImplementation(() => undefined);
   });
 
   it('should extract file:// providers', () => {
@@ -87,6 +101,62 @@ prompts:
     );
     expect(core.warning).not.toHaveBeenCalledWith(
       expect.stringContaining('42'),
+    );
+  });
+
+  it.each([
+    ['FIFO', false, 0],
+    ['oversized file', true, 2 ** 40],
+  ])('should not read a primary config backed by a %s', (_kind, isFile, size) => {
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => isFile,
+      mode: isFile ? 0o100644 : 0o10644,
+      size,
+    } as fs.Stats);
+    mockFs.readFileSync.mockImplementation(() => {
+      throw new Error('primary config should not be read');
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(mockFs.readFileSync).not.toHaveBeenCalled();
+    expect(mockFs.openSync).toHaveBeenCalledWith(
+      '/test/working/promptfooconfig.yaml',
+      fs.constants.O_RDONLY | fs.constants.O_NONBLOCK,
+    );
+    expect(mockFs.closeSync).toHaveBeenCalledWith(
+      '/test/working/promptfooconfig.yaml',
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract dependencies from config: unable to read or parse config',
+    );
+  });
+
+  it('should not read a primary config swapped to a FIFO after path validation', () => {
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o100644,
+      size: 0,
+    } as fs.Stats);
+    mockFs.fstatSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => false,
+      mode: 0o10644,
+      size: 0,
+    } as fs.Stats);
+    mockFs.readFileSync.mockImplementation(() => {
+      throw new Error('swapped primary config should not be read');
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(mockFs.readFileSync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract dependencies from config: unable to read or parse config',
     );
   });
 
@@ -2548,11 +2618,16 @@ prompts:
     mockFs.existsSync.mockImplementation((filePath: unknown) =>
       String(filePath).endsWith('/templates'),
     );
-    mockFs.statSync.mockReturnValue({
-      isDirectory: () => true,
-      isFile: () => false,
-      mode: 0o755,
-    } as fs.Stats);
+    mockFs.statSync.mockImplementation(
+      (filePath: unknown) =>
+        ({
+          isDirectory: () =>
+            !String(filePath).endsWith('/promptfooconfig.yaml'),
+          isFile: () => String(filePath).endsWith('/promptfooconfig.yaml'),
+          mode: 0o755,
+          size: 0,
+        }) as fs.Stats,
+    );
 
     const deps = extractFileDependencies(
       '/test/working/evals/promptfooconfig.yaml',
@@ -2624,7 +2699,15 @@ prompts:
     mockFs.existsSync.mockImplementation((filePath: unknown) =>
       String(filePath).endsWith('generate.zsh'),
     );
-    mockFs.statSync.mockImplementation(() => {
+    mockFs.statSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/promptfooconfig.yaml')) {
+        return {
+          isDirectory: () => false,
+          isFile: () => true,
+          mode: 0o100644,
+          size: 0,
+        } as fs.Stats;
+      }
       throw new Error('permission denied');
     });
 
@@ -2901,6 +2984,93 @@ prompts:
     );
     expect(core.warning).toHaveBeenCalledWith(
       'Skipping oversized structured prompt dependency; nested references will not be inspected',
+    );
+  });
+
+  it('should not read a contained FIFO structured prompt while preserving safe sibling dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/safe.yaml')) {
+        return 'content: file://shared/nested.txt\n';
+      }
+      if (String(filePath).endsWith('/blocked.yaml')) {
+        throw new Error('FIFO prompt should not be read');
+      }
+      return `
+prompts:
+  - file://prompts/blocked.yaml
+  - file://prompts/safe.yaml
+`;
+    });
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.statSync.mockImplementation(
+      (filePath: unknown) =>
+        ({
+          isDirectory: () => false,
+          isFile: () => !String(filePath).endsWith('/blocked.yaml'),
+          mode: String(filePath).endsWith('/blocked.yaml') ? 0o10644 : 0o100644,
+          size: 0,
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'prompts/blocked.yaml',
+      './',
+      'prompts/safe.yaml',
+      'shared/nested.txt',
+    ]);
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(
+      '/test/working/prompts/blocked.yaml',
+      'utf8',
+    );
+    expect(mockFs.openSync).toHaveBeenCalledWith(
+      '/test/working/prompts/blocked.yaml',
+      fs.constants.O_RDONLY | fs.constants.O_NONBLOCK,
+    );
+    expect(mockFs.closeSync).toHaveBeenCalledWith(
+      '/test/working/prompts/blocked.yaml',
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping non-file structured prompt dependency; nested references will not be inspected',
+    );
+  });
+
+  it('should not read a structured prompt swapped to a FIFO after path validation', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/blocked.yaml')) {
+        throw new Error('swapped FIFO prompt should not be read');
+      }
+      return 'prompts: file://prompts/blocked.yaml\n';
+    });
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o100644,
+      size: 0,
+    } as fs.Stats);
+    mockFs.fstatSync.mockImplementation(
+      (descriptor: unknown) =>
+        ({
+          isDirectory: () => false,
+          isFile: () => !String(descriptor).endsWith('/blocked.yaml'),
+          mode: String(descriptor).endsWith('/blocked.yaml')
+            ? 0o10644
+            : 0o100644,
+          size: 0,
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/blocked.yaml', './']);
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(
+      '/test/working/prompts/blocked.yaml',
+      'utf8',
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping non-file structured prompt dependency; nested references will not be inspected',
     );
   });
 
@@ -4533,9 +4703,12 @@ providers:
     });
 
     mockFs.statSync.mockImplementation(
-      () =>
+      (filePath: unknown) =>
         ({
-          isDirectory: () => true,
+          isDirectory: () =>
+            !String(filePath).endsWith('/promptfooconfig.yaml'),
+          isFile: () => String(filePath).endsWith('/promptfooconfig.yaml'),
+          size: 0,
         }) as fs.Stats,
     );
 

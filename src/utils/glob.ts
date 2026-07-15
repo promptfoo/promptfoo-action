@@ -11,24 +11,25 @@ export function normalizeGlobSeparators(
   value: string,
   windowsPathsNoEscape = false,
 ): string {
-  let normalized = '';
+  const normalizedParts: string[] = [];
   for (let index = 0; index < value.length; index++) {
     const character = value.charAt(index);
     if (character !== '\\') {
-      normalized += character;
+      normalizedParts.push(character);
       continue;
     }
     let end = index + 1;
     while (value.charAt(end) === '\\') end++;
     const next = value.charAt(end);
     if (!windowsPathsNoEscape && '{}[]()'.includes(next)) {
-      normalized += value.slice(index, end) + next;
+      normalizedParts.push(value.slice(index, end), next);
       index = end;
       continue;
     }
-    normalized += '/'.repeat(end - index);
+    normalizedParts.push('/'.repeat(end - index));
     index = end - 1;
   }
+  const normalized = normalizedParts.join('');
   if (windowsPathsNoEscape && /^\/[A-Za-z]:\//.test(normalized)) {
     return normalized.slice(1);
   }

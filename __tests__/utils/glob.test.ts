@@ -91,4 +91,14 @@ describe('normalizeGlobSeparators', () => {
       '/C:/repo/prompts/*.txt',
     );
   });
+
+  it('normalizes a maximum-length separator-heavy glob within a bounded time', () => {
+    const pattern = 'a\\'.repeat(32_768);
+    const startedAt = performance.now();
+
+    const normalized = normalizeGlobSeparators(pattern, true);
+
+    expect(normalized).toBe('a/'.repeat(32_768));
+    expect(performance.now() - startedAt).toBeLessThan(250);
+  });
 });

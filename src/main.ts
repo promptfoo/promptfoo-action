@@ -21,7 +21,7 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
-import { preflightGlob } from './utils/glob';
+import { normalizeGlobSeparators, preflightGlob } from './utils/glob';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -532,13 +532,20 @@ export async function run(): Promise<void> {
       .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
       .filter((file) => file);
 
-    for (const globPattern of promptFilesGlobs) {
+    for (const rawGlobPattern of promptFilesGlobs) {
+      const windowsPathsNoEscape = process.platform === 'win32';
+      const globPattern =
+        windowsPathsNoEscape &&
+        rawGlobPattern.length <= MAX_DEPENDENCY_GLOB_LENGTH
+          ? normalizeGlobSeparators(rawGlobPattern, true)
+          : rawGlobPattern;
       let matches: string[];
       try {
         if (
           preflightGlob(globPattern, {
             maxLength: MAX_DEPENDENCY_GLOB_LENGTH,
             maxBraceExpansions: MAX_PROMPT_BRACE_EXPANSIONS,
+            windowsPathsNoEscape,
           }) !== 'safe' ||
           braceExpand(globPattern, {
             braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
@@ -554,6 +561,7 @@ export async function run(): Promise<void> {
           cwd: workingDirectory,
           nodir: true,
           braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
+          ...(windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}),
         });
       } catch {
         promptGlobFailed = true;
@@ -696,8 +704,11 @@ export async function run(): Promise<void> {
       }
     }
 
-    const evaluationPromptFiles =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const evaluationPromptFiles = useConfigPrompts
+      ? []
+      : configChanged || dependencyChanged
+        ? allPromptFiles
+        : promptFiles;
 
     if (
       !forceRun &&

@@ -596,6 +596,77 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test.each([
+      1, 2, 3,
+    ])('should bound a Windows action brace range after %i backslash separators', async (separatorCount) => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      withInputs({
+        prompts: `prompts${'\\'.repeat(separatorCount)}{1..1000000000}.txt`,
+      });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+
+      try {
+        await run();
+      } finally {
+        if (platform) Object.defineProperty(process, 'platform', platform);
+      }
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should normalize a valid Windows action glob before expansion and enumeration', async () => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      withInputs({ prompts: 'prompts\\{one,two}\\*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/one/safe.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/one/safe.txt']);
+
+      try {
+        await run();
+      } finally {
+        if (platform) Object.defineProperty(process, 'platform', platform);
+      }
+
+      expect(mockGlob.sync).toHaveBeenCalledWith('prompts/{one,two}/*.txt', {
+        cwd: process.cwd(),
+        nodir: true,
+        braceExpandMax: 1024,
+        windowsPathsNoEscape: true,
+      });
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject an oversized Windows action glob before separator normalization', async () => {
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      withInputs({ prompts: `prompts\\${'a'.repeat(65_537)}.txt` });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      const startedAt = performance.now();
+
+      try {
+        await run();
+      } finally {
+        if (platform) Object.defineProperty(process, 'platform', platform);
+      }
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(performance.now() - startedAt).toBeLessThan(250);
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should describe config-prompt fallback accurately when no action prompt matches', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'promptfooconfig.yaml' },
@@ -1634,6 +1705,35 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
       expect(mockCore.info).not.toHaveBeenCalledWith(
         expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+    });
+
+    test('should ignore an unused CRLF action-prompt match in config-prompt mode', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/custom.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/unused\r\n::warning::SENSITIVE-REVIEW-TOKEN.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'LLM evaluation used prompts from the config file',
+          ),
+        }),
       );
     });
 
