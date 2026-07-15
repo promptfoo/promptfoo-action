@@ -36332,7 +36332,7 @@ function isPathInside(baseDir, targetPath) {
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
 function sanitizeLogText(value) {
-  return value.replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  return value.replace(/\0/g, "\\0").replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
 function isUnsupportedWindowsPath(filePath) {
   return /^[A-Za-z]:(?![\\/])/.test(filePath) || !path5.isAbsolute(filePath) && path5.win32.isAbsolute(filePath);
@@ -37220,17 +37220,18 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       )) {
         return false;
       }
-      if (reference.startsWith("file://") || reference.startsWith("exec:") || reference.includes("*") || reference.includes("/") || reference.includes("\\")) {
+      if (reference.startsWith("file://") || reference.startsWith("exec:")) {
         return true;
       }
-      const tokens = reference.split(":");
-      const lastToken = tokens[tokens.length - 1];
-      const pathToken = tokens[tokens.length - 2] ?? "";
-      return /\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)$/.test(
-        lastToken
-      ) || /\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)$/.test(
-        pathToken
-      ) || reference.charAt(reference.length - 3) === "." || reference.charAt(reference.length - 4) === ".";
+      const selectorIndex = reference.lastIndexOf(":");
+      const candidate = selectorIndex > -1 ? reference.slice(0, selectorIndex) : reference;
+      const extensionIndex = candidate.lastIndexOf(".");
+      const extension = extensionIndex > -1 ? candidate.slice(extensionIndex + 1) : "";
+      const hasExtension = extension.length > 0 && /^[A-Za-z0-9]+$/.test(extension);
+      if (/[\\/*?{}[\]]/.test(reference)) {
+        return !/\s/.test(reference) || /[\\/]/.test(reference) || hasExtension;
+      }
+      return hasExtension;
     };
     const processPromptReference = (reference) => {
       if (!isPromptReference(reference)) {
@@ -37860,6 +37861,14 @@ function findForbiddenAuthKey(environment) {
   );
 }
 function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, override = true) {
+  const filePaths = Array.isArray(envFilePath) ? envFilePath : [envFilePath];
+  if (filePaths.some((filePath) => /[\0\r\n]/.test(filePath))) {
+    throw new PromptfooActionError(
+      "Invalid environment file path: control characters are not allowed.",
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Choose an environment file path without NUL, CR, or LF characters."
+    );
+  }
   const fileEnvironment = /* @__PURE__ */ Object.create(null);
   const result = dotenv.config({
     path: envFilePath,
@@ -38824,7 +38833,10 @@ async function run() {
       "use-config-prompts",
       { required: false }
     );
-    const envFiles = getInput("env-files", { required: false });
+    const envFiles = getInput("env-files", {
+      required: false,
+      trimWhitespace: false
+    });
     const failOnThreshold = parseOptionalPercentage(
       getInput("fail-on-threshold", { required: false }),
       "fail-on-threshold"
@@ -38887,7 +38899,17 @@ async function run() {
       }
     }
     const loadEnvironmentFiles = () => {
+      const validateEnvFilePath = (envFilePath) => {
+        if (/[\0\r\n]/.test(envFilePath)) {
+          throw new PromptfooActionError(
+            "Invalid environment file path: control characters are not allowed.",
+            ErrorCodes.INVALID_CONFIGURATION,
+            "Choose an environment file path without NUL, CR, or LF characters."
+          );
+        }
+      };
       const resolveContainedEnvFile = (envFilePath) => {
+        validateEnvFilePath(envFilePath);
         const resolvedPath = path7.resolve(envFilePath);
         const relativePath = path7.relative(workingDirectory, resolvedPath);
         if (relativePath === ".." || relativePath.startsWith(`..${path7.sep}`) || path7.isAbsolute(relativePath)) {
@@ -38921,7 +38943,12 @@ async function run() {
       const implicitFilePath = resolveContainedEnvFile(
         implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath
       );
-      const explicitEnvFiles = envFiles.split(",").map((envFile) => envFile.trim()).filter(Boolean).map((envFile) => path7.resolve(path7.join(workingDirectory, envFile))).map((envFilePath) => {
+      const explicitEnvFiles = envFiles.split(",").map((envFile) => {
+        validateEnvFilePath(envFile);
+        return envFile.trim();
+      }).filter(Boolean).map(
+        (envFile) => resolveContainedEnvFile(path7.join(workingDirectory, envFile))
+      ).map((envFilePath) => {
         resolveContainedEnvFile(envFilePath);
         const vaultPath = envFilePath.endsWith(".vault") ? envFilePath : `${envFilePath}.vault`;
         const effectivePath = process.env.DOTENV_KEY && fs8.existsSync(vaultPath) ? vaultPath : envFilePath;
@@ -39356,7 +39383,8 @@ async function run() {
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const modifiedFiles = evaluatedPromptFiles.join(", ");
-      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
+      const description = useConfigPrompts ? "\u26A0\uFE0F Evaluation used prompts defined in the Promptfoo config." : forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? `\u26A0\uFE0F Evaluated prompt files: ${modifiedFiles}` : `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}`;
+      let body = `${description}
 
 | Success | Failure |
 |---------|---------|
