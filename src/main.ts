@@ -4,6 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -21,6 +22,12 @@ import {
   PromptfooActionError,
 } from './utils/errors';
 import { isDirectory } from './utils/fs';
+import {
+  hasBalancedGlobDelimiters,
+  hasUnsafeNumericGlobRange,
+  MAX_BRACE_EXPANSIONS,
+  MAX_GLOB_PATTERN_LENGTH,
+} from './utils/glob';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -509,9 +516,36 @@ export async function run(): Promise<void> {
     const changedFilesList = changedFiles.split('\0').filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
+      if (
+        globPattern.length > MAX_GLOB_PATTERN_LENGTH ||
+        globPattern.includes('\0')
+      ) {
+        throw new PromptfooActionError(
+          'Action prompt glob is too long or contains a null byte; refusing to enumerate unsafe pattern',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+      if (!hasBalancedGlobDelimiters(globPattern)) {
+        throw new PromptfooActionError(
+          'Action prompt glob contains malformed delimiters; refusing to enumerate unsafe pattern',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+      if (
+        hasUnsafeNumericGlobRange(globPattern) ||
+        braceExpand(globPattern, {
+          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+        }).length > MAX_BRACE_EXPANSIONS
+      ) {
+        throw new PromptfooActionError(
+          'Action prompt glob expands to more than 1024 alternatives; refusing to enumerate unsafe pattern',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,
+        braceExpandMax: MAX_BRACE_EXPANSIONS,
       });
       const allMatches = matches.filter((file) => {
         const repositoryFile = toRepositoryPath(
@@ -556,9 +590,24 @@ export async function run(): Promise<void> {
             }
 
             if (
+              dep.length > MAX_GLOB_PATTERN_LENGTH ||
+              dep.includes('\0') ||
+              !hasBalancedGlobDelimiters(dep) ||
+              hasUnsafeNumericGlobRange(dep) ||
+              braceExpand(dep, {
+                braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+              }).length > MAX_BRACE_EXPANSIONS
+            ) {
+              core.warning(
+                'Failed to validate config dependency glob; conservatively running evaluation',
+              );
+              return true;
+            }
+
+            if (
               glob.hasMagic(dep, {
                 magicalBraces: true,
-                braceExpandMax: 1025,
+                braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
               }) &&
               changedFilesList.some((changedFile) =>
                 path.posix.matchesGlob(changedFile, dep),

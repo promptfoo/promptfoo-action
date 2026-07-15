@@ -442,6 +442,53 @@ providers:
     }
   });
 
+  it('should normalize Windows file URL drives for prompt, variable, and assertion dependencies', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - file:///C:/repository/prompts/prompt.txt
+tests:
+  - vars:
+      context: file:///C:/repository/vars/context.txt
+    assert:
+      - type: javascript
+        value: file:///C:/repository/assertions/check.js
+`);
+
+      const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+      expect(deps).toEqual([
+        '../config/C:/repository/prompts/prompt.txt',
+        '../config/C:/repository/vars/context.txt',
+        '../config/C:/repository/assertions/check.js',
+      ]);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
+  it('should preserve a safe numeric dependency brace range on Windows', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      mockFs.readFileSync.mockReturnValue(
+        'providers: file://providers/provider_{1..8}.py',
+      );
+      mockGlob.hasMagic.mockImplementation(
+        (value: string, options?: { magicalBraces?: boolean }) =>
+          options?.magicalBraces === true && value.includes('{'),
+      );
+
+      const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+      expect(deps).toEqual(['../config/providers/']);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
   it('should strip class-method selectors from Python and Ruby providers', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -2049,7 +2096,9 @@ providers:
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - 'file://C:\\private\\DRIVE_SECRET_MARKER.py'
+  - 'file:///C:/private/URL_DRIVE_SECRET_MARKER.py'
   - 'file://\\\\server\\share\\UNC_SECRET_MARKER.py'
+  - 'file:////server/share/URL_UNC_SECRET_MARKER.py'
   - 'file://\\private\\ROOT_SECRET_MARKER.py'
 prompts:
   - file: 'C:\\private\\OBJECT_SECRET_MARKER.txt'
@@ -2083,6 +2132,69 @@ prompts:
     expect(mockGlob.sync).not.toHaveBeenCalled();
     expect(core.warning).toHaveBeenCalledWith(
       'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
+  it('should reject a huge numeric dependency brace range before glob parsing', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://providers/{1..1000000000}.py',
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
+  it('should reject a huge numeric dependency brace range inside a character class before glob parsing', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://providers/[{1..1000000000}].py',
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
+  it('should reject a multiplicative dependency brace glob before enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(
+      `providers: file://providers/${'{one,two}'.repeat(11)}.py`,
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        options?.magicalBraces === true && value.includes('{'),
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
+  it('should reject an overlong dependency glob before glob parsing', () => {
+    mockFs.readFileSync.mockReturnValue(
+      `providers: file://providers/${'a'.repeat(4097)}.py`,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping unsafe config dependency glob; conservatively watching the dependency root',
     );
   });
 
@@ -2837,6 +2949,23 @@ providers:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([]);
+  });
+
+  it('should reject an initial null-byte provider and an object-form null-byte prompt safely', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "file://\\0provider.py"
+prompts:
+  - file: "\\0prompt.txt"
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping unsafe config dependency content; its path may still be tracked for change detection',
+    );
   });
 
   it('should ignore unsafe object-form variable and assertion dependencies', () => {

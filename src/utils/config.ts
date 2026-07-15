@@ -5,6 +5,12 @@ import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import { isDirectory } from './fs';
+import {
+  hasBalancedGlobDelimiters,
+  hasUnsafeNumericGlobRange,
+  MAX_BRACE_EXPANSIONS,
+  MAX_GLOB_PATTERN_LENGTH,
+} from './glob';
 
 type ProviderEntry = string | { id?: string; [key: string]: unknown };
 type ProviderEnv = Record<string, string | number | boolean | undefined>;
@@ -23,7 +29,6 @@ type TestEntry = {
   assertScoringFunction?: string;
   [key: string]: unknown;
 };
-const MAX_BRACE_EXPANSIONS = 1024;
 const MAX_STRUCTURED_DEPENDENCY_BYTES = 10 * 1024 * 1024;
 const MAX_TEST_PATH_LENGTH = 4096;
 const GLOB_MAGIC_OPTIONS = {
@@ -94,38 +99,11 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
 function isForeignWindowsPath(filePath: string): boolean {
   return (
     process.platform !== 'win32' &&
-    (/^[A-Za-z]:/.test(filePath) || filePath.startsWith('\\'))
+    (/^\/?[A-Za-z]:/.test(filePath) ||
+      filePath.startsWith('\\') ||
+      filePath.startsWith('//') ||
+      filePath.startsWith('/\\'))
   );
-}
-
-function hasBalancedGlobDelimiters(pattern: string): boolean {
-  const expectedClosers: string[] = [];
-  const closers: Record<string, string> = {
-    '{': '}',
-    '(': ')',
-    '[': ']',
-  };
-  let inCharacterClass = false;
-
-  for (const character of pattern) {
-    if (inCharacterClass) {
-      if (character === ']') {
-        inCharacterClass = false;
-      }
-      continue;
-    }
-    if (character === '[') {
-      inCharacterClass = true;
-    } else if (character in closers) {
-      expectedClosers.push(closers[character]);
-    } else if (character === '}' || character === ')' || character === ']') {
-      if (expectedClosers.pop() !== character) {
-        return false;
-      }
-    }
-  }
-
-  return expectedClosers.length === 0 && !inCharacterClass;
 }
 
 function isPromptFilePath(prompt: string): boolean {
@@ -324,7 +302,12 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Helper function to process file:// paths with glob support
     const processFileUrlUnchecked = (fileUrl: string): string[] | undefined => {
-      const filePath = fileUrl.replace('file://', '');
+      const encodedFilePath = fileUrl.replace('file://', '');
+      const filePath =
+        process.platform === 'win32' &&
+        /^\/[A-Za-z]:[\\/]/.test(encodedFilePath)
+          ? encodedFilePath.slice(1)
+          : encodedFilePath;
       if (isForeignWindowsPath(filePath)) {
         if (!dependencyRootWarningEmitted) {
           core.warning(
@@ -332,6 +315,29 @@ export function extractFileDependencies(configPath: string): string[] {
           );
           dependencyRootWarningEmitted = true;
         }
+        return [];
+      }
+      if (filePath.includes('\0')) {
+        if (!dependencyRootWarningEmitted) {
+          core.warning(
+            'Skipping unsafe config dependency content; its path may still be tracked for change detection',
+          );
+          dependencyRootWarningEmitted = true;
+        }
+        return [];
+      }
+      if (filePath.length > MAX_GLOB_PATTERN_LENGTH) {
+        watchDependencyRoots();
+        core.warning(
+          'Skipping unsafe config dependency glob; conservatively watching the dependency root',
+        );
+        return [];
+      }
+      if (hasUnsafeNumericGlobRange(filePath)) {
+        watchDependencyRoots();
+        core.warning(
+          'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+        );
         return [];
       }
       const isGlob = glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS);
@@ -453,6 +459,13 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     const hasGlobMagicSafely = (filePath: string): boolean => {
+      if (
+        filePath.length > MAX_GLOB_PATTERN_LENGTH ||
+        filePath.includes('\0') ||
+        hasUnsafeNumericGlobRange(filePath)
+      ) {
+        return true;
+      }
       try {
         return glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS);
       } catch {

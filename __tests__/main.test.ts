@@ -1561,7 +1561,7 @@ describe('GitHub Action Main', () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue([
-        'providers/INVALID_GLOB_SECRET_MARKER[.py',
+        'providers/INVALID_GLOB_SECRET_MARKER*.py',
       ]);
       mockGlob.hasMagic.mockImplementation((value: string) => {
         if (value.includes('INVALID_GLOB_SECRET_MARKER')) {
@@ -1583,6 +1583,44 @@ describe('GitHub Action Main', () => {
             String(call[0]).includes('INVALID_GLOB_SECRET_MARKER'),
           ),
       ).toBe(false);
+    });
+
+    test('should conservatively run before parsing an oversized numeric config dependency glob', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'prompts/{1..1000000000}.txt',
+      ]);
+      mockGlob.hasMagic.mockImplementation(() => {
+        throw new Error('dependency glob parser should not run');
+      });
+
+      await run();
+
+      expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should conservatively run before matching a multiplicative config dependency brace glob', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        `prompts/${'{one,two}'.repeat(11)}.txt`,
+      ]);
+      mockGlob.hasMagic.mockImplementation(() => {
+        throw new Error('dependency glob parser should not run');
+      });
+
+      await run();
+
+      expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should force evaluation when no relevant files changed', async () => {
@@ -2078,6 +2116,144 @@ describe('GitHub Action Main', () => {
   });
 
   describe('security validation', () => {
+    test('should reject action prompt globs with too many brace alternatives before enumeration', async () => {
+      withInputs({ prompts: 'prompts/{1..1025}.txt' });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Action prompt glob expands to more than 1024 alternatives; refusing to enumerate unsafe pattern',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a huge numeric action prompt brace range before enumeration', async () => {
+      withInputs({ prompts: 'prompts/{1..1000000000}.txt' });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Action prompt glob expands to more than 1024 alternatives; refusing to enumerate unsafe pattern',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a huge numeric action prompt brace range inside a character class before enumeration', async () => {
+      withInputs({ prompts: 'prompts/[{1..1000000000}].txt' });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Action prompt glob expands to more than 1024 alternatives; refusing to enumerate unsafe pattern',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a zero-step numeric action prompt brace range before enumeration', async () => {
+      withInputs({ prompts: 'prompts/{1..8..0}.txt' });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Action prompt glob expands to more than 1024 alternatives; refusing to enumerate unsafe pattern',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['an overlong glob', `prompts/${'a'.repeat(4097)}.txt`],
+      ['a null-byte glob', 'prompts/null\0byte.txt'],
+    ])('should reject %s before action prompt enumeration', async (_name, globPattern) => {
+      withInputs({ prompts: globPattern });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Action prompt glob is too long or contains a null byte; refusing to enumerate unsafe pattern',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject malformed action prompt glob delimiters without leaking the pattern', async () => {
+      withInputs({
+        prompts: 'prompts/{ACTION_GLOB_SECRET_MARKER.txt',
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Action prompt glob contains malformed delimiters; refusing to enumerate unsafe pattern',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) =>
+            String(call[0]).includes('ACTION_GLOB_SECRET_MARKER'),
+          ),
+      ).toBe(false);
+    });
+
+    test('should cap action prompt glob enumeration while preserving valid braces and character classes', async () => {
+      withInputs({ prompts: 'prompts/{one,two}/[!}]*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/one/prompt1.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/one/prompt1.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/{one,two}/[!}]*.txt',
+        expect.objectContaining({ nodir: true, braceExpandMax: 1024 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should preserve a safely stepped descending numeric action prompt brace range', async () => {
+      withInputs({ prompts: 'prompts/{1000000000..1..-1000000}.txt' });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/{1000000000..1..-1000000}.txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should preserve escaped literal action prompt glob delimiters on POSIX', async () => {
+      if (process.platform === 'win32') return;
+      const patterns = [
+        'prompts/\\{literal.txt',
+        'prompts/literal\\}.txt',
+        'prompts/\\[literal.txt',
+        'prompts/\\(literal.txt',
+        'prompts/\\{1..1000000000}.txt',
+      ];
+      withInputs({ prompts: patterns.join('\n') });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(patterns.length);
+      for (const pattern of patterns) {
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          pattern,
+          expect.objectContaining({ braceExpandMax: 1024 }),
+        );
+      }
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should reject an in-workspace config symlink that resolves outside the checkout before evaluation', async () => {
       withInputs({ config: 'evals/promptfooconfig.yaml' });
       mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
