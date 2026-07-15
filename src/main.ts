@@ -841,8 +841,7 @@ export async function run(): Promise<void> {
     }
 
     const configChanged =
-      changedFilesList.length > 0 &&
-      changedFilesList.includes(configRepositoryPath);
+      changedFilesList.length > 0 && changedFileKeys.has(configKey);
 
     // Extract dependencies from config file
     let dependencyChanged = false;
@@ -859,13 +858,16 @@ export async function run(): Promise<void> {
           }
 
           // Direct file match
-          if (changedFilesList.includes(dep)) {
+          const dependencyKey = repositoryKey(dep);
+          if (changedFileKeys.has(dependencyKey)) {
             return true;
           }
 
           // Preserve deleted dependency directories that no longer exist.
-          const depDir = dep.endsWith('/') ? dep : `${dep}/`;
-          return changedFilesList.some((changedFile) =>
+          const depDir = dependencyKey.endsWith('/')
+            ? dependencyKey
+            : `${dependencyKey}/`;
+          return Array.from(changedFileKeys).some((changedFile) =>
             changedFile.startsWith(depDir),
           );
         });

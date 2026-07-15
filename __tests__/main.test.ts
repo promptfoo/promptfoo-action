@@ -636,6 +636,32 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test('should evaluate all prompts when the Windows config path changes with different casing', async () => {
+      const currentPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      withInputs({ config: 'PromptFooConfig.yaml' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/unchanged.txt']);
+
+      try {
+        await run();
+
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/unchanged.txt']),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
     test('should process all remaining prompts when a monitored prompt is deleted', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'prompts/removed.txt', status: 'removed' },
@@ -2632,6 +2658,39 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should detect mixed-case Windows file and directory config dependencies', async () => {
+      const currentPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json', status: 'modified' },
+        { filename: 'assets/nested/example.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/unchanged.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'Data/Context.json',
+        'ASSETS/',
+      ]);
+
+      try {
+        await run();
+
+        expect(mockCore.info).toHaveBeenCalledWith(
+          'Detected changes in config file dependencies',
+        );
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/unchanged.txt']),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
     });
 
     test('should not narrow evaluation when a prompt and shared config dependency change together', async () => {
