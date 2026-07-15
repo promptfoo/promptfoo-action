@@ -136,6 +136,7 @@ function validatePromptPath(
   workspaceRoot: string,
   workingDirectory: string,
   filePath: string,
+  realRoots: { workspaceRoot?: string; workingDirectory?: string },
 ): string {
   const resolvedPath = path.resolve(workingDirectory, filePath);
   try {
@@ -145,16 +146,16 @@ function validatePromptPath(
     ) {
       throw new Error('Prompt path escapes the workspace');
     }
-    const realWorkspaceRoot = path.resolve(
+    realRoots.workspaceRoot ??= path.resolve(
       fs.realpathSync(workspaceRoot).toString(),
     );
-    const realWorkingDirectory = path.resolve(
+    realRoots.workingDirectory ??= path.resolve(
       fs.realpathSync(workingDirectory).toString(),
     );
     const realPath = path.resolve(fs.realpathSync(resolvedPath).toString());
     if (
-      !isPathInside(realWorkspaceRoot, realPath) ||
-      !isPathInside(realWorkingDirectory, realPath)
+      !isPathInside(realRoots.workspaceRoot, realPath) ||
+      !isPathInside(realRoots.workingDirectory, realPath)
     ) {
       throw new Error('Prompt path escapes the workspace');
     }
@@ -813,8 +814,17 @@ export async function run(): Promise<void> {
         'Rename the prompt file so its path does not contain CR or LF characters.',
       );
     }
+    const realPromptRoots: {
+      workspaceRoot?: string;
+      workingDirectory?: string;
+    } = {};
     for (const file of evaluatedPromptFiles) {
-      validatePromptPath(workspaceRoot, workingDirectory, file);
+      validatePromptPath(
+        workspaceRoot,
+        workingDirectory,
+        file,
+        realPromptRoots,
+      );
     }
 
     // Only parse repository environment files once an evaluation is required.

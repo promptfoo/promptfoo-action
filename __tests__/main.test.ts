@@ -670,6 +670,41 @@ describe('GitHub Action Main', () => {
       expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
     });
 
+    test('should resolve canonical prompt roots only once for a large prompt set', async () => {
+      const prompts = Array.from(
+        { length: 500 },
+        (_, index) => `prompts/prompt-${index}.txt`,
+      );
+      const workspaceRoot = process.cwd();
+      const workingDirectory = path.resolve(workspaceRoot, 'evals');
+      withInputs({ 'working-directory': 'evals' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(prompts);
+
+      await run();
+
+      const realpathInputs = mockFs.realpathSync.mock.calls.map(([filePath]) =>
+        filePath.toString(),
+      );
+      expect(
+        realpathInputs.filter((filePath) => filePath === workspaceRoot),
+      ).toHaveLength(1);
+      expect(
+        realpathInputs.filter((filePath) => filePath === workingDirectory),
+      ).toHaveLength(1);
+      expect(realpathInputs).toHaveLength(prompts.length + 2);
+      for (const prompt of prompts) {
+        expect(
+          realpathInputs.filter(
+            (filePath) => filePath === path.resolve(workingDirectory, prompt),
+          ),
+        ).toHaveLength(1);
+      }
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should reject a full-evaluation prompt symlink that physically escapes the workspace', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'promptfooconfig.yaml' },
