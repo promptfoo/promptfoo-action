@@ -601,6 +601,23 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should detect a removed prompt below separated globstars', async () => {
+      withInputs({ prompts: '**/sub/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/sub/deep/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/sub/deep/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/sub/deep/remaining.txt']),
+      );
+    });
+
     test.each([
       'prompts/**/./../*.txt',
       'prompts/**//../*.txt',

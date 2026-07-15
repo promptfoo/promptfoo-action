@@ -270,13 +270,13 @@ export async function run(): Promise<void> {
       { windowsPathsNoEscape: false, magicalBraces: true },
     );
     let promptGlobMatchingCapped = false;
-    let promptGlobMatchers: RegExp[] | undefined;
-    const getPromptGlobMatchers = (): RegExp[] => {
+    let promptGlobMatchers: Array<RegExp | Minimatch> | undefined;
+    const getPromptGlobMatchers = (): Array<RegExp | Minimatch> => {
       if (promptGlobMatchers) {
         return promptGlobMatchers;
       }
 
-      const matchers: RegExp[] = [];
+      const matchers: Array<RegExp | Minimatch> = [];
       for (const pattern of promptFilesGlobs) {
         const traversalPatterns = braceExpand(pattern, {
           braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
@@ -328,17 +328,21 @@ export async function run(): Promise<void> {
             continue;
           }
 
+          const matcher = new Minimatch(traversalPattern, {
+            nonegate: true,
+            nocomment: true,
+            nobrace: true,
+            nocase: ['darwin', 'win32'].includes(process.platform),
+            nocaseMagicOnly: false,
+            optimizationLevel: 2,
+            platform: process.platform,
+            windowsPathsNoEscape: false,
+          });
           matchers.push(
-            new Minimatch(traversalPattern, {
-              nonegate: true,
-              nocomment: true,
-              nobrace: true,
-              nocase: ['darwin', 'win32'].includes(process.platform),
-              nocaseMagicOnly: false,
-              optimizationLevel: 2,
-              platform: process.platform,
-              windowsPathsNoEscape: false,
-            }).makeRe() as RegExp,
+            traversalPattern.split('/').filter((segment) => segment === '**')
+              .length > 1
+              ? matcher
+              : (matcher.makeRe() as RegExp),
           );
         }
       }
@@ -361,9 +365,14 @@ export async function run(): Promise<void> {
       }
 
       const matchers = getPromptGlobMatchers();
+      const repositoryPath = toRepositoryPath(absolutePath);
       return (
         promptGlobMatchingCapped ||
-        matchers.some((matcher) => matcher.test(toRepositoryPath(absolutePath)))
+        matchers.some((matcher) =>
+          matcher instanceof RegExp
+            ? matcher.test(repositoryPath)
+            : matcher.match(repositoryPath),
+        )
       );
     };
     const selectChangedFiles = (files: ChangedFile[]): string => {
