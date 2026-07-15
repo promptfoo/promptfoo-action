@@ -1050,6 +1050,24 @@ metadata: ${metadata}
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should reject an invalid legacy YAML set without disclosing config contents', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts: file://prompts/main.txt
+token: SENSITIVE-REVIEW-TOKEN
+metadata: !!set {a: not-null}
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract dependencies from config: unable to read or parse config',
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
+  });
+
   it.each([
     '!!binary SGVsbG8=',
     '!!omap [{a: 1}, {b: 2}]',
