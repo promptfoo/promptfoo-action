@@ -2181,6 +2181,22 @@ prompts:
     );
   });
 
+  it('should reject an active numeric dependency brace range after an even number of POSIX escapes', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue(
+      "providers: 'file://providers/\\\\{1..1000000000}.py'",
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
   it('should reject a multiplicative dependency brace glob before enumeration', () => {
     mockFs.readFileSync.mockReturnValue(
       `providers: file://providers/${'{one,two}'.repeat(11)}.py`,
