@@ -4,7 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { braceExpand } from 'minimatch';
+import { braceExpand, Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -18,6 +18,7 @@ import {
 import {
   extractFileDependencies,
   hasBalancedGlobDelimiters,
+  hasSafeNumericBraceRanges,
   isForeignWindowsPath,
 } from './utils/config';
 import {
@@ -523,7 +524,7 @@ export async function run(): Promise<void> {
         const absoluteFile = path.resolve(workingDirectory, file);
         if (seen.has(absoluteFile)) continue;
         seen.add(absoluteFile);
-        target.push(file);
+        target.push(path.relative(workingDirectory, absoluteFile));
       }
     };
     const changedFilesList = changedFiles.split('\0').filter((file) => file);
@@ -531,11 +532,25 @@ export async function run(): Promise<void> {
     for (const globPattern of promptFilesGlobs) {
       if (
         globPattern.length > MAX_GLOB_PATTERN_LENGTH ||
-        !hasBalancedGlobDelimiters(globPattern)
+        globPattern.includes('\0') ||
+        !hasBalancedGlobDelimiters(globPattern, process.platform === 'win32')
       ) {
         throw new Error('Prompt glob pattern is invalid or too large');
       }
-      const expandedPatterns = braceExpand(globPattern.replace(/\\/g, '/'), {
+      if (
+        !hasSafeNumericBraceRanges(
+          globPattern,
+          MAX_BRACE_EXPANSIONS,
+          process.platform === 'win32',
+        )
+      ) {
+        throw new Error('Prompt glob pattern has too many brace alternatives');
+      }
+      const expansionPattern =
+        process.platform === 'win32'
+          ? globPattern.replace(/\\/g, '/')
+          : globPattern;
+      const expandedPatterns = braceExpand(expansionPattern, {
         braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
       });
       if (expandedPatterns.length > MAX_BRACE_EXPANSIONS) {
@@ -649,15 +664,30 @@ export async function run(): Promise<void> {
 
           try {
             if (
+              dep.includes('\0') ||
+              !hasBalancedGlobDelimiters(dep, false) ||
+              !hasSafeNumericBraceRanges(dep, MAX_BRACE_EXPANSIONS, false)
+            ) {
+              core.warning('Skipping invalid config dependency glob pattern');
+            } else if (
               glob.hasMagic(dep, {
                 magicalBraces: true,
-                braceExpandMax: 1025,
-              }) &&
-              changedFilesList.some((changedFile) =>
-                path.posix.matchesGlob(changedFile, dep),
-              )
+                braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+              })
             ) {
-              return true;
+              const dependencyMatcher = new Minimatch(dep, {
+                platform: 'linux',
+                windowsPathsNoEscape: false,
+                magicalBraces: true,
+                braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+              });
+              if (
+                changedFilesList.some((changedFile) =>
+                  dependencyMatcher.match(changedFile),
+                )
+              ) {
+                return true;
+              }
             }
           } catch {
             core.warning('Skipping invalid config dependency glob pattern');
@@ -708,7 +738,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`,
       );
     }
 

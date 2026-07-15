@@ -4,6 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
+import * as minimatch from 'minimatch';
 import {
   afterEach,
   beforeEach,
@@ -69,6 +70,10 @@ vi.mock('../src/utils/config', async () => {
   };
 });
 vi.mock('../src/utils/fs');
+vi.mock('minimatch', async () => {
+  const actual = await vi.importActual<typeof import('minimatch')>('minimatch');
+  return { ...actual, braceExpand: vi.fn(actual.braceExpand) };
+});
 
 import { handleError, run } from '../src/main';
 import * as auth from '../src/utils/auth';
@@ -458,6 +463,37 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
+    test('should normalize and deduplicate absolute prompt matches in a manual full-scan log', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValue('');
+      const absolute = path.join(process.cwd(), 'prompts/prompt1.*');
+      withInputs({ prompts: `${absolute}\nprompts/*.txt` });
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === absolute
+          ? [path.join(process.cwd(), 'prompts/prompt1.txt')]
+          : ['prompts/prompt1.txt', 'prompts/prompt2.txt'],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(args.filter((arg) => arg.includes('prompts/prompt'))).toEqual([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: ["prompts/prompt1.txt","prompts/prompt2.txt"]',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test.each([
       {
         label: 'changed prompt',
@@ -465,6 +501,7 @@ describe('GitHub Action Main', () => {
         dependencies: [],
         expected: ['prompts/prompt1.txt'],
         absoluteOverlap: false,
+        absoluteFirst: false,
       },
       {
         label: 'shared dependency',
@@ -472,6 +509,7 @@ describe('GitHub Action Main', () => {
         dependencies: ['data/context.json'],
         expected: ['prompts/prompt1.txt', 'prompts/prompt2.txt'],
         absoluteOverlap: false,
+        absoluteFirst: false,
       },
       {
         label: 'changed prompt with an absolute overlap',
@@ -479,6 +517,7 @@ describe('GitHub Action Main', () => {
         dependencies: [],
         expected: ['prompts/prompt1.txt'],
         absoluteOverlap: true,
+        absoluteFirst: false,
       },
       {
         label: 'shared dependency with an absolute overlap',
@@ -486,17 +525,39 @@ describe('GitHub Action Main', () => {
         dependencies: ['data/context.json'],
         expected: ['prompts/prompt1.txt', 'prompts/prompt2.txt'],
         absoluteOverlap: true,
+        absoluteFirst: false,
+      },
+      {
+        label: 'changed prompt with an absolute glob first',
+        changed: ['prompts/prompt1.txt'],
+        dependencies: [],
+        expected: ['prompts/prompt1.txt'],
+        absoluteOverlap: true,
+        absoluteFirst: true,
+      },
+      {
+        label: 'shared dependency with an absolute glob first',
+        changed: ['data/context.json'],
+        dependencies: ['data/context.json'],
+        expected: ['prompts/prompt1.txt', 'prompts/prompt2.txt'],
+        absoluteOverlap: true,
+        absoluteFirst: true,
       },
     ])('should deduplicate overlapping prompt globs for a $label', async ({
       changed,
       dependencies,
       expected,
       absoluteOverlap,
+      absoluteFirst,
     }) => {
       const overlap = absoluteOverlap
         ? path.join(process.cwd(), 'prompts/prompt1.*')
         : 'prompts/prompt1.*';
-      withInputs({ prompts: `prompts/*.txt\n${overlap}` });
+      withInputs({
+        prompts: absoluteFirst
+          ? `${overlap}\nprompts/*.txt`
+          : `prompts/*.txt\n${overlap}`,
+      });
       mockOctokit.paginate.mockResolvedValue(
         changed.map((filename) => ({ filename })),
       );
@@ -521,6 +582,7 @@ describe('GitHub Action Main', () => {
         .body as string;
       expect(body.split('prompts/prompt1.txt')).toHaveLength(2);
       expect(body).toContain(expected.join(', '));
+      expect(body).not.toContain(process.cwd());
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
@@ -1437,6 +1499,134 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test.each([
+      'prompts/{1..1000000000}.txt',
+      'prompts/{-1000000000..1}.txt',
+      'prompts/{1..1000000000..2}.txt',
+      'prompts/{1..1024}{1..2}.txt',
+      'prompts/{999999999999999999999..1}.txt',
+      'prompts/[{1..1000000000}].txt',
+      'prompts/\\\\{1..1000000000}.txt',
+      `prompts/{${'0'.repeat(32_000)}1..${'0'.repeat(32_000)}1024}.txt`,
+    ])('should reject an excessive numeric prompt brace range before expansion: %s', async (prompts) => {
+      withInputs({ prompts });
+      vi.mocked(minimatch.braceExpand).mockImplementationOnce(() => {
+        throw new Error('unsafe numeric brace expansion was reached');
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt glob pattern has too many brace alternatives',
+      );
+      expect(minimatch.braceExpand).not.toHaveBeenCalled();
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      vi.mocked(minimatch.braceExpand).mockReset();
+    });
+
+    test('should reject a NUL prompt glob before brace expansion', async () => {
+      withInputs({ prompts: 'prompts/unsafe\0{one,two}.txt' });
+      vi.mocked(minimatch.braceExpand).mockImplementationOnce(() => {
+        throw new Error('unsafe NUL brace expansion was reached');
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt glob pattern is invalid or too large',
+      );
+      expect(minimatch.braceExpand).not.toHaveBeenCalled();
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      vi.mocked(minimatch.braceExpand).mockReset();
+    });
+
+    test.each([
+      'prompts/literal\\{brace\\}.txt',
+      'prompts/literal\\[bracket\\].txt',
+      'prompts/literal\\(paren\\).txt',
+    ])('should preserve POSIX-escaped prompt glob delimiters during brace validation: %s', async (prompts) => {
+      withInputs({ prompts });
+      const filename = prompts.split('\\').join('');
+      mockOctokit.paginate.mockResolvedValue([{ filename }]);
+      mockGlob.sync.mockReturnValue([filename]);
+
+      await run();
+
+      expect(minimatch.braceExpand).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1025 }),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1025 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      `prompts/\${1..1000000000}.txt`,
+      `prompts/\${nested{1..1000000000}}.txt`,
+    ])('should preserve literal dollar-brace prompt filenames: %s', async (prompts) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([{ filename: prompts }]);
+      mockGlob.sync.mockReturnValue([prompts]);
+
+      await run();
+
+      expect(minimatch.braceExpand).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1025 }),
+      );
+      expect(mockGlob.sync).toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should reject too many comma prompt-brace alternatives after bounded expansion', async () => {
+      withInputs({
+        prompts: `prompts/{${Array.from({ length: 1026 }, (_, index) => index).join(',')}}.txt`,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt glob pattern has too many brace alternatives',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject too many alphabetic prompt-brace alternatives after bounded expansion', async () => {
+      withInputs({ prompts: 'prompts/{a..z}{A..Z}{a..z}.txt' });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt glob pattern has too many brace alternatives',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should allow mutually exclusive numeric prompt-brace arms at the expansion limit', async () => {
+      const prompts = 'prompts/{{1..32},{33..64}}{1..16}.txt';
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'prompts/1/1.txt' }]);
+      mockGlob.sync.mockReturnValue(['prompts/1/1.txt']);
+
+      await run();
+
+      expect(minimatch.braceExpand).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1025 }),
+      );
+      expect(mockGlob.sync).toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should pass the brace-expansion cap to prompt-glob enumeration', async () => {
       withInputs({ prompts: 'prompts/{one,two}.txt' });
       mockOctokit.paginate.mockResolvedValue([{ filename: 'prompts/one.txt' }]);
@@ -1450,6 +1640,33 @@ describe('GitHub Action Main', () => {
       );
       expect(mockExec.exec).toHaveBeenCalled();
       expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should normalize Windows prompt-glob separators before brace validation', async () => {
+      const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      try {
+        withInputs({ prompts: 'prompts\\{one,two}.txt' });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'prompts/one.txt' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/one.txt']);
+
+        await run();
+
+        expect(minimatch.braceExpand).toHaveBeenCalledWith(
+          'prompts/{one,two}.txt',
+          expect.objectContaining({ braceExpandMax: 1025 }),
+        );
+        expect(mockGlob.sync).toHaveBeenCalled();
+        expect(mockExec.exec).toHaveBeenCalled();
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+      } finally {
+        if (descriptor) Object.defineProperty(process, 'platform', descriptor);
+      }
     });
 
     test('should reject an oversized prompt glob before enumeration', async () => {
@@ -1524,7 +1741,7 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
-    test('should match normalized dependency globs with the POSIX path matcher', async () => {
+    test('should match normalized dependency globs with a compiled POSIX matcher', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'evals/data/deleted.txt' },
       ]);
@@ -1537,10 +1754,38 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(matchesGlob).toHaveBeenCalledWith(
-        'evals/data/deleted.txt',
-        'evals/data/*.txt',
+      expect(matchesGlob).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
       );
+      expect(mockExec.exec).toHaveBeenCalled();
+      matchesGlob.mockRestore();
+    });
+
+    test('should compile a valid brace dependency glob once for a large changed-file list', async () => {
+      const dependency = `evals/data/${'{a,b}'.repeat(10)}/*.txt`;
+      mockOctokit.paginate.mockResolvedValue([
+        ...Array.from({ length: 2998 }, (_, index) => ({
+          filename: `docs/file-${index}.md`,
+        })),
+        { filename: 'evals/data/aaaaaaaaaa/target.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('{'),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+      const matchesGlob = vi
+        .spyOn(path.posix, 'matchesGlob')
+        .mockImplementation(() => {
+          throw new Error('dependency matcher was compiled per changed file');
+        });
+      const started = Date.now();
+
+      await run();
+
+      expect(matchesGlob).not.toHaveBeenCalled();
+      expect(Date.now() - started).toBeLessThan(1500);
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
       );

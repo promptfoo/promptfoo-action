@@ -6,6 +6,7 @@ import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   extractFileDependencies,
+  hasSafeNumericBraceRanges,
   normalizeConfigFilePath,
 } from '../../src/utils/config';
 
@@ -2064,6 +2065,177 @@ defaultTest: file://defaults/default.yaml
     expect(mockGlob.sync).not.toHaveBeenCalled();
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('too many brace alternatives'),
+    );
+  });
+
+  it.each([
+    'providers/{1..1000000000}.py',
+    'providers/{-1000000000..1}.py',
+    'providers/{1..1000000000..2}.py',
+    'providers/{1..1024}{1..2}.py',
+    'providers\\{1..1000000000}.py',
+    'providers/[{1..1000000000}].py',
+    `providers/{${'0'.repeat(32_000)}1..${'0'.repeat(32_000)}1024}.py`,
+  ])('should reject an excessive numeric dependency brace range before magic detection: %s', (pattern) => {
+    mockFs.readFileSync.mockReturnValue(`providers: ['file://${pattern}']`);
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error('unsafe numeric glob magic detection was reached');
+    });
+    vi.mocked(minimatch.braceExpand).mockImplementationOnce(() => {
+      throw new Error('unsafe numeric brace expansion was reached');
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(minimatch.braceExpand).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('too many brace alternatives'),
+    );
+    vi.mocked(minimatch.braceExpand).mockReset();
+  });
+
+  it('should validate malformed, stepped, and padded numeric brace ranges linearly', () => {
+    expect(hasSafeNumericBraceRanges('providers/{1..x}.py', 1024)).toBe(true);
+    expect(hasSafeNumericBraceRanges('providers/{1..2..x}.py', 1024)).toBe(
+      true,
+    );
+    expect(hasSafeNumericBraceRanges('providers/{1..2foo}.py', 1024)).toBe(
+      true,
+    );
+    expect(hasSafeNumericBraceRanges('providers/{1..5..2}.py', 1024)).toBe(
+      true,
+    );
+    expect(hasSafeNumericBraceRanges('providers/{1..5..0}.py', 1024)).toBe(
+      false,
+    );
+    expect(
+      hasSafeNumericBraceRanges(
+        'providers/{1..2..999999999999999999999}.py',
+        1024,
+      ),
+    ).toBe(false);
+    expect(
+      hasSafeNumericBraceRanges('providers/{{1..32},{33..64}}{1..16}.py', 1024),
+    ).toBe(true);
+    const alternatives = Array.from({ length: 513 }, (_, index) => index).join(
+      ',',
+    );
+    expect(
+      hasSafeNumericBraceRanges(`providers/{1..2}{${alternatives}}.py`, 1024),
+    ).toBe(false);
+    expect(
+      hasSafeNumericBraceRanges(`providers/\${1..1000000000}.py`, 1024),
+    ).toBe(true);
+    expect(
+      hasSafeNumericBraceRanges(
+        `providers/\${nested{1..1000000000}}{1..8}.py`,
+        1024,
+      ),
+    ).toBe(true);
+    expect(
+      hasSafeNumericBraceRanges(
+        `providers/{${'0'.repeat(32_000)}1..${'0'.repeat(32_000)}1024}.py`,
+        1024,
+      ),
+    ).toBe(false);
+  });
+
+  it.each([
+    `providers/\${1..1000000000}.py`,
+    `providers/\${nested{1..1000000000}}.py`,
+  ])('should preserve literal dollar-brace dependency filenames: %s', (pattern) => {
+    mockFs.readFileSync.mockReturnValue(`providers: ['file://${pattern}']`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([`evals/${pattern}`]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should allow mutually exclusive numeric dependency-brace arms at the expansion limit', () => {
+    const pattern = 'providers/{{1..32},{33..64}}{1..16}.py';
+    mockFs.readFileSync.mockReturnValue(`providers: ['file://${pattern}']`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('{'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(minimatch.braceExpand).toHaveBeenCalledWith(
+      pattern,
+      expect.objectContaining({ braceExpandMax: 1025 }),
+    );
+    expect(mockGlob.sync).toHaveBeenCalled();
+    expect(deps).toEqual(['evals/providers/']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should reject too many comma dependency-brace alternatives after bounded expansion', () => {
+    const alternatives = Array.from({ length: 1026 }, (_, index) => index).join(
+      ',',
+    );
+    mockFs.readFileSync.mockReturnValue(
+      `providers: ['file://providers/{${alternatives}}.py']`,
+    );
+    mockGlob.hasMagic.mockReturnValue(true);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('too many brace alternatives'),
+    );
+  });
+
+  it('should reject too many alphabetic dependency-brace alternatives after bounded expansion', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "providers: ['file://providers/{a..z}{A..Z}{a..z}.py']",
+    );
+    mockGlob.hasMagic.mockReturnValue(true);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('too many brace alternatives'),
+    );
+  });
+
+  it('should reject a NUL structured-prompt glob before magic detection', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: "file://prompts/unsafe\\0{one,two}.txt"',
+    );
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error('unsafe NUL glob magic detection was reached');
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(minimatch.braceExpand).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('mismatched or unclosed delimiters'),
     );
   });
 

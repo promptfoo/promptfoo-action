@@ -147,10 +147,23 @@ function getProviderFileUrl(value: string): string | undefined {
     : `file://${providerPath}`;
 }
 
-export function hasBalancedGlobDelimiters(filePath: string): boolean {
+export function hasBalancedGlobDelimiters(
+  filePath: string,
+  windowsPathsNoEscape = true,
+): boolean {
   const expectedClosers: string[] = [];
+  let escaped = false;
   for (let index = 0; index < filePath.length; index++) {
     const character = filePath[index];
+    if (!windowsPathsNoEscape && character === '\\') {
+      escaped = !escaped;
+      continue;
+    }
+    if (!windowsPathsNoEscape && escaped && '{}[]()'.includes(character)) {
+      escaped = false;
+      continue;
+    }
+    escaped = false;
     if (expectedClosers[expectedClosers.length - 1] === ']') {
       if (character === ']') expectedClosers.pop();
       continue;
@@ -172,6 +185,112 @@ export function hasBalancedGlobDelimiters(filePath: string): boolean {
     }
   }
   return expectedClosers.length === 0;
+}
+
+export function hasSafeNumericBraceRanges(
+  filePath: string,
+  maxExpansions: number,
+  windowsPathsNoEscape = true,
+): boolean {
+  const frames: Array<{ product: number; sum: number; alternatives: boolean }> =
+    [{ product: 1, sum: 0, alternatives: false }];
+  let escaped = false;
+  let literalBraceDepth = 0;
+  const readInteger = (
+    start: number,
+  ): { value: number; next: number; safe: boolean } | undefined => {
+    let next = start;
+    if (filePath[next] === '-') next++;
+    const digits = next;
+    while (
+      next < filePath.length &&
+      filePath.charCodeAt(next) >= 48 &&
+      filePath.charCodeAt(next) <= 57
+    ) {
+      next++;
+    }
+    if (next === digits) return undefined;
+    const value = Number(filePath.slice(start, next));
+    return {
+      value,
+      next,
+      safe: next - digits <= 32 && Number.isSafeInteger(value),
+    };
+  };
+
+  for (let index = 0; index < filePath.length; index++) {
+    if (!windowsPathsNoEscape && filePath[index] === '\\') {
+      escaped = !escaped;
+      continue;
+    }
+    if (
+      !windowsPathsNoEscape &&
+      escaped &&
+      '{}[](),'.includes(filePath[index])
+    ) {
+      escaped = false;
+      continue;
+    }
+    escaped = false;
+    const character = filePath[index];
+    if (literalBraceDepth > 0) {
+      if (character === '{') literalBraceDepth++;
+      if (character === '}') literalBraceDepth--;
+      continue;
+    }
+    if (character === '{' && filePath[index - 1] === '$') {
+      literalBraceDepth = 1;
+      continue;
+    }
+    if (character === '{') {
+      const start = readInteger(index + 1);
+      if (start && filePath.slice(start.next, start.next + 2) === '..') {
+        const end = readInteger(start.next + 2);
+        if (end) {
+          let next = end.next;
+          let step = 1;
+          if (filePath.slice(next, next + 2) === '..') {
+            const parsedStep = readInteger(next + 2);
+            if (parsedStep) {
+              if (!parsedStep.safe) return false;
+              step = Math.abs(parsedStep.value);
+              next = parsedStep.next;
+            }
+          }
+          if (filePath[next] === '}') {
+            if (!start.safe || !end.safe || step === 0) return false;
+            const range =
+              Math.floor(Math.abs(end.value - start.value) / step) + 1;
+            const frame = frames[frames.length - 1];
+            if (range > maxExpansions / frame.product) return false;
+            frame.product *= range;
+            index = next;
+            continue;
+          }
+        }
+      }
+      frames.push({ product: 1, sum: 0, alternatives: false });
+      continue;
+    }
+    const frame = frames[frames.length - 1];
+    if (character === ',' && frames.length > 1) {
+      frame.sum += frame.product;
+      if (frame.sum > maxExpansions) return false;
+      frame.product = 1;
+      frame.alternatives = true;
+      continue;
+    }
+    if (character === '}' && frames.length > 1) {
+      frames.pop();
+      const alternatives = frame.alternatives
+        ? frame.sum + frame.product
+        : frame.product;
+      const parent = frames[frames.length - 1];
+      if (alternatives > maxExpansions / parent.product) return false;
+      parent.product *= alternatives;
+    }
+  }
+  return true;
 }
 
 export function isForeignWindowsPath(filePath: string): boolean {
@@ -408,6 +527,20 @@ export function extractFileDependencies(configPath: string): string[] {
 
     const getGlobMagic = (filePath: string): boolean | undefined => {
       if (!isValidGlobLength(filePath)) return undefined;
+      if (filePath.includes('\0')) {
+        addDependencyRootWatchers();
+        core.warning(
+          'Skipping invalid config dependency glob pattern with mismatched or unclosed delimiters; conservatively watching the dependency root',
+        );
+        return undefined;
+      }
+      if (!hasSafeNumericBraceRanges(filePath, MAX_BRACE_EXPANSIONS)) {
+        addDependencyRootWatchers();
+        core.warning(
+          'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+        );
+        return undefined;
+      }
       try {
         return glob.hasMagic(filePath, globOptions);
       } catch {
@@ -422,8 +555,18 @@ export function extractFileDependencies(configPath: string): string[] {
         ['{%', '%}'],
         ['{#', '#}'],
       ].some(([open, close]) => {
-        const start = filePath.indexOf(open);
-        return start >= 0 && filePath.indexOf(close, start + 2) >= 0;
+        let start = filePath.indexOf(open);
+        while (start >= 0) {
+          if (filePath.indexOf(close, start + 2) < 0) return false;
+          if (
+            open !== '{{' ||
+            !/^-?\d+\.\.-?\d+/.test(filePath.slice(start + 2))
+          ) {
+            return true;
+          }
+          start = filePath.indexOf(open, start + 2);
+        }
+        return false;
       });
 
     const watchDynamicFilePath = (filePath: string): boolean => {
