@@ -684,6 +684,35 @@ nunjucksFilters:
     ]);
   });
 
+  it('should preserve literal backslashes in direct HTTP asset paths on POSIX', () => {
+    mockFs.readFileSync.mockReturnValue(
+      String.raw`providers:
+  - id: https
+    config:
+      multipart:
+        parts:
+          - kind: file
+            source:
+              type: path
+              path: 'assets\multipart.txt'
+      signatureAuth:
+        privateKeyPath: 'keys\signing.pem'
+      tls:
+        certPath: 'certs\client.pem'
+        keyPath: 'certs\client.key'
+`,
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/assets\\multipart.txt',
+      '../config/keys\\signing.pem',
+      '../config/certs\\client.pem',
+      '../config/certs\\client.key',
+    ]);
+  });
+
   it('should track HTTP file-auth and multipart paths with env-computed discriminators', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
