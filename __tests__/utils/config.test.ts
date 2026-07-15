@@ -253,6 +253,42 @@ node: &node
     ).toEqual(['prompts/chat.yaml', 'prompts', 'partials/system.txt']);
   });
 
+  it.each([
+    'prompts/*.{yaml,json}',
+    'prompts/*',
+  ])('should extract nested references from mapped structured prompt glob %s', (promptGlob) => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return `prompts:\n  file://${promptGlob}: mapped prompts\n`;
+      }
+      if (candidate.endsWith('/prompts/chat.yaml')) {
+        return 'system: file://partials/system.txt\n';
+      }
+      if (candidate.endsWith('/prompts/chat.json')) {
+        return '{"user":"file://partials/user.txt"}';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => value.includes('*') || value.includes('{'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/prompts/chat.yaml',
+      '/test/working/prompts/chat.json',
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'prompts/chat.yaml',
+      'prompts/chat.json',
+      'prompts',
+      'partials/system.txt',
+      'partials/user.txt',
+    ]);
+  });
+
   it('should ignore unsafe and malformed mapped structured prompts', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       const candidate = String(filePath);

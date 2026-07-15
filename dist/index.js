@@ -36399,7 +36399,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         /\\/g,
         "/"
       );
-      if (!/\.(?:json|ya?ml)$/i.test(normalizedPath)) {
+      const isPromptGlob = le(normalizedPath, {
+        windowsPathsNoEscape: true
+      });
+      if (!isPromptGlob && !/\.(?:json|ya?ml)$/i.test(normalizedPath)) {
         return;
       }
       const absolutePath = resolveConfigDependency(
@@ -36407,9 +36410,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         "nested prompt file dependency"
       );
       if (!absolutePath) return;
-      const promptFiles = le(normalizedPath, {
-        windowsPathsNoEscape: true
-      }) ? Ui(absolutePath, {
+      const promptFiles = isPromptGlob ? Ui(absolutePath, {
         nodir: true,
         windowsPathsNoEscape: true
       }) : [absolutePath];
@@ -36426,7 +36427,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
       };
       for (const promptFile of promptFiles) {
-        if (!isPathInside(dependencyRoot, promptFile)) continue;
+        if (!isPathInside(dependencyRoot, promptFile) || !/\.(?:json|ya?ml)$/i.test(promptFile)) {
+          continue;
+        }
         try {
           const promptContent = fs6.readFileSync(promptFile, "utf8");
           const parsed = promptFile.endsWith(".json") ? JSON.parse(promptContent) : load(promptContent, {

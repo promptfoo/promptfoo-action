@@ -203,7 +203,10 @@ export function extractFileDependencies(
         /\\/g,
         '/',
       );
-      if (!/\.(?:json|ya?ml)$/i.test(normalizedPath)) {
+      const isPromptGlob = glob.hasMagic(normalizedPath, {
+        windowsPathsNoEscape: true,
+      });
+      if (!isPromptGlob && !/\.(?:json|ya?ml)$/i.test(normalizedPath)) {
         return;
       }
 
@@ -213,9 +216,7 @@ export function extractFileDependencies(
       );
       if (!absolutePath) return;
 
-      const promptFiles = glob.hasMagic(normalizedPath, {
-        windowsPathsNoEscape: true,
-      })
+      const promptFiles = isPromptGlob
         ? glob.sync(absolutePath, {
             nodir: true,
             windowsPathsNoEscape: true,
@@ -236,7 +237,12 @@ export function extractFileDependencies(
       };
 
       for (const promptFile of promptFiles) {
-        if (!isPathInside(dependencyRoot, promptFile)) continue;
+        if (
+          !isPathInside(dependencyRoot, promptFile) ||
+          !/\.(?:json|ya?ml)$/i.test(promptFile)
+        ) {
+          continue;
+        }
         try {
           const promptContent = fs.readFileSync(promptFile, 'utf8');
           const parsed = promptFile.endsWith('.json')
