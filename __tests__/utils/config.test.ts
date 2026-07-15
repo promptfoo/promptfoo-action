@@ -2684,6 +2684,23 @@ ${vars}
     );
   });
 
+  it('should reject a truncated combinatorial alphabetic brace dependency before enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "prompts: 'file://prompts/{a..z}{a..z}{a..z}.txt'\n",
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('{'),
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
   it('should fail closed when structured-prompt glob inspection exhausts its traversal budget', () => {
     mockFs.readFileSync.mockReturnValue('prompts: file://defs/*.yaml\n');
     mockGlob.hasMagic.mockImplementation((value: string) =>
@@ -4468,6 +4485,9 @@ prompts:
   it.each([
     '{{ env.PROMPT_FILE }}',
     "{{ env['PROMPT-FILE'] }}",
+    "{{ env ['PROMPT-FILE'] }}",
+    "{{ (env)['PROMPT-FILE'] }}",
+    "{{\u00a0(env)['PROMPT-FILE']\u00a0}}",
     '{{- env.PROMPT_FILE -}}',
     "{{- env['PROMPT-FILE'] -}}",
     '{{ env.TEST_PROMPT_PATH }}/prompt.txt',
@@ -5325,6 +5345,50 @@ tests:
 
     expect(deps).toEqual(['rubrics/cyclic.txt', './']);
     expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should not watch unrelated files for an ordinary inline HTTP grading body', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: openai:gpt-4.1-mini
+tests:
+  - assert:
+      - type: llm-rubric
+        provider:
+          id: https
+          config:
+            url: https://example.test/grade
+            body:
+              prompt: '{{ prompt }}'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
+  it('should conservatively watch an inline HTTP grading body with a nested Nunjucks include', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: openai:gpt-4.1-mini
+tests:
+  - assert:
+      - type: llm-rubric
+        provider:
+          id: https
+          config:
+            url: https://example.test/grade
+            headers:
+              empty: null
+              cyclic: &header
+                self: *header
+              x-template:
+                - '{% include "partials/header.njk" %}'
+            body:
+              prompt: '{{ prompt }}'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
   });
 
   it('should not enumerate binary grading metadata while preserving sibling dependencies', () => {

@@ -515,6 +515,10 @@ describe('GitHub Action Main', () => {
         label: 'comma-alternative range',
         prompts: `prompts/{${Array.from({ length: 1025 }, (_, index) => index).join(',')}}/*.txt`,
       },
+      {
+        label: 'combinatorial alphabetic range',
+        prompts: 'prompts/{a..z}{a..z}{a..z}.txt',
+      },
     ])('should fail closed on an unsafe prompt glob without enumerating it: $label', async ({
       prompts,
     }) => {
@@ -1204,6 +1208,7 @@ describe('GitHub Action Main', () => {
       'configs/invalid\0config.yaml',
       `configs/${'a'.repeat(65_537)}*.yaml`,
       `configs/${'@(x)'.repeat(15_000)}.yaml`,
+      'configs/{a..z}{a..z}{a..z}.yaml',
     ])('should reject an unsafe primary config glob before enumeration', async (config) => {
       withInputs({ config });
 
@@ -2726,6 +2731,25 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      ['no surviving match', []],
+      ['a surviving sibling', ['prompts/surviving.txt']],
+    ])('should run when an action-prompt glob match is deleted with %s', async (_label, matches) => {
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/deleted.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(matches);
+      mockConfig.extractFileDependencies.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
       );
       expect(mockExec.exec).toHaveBeenCalled();
     });

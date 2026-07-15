@@ -752,6 +752,54 @@ export async function run(): Promise<void> {
         if (globTraversal.exhausted) {
           throw new Error('Prompt glob traversal budget was exceeded');
         }
+        if (changedFilesList.length > 0) {
+          const promptPrefixes = expandedPromptPatterns.map((pattern) => {
+            const magicIndex = pattern.search(/[*?[\]{}()!+@]/);
+            const prefixEnd =
+              magicIndex < 0
+                ? pattern.length
+                : pattern.lastIndexOf('/', magicIndex) + 1;
+            return pattern.slice(0, prefixEnd);
+          });
+          const promptMatcher = new Minimatch(globPattern, {
+            ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+            platform: 'linux',
+            windowsPathsNoEscape,
+          });
+          const matchedRepositoryPaths = new Set(
+            matches.map((file) =>
+              toRepositoryPath(
+                path.relative(
+                  workspaceRoot,
+                  path.resolve(workingDirectory, file),
+                ),
+              ),
+            ),
+          );
+          if (
+            changedFilesList.some((changedFile) => {
+              const absoluteFile = path.resolve(workspaceRoot, changedFile);
+              const promptCandidate = path.isAbsolute(globPattern)
+                ? absoluteFile
+                : toRepositoryPath(
+                    path.relative(workingDirectory, absoluteFile),
+                  );
+              if (
+                !promptPrefixes.some((prefix) =>
+                  promptCandidate.startsWith(prefix),
+                )
+              ) {
+                return false;
+              }
+              return (
+                promptMatcher.match(promptCandidate) &&
+                !matchedRepositoryPaths.has(changedFile)
+              );
+            })
+          ) {
+            promptGlobFailed = true;
+          }
+        }
       } catch {
         promptGlobFailed = true;
         core.warning(

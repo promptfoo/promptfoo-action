@@ -1312,7 +1312,9 @@ export function extractFileDependencies(
         const isFileUrl = reference.startsWith('file://');
         const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
         const isEnvironmentTemplate =
-          /^\s*\{\{-?\s*env(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(reference);
+          /^\s*\{\{-?\s*(?:\(\s*env\s*\)|env)(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(
+            reference,
+          );
         if (
           !declaredFile &&
           !isExecutable &&
@@ -1755,6 +1757,20 @@ export function extractFileDependencies(
     };
 
     // Extract assert files
+    const containsNunjucksDirective = (
+      value: unknown,
+      visited = new WeakSet<object>(),
+    ): boolean => {
+      if (typeof value === 'string') {
+        return /\{%-?\s*(?:include|extends|import|from)\b/.test(value);
+      }
+      if (!Array.isArray(value) && !isTraversableRecord(value)) return false;
+      if (visited.has(value)) return false;
+      visited.add(value);
+      return (Array.isArray(value) ? value : Object.values(value)).some(
+        (nestedValue) => containsNunjucksDirective(nestedValue, visited),
+      );
+    };
     const extractGradingProvider = (provider: unknown): void => {
       if (typeof provider === 'string') {
         if (provider.startsWith('file://')) {
@@ -1782,15 +1798,21 @@ export function extractFileDependencies(
       processFileBackedProviderReference(providerId);
       watchExternalProviderConfig(providerId);
       watchDynamicProviderSideInputs(providerId);
-      if (
-        /^(?:https?|exec)(?::|$)/.test(providerId) ||
-        /\{[{%#]/.test(providerId)
+      const hasOnlyInlineHttpConfig =
+        /^https?(?::|$)/.test(providerId) &&
+        isTraversableRecord(providerOptions) &&
+        isTraversableRecord(providerOptions.config) &&
+        Object.keys(providerOptions.config).every((field) =>
+          ['url', 'method', 'headers', 'body'].includes(field),
+        ) &&
+        !containsNunjucksDirective(providerOptions.config);
+      if (/^exec:\s*\S/.test(providerId)) {
+        watchDynamicSideInputs = true;
+      } else if (
+        /\{[{%#]/.test(providerId) ||
+        (/^https?(?::|$)/.test(providerId) && !hasOnlyInlineHttpConfig)
       ) {
-        if (/^exec:\s*\S/.test(providerId)) {
-          watchDynamicSideInputs = true;
-        } else {
-          dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
-        }
+        dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
       }
     };
     const extractRuntimeFileReferences = (
