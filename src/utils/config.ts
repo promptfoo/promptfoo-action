@@ -7,8 +7,12 @@ import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { isDirectory } from './fs';
+import {
+  MAX_GLOB_BRACE_EXPANSIONS,
+  MAX_GLOB_PATTERN_LENGTH,
+  validateGlobPattern,
+} from './glob';
 
-const MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 const MAX_STRUCTURED_DEPENDENCY_SIZE = 10 * 1024 * 1024;
 const MAX_UNSAFE_DEPENDENCY_WARNINGS = 10;
 
@@ -263,9 +267,18 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       // Check if the path contains glob patterns
+      validateGlobPattern(filePath, 'Config file dependency pattern');
       if (glob.hasMagic(filePath, { magicalBraces: true })) {
         const safePatterns: string[] = [];
-        const matches = braceExpand(filePath).flatMap((pattern) => {
+        const expandedPatterns = braceExpand(filePath, {
+          braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS + 1,
+        });
+        if (expandedPatterns.length > MAX_GLOB_BRACE_EXPANSIONS) {
+          throw new Error(
+            `Config file dependency pattern expands to more than ${MAX_GLOB_BRACE_EXPANSIONS} alternatives.`,
+          );
+        }
+        const matches = expandedPatterns.flatMap((pattern) => {
           const absolutePattern = path.resolve(configDir, pattern);
           if (
             (path.win32.isAbsolute(pattern) && !path.isAbsolute(pattern)) ||
@@ -279,7 +292,10 @@ export function extractFileDependencies(configPath: string): string[] {
             return [];
           }
           safePatterns.push(pattern);
-          return glob.sync(absolutePattern, { nodir: true });
+          return glob.sync(absolutePattern, {
+            nodir: true,
+            braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
+          });
         });
         const globDependencyRoots = getResolvedDependencyRoots();
         for (const match of matches) {
@@ -491,6 +507,11 @@ export function extractFileDependencies(configPath: string): string[] {
       }> = [
         {
           value:
+            'request' in providerConfig ? providerConfig.request : undefined,
+          kind: 'transform',
+        },
+        {
+          value:
             'validateStatus' in providerConfig
               ? providerConfig.validateStatus
               : undefined,
@@ -632,10 +653,6 @@ export function extractFileDependencies(configPath: string): string[] {
               ? configuredPrompt.id
               : undefined;
       if (typeof prompt === 'string' && !prompt.includes('\n')) {
-        if (prompt.includes('{{') || prompt.includes('{%')) {
-          watchDynamicDependency = true;
-          continue;
-        }
         const promptPath = (
           prompt.startsWith('exec:') ? prompt.slice('exec:'.length) : prompt
         ).replace(/^file:\/\//, '');
@@ -650,6 +667,10 @@ export function extractFileDependencies(configPath: string): string[] {
             promptPath,
           );
         if (!isPromptPath) {
+          continue;
+        }
+        if (prompt.includes('{{') || prompt.includes('{%')) {
+          watchDynamicDependency = true;
           continue;
         }
         const fileUrl = `file://${promptPath}`;

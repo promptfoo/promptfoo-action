@@ -126,6 +126,43 @@ targets:
     ]);
   });
 
+  it('should track inline HTTP raw request file dependencies and ignore inline request text', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https
+    config:
+      request: file://requests/payload.txt
+  - id: http
+    config:
+      request: POST /api HTTP/1.1
+  - id: openai:gpt-4
+    config:
+      request: file://requests/ignored.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['requests/payload.txt']);
+  });
+
+  it('should contain inline HTTP raw request file dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https
+    config:
+      request: file://../outside/payload.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'must stay within the checkout or config directory',
+      ),
+    );
+  });
+
   it('should extract templated HTTP, file-auth, multipart, and slash-selector dependencies and fail closed for a dynamic provider id', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -657,6 +694,76 @@ prompts:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/prompts/prompt1.txt');
     expect(deps).toContain('../config/prompts/prompt2.txt');
+  });
+
+  it('should not watch the workspace for ordinary inline prompt templates', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - 'Translate {{text}}'
+  - raw: 'Hello {{ name }}'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should conservatively watch the workspace for templated prompt paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - file://prompts/{{ env.PROMPT }}.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+  });
+
+  it.each([
+    ['huge numeric range', 'file://providers/{1..1000000000}/*.py'],
+    ['malformed brace', 'file://providers/{safe,../outside/*.py'],
+    ['in-class numeric range', 'file://providers/[{1..5000000}].py'],
+    ['even-backslash numeric range', 'file://providers/\\\\{1..1000000000}.py'],
+    ['unsafe numeric bound', `file://providers/{1..${'9'.repeat(200)}}/*.py`],
+    ['unsafe integer bound', `file://providers/{1..${'9'.repeat(20)}}/*.py`],
+    [
+      'zero-padded numeric range',
+      `file://providers/{${'0'.repeat(32_000)}1..1024}.py`,
+    ],
+    [
+      'large estimated expansion',
+      `file://providers/${'a'.repeat(4096)}-{1..1024}.py`,
+    ],
+    [
+      'large comma expansion',
+      `file://providers/${'a'.repeat(60_000)}-{${'x,'.repeat(1023)}x}.py`,
+    ],
+  ])('should fail closed before enumerating a %s config dependency glob', (_kind, provider) => {
+    mockFs.readFileSync.mockReturnValue(`providers:\n  - ${provider}`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
+  it('should fail closed before enumerating excessive config brace alternatives', () => {
+    const provider = `file://providers/{${'a,'.repeat(1024)}a}/*.py`;
+    mockFs.readFileSync.mockReturnValue(`providers:\n  - ${provider}`);
+    mockGlob.hasMagic.mockReturnValue(true);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
   });
 
   it('should extract plain prompt paths, globs, and executable prompt selectors', () => {
@@ -1370,6 +1477,10 @@ tests:
     expect(mockGlob.sync).not.toHaveBeenCalledWith(
       expect.stringContaining('/outside/'),
       expect.anything(),
+    );
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/working/vars/one.yaml',
+      expect.objectContaining({ braceExpandMax: 1024 }),
     );
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('Ignoring unsafe config dependency glob pattern'),

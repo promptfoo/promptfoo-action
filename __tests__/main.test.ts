@@ -451,7 +451,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGlob.sync).toHaveBeenCalledWith(
         'prompts/*.txt',
-        expect.any(Object),
+        expect.objectContaining({ braceExpandMax: 1024 }),
       );
       expect(mockGlob.sync).toHaveBeenCalledWith(
         ' prompts/spaced *.txt ',
@@ -461,6 +461,111 @@ describe('GitHub Action Main', () => {
         required: false,
         trimWhitespace: false,
       });
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject a prompt glob with excessive brace expansion before enumeration', async () => {
+      withInputs({ prompts: 'prompts/{1..1000000000}/*.txt' });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file glob expands to more than 1024 alternatives.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a prompt glob with excessive brace alternatives before enumeration', async () => {
+      withInputs({ prompts: `prompts/{${'a,'.repeat(1024)}a}/*.txt` });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file glob expands to more than 1024 alternatives.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['oversized', `prompts/${'a'.repeat(64 * 1024)}.txt`, 'is too long'],
+      ['null byte', 'prompts/unsafe\0*.txt', 'contains an invalid null byte'],
+      ['unclosed brace', 'prompts/{safe,../escape/*.txt', 'is malformed'],
+      ['unopened brace', 'prompts/safe}/*.txt', 'is malformed'],
+      [
+        'deeply nested brace',
+        `prompts/${'{'.repeat(33)}safe${'}'.repeat(33)}/*.txt`,
+        'is malformed',
+      ],
+      ['unclosed class', 'prompts/[safe/*.txt', 'is malformed'],
+      [
+        'in-class numeric range',
+        'prompts/[{1..5000000}].txt',
+        'expands to more than 1024 alternatives',
+      ],
+      [
+        'even-backslash numeric range',
+        'prompts/\\\\{1..1000000000}.txt',
+        'expands to more than 1024 alternatives',
+      ],
+      [
+        'Windows numeric range',
+        'C:\\repo\\{1..1000000000}\\*.txt',
+        'expands to more than 1024 alternatives',
+      ],
+      [
+        'oversized numeric bound',
+        `prompts/{1..${'9'.repeat(200)}}/*.txt`,
+        'exceeds the safe expansion size',
+      ],
+      [
+        'unsafe integer bound',
+        `prompts/{1..${'9'.repeat(20)}}/*.txt`,
+        'expands to more than 1024 alternatives',
+      ],
+      [
+        'zero-padded numeric range',
+        `prompts/{${'0'.repeat(32_000)}1..1024}.txt`,
+        'exceeds the safe expansion size',
+      ],
+      [
+        'large estimated expansion',
+        `prompts/${'a'.repeat(4096)}-{1..1024}.txt`,
+        'exceeds the safe expansion size',
+      ],
+      [
+        'large comma expansion',
+        `prompts/${'a'.repeat(60_000)}-{${'x,'.repeat(1023)}x}.txt`,
+        'exceeds the safe expansion size',
+      ],
+    ])('should reject an %s prompt glob during preflight', async (_kind, prompts, message) => {
+      withInputs({ prompts });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(message),
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should preserve valid POSIX escaped literals and stepped numeric prompt globs', async () => {
+      const escapedGlob =
+        'prompts/[a-c]/\\{1..5000000\\}\\{literal\\}\\[team\\]\\(v1\\)-{10..1..-2}.txt';
+      withInputs({ prompts: escapedGlob });
+      mockOctokit.paginate.mockResolvedValue([]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/a/{1..5000000}{literal}[team](v1)-10.txt',
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        escapedGlob,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
       expect(mockExec.exec).toHaveBeenCalled();
     });
 

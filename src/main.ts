@@ -22,6 +22,7 @@ import {
   PromptfooActionError,
 } from './utils/errors';
 import { isDirectory } from './utils/fs';
+import { MAX_GLOB_BRACE_EXPANSIONS, validateGlobPattern } from './utils/glob';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -516,7 +517,16 @@ export async function run(): Promise<void> {
     }
 
     for (const globPattern of promptFilesGlobs) {
-      for (const pattern of braceExpand(globPattern)) {
+      validateGlobPattern(globPattern, 'Prompt file glob');
+      const expandedPatterns = braceExpand(globPattern, {
+        braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS + 1,
+      });
+      if (expandedPatterns.length > MAX_GLOB_BRACE_EXPANSIONS) {
+        throw new Error(
+          `Prompt file glob expands to more than ${MAX_GLOB_BRACE_EXPANSIONS} alternatives.`,
+        );
+      }
+      for (const pattern of expandedPatterns) {
         const absolutePattern = path.resolve(workingDirectory, pattern);
         if (
           (path.win32.isAbsolute(pattern) && !path.isAbsolute(pattern)) ||
@@ -530,6 +540,7 @@ export async function run(): Promise<void> {
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,
+        braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
       });
 
       const eligibleMatches = matches.filter((file) => {
