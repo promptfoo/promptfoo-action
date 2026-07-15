@@ -30,6 +30,7 @@ const FILE_BEARING_PROVIDER_KEYS = new Set([
   'responseFormat',
   'responseParser',
   'sessionParser',
+  'systemPrompt',
   'tools',
   'transformRequest',
   'transformResponse',
@@ -136,10 +137,27 @@ function renderEnvTemplate(
     return value;
   }
 
-  return value.replace(
-    /\{\{-?\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*-?\}\}/g,
-    (template, dotName: string | undefined, bracketName: string | undefined) =>
-      environment[dotName ?? (bracketName as string)] ?? template,
+  const uncommentedValue = value.replace(
+    /^(?:\s*\{#[\s\S]*?#\}\s*)+(?=\{\{-?\s*env(?:\.|\[))/,
+    '',
+  );
+
+  return uncommentedValue.replace(
+    /\{\{-?\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*(?:\|\s*(?:default|d)\(\s*(['"])([^'"]*)\3\s*(?:,\s*(true|false))?\s*\))?\s*-?\}\}/g,
+    (
+      template,
+      dotName: string | undefined,
+      bracketName: string | undefined,
+      _quote: string | undefined,
+      defaultValue: string | undefined,
+      defaultOnFalsy: string | undefined,
+    ) => {
+      const envValue = environment[dotName ?? (bracketName as string)];
+      if (envValue !== undefined && defaultOnFalsy === 'true') {
+        return template;
+      }
+      return envValue ?? defaultValue ?? template;
+    },
   );
 }
 
@@ -165,7 +183,7 @@ function environmentValues(
 }
 
 function mayRenderFileUrl(value: string): boolean {
-  const candidate = value.trimStart();
+  const candidate = value.trimStart().replace(/^(?:\s*\{#[\s\S]*?#\}\s*)+/, '');
   if (
     candidate.startsWith('file://') ||
     /^\{\{-?\s*env(?:\.|\[)|^\{%-?[^%]*\benv(?:\.|\[)/.test(candidate)
@@ -450,21 +468,22 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       if (typeof value === 'string') {
-        if (
-          !isProviderReference &&
-          !isFileBearingConfigValue &&
-          !value.trimStart().startsWith('file://')
-        ) {
-          return;
-        }
         const environment = {
           ...configEnvironment,
           ...providerOverrides,
         };
-        if (!mayRenderFileUrl(value)) {
+        const renderedValue = renderEnvTemplate(value, environment);
+        if (
+          !isProviderReference &&
+          !isFileBearingConfigValue &&
+          !value.trimStart().startsWith('file://') &&
+          !renderedValue.startsWith('file://')
+        ) {
           return;
         }
-        const renderedValue = renderEnvTemplate(value, environment);
+        if (!mayRenderFileUrl(value) && !renderedValue.startsWith('file://')) {
+          return;
+        }
         if (!renderedValue.startsWith('file://')) {
           if (/\{\{|\{%|\{#/.test(renderedValue)) {
             dependencies.add(`${dependencyRoot}${path.sep}`);
@@ -534,11 +553,29 @@ export function extractFileDependencies(configPath: string): string[] {
           ...providerOverrides,
         };
 
-        const fileAuthPath =
+        const authType = (value as { type?: unknown }).type;
+        const renderedAuthType =
+          typeof authType === 'string'
+            ? renderEnvTemplate(authType, {
+                ...configEnvironment,
+                ...nestedProviderOverrides,
+              })
+            : undefined;
+        const isHttpAuthContext =
           parentKey === 'auth' &&
           grandparentKey === 'config' &&
-          (providerDepth === 2 || providerDepth === 3) &&
-          (value as { type?: unknown }).type === 'file' &&
+          (providerDepth === 2 || providerDepth === 3);
+        if (
+          isHttpAuthContext &&
+          typeof (value as { path?: unknown }).path === 'string' &&
+          renderedAuthType !== undefined &&
+          /\{\{|\{%|\{#/.test(renderedAuthType)
+        ) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+        }
+        const fileAuthPath =
+          isHttpAuthContext &&
+          renderedAuthType === 'file' &&
           typeof (value as { path?: unknown }).path === 'string'
             ? (value as { path: string }).path
             : undefined;
@@ -631,12 +668,13 @@ export function extractFileDependencies(configPath: string): string[] {
           const inspectProviderKey =
             key.trimStart().startsWith('file://') ||
             (isProviderReference && mayRenderFileUrl(key));
-          if (
-            inspectProviderKey &&
-            renderEnvTemplate(key, environment).startsWith('file://')
-          ) {
+          const renderedProviderKey = renderEnvTemplate(key, environment);
+          if (inspectProviderKey && renderedProviderKey.startsWith('file://')) {
             processProviderReference(key, true, mappedProviderOverrides, true);
-          } else if (inspectProviderKey) {
+          } else if (
+            inspectProviderKey &&
+            /\{\{|\{%|\{#/.test(renderedProviderKey)
+          ) {
             dependencies.add(`${dependencyRoot}${path.sep}`);
           }
           processProviderValue(

@@ -141,7 +141,7 @@ providers:
     expect(deps).toEqual(['./']);
   });
 
-  it('should conservatively watch the workspace for a filtered provider path template', () => {
+  it('should resolve a default-filtered provider path template', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -152,7 +152,7 @@ providers:
       '/test/repository/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['./']);
+    expect(deps).toEqual(['providers/provider.py']);
   });
 
   it('should conservatively watch the workspace when templating is disabled in the process environment', () => {
@@ -355,6 +355,7 @@ prompts:
 tests:
   - vars:
       context: "{# context prefix #}file://vars/context.txt"
+      splitPrefix: "f{# split prefix #}ile://vars/context.txt"
 `);
 
     const deps = extractFileDependencies(
@@ -462,6 +463,58 @@ providers:
     ]);
   });
 
+  it('should extract an HTTP file-auth path when its auth type is templated', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    env:
+      AUTH_TYPE: file
+    config:
+      auth:
+        type: "{{ env.AUTH_TYPE }}"
+        path: ./auth/templated-type.ts
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['auth/templated-type.ts']);
+  });
+
+  it('should resolve a default-filtered HTTP file-auth type', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      auth:
+        type: "{{ env.MISSING_AUTH_TYPE | default('file') }}"
+        path: ./auth/default-type.ts
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['auth/default-type.ts']);
+  });
+
+  it('should conservatively watch an unsupported filtered HTTP file-auth type', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    env:
+      AUTH_TYPE: FILE
+    config:
+      auth:
+        type: "{{ env.AUTH_TYPE | lower }}"
+        path: ./auth/filtered-type.ts
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
   it('should extract plain and env-templated HTTP credential paths', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -520,7 +573,7 @@ providers:
     vi.unstubAllEnvs();
   });
 
-  it('should conservatively watch an unresolved HTTP credential template', () => {
+  it('should resolve a default-filtered HTTP credential template', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -528,6 +581,23 @@ providers:
     config:
       tls:
         caPath: "{{- env['MISSING_CA'] | default('./credentials/ca.pem', true) -}}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['credentials/ca.pem']);
+  });
+
+  it('should conservatively watch an unsupported filtered HTTP credential path', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    env:
+      CA_PATH: ' ./credentials/ca.pem '
+    config:
+      tls:
+        caPath: "{{ env.CA_PATH | trim }}"
 `);
 
     expect(
@@ -593,7 +663,7 @@ providers:
     vi.unstubAllEnvs();
   });
 
-  it('should conservatively watch an unresolved HTTP file-auth template', () => {
+  it('should resolve a default-filtered HTTP file-auth template', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -602,6 +672,24 @@ providers:
       auth:
         type: file
         path: "{{- env['MISSING_AUTH'] | default('./auth/default.ts', true) -}}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['auth/default.ts']);
+  });
+
+  it('should conservatively watch an unsupported filtered HTTP file-auth path', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    env:
+      AUTH_PATH: ' ./auth/filtered.ts '
+    config:
+      auth:
+        type: file
+        path: "{{ env.AUTH_PATH | trim }}"
 `);
 
     expect(
@@ -628,7 +716,7 @@ providers:
     );
   });
 
-  it('should resolve bracket and conservatively watch default-filter env templates in nested provider dependencies', () => {
+  it('should resolve bracket and default-filter env templates in nested provider dependencies', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     vi.stubEnv('PROVIDER_TOOLS_PATH', 'file://tools/current.ts:getTools');
     mockFs.readFileSync.mockReturnValue(`
@@ -648,7 +736,11 @@ providers:
       '/test/repository/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['tools/current.ts', './']);
+    expect(deps).toEqual([
+      'tools/current.ts',
+      'tools/default.ts',
+      'tools/default-bracket.ts',
+    ]);
     vi.unstubAllEnvs();
   });
 
@@ -727,6 +819,68 @@ providers:
     ).toEqual(['schemas/current.json']);
   });
 
+  it('should extract env-templated nested provider config file URLs', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:chat:gpt-4
+    env:
+      SYSTEM_PROMPT: file://prompts/system.txt
+    config:
+      systemPrompt: "{{ env.SYSTEM_PROMPT }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['prompts/system.txt']);
+  });
+
+  it('should resolve a default-filtered nested provider config file URL', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:chat:gpt-4
+    config:
+      systemPrompt: "{{ env.MISSING_SYSTEM_PROMPT | default('file://prompts/system.txt') }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['prompts/system.txt']);
+  });
+
+  it('should conservatively watch an unsupported filtered nested provider config file URL', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:chat:gpt-4
+    env:
+      SYSTEM_PROMPT: ' file://prompts/system.txt '
+    config:
+      systemPrompt: "{{ env.SYSTEM_PROMPT | trim }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should extract comment-prefixed env file templates', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:chat:gpt-4
+    env:
+      PROVIDER_REF: file://providers/current.py
+    config:
+      tools: "{# choose #}{{ env.PROVIDER_REF }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['providers/current.py']);
+  });
+
   it('should extract string and array test-vars file references', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -774,6 +928,32 @@ env:
   PROVIDER_ID: openai:chat:gpt-4
 providers:
   - "{{ env.PROVIDER_ID }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should not conservatively watch a resolved non-file provider-map key', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROVIDER_ID: openai:chat:gpt-4
+providers:
+  - "{{ env.PROVIDER_ID }}": {}
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should not conservatively watch a default-filtered non-file provider-map key', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "{{ env.MISSING_PROVIDER_ID | default('openai:chat:gpt-4') }}": {}
 `);
 
     expect(
