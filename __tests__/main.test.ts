@@ -464,6 +464,42 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test('should detect a removed prompt with a mixed Windows-separator glob', async () => {
+      const currentPlatform = process.platform;
+      const promptPattern = `${path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('\\')}/[tr]/*.txt`;
+
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'prompts/t/removed.txt', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/t/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          promptPattern.split('\\').join('/'),
+          { cwd: process.cwd(), nodir: true },
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
     test('should detect a removed prompt under an escaped directory glob', async () => {
       withInputs({ prompts: 'prompts/\\[team\\]/*.txt' });
       mockOctokit.paginate.mockResolvedValue([
@@ -485,6 +521,8 @@ describe('GitHub Action Main', () => {
       'packages/[team]',
       'packages/{alpha,beta}',
       'packages/{1..3}',
+      'packages/\\{alpha,beta}',
+      'packages/\\\\{1..3}',
       'packages/app*(team)',
     ])('should treat glob characters in the working directory %s as literal', async (workingDirectory) => {
       withInputs({

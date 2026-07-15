@@ -246,9 +246,7 @@ export async function run(): Promise<void> {
           .split('\n')
           .filter((line) => line.trim())
           .map((pattern) =>
-            process.platform === 'win32' &&
-            !pattern.includes('/') &&
-            path.win32.isAbsolute(pattern)
+            process.platform === 'win32' && path.win32.isAbsolute(pattern)
               ? pattern.split('\\').join('/')
               : pattern,
           )
@@ -269,8 +267,8 @@ export async function run(): Promise<void> {
     );
     const workingDirectoryPattern = escapeGlob(
       toRepositoryPath(workingDirectory),
-      { windowsPathsNoEscape: false },
-    ).replace(/[{}]/g, '\\$&');
+      { windowsPathsNoEscape: false, magicalBraces: true },
+    );
     let promptGlobMatchingCapped = false;
     let promptGlobMatchers: RegExp[] | undefined;
     const getPromptGlobMatchers = (): RegExp[] => {
@@ -280,12 +278,13 @@ export async function run(): Promise<void> {
 
       const matchers: RegExp[] = [];
       for (const pattern of promptFilesGlobs) {
-        const absolutePattern = path.isAbsolute(pattern)
-          ? pattern
-          : `${workingDirectoryPattern}/${pattern}`;
-        const traversalPatterns = braceExpand(absolutePattern, {
+        const traversalPatterns = braceExpand(pattern, {
           braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
-        });
+        }).map((traversalPattern) =>
+          path.isAbsolute(pattern)
+            ? traversalPattern
+            : `${workingDirectoryPattern}/${traversalPattern}`,
+        );
 
         for (const traversalPattern of traversalPatterns) {
           if (
