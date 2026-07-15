@@ -37033,14 +37033,18 @@ function extractFileDependencies(configPath) {
       if (reference.includes("{{") || reference.includes("{%")) {
         return reference.includes("file://");
       }
-      if (reference.startsWith("file://") || reference.startsWith("exec:") || /[\\/*?{}[\]]/.test(reference)) {
+      if (reference.startsWith("file://") || reference.startsWith("exec:")) {
         return true;
       }
       const selectorIndex = reference.lastIndexOf(":");
       const candidate = selectorIndex > -1 ? reference.slice(0, selectorIndex) : reference;
       const extensionIndex = candidate.lastIndexOf(".");
       const extension = extensionIndex > -1 ? candidate.slice(extensionIndex + 1) : "";
-      return extension.length > 0 && /^[A-Za-z0-9]+$/.test(extension);
+      const hasExtension = extension.length > 0 && /^[A-Za-z0-9]+$/.test(extension);
+      if (/[\\/*?{}[\]]/.test(reference)) {
+        return !/\s/.test(reference) || /[\\/]/.test(reference) || hasExtension;
+      }
+      return hasExtension;
     };
     if (typeof config2.prompts === "string") {
       processPromptReference(config2.prompts);
@@ -37573,6 +37577,13 @@ function findForbiddenEnvFileKey(environment) {
   });
 }
 function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, override = true) {
+  if (/[\0\r\n]/.test(envFilePath)) {
+    throw new PromptfooActionError(
+      "Invalid environment file path: control characters are not allowed.",
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Choose an environment file path without NUL, CR, or LF characters."
+    );
+  }
   const fileEnvironment = /* @__PURE__ */ Object.create(null);
   const result = dotenv.config({
     path: envFilePath,
@@ -38117,7 +38128,10 @@ async function run() {
       "use-config-prompts",
       { required: false }
     );
-    const envFiles = getInput("env-files", { required: false });
+    const envFiles = getInput("env-files", {
+      required: false,
+      trimWhitespace: false
+    });
     const failOnThreshold = parseOptionalPercentage(
       getInput("fail-on-threshold", { required: false }),
       "fail-on-threshold"
@@ -38180,7 +38194,17 @@ async function run() {
       }
     }
     const loadEnvironmentFiles = () => {
+      const validateEnvFilePath = (envFilePath) => {
+        if (/[\0\r\n]/.test(envFilePath)) {
+          throw new PromptfooActionError(
+            "Invalid environment file path: control characters are not allowed.",
+            ErrorCodes.INVALID_CONFIGURATION,
+            "Choose an environment file path without NUL, CR, or LF characters."
+          );
+        }
+      };
       const resolveContainedEnvFile = (envFilePath) => {
+        validateEnvFilePath(envFilePath);
         const resolvedPath = path6.resolve(envFilePath);
         const relativePath = path6.relative(workingDirectory, resolvedPath);
         if (relativePath === ".." || relativePath.startsWith(`..${path6.sep}`) || path6.isAbsolute(relativePath)) {
@@ -38214,7 +38238,10 @@ async function run() {
       const implicitFilePath = resolveContainedEnvFile(
         implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath
       );
-      const explicitEnvFiles = envFiles.split(",").map((envFile) => envFile.trim()).filter(Boolean).map((envFile) => path6.resolve(path6.join(workingDirectory, envFile))).map((envFilePath) => {
+      const explicitEnvFiles = envFiles.split(",").map((envFile) => {
+        validateEnvFilePath(envFile);
+        return envFile.trim();
+      }).filter(Boolean).map((envFile) => path6.resolve(path6.join(workingDirectory, envFile))).map((envFilePath) => {
         resolveContainedEnvFile(envFilePath);
         const vaultPath = envFilePath.endsWith(".vault") ? envFilePath : `${envFilePath}.vault`;
         const effectivePath = process.env.DOTENV_KEY && fs7.existsSync(vaultPath) ? vaultPath : envFilePath;
@@ -38623,8 +38650,9 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = evaluatedPromptFiles.join(", ");
-      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
+      const evaluatedFiles = evaluatedPromptFiles.join(", ");
+      const description = evaluatedPromptFiles.length === 0 ? "Evaluated config-defined prompts" : forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? `Evaluated prompt files: ${evaluatedFiles}` : `\u26A0\uFE0F LLM prompt was modified in these files: ${evaluatedFiles}`;
+      let body = `${description}
 
 | Success | Failure |
 |---------|---------|
