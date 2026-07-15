@@ -104,6 +104,7 @@ vi.mock('fs', async () => {
 });
 vi.mock('glob', () => ({
   sync: vi.fn(),
+  hasMagic: vi.fn(),
 }));
 vi.mock('dotenv');
 
@@ -137,6 +138,7 @@ import * as glob from 'glob';
 
 const mockGlob = glob as unknown as {
   sync: MockedFunction<typeof glob.sync>;
+  hasMagic: MockedFunction<typeof glob.hasMagic>;
 };
 
 const DEFAULT_INPUTS: Record<string, string> = {
@@ -170,6 +172,11 @@ function setupCommonMocks(): MockOctokit {
   mockCache.logCacheMetrics.mockResolvedValue();
   mockConfig.extractFileDependencies.mockReturnValue([]);
   mockFsUtils.isDirectory.mockReturnValue(false);
+  mockGlob.hasMagic.mockImplementation(
+    (value: string, options?: { magicalBraces?: boolean }) =>
+      value.includes('*') ||
+      (options?.magicalBraces === true && value.includes('{')),
+  );
 
   // Setup octokit mock
   const mockOctokit: MockOctokit = {
@@ -1013,6 +1020,33 @@ describe('GitHub Action Main', () => {
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
       );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      ['deleted.txt', true],
+      ['README.md', false],
+    ])('should match a workspace-root dependency glob for %s', async (changedFile, shouldRun) => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['*.txt']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledTimes(shouldRun ? 1 : 0);
+    });
+
+    test('should match a deleted dependency from a brace-only glob', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'deleted_first.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'deleted_{first,second}.txt',
+      ]);
+
+      await run();
+
       expect(mockExec.exec).toHaveBeenCalled();
     });
 

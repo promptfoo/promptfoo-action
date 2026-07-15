@@ -501,6 +501,19 @@ export async function run(): Promise<void> {
             return true;
           }
 
+          if (
+            glob.hasMagic(dep, {
+              windowsPathsNoEscape: true,
+              magicalBraces: true,
+              braceExpandMax: 1024,
+            }) &&
+            changedFilesList.some((changedFile) =>
+              path.matchesGlob(changedFile, dep),
+            )
+          ) {
+            return true;
+          }
+
           // Direct file match
           if (changedFilesList.includes(dep)) {
             return true;

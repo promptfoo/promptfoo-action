@@ -208,6 +208,7 @@ prompts:
     'Is it safe? choose pass/fail',
     'Use regex (foo|bar)? for yes/no',
     'Summarize [a-z] for input/output',
+    'Explain [a-z], e.g.',
   ])('should ignore single-line inline prompt-map keys containing path markers: %s', (prompt) => {
     mockFs.readFileSync.mockReturnValue(
       `prompts:\n  "${prompt}": inline prompt\n`,
@@ -591,6 +592,27 @@ system: file://partials/system.txt
     ).toEqual(['prompts/chat.yaml', 'partials/system.txt']);
   });
 
+  it('should treat binary YAML scalars as traversal leaves', () => {
+    const keys = vi.spyOn(Object, 'keys');
+    const entries = vi.spyOn(Object, 'entries');
+    const values = vi.spyOn(Object, 'values');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'metadata:\n  binary: !!binary SGVsbG8=\nprompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return 'metadata:\n  binary: !!binary SGVsbG8=\nsystem: file://partials/system.txt\n';
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'partials/system.txt']);
+    expect(
+      [...keys.mock.calls, ...entries.mock.calls, ...values.mock.calls].some(
+        ([value]) => ArrayBuffer.isView(value),
+      ),
+    ).toBe(false);
+  });
+
   it('should tolerate self-referential arrays in mapped structured prompts', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       const candidate = String(filePath);
@@ -727,15 +749,18 @@ prompts:
     );
   });
 
-  it('should extract executable prompt-map keys without command arguments', () => {
+  it('should extract executable prompt-map keys from the action working directory', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
   exec:./prompts/generate.sh --tone formal: generated prompt
 `);
 
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+      '/test/working',
+    );
 
-    expect(deps).toEqual(['../config/prompts/generate.sh']);
+    expect(deps).toEqual(['prompts/generate.sh']);
   });
 
   it('should retain a deleted file argument for mapped executable prompts', () => {
@@ -748,6 +773,18 @@ prompts:
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual(['node', 'templates/generate.js']);
+  });
+
+  it('should retain escaped-space file arguments for mapped executable prompts', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  exec:node templates/my\\ generator.py --tone formal: generated prompt
+`);
+    mockFs.existsSync.mockReturnValue(false);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['node', 'templates/my generator.py']);
   });
 
   it('should track existing file arguments for mapped executable prompts from the action working directory', () => {
@@ -775,7 +812,7 @@ prompts:
   it('should track contained absolute executable arguments and ignore directory arguments', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
-  exec:../bin/python /test/working/prompts/generate.py ./templates: generated prompt
+  exec:../bin/python /test/working/prompts/generate.py ./templates /tmp/outside/generate.py: generated prompt
 `);
     mockFs.existsSync.mockImplementation((filePath: unknown) => {
       const candidate = String(filePath);
@@ -823,6 +860,22 @@ prompts:
     );
 
     expect(deps).toEqual(['bin/python', 'custom/templates/generate.py']);
+  });
+
+  it('should resolve direct executable prompt paths from prompt config basePath', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - raw: exec:./scripts/build.sh
+    config:
+      basePath: custom
+`);
+
+    expect(
+      extractFileDependencies(
+        '/test/working/evals/promptfooconfig.yaml',
+        '/test/working',
+      ),
+    ).toEqual(['custom/scripts/build.sh']);
   });
 
   it('should extract uncommon root-level executable prompt-map keys', () => {
@@ -891,12 +944,12 @@ prompts:
     label: inline
 `);
 
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+      '/test/working',
+    );
 
-    expect(deps).toEqual([
-      '../config/prompts/from-raw.txt',
-      '../config/prompts/generate.sh',
-    ]);
+    expect(deps).toEqual(['evals/prompts/from-raw.txt', 'prompts/generate.sh']);
   });
 
   it('should ignore empty executable prompts and unsupported prompt objects', () => {
@@ -1014,7 +1067,7 @@ tests:
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual(['tests/first.xlsx', 'tests/second.xls', 'tests']);
     expect(mockGlob.sync).toHaveBeenCalledWith(
-      '/test/working/tests/*.{xlsx,xls}',
+      ['/test/working/tests/*.xlsx', '/test/working/tests/*.xls'],
       expect.objectContaining({ windowsPathsNoEscape: true }),
     );
   });
@@ -1034,6 +1087,7 @@ tests:
 tests:
   path: file://tests/generate.py:create_tests
   config:
+    binary: !!binary SGVsbG8=
     object: &object
       self: *object
       source: file://data/object.json
@@ -1145,6 +1199,78 @@ defaultTest:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/templates/default.txt');
     expect(deps).toContain('../config/expected/default.txt');
+  });
+
+  it('should extract nested HTTP file-auth and assertion config dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/api
+    env:
+      AUTH_PATH: ./auth/current-token.ts
+      IGNORED_NUMBER: 7
+    config: &provider_config
+      auth:
+        type: file
+        path: "{{ env.AUTH_PATH }}"
+      self: *provider_config
+      binary: !!binary SGVsbG8=
+  - id: https://example.test/named
+    config:
+      auth:
+        type: file
+        path: file://auth/named-token.py:get_token
+defaultTest:
+  assert:
+    - type: assert-set
+      assert:
+        - type: llm-rubric
+          config:
+            rubric: file://rubrics/default.md
+            tools:
+              - file://tools/default-tools.py:get_tools
+tests:
+  - assert:
+      - type: llm-rubric
+        config:
+          rubric: file://rubrics/test.md
+          transform: file://checks/test.js:score
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/auth/current-token.ts',
+      'evals/auth/named-token.py',
+      'evals/rubrics/default.md',
+      'evals/tools/default-tools.py',
+      'evals/rubrics/test.md',
+      'evals/checks/test.js',
+    ]);
+  });
+
+  it('should conservatively watch unresolved nested auth and assertion dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/api
+    config:
+      auth:
+        type: file
+        path: "{{ env.MISSING_AUTH }}"
+tests:
+  - assert:
+      - type: llm-rubric
+        config:
+          rubric: file://rubrics/{{ env.MISSING_RUBRIC }}.md
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Templated prompt file dependencies cannot be extracted statically',
+      ),
+    );
   });
 
   it('should extract dependencies inherited through YAML merge keys', () => {
@@ -1342,9 +1468,13 @@ prompts:
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
 
     expect(deps).toEqual(['prompts/example.txt', 'prompts']);
-    expect(mockGlob.hasMagic).toHaveBeenCalledWith('prompts/*.txt', {
-      windowsPathsNoEscape: true,
-    });
+    expect(mockGlob.hasMagic).toHaveBeenCalledWith(
+      'prompts/*.txt',
+      expect.objectContaining({
+        windowsPathsNoEscape: true,
+        magicalBraces: true,
+      }),
+    );
   });
 
   it('should recognize Windows backslash-separated prompt globs', () => {
@@ -1364,9 +1494,13 @@ prompts:
       );
 
       expect(deps).toEqual(['prompts/']);
-      expect(mockGlob.hasMagic).toHaveBeenCalledWith('prompts/*.txt', {
-        windowsPathsNoEscape: true,
-      });
+      expect(mockGlob.hasMagic).toHaveBeenCalledWith(
+        'prompts/*.txt',
+        expect.objectContaining({
+          windowsPathsNoEscape: true,
+          magicalBraces: true,
+        }),
+      );
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
     }
@@ -1515,6 +1649,131 @@ prompts:
     expect(deps).toEqual(['evals/']);
   });
 
+  it.each([
+    false,
+    true,
+  ])('should preserve a workspace-root prompt glob without watching unrelated files (matched: %s)', (matched) => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://*.txt: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(
+      matched ? ['/test/working/existing.txt'] : [],
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(matched ? ['existing.txt', '*.txt'] : ['*.txt']);
+  });
+
+  it('should preserve brace-only prompt globs for deleted dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://prompts/{first,second}.txt: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      ['/test/working/prompts/first.txt', '/test/working/prompts/second.txt'],
+      expect.objectContaining({ magicalBraces: true }),
+    );
+  });
+
+  it('should expand contained parent-directory brace alternatives before glob enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://{../shared,tests}/*.yaml: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/shared/common.yaml',
+      '/test/working/evals/tests/cases.yaml',
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'shared/common.yaml',
+      'evals/tests/cases.yaml',
+      'shared',
+      'evals/tests',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      ['/test/working/shared/*.yaml', '/test/working/evals/tests/*.yaml'],
+      expect.objectContaining({ magicalBraces: true }),
+    );
+  });
+
+  it('should discard an escaping brace alternative before glob enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://{../../outside,tests}/*.yaml: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/evals/tests/cases.yaml']);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/tests/cases.yaml', 'evals/tests']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      ['/test/working/evals/tests/*.yaml'],
+      expect.objectContaining({ magicalBraces: true }),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('unsafe config dependency glob alternative'),
+    );
+  });
+
+  it('should preserve an unmatched brace-arm watch directory when another arm has matches', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://{../shared,tests}/*.yaml: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/shared/common.yaml']);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['shared/common.yaml', 'shared', 'evals/tests/']);
+  });
+
+  it('should bound brace expansion before glob enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://prompts/prompt_{1..1025}.txt: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('too many brace alternatives'),
+    );
+  });
+
   it('should preserve an explicitly mapped prompt directory after its last file is deleted', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
@@ -1586,7 +1845,14 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py', '../config']);
+    expect(deps).toEqual([
+      '../config/providers/custom.py',
+      '../config/providers',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      ['/test/config/providers/*.py'],
+      expect.objectContaining({ magicalBraces: true }),
+    );
   });
 
   it('should extract all file types from complex config', () => {
