@@ -38354,6 +38354,9 @@ function isPathInside(baseDir, targetPath) {
   const relativePath = path6.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
 }
+function sanitizeDependencyDisplayPath(filePath) {
+  return /[\0\r\n]/.test(filePath) ? "[redacted]" : filePath;
+}
 function normalizeConfigFilePath(filePath, platform2 = process.platform) {
   return platform2 === "win32" ? filePath.replace(/^\/(?=[A-Za-z]:[\\/])/, "").replace(/\\/g, "/") : filePath;
 }
@@ -38437,6 +38440,21 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const isDependencyPathInside = (targetPath) => isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
+  let physicalDependencyRoots;
+  const isPhysicalDependencyPathInside = (targetPath) => {
+    if (!physicalDependencyRoots) {
+      physicalDependencyRoots = [];
+      for (const root of /* @__PURE__ */ new Set([dependencyRoot, cwd])) {
+        try {
+          physicalDependencyRoots.push(fs6.realpathSync(root));
+        } catch {
+        }
+      }
+    }
+    return physicalDependencyRoots.some(
+      (root) => isPathInside(root, targetPath)
+    );
+  };
   try {
     if (/\.(?:[cm]?[jt]s)$/i.test(configPath)) {
       warning(
@@ -38530,10 +38548,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         return absolutePath;
       } catch (error2) {
+        const message = String(error2);
+        const reason = message.includes(
+          "must stay within the repository workspace"
+        ) ? `${source} must stay within the repository workspace` : message.includes("contains an invalid null byte") ? `${source} contains an invalid null byte` : `${source} is empty or invalid`;
         warning(
-          `Ignoring unsafe config dependency "${displayPath}": ${String(
-            error2
-          ).replace(/^(?:[A-Za-z]+)?Error: /, "")}`
+          `Ignoring unsafe config dependency "${sanitizeDependencyDisplayPath(displayPath)}": ${reason}`
         );
         return void 0;
       }
@@ -38599,7 +38619,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     };
     const processFileUrl = (fileUrl, stripFunctionSuffix = false, displayFileUrl = fileUrl, redactDisplayPath = false) => {
       const rawFilePath = fileUrl.replace("file://", "");
-      const displayFilePath = redactDisplayPath ? "[redacted]" : displayFileUrl.replace("file://", "");
+      const displayFilePath = sanitizeDependencyDisplayPath(
+        redactDisplayPath ? "[redacted]" : displayFileUrl.replace("file://", "")
+      );
       const filePath = normalizeConfigFilePath(
         stripFunctionSuffix ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, "$1") : rawFilePath
       );
@@ -38636,7 +38658,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             );
             continue;
           }
-          if (isDependencyPathInside(absoluteMatch) && isDependencyPathInside(physicalMatch)) {
+          if (isDependencyPathInside(absoluteMatch) && isPhysicalDependencyPathInside(physicalMatch)) {
             dependencies.add(absoluteMatch);
           } else {
             warning(
@@ -38859,7 +38881,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           const physicalPromptFile = fs6.existsSync(absolutePromptFile) ? fs6.realpathSync(absolutePromptFile) : absolutePromptFile;
           if (!isDependencyPathInside(physicalPromptFile)) {
             warning(
-              `Ignoring unsafe prompt file dependency "${displayPromptPath}": resolved path must stay within the repository workspace`
+              `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within the repository workspace`
             );
             continue;
           }
