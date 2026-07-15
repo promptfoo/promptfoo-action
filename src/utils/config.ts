@@ -330,7 +330,7 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
-    function inspectNestedConfigFile(fileUrl: string): void {
+    const inspectNestedConfigFile = (fileUrl: string): void => {
       const filePath = normalizeConfigFilePath(fileUrl.slice('file://'.length));
       if (watchDynamicFilePath(filePath)) return;
       const absolutePath = resolveConfigDependency(
@@ -363,7 +363,7 @@ export function extractFileDependencies(configPath: string): string[] {
           'Failed to inspect nested config file; nested file dependencies may be incomplete',
         );
       }
-    }
+    };
 
     // Extract test variable files and inspect external variable maps.
     const inspectedVarFiles = new Set<string>();
