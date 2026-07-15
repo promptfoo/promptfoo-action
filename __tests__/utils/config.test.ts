@@ -102,6 +102,152 @@ prompts:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should preserve a checkout-contained glob match when an unused external root is unreadable', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers:\n  - file:///test/working/providers/*.py\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/providers/safe.py']);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const resolvedPath = String(filePath);
+      if (resolvedPath === '/test/external') {
+        throw new Error('EACCES: SENSITIVE-REVIEW-TOKEN');
+      }
+      if (resolvedPath.startsWith('/test/working')) {
+        return resolvedPath.replace('/test/working', '/private/worktree');
+      }
+      return resolvedPath;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/external/promptfooconfig.yaml',
+      '/test/working',
+    );
+
+    expect(deps).toEqual(['providers/safe.py', 'providers']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should preserve a glob match under a symlinked external config root', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers:\n  - file://providers/*.py\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/linked/providers/safe.py']);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const resolvedPath = String(filePath);
+      return resolvedPath.startsWith('/test/linked')
+        ? resolvedPath.replace('/test/linked', '/private/external')
+        : resolvedPath;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/linked/promptfooconfig.yaml',
+      '/test/working',
+    );
+
+    expect(deps).toEqual([
+      '../linked/providers/safe.py',
+      '../linked/providers',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should reject an escaping dependency-glob symlink and preserve safe matches', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers:\n  - file://providers/*.py\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/escape.py',
+      '/test/working/providers/safe.py',
+    ]);
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('/escape.py')
+        ? '/test/outside/SENSITIVE-REVIEW-TOKEN.py'
+        : filePath,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/safe.py', 'providers']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob match: resolved path must stay within the repository workspace',
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
+  });
+
+  it('should preserve safe dependency-glob matches when a sibling realpath lookup fails', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers:\n  - file://providers/*.py\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/unreadable.py',
+      '/test/working/providers/safe.py',
+    ]);
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/unreadable.py')) {
+        throw new Error('EACCES: SENSITIVE-REVIEW-TOKEN');
+      }
+      return filePath;
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/safe.py', 'providers']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unreadable config dependency glob match: unable to resolve path',
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
+  });
+
+  it('should reject a dangling dependency-glob symlink and preserve safe matches', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers:\n  - file://providers/*.py\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/dangling.py',
+      '/test/working/providers/safe.py',
+    ]);
+    mockFs.existsSync.mockImplementation(
+      (filePath: unknown) => !String(filePath).endsWith('/dangling.py'),
+    );
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/dangling.py')) {
+        throw new Error('ENOENT: SENSITIVE-REVIEW-TOKEN');
+      }
+      return filePath;
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/safe.py', 'providers']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unreadable config dependency glob match: unable to resolve path',
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
+  });
+
   it('should extract file-backed targets and nested target dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 targets:
@@ -1612,7 +1758,11 @@ prompts: file://configs/prompts.yaml
     mockFs.existsSync.mockImplementation((filePath: unknown) =>
       String(filePath).endsWith('linked/secret.yaml'),
     );
-    mockFs.realpathSync.mockReturnValue('/tmp/outside/secret.yaml');
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('linked/secret.yaml')
+        ? '/tmp/outside/secret.yaml'
+        : filePath,
+    );
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
@@ -1655,6 +1805,114 @@ prompts: file://configs/prompts.yaml
       2,
       '/test/config/defs/*.yaml',
       { nodir: true, windowsPathsNoEscape: true },
+    );
+  });
+
+  it('should not read a dangling structured-prompt glob symlink and preserve safe matches', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('defs/safe.yaml')) {
+        return 'content: file://shared/nested.txt\n';
+      }
+      if (String(filePath).endsWith('defs/dangling.yaml')) {
+        return 'content: file:///test/outside/SENSITIVE-REVIEW-TOKEN.txt\n';
+      }
+      return 'prompts: file://defs/*.yaml\n';
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/config/defs/dangling.yaml',
+      '/test/config/defs/safe.yaml',
+    ]);
+    mockFs.existsSync.mockImplementation(
+      (filePath: unknown) => !String(filePath).endsWith('/dangling.yaml'),
+    );
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/dangling.yaml')) {
+        throw new Error('ENOENT: SENSITIVE-REVIEW-TOKEN');
+      }
+      return filePath;
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/defs/safe.yaml',
+      '../config/defs',
+      '../config/shared/nested.txt',
+    ]);
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(
+      '/test/config/defs/dangling.yaml',
+      'utf8',
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
+  });
+
+  it('should redact an unreadable structured-prompt glob pattern and preserve safe matches', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/safe.yaml')) {
+        return 'content: file://shared/nested.txt\n';
+      }
+      return 'prompts: file://SENSITIVE-REVIEW-TOKEN/*.yaml\n';
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/config/SENSITIVE-REVIEW-TOKEN/unreadable.yaml',
+      '/test/config/SENSITIVE-REVIEW-TOKEN/safe.yaml',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/unreadable.yaml')) {
+        throw new Error('EACCES: SENSITIVE-REVIEW-TOKEN');
+      }
+      return filePath;
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/SENSITIVE-REVIEW-TOKEN/safe.yaml',
+      '../config/SENSITIVE-REVIEW-TOKEN',
+      '../config/shared/nested.txt',
+    ]);
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
+  });
+
+  it('should redact an escaping structured-prompt glob pattern and preserve safe matches', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/safe.yaml')) {
+        return 'content: file://shared/nested.txt\n';
+      }
+      return 'prompts: file://SENSITIVE-REVIEW-TOKEN/*.yaml\n';
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/config/SENSITIVE-REVIEW-TOKEN/escape.yaml',
+      '/test/config/SENSITIVE-REVIEW-TOKEN/safe.yaml',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('/escape.yaml')
+        ? '/test/outside/SENSITIVE-REVIEW-TOKEN.yaml'
+        : filePath,
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/SENSITIVE-REVIEW-TOKEN/safe.yaml',
+      '../config/SENSITIVE-REVIEW-TOKEN',
+      '../config/shared/nested.txt',
+    ]);
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
     );
   });
 

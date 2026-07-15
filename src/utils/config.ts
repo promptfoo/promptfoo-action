@@ -105,6 +105,20 @@ export function extractFileDependencies(
     dependencyRoot === cwd ? [dependencyRoot] : [dependencyRoot, cwd];
   const isInsideDependencyRoots = (filePath: string): boolean =>
     dependencyRoots.some((root) => isPathInside(root, filePath));
+  let physicalDependencyRoots: string[] | undefined;
+  const isInsidePhysicalDependencyRoots = (filePath: string): boolean => {
+    if (!physicalDependencyRoots) {
+      physicalDependencyRoots = [];
+      for (const root of dependencyRoots) {
+        try {
+          physicalDependencyRoots.push(fs.realpathSync(root));
+        } catch {
+          // Another configured root may still safely contain this dependency.
+        }
+      }
+    }
+    return physicalDependencyRoots.some((root) => isPathInside(root, filePath));
+  };
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -208,11 +222,24 @@ export function extractFileDependencies(
           );
           for (const match of matches) {
             const absoluteMatch = path.resolve(match);
-            if (isInsideDependencyRoots(absoluteMatch)) {
-              dependencies.add(absoluteMatch);
-            } else {
+            if (!isInsideDependencyRoots(absoluteMatch)) {
               core.warning(
-                `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+                'Ignoring unsafe config dependency glob match: resolved path must stay within the repository workspace',
+              );
+              continue;
+            }
+            try {
+              const physicalMatch = fs.realpathSync(absoluteMatch);
+              if (!isInsidePhysicalDependencyRoots(physicalMatch)) {
+                core.warning(
+                  'Ignoring unsafe config dependency glob match: resolved path must stay within the repository workspace',
+                );
+                continue;
+              }
+              dependencies.add(absoluteMatch);
+            } catch {
+              core.warning(
+                'Ignoring unreadable config dependency glob match: unable to resolve path',
               );
             }
           }
@@ -652,12 +679,15 @@ export function extractFileDependencies(
           }
 
           try {
-            const physicalPromptFile = fs.existsSync(absolutePromptFile)
-              ? fs.realpathSync(absolutePromptFile)
-              : absolutePromptFile;
-            if (!isInsideDependencyRoots(physicalPromptFile)) {
+            const physicalPromptFile =
+              isPromptGlob || fs.existsSync(absolutePromptFile)
+                ? fs.realpathSync(absolutePromptFile)
+                : absolutePromptFile;
+            if (!isInsidePhysicalDependencyRoots(physicalPromptFile)) {
               core.warning(
-                `Ignoring unsafe prompt file dependency "${promptPath}": resolved path must stay within the repository workspace`,
+                isPromptGlob
+                  ? 'Ignoring unsafe prompt file dependency glob match: resolved path must stay within the repository workspace'
+                  : `Ignoring unsafe prompt file dependency "${promptPath}": resolved path must stay within the repository workspace`,
               );
               continue;
             }
@@ -695,7 +725,9 @@ export function extractFileDependencies(
             visitNestedReferences(nestedConfig);
           } catch {
             core.warning(
-              `Failed to inspect prompt file dependency "${promptPath}": unable to read or parse file`,
+              isPromptGlob
+                ? 'Failed to inspect prompt file dependency glob match: unable to read or parse file'
+                : `Failed to inspect prompt file dependency "${promptPath}": unable to read or parse file`,
             );
           }
         }
