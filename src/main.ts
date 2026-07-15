@@ -656,14 +656,6 @@ export async function run(): Promise<void> {
       return;
     }
 
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
-      throw new PromptfooActionError(
-        'Prompt filenames must not contain CR or LF characters',
-        ErrorCodes.INVALID_CONFIGURATION,
-        'Rename the matched prompt files to remove line-break characters.',
-      );
-    }
-
     // Only parse repository environment files once an evaluation is required.
     loadEnvironmentFiles();
 

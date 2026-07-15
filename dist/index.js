@@ -38360,13 +38360,6 @@ async function run() {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
-      throw new PromptfooActionError(
-        "Prompt filenames must not contain CR or LF characters",
-        ErrorCodes.INVALID_CONFIGURATION,
-        "Rename the matched prompt files to remove line-break characters."
-      );
-    }
     loadEnvironmentFiles();
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");

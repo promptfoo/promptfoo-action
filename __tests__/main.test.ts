@@ -2604,7 +2604,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('Prompt filenames must not contain CR or LF'),
+        expect.stringContaining(
+          'Invalid prompt file path: line breaks are not allowed',
+        ),
       );
       expect(mockCore.setFailed).not.toHaveBeenCalledWith(
         expect.stringContaining('forged.txt'),
