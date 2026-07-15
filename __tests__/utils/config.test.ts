@@ -138,6 +138,30 @@ prompts:
   });
 
   it.each([
+    { prompt: 'prompt?', expected: ['prompt?'] },
+    { prompt: '[ab]', expected: ['[ab]'] },
+    { prompt: '{one,two}', expected: ['one', 'two'] },
+    { prompt: '@(one|two)', expected: ['@(one|two)'] },
+  ])('should retain an extensionless non-star prompt glob after deletion', ({
+    prompt,
+    expected,
+  }) => {
+    mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('?') ||
+        value.includes('[') ||
+        value.includes('@(') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(expected);
+  });
+
+  it.each([
     'release notes-*.{json,yaml}',
     'release notes-*.@(json|yaml)',
     'release notes-*',
@@ -1040,6 +1064,18 @@ prompts:
     mockFs.readFileSync.mockReturnValue(`
 prompts:
   - id: customer/v2
+    file: prompts/customer.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/customer.txt']);
+  });
+
+  it('should prefer an explicit prompt file over a file-like prompt id label', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - id: customer.md
     file: prompts/customer.txt
 `);
 

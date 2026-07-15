@@ -339,6 +339,14 @@ export function extractFileDependencies(
           (reference.includes('*') &&
             (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) ||
               /^[^*]*\*+$/.test(reference))) ||
+          (!reference.includes('*') &&
+            !reference.includes('\0') &&
+            !/\s/.test(reference) &&
+            !isTemplated &&
+            glob.hasMagic(reference, {
+              magicalBraces: true,
+              braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+            })) ||
           (/[\\/]/.test(reference) && !/\s/.test(reference)) ||
           /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
             reference,
@@ -559,16 +567,7 @@ export function extractFileDependencies(
         if (typeof prompt === 'string') {
           processPromptReference(prompt);
         } else if (typeof prompt === 'object' && prompt !== null) {
-          const fileBackedPromptId =
-            typeof prompt.id === 'string' &&
-            (/^(?:file:\/\/|exec:)/.test(prompt.id) ||
-              /\*/.test(prompt.id) ||
-              /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
-                prompt.id,
-              ));
-          const promptReference =
-            prompt.raw ||
-            (fileBackedPromptId ? prompt.id : prompt.file || prompt.id);
+          const promptReference = prompt.raw || prompt.file || prompt.id;
           if (typeof promptReference === 'string') {
             const promptConfig = prompt.config;
             const promptBasePath =
@@ -580,7 +579,7 @@ export function extractFileDependencies(
                 : undefined;
             processPromptReference(
               promptReference,
-              Boolean(prompt.file && !prompt.raw && !fileBackedPromptId),
+              Boolean(prompt.file && !prompt.raw),
               promptBasePath
                 ? path.resolve(executionCwd, promptBasePath)
                 : executionCwd,
