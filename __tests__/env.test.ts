@@ -271,6 +271,7 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_DISABLE_SHARING',
     'PROMPTFOO_DISABLE_TELEMETRY',
     'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
     'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
     'PROMPTFOO_DISABLE_ERROR_LOG',
     'PROMPTFOO_DISABLE_DEBUG_LOG',
@@ -401,6 +402,7 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
   test.each([
     'PROMPTFOO_DISABLE_TELEMETRY',
     'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
     'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
   ])('rejects privacy control %s without leaking sibling values', (key) => {
     const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
