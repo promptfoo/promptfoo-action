@@ -86,7 +86,7 @@ inputs:
     required: false
     default: 'false'
   env-files:
-    description: 'Comma-separated application .env files to load when evaluation is needed; process-control, credential-routing, and Promptfoo authentication variables are rejected'
+    description: 'Comma-separated application .env files within working-directory, loaded when evaluation is needed; traversal, escaping symlinks, process-control, credential-routing, and Promptfoo authentication variables are rejected'
     required: false
     default: ''
   fail-on-threshold:
