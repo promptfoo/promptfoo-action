@@ -54,6 +54,9 @@ describe('safe glob expansion', () => {
     expect(
       safelyExpandGlob(String.raw`prompts/\\\{1..1000000000\}.txt`),
     ).toEqual(['prompts/\\{1..1000000000}.txt']);
+    expect(safelyExpandGlob(String.raw`prompts/\{literal}.txt`)).toEqual([
+      'prompts/{literal}.txt',
+    ]);
   });
 
   it('treats Windows backslashes as separators during numeric preflight', () => {

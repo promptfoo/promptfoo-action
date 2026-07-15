@@ -53,8 +53,14 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
 function validateCheckoutConfigPath(
   configAbsolutePath: string,
   workspaceRoot: string,
+  configPath: string,
 ): void {
   if (!isPathInside(workspaceRoot, configAbsolutePath)) {
+    if (!path.isAbsolute(configPath)) {
+      throw new Error(
+        'Config file path must stay within the repository workspace unless an absolute external path is provided.',
+      );
+    }
     return;
   }
 
@@ -70,6 +76,27 @@ function validateCheckoutConfigPath(
 
   throw new Error(
     'Config file path must stay within the repository workspace.',
+  );
+}
+
+function validateCheckoutWorkingDirectory(
+  workingDirectory: string,
+  workspaceRoot: string,
+): void {
+  if (isPathInside(workspaceRoot, workingDirectory)) {
+    try {
+      const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+      const realWorkingDirectory = fs.realpathSync(workingDirectory);
+      if (isPathInside(realWorkspaceRoot, realWorkingDirectory)) {
+        return;
+      }
+    } catch {
+      // A repository-controlled path that cannot be canonicalized is unsafe.
+    }
+  }
+
+  throw new Error(
+    'Working directory must stay within the repository workspace.',
   );
 }
 
@@ -311,8 +338,9 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    validateCheckoutWorkingDirectory(workingDirectory, workspaceRoot);
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
-    validateCheckoutConfigPath(configAbsolutePath, workspaceRoot);
+    validateCheckoutConfigPath(configAbsolutePath, workspaceRoot, configPath);
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
     );
@@ -598,12 +626,16 @@ export async function run(): Promise<void> {
       explicitChangedFiles ?? changedFiles.split('\0').filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
-      if (!safelyExpandGlob(globPattern)) {
+      const normalizedGlobPattern =
+        process.platform === 'win32'
+          ? globPattern.replace(/\\/g, '/')
+          : globPattern;
+      if (!safelyExpandGlob(normalizedGlobPattern)) {
         throw new Error(
           'Prompt file glob is invalid or too large to expand safely.',
         );
       }
-      const matches = glob.sync(globPattern, {
+      const matches = glob.sync(normalizedGlobPattern, {
         cwd: workingDirectory,
         nodir: true,
         braceExpandMax: MAX_BRACE_EXPANSIONS,
@@ -729,7 +761,9 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`,
+        useConfigPrompts
+          ? 'Processing prompts defined in the Promptfoo config.'
+          : `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`,
       );
     }
 

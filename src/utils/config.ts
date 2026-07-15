@@ -44,8 +44,16 @@ const HTTP_CREDENTIAL_PATH_KEYS = new Set([
   'certPath',
   'keyPath',
   'keystorePath',
+  'jksPath',
   'pfxPath',
   'privateKeyPath',
+]);
+const HTTP_TRANSFORM_PATH_KEYS = new Set([
+  'responseParser',
+  'sessionParser',
+  'transformRequest',
+  'transformResponse',
+  'validateStatus',
 ]);
 
 type TemplateEnvironment = Record<
@@ -92,6 +100,7 @@ export interface PromptfooConfig {
     | Array<string | { tests?: PromptfooTests; config?: PromptfooTests }>;
   defaultTest?: string | PromptfooTestCase;
   nunjucksFilters?: Record<string, string>;
+  extensions?: string[];
 }
 
 interface PromptfooTestCase {
@@ -111,7 +120,7 @@ type PromptfooTests =
 
 interface PromptfooAssertion {
   type?: string;
-  value?: string | { file?: string };
+  value?: string | { file?: string } | Array<string | { file?: string }>;
   assert?: PromptfooAssertion[];
   provider?: unknown;
   contextTransform?: unknown;
@@ -217,7 +226,7 @@ function prefixedScriptProviderFileUrl(value: string): string | undefined {
   if (!match || (match[1] === 'exec' && /\s/.test(match[2]))) {
     return undefined;
   }
-  return `file://${match[2]}`;
+  return match[2]?.startsWith('file://') ? match[2] : `file://${match[2]}`;
 }
 
 function scriptProviderFilePath(fileUrl: string): string {
@@ -378,25 +387,88 @@ function mayRenderFileUrl(value: string): boolean {
   );
 }
 
-function hasGlobMagic(pattern: string): boolean | undefined {
-  const normalizedPattern = pattern.replace(/\\/g, '/');
+function hasGlobMagic(
+  pattern: string,
+  normalizeWindowsPaths = true,
+): boolean | undefined {
+  const normalizedPattern = normalizeWindowsPaths
+    ? pattern.replace(/\\/g, '/')
+    : pattern;
   if (!canSafelyInspectGlob(normalizedPattern)) {
     return undefined;
   }
   try {
-    return glob.hasMagic(normalizedPattern, {
-      magicalBraces: true,
-      braceExpandMax: MAX_BRACE_EXPANSIONS,
-      windowsPathsNoEscape: true,
-    });
+    return (
+      glob.hasMagic(normalizedPattern, {
+        magicalBraces: true,
+        braceExpandMax: MAX_BRACE_EXPANSIONS,
+        windowsPathsNoEscape: normalizeWindowsPaths,
+      }) ||
+      (normalizeWindowsPaths && normalizedPattern.includes('['))
+    );
   } catch {
     return undefined;
   }
 }
 
-function canReadStructuredFile(filePath: string): boolean {
-  const stats = fs.statSync(filePath);
-  return stats.isFile() && stats.size <= MAX_STRUCTURED_FILE_BYTES;
+function readStructuredFile(
+  filePath: string,
+  dependencyRoots: string[],
+  realDependencyRoots: Map<string, string | undefined>,
+): string | undefined {
+  try {
+    const containingRoot = dependencyRoots.find((root) =>
+      isPathInside(root, filePath),
+    ) as string;
+
+    if (!realDependencyRoots.has(containingRoot)) {
+      realDependencyRoots.set(containingRoot, fs.realpathSync(containingRoot));
+    }
+    const realDependencyRoot = realDependencyRoots.get(
+      containingRoot,
+    ) as string;
+
+    const realFilePath = fs.realpathSync(filePath);
+    if (!isPathInside(realDependencyRoot, realFilePath)) return undefined;
+
+    const descriptor = fs.openSync(
+      realFilePath,
+      fs.constants.O_RDONLY | fs.constants.O_NONBLOCK,
+    );
+    try {
+      const stats = fs.fstatSync(descriptor);
+      if (!stats.isFile() || stats.size > MAX_STRUCTURED_FILE_BYTES) {
+        return undefined;
+      }
+      const currentFilePath = fs.realpathSync(filePath);
+      if (!isPathInside(realDependencyRoot, currentFilePath)) return undefined;
+      const currentStats = fs.statSync(currentFilePath);
+      if (stats.dev !== currentStats.dev || stats.ino !== currentStats.ino) {
+        return undefined;
+      }
+      const readLimit = MAX_STRUCTURED_FILE_BYTES + 1;
+      const buffer = Buffer.allocUnsafe(readLimit);
+      let totalBytesRead = 0;
+      while (totalBytesRead < readLimit) {
+        const bytesRead = fs.readSync(
+          descriptor,
+          buffer,
+          totalBytesRead,
+          readLimit - totalBytesRead,
+          totalBytesRead,
+        );
+        if (bytesRead === 0) break;
+        totalBytesRead += bytesRead;
+      }
+      return totalBytesRead <= MAX_STRUCTURED_FILE_BYTES
+        ? buffer.toString('utf8', 0, totalBytesRead)
+        : undefined;
+    } finally {
+      fs.closeSync(descriptor);
+    }
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -410,6 +482,7 @@ export function extractFileDependencies(configPath: string): string[] {
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const dependencyRoots =
     dependencyRoot === cwd ? [cwd] : [dependencyRoot, cwd];
+  const realDependencyRoots = new Map<string, string | undefined>();
   const watchDependencyRoots = (): void => {
     for (const root of dependencyRoots) {
       dependencies.add(`${root}${path.sep}`);
@@ -429,14 +502,18 @@ export function extractFileDependencies(configPath: string): string[] {
   let configParsed = false;
 
   try {
-    if (!canReadStructuredFile(configPath)) {
+    const configContent = readStructuredFile(
+      configPath,
+      dependencyRoots,
+      realDependencyRoots,
+    );
+    if (configContent === undefined) {
       core.warning(
         'Config dependency file is not a regular file or is too large to inspect safely. Watching the repository workspace conservatively.',
       );
       watchDependencyRoots();
       return Array.from(dependencies).map(toRepositoryPath);
     }
-    const configContent = fs.readFileSync(configPath, 'utf8');
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
       return [];
@@ -469,7 +546,6 @@ export function extractFileDependencies(configPath: string): string[] {
       ...configOverrides,
     };
 
-    const realDependencyRoots = new Map<string, string | undefined>();
     const isSafeDependencyPath = (absolutePath: string): boolean => {
       const containingRoot = dependencyRoots.find((root) =>
         isPathInside(root, absolutePath),
@@ -551,7 +627,7 @@ export function extractFileDependencies(configPath: string): string[] {
         return absolutePath;
       } catch (error) {
         const containingRoot =
-          filePath.length > 0 && !filePath.includes('\0')
+          !isForeignPath && filePath.length > 0 && !filePath.includes('\0')
             ? dependencyRoots.find((root) =>
                 isPathInside(root, path.resolve(configDir, filePath)),
               )
@@ -579,7 +655,6 @@ export function extractFileDependencies(configPath: string): string[] {
       allowJavascript = false,
       environment: TemplateEnvironment = configEnvironment,
       isAssertion = false,
-      isHttpTransform = false,
       isScriptProvider = false,
     ): string[] => {
       const renderedFileUrl = renderEnvTemplate(fileUrl, environment);
@@ -589,33 +664,27 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       const filePath = (
-        isHttpTransform
-          ? httpTransformFilePath(renderedFileUrl)
-          : isScriptProvider
-            ? scriptProviderFilePath(renderedFileUrl)
-            : isProvider
-              ? providerFilePath(renderedFileUrl, allowJavascript)
-              : isAssertion
-                ? assertionFilePath(renderedFileUrl)
-                : renderedFileUrl.slice('file://'.length)
-      ).replace(/\\/g, '/');
-      const displayPath = isHttpTransform
-        ? fileUrl.startsWith('file://')
-          ? httpTransformFilePath(fileUrl)
-          : fileUrl
-        : isScriptProvider
-          ? fileUrl.startsWith('file://')
-            ? scriptProviderFilePath(fileUrl)
-            : fileUrl
+        isScriptProvider
+          ? scriptProviderFilePath(renderedFileUrl)
           : isProvider
-            ? fileUrl.startsWith('file://')
-              ? providerFilePath(fileUrl, allowJavascript)
-              : fileUrl
-            : fileUrl.startsWith('file://')
-              ? isAssertion
-                ? assertionFilePath(fileUrl)
-                : fileUrl.slice('file://'.length)
-              : fileUrl;
+            ? providerFilePath(renderedFileUrl, allowJavascript)
+            : isAssertion
+              ? assertionFilePath(renderedFileUrl)
+              : renderedFileUrl.slice('file://'.length)
+      ).replace(/\\/g, '/');
+      const displayPath = isScriptProvider
+        ? fileUrl.startsWith('file://')
+          ? scriptProviderFilePath(fileUrl)
+          : fileUrl
+        : isProvider
+          ? fileUrl.startsWith('file://')
+            ? providerFilePath(fileUrl, allowJavascript)
+            : fileUrl
+          : fileUrl.startsWith('file://')
+            ? isAssertion
+              ? assertionFilePath(fileUrl)
+              : fileUrl.slice('file://'.length)
+            : fileUrl;
       if (filePath.includes('\0')) {
         resolveConfigDependency(
           filePath,
@@ -798,7 +867,6 @@ export function extractFileDependencies(configPath: string): string[] {
             false,
             environment,
             false,
-            false,
             true,
           );
           return;
@@ -826,20 +894,67 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         if (
           httpProviderContext &&
-          parentKey === 'validateStatus' &&
-          grandparentKey === 'config'
+          ((grandparentKey === 'config' &&
+            HTTP_TRANSFORM_PATH_KEYS.has(parentKey ?? '')) ||
+            (grandparentKey === 'session' && parentKey === 'responseParser'))
         ) {
-          processFileUrl(value, false, false, environment, false, true);
           const pinnedPath = httpTransformFilePath(renderedValue);
           const latestPath = httpTransformFilePath(renderedValue, true);
-          if (latestPath !== pinnedPath) {
-            if (renderedValue === value) {
-              processFileUrl(`file://${latestPath}`);
-            } else {
+          const transformPaths =
+            renderedValue === value
+              ? new Set([pinnedPath, latestPath])
+              : new Set([pinnedPath]);
+          for (const transformPath of transformPaths) {
+            const absoluteTransformPath = resolveConfigDependency(
+              transformPath,
+              'provider HTTP transform dependency',
+              renderedValue === value
+                ? '<redacted provider HTTP transform path>'
+                : value,
+            );
+            if (absoluteTransformPath) {
+              dependencies.add(absoluteTransformPath);
+            } else if (renderedValue !== value) {
               watchDependencyRoots();
             }
           }
+          if (latestPath !== pinnedPath && renderedValue !== value) {
+            watchDependencyRoots();
+          }
           return;
+        }
+        if (
+          httpProviderContext &&
+          process.platform !== 'win32' &&
+          renderedValue.includes('\\')
+        ) {
+          const runtimePath = providerFilePath(
+            renderedValue,
+            !isProviderReference,
+          );
+          const isRuntimeGlob = hasGlobMagic(runtimePath, false);
+          if (isRuntimeGlob === undefined) {
+            watchDependencyRoots();
+            core.warning(
+              'Ignoring an invalid or oversized HTTP config dependency glob. Watching the repository workspace conservatively.',
+            );
+            return;
+          }
+          if (!isRuntimeGlob) {
+            const absoluteRuntimePath = resolveConfigDependency(
+              runtimePath,
+              'provider HTTP config dependency',
+              renderedValue === value
+                ? '<redacted provider HTTP config path>'
+                : value,
+            );
+            if (absoluteRuntimePath) {
+              dependencies.add(absoluteRuntimePath);
+            } else if (renderedValue !== value) {
+              watchDependencyRoots();
+            }
+            return;
+          }
         }
         processProviderReference(
           value,
@@ -975,6 +1090,28 @@ export function extractFileDependencies(configPath: string): string[] {
           }
         }
 
+        const isHttpMultipartSourceContext =
+          nestedHttpProviderContext &&
+          (providerDepth === 4 || providerDepth === 5) &&
+          grandparentKey === 'parts' &&
+          parentKey === 'source';
+        const multipartSourceType = (value as { type?: unknown }).type;
+        const renderedMultipartSourceType =
+          typeof multipartSourceType === 'string'
+            ? renderEnvTemplate(multipartSourceType, {
+                ...configEnvironment,
+                ...nestedProviderOverrides,
+              })
+            : undefined;
+        if (
+          isHttpMultipartSourceContext &&
+          typeof (value as { path?: unknown }).path === 'string' &&
+          renderedMultipartSourceType !== undefined &&
+          /\{\{|\{%|\{#/.test(renderedMultipartSourceType)
+        ) {
+          watchDependencyRoots();
+        }
+
         for (const [key, nestedValue] of Object.entries(value)) {
           if (key === 'env' || (key === 'path' && fileAuthPath !== undefined)) {
             continue;
@@ -989,7 +1126,7 @@ export function extractFileDependencies(configPath: string): string[] {
                 grandparentKey === 'parts' &&
                 parentKey === 'source' &&
                 key === 'path' &&
-                (value as { type?: unknown }).type === 'path')) &&
+                renderedMultipartSourceType === 'path')) &&
             typeof nestedValue === 'string'
           ) {
             const credentialEnvironment = {
@@ -1055,7 +1192,6 @@ export function extractFileDependencies(configPath: string): string[] {
               false,
               false,
               environment,
-              false,
               false,
               true,
             );
@@ -1127,6 +1263,7 @@ export function extractFileDependencies(configPath: string): string[] {
         if (
           !providerPath ||
           providerPath.includes('\0') ||
+          isForeignWindowsPath(providerPath) ||
           isProviderGlob === undefined
         ) {
           return;
@@ -1165,19 +1302,21 @@ export function extractFileDependencies(configPath: string): string[] {
 
         inspectedProviderFiles.add(inspectionKey);
         try {
-          if (!canReadStructuredFile(absolutePath)) {
+          const providerContent = readStructuredFile(
+            absolutePath,
+            dependencyRoots,
+            realDependencyRoots,
+          );
+          if (providerContent === undefined) {
             watchDependencyRoots();
             core.warning(
               'Provider config dependency is not a regular file or is too large to inspect safely. Watching the repository workspace conservatively.',
             );
             continue;
           }
-          const providerConfig = loadYaml(
-            fs.readFileSync(absolutePath, 'utf8'),
-            {
-              schema: YAML_LOAD_SCHEMA,
-            },
-          );
+          const providerConfig = loadYaml(providerContent, {
+            schema: YAML_LOAD_SCHEMA,
+          });
           processProviderValue(
             providerConfig,
             false,
@@ -1263,19 +1402,21 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         inspectedStructuredPrompts.add(promptPath);
         try {
-          if (!canReadStructuredFile(promptPath)) {
+          const promptContent = readStructuredFile(
+            promptPath,
+            dependencyRoots,
+            realDependencyRoots,
+          );
+          if (promptContent === undefined) {
             watchDependencyRoots();
             core.warning(
               'Structured prompt dependency is not a regular file or is too large to inspect safely. Watching the repository workspace conservatively.',
             );
             continue;
           }
-          const structuredPrompt = loadYaml(
-            fs.readFileSync(promptPath, 'utf8'),
-            {
-              schema: YAML_LOAD_SCHEMA,
-            },
-          );
+          const structuredPrompt = loadYaml(promptContent, {
+            schema: YAML_LOAD_SCHEMA,
+          });
           const pending: unknown[] = [structuredPrompt];
           const visitedObjects = new WeakSet<object>();
           while (pending.length > 0) {
@@ -1304,6 +1445,7 @@ export function extractFileDependencies(configPath: string): string[] {
             } else if (
               current &&
               typeof current === 'object' &&
+              !ArrayBuffer.isView(current) &&
               !visitedObjects.has(current)
             ) {
               visitedObjects.add(current);
@@ -1340,7 +1482,6 @@ export function extractFileDependencies(configPath: string): string[] {
               false,
               false,
               configEnvironment,
-              false,
               false,
               true,
             );
@@ -1429,7 +1570,6 @@ export function extractFileDependencies(configPath: string): string[] {
             false,
             configEnvironment,
             false,
-            false,
             true,
           );
         } else if (
@@ -1453,12 +1593,23 @@ export function extractFileDependencies(configPath: string): string[] {
           if (!match) return value;
           const prefix = match[1] as string;
           const providerPath = match[2] as string;
-          if (prefix === 'exec:' && /\s/.test(providerPath)) return value;
+          const hasExecFilePrefix =
+            prefix === 'exec:' && providerPath.startsWith('file://');
+          const normalizedProviderPath = hasExecFilePrefix
+            ? providerPath.slice('file://'.length)
+            : providerPath;
+          if (prefix === 'exec:' && /\s/.test(normalizedProviderPath)) {
+            return value;
+          }
           const rebasedPath =
-            path.isAbsolute(providerPath) || isForeignWindowsPath(providerPath)
-              ? providerPath
-              : path.relative(configDir, path.resolve(baseDir, providerPath));
-          return `${prefix}${rebasedPath}`;
+            path.isAbsolute(normalizedProviderPath) ||
+            isForeignWindowsPath(normalizedProviderPath)
+              ? normalizedProviderPath
+              : path.relative(
+                  configDir,
+                  path.resolve(baseDir, normalizedProviderPath),
+                );
+          return `${prefix}${hasExecFilePrefix ? 'file://' : ''}${rebasedPath}`;
         }
         if (!value || typeof value !== 'object') return value;
         const existing = clonedValues.get(value);
@@ -1482,18 +1633,23 @@ export function extractFileDependencies(configPath: string): string[] {
       if (!asserts || visitedAssertionSets.has(asserts)) return;
       visitedAssertionSets.add(asserts);
       for (const assert of asserts) {
-        if (typeof assert.value === 'string') {
-          processPotentialFileUrl(assert.value, true);
-        } else if (
-          typeof assert.value === 'object' &&
-          assert.value !== null &&
-          'file' in assert.value &&
-          typeof assert.value.file === 'string'
-        ) {
-          processTemplatedDependency(
-            assert.value.file,
-            'assertion file dependency',
-          );
+        const assertionValues = Array.isArray(assert.value)
+          ? assert.value
+          : [assert.value];
+        for (const assertionValue of assertionValues) {
+          if (typeof assertionValue === 'string') {
+            processPotentialFileUrl(assertionValue, true);
+          } else if (
+            typeof assertionValue === 'object' &&
+            assertionValue !== null &&
+            'file' in assertionValue &&
+            typeof assertionValue.file === 'string'
+          ) {
+            processTemplatedDependency(
+              assertionValue.file,
+              'assertion file dependency',
+            );
+          }
         }
         if (assert.provider) {
           processProviderValue(assert.provider, true);
@@ -1511,6 +1667,14 @@ export function extractFileDependencies(configPath: string): string[] {
       value: string,
       rebaseExternalTests = true,
     ): void => {
+      const renderedTestPath = renderEnvTemplate(value, configEnvironment);
+      if (
+        /^(?:https?:\/\/|huggingface:\/\/datasets\/|az:\/\/)/i.test(
+          renderedTestPath,
+        )
+      ) {
+        return;
+      }
       const sheetSeparator = value.indexOf('#');
       const pathWithoutSheet = value.slice(0, sheetSeparator);
       const lowerPath = pathWithoutSheet.toLowerCase();
@@ -1527,7 +1691,6 @@ export function extractFileDependencies(configPath: string): string[] {
         false,
         false,
         configEnvironment,
-        false,
         false,
         true,
       );
@@ -1549,14 +1712,18 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         inspectedExternalTestFiles.add(inspectionKey);
         try {
-          if (!canReadStructuredFile(externalTestPath)) {
+          const externalTestContent = readStructuredFile(
+            externalTestPath,
+            dependencyRoots,
+            realDependencyRoots,
+          );
+          if (externalTestContent === undefined) {
             watchDependencyRoots();
             core.warning(
               'External test dependency is not a regular file or is too large to inspect safely. Watching the repository workspace conservatively.',
             );
             continue;
           }
-          const externalTestContent = fs.readFileSync(externalTestPath, 'utf8');
           const externalTests = externalTestPath
             .toLowerCase()
             .endsWith('.jsonl')
@@ -1595,6 +1762,7 @@ export function extractFileDependencies(configPath: string): string[] {
             if (
               !current ||
               typeof current !== 'object' ||
+              ArrayBuffer.isView(current) ||
               visitedObjects.has(current)
             ) {
               continue;
@@ -1740,6 +1908,8 @@ export function extractFileDependencies(configPath: string): string[] {
         'transform',
         'transformVars',
         'rubricPrompt',
+        'response_format',
+        'responseFormat',
       ]) {
         processTestFileBearingValue(tests.options?.[key]);
       }
@@ -1775,9 +1945,15 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     }
 
+    if (config.extensions) {
+      for (const extension of config.extensions) {
+        processFileUrl(extension, false, false, configEnvironment, false, true);
+      }
+    }
+
     // Convert absolute paths back to relative paths from working directory
     return Array.from(dependencies).map(toRepositoryPath);
-  } catch (error) {
+  } catch {
     if (configParsed) {
       core.warning(
         'Failed to extract config dependencies. Watching the repository workspace conservatively.',
@@ -1787,9 +1963,7 @@ export function extractFileDependencies(configPath: string): string[] {
       return Array.from(dependencies).map(toRepositoryPath);
     }
 
-    core.warning(
-      `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
-    );
+    core.warning('Failed to extract dependencies from config.');
     return [];
   }
 }

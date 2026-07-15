@@ -11,11 +11,18 @@ export function canSafelyInspectGlob(pattern: string): boolean {
   }
 
   let braceDepth = 0;
+  let escapedBraceDepth = 0;
   let inCharacterClass = false;
   let classBraceDepth = 0;
   for (let index = 0; index < pattern.length; index += 1) {
     const character = pattern[index];
     if (character === '\\' && process.platform !== 'win32') {
+      const escapedCharacter = pattern[index + 1];
+      if (escapedCharacter === '{') {
+        escapedBraceDepth += 1;
+      } else if (escapedCharacter === '}' && escapedBraceDepth > 0) {
+        escapedBraceDepth -= 1;
+      }
       index += 1;
       continue;
     }
@@ -42,7 +49,11 @@ export function canSafelyInspectGlob(pattern: string): boolean {
       braceDepth += 1;
       if (braceDepth > MAX_BRACE_DEPTH) return false;
     } else if (character === '}') {
-      if (braceDepth === 0) return false;
+      if (braceDepth === 0) {
+        if (escapedBraceDepth === 0) return false;
+        escapedBraceDepth -= 1;
+        continue;
+      }
       braceDepth -= 1;
     }
   }
