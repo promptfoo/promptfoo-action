@@ -586,6 +586,7 @@ describe('GitHub Action Main', () => {
       'GIT_CONFIG_COUNT',
       'RUBYOPT',
       'PYTHONHOME',
+      'PYTHON',
       'PYTHONPATH',
       'pythonuserbase',
       'PERL5LIB',
@@ -598,6 +599,7 @@ describe('GitHub Action Main', () => {
       'GEM_PATH',
       'GEM_SPEC_CACHE',
       'PROMPTFOO_PYTHON',
+      'NODE_GYP_FORCE_PYTHON',
       'PROMPTFOO_RUBY',
       'playwright_browsers_path',
       'PLAYWRIGHT_DOWNLOAD_HOST',
@@ -667,10 +669,16 @@ describe('GitHub Action Main', () => {
       'OPENAI_BASE_URL',
       'openai_api_base_url',
       'OPENAI_API_HOST',
+      'OPENAI_ORGANIZATION',
+      'OPENAI_ORG_ID',
+      'OPENAI_PROJECT_ID',
       'ANTHROPIC_BASE_URL',
       'aPi_HoSt',
       'AWS_ENDPOINT_URL',
       'AWS_PROFILE',
+      'AWS_BEDROCK_REGION',
+      'AWS_REGION',
+      'AWS_DEFAULT_REGION',
       'aws_default_profile',
       'AWS_WEB_IDENTITY_TOKEN_FILE',
       'AWS_ROLE_ARN',
@@ -690,6 +698,9 @@ describe('GitHub Action Main', () => {
       'AZURE_STORAGE_CONNECTION_STRING',
       'AZURE_TOKEN_CREDENTIALS',
       'AZURE_ADDITIONALLY_ALLOWED_TENANTS',
+      'AZURE_TENANT_ID',
+      'AZURE_TOKEN_SCOPE',
+      'AZURE_REGIONAL_AUTHORITY_NAME',
       'IDENTITY_ENDPOINT',
       'IDENTITY_HEADER',
       'IDENTITY_SERVER_THUMBPRINT',
@@ -699,6 +710,10 @@ describe('GitHub Action Main', () => {
       'AZURE_FEDERATED_TOKEN_FILE',
       'AZURE_CLIENT_CERTIFICATE_PATH',
       'GOOGLE_APPLICATION_CREDENTIALS',
+      'GOOGLE_GENAI_USE_VERTEXAI',
+      'GOOGLE_CLOUD_PROJECT',
+      'GOOGLE_CLOUD_QUOTA_PROJECT',
+      'GOOGLE_PROJECT_ID',
       'GOOGLE_API_CERTIFICATE_CONFIG',
       'google_external_account_allow_executables',
       'GOOGLE_GHA_CREDS_PATH',
@@ -708,6 +723,7 @@ describe('GitHub Action Main', () => {
       'gce_metadata_ip',
       'METADATA_SERVER_DETECTION',
       'VERTEX_REGION',
+      'VERTEX_PROJECT_ID',
       'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
       'cloudsdk_config',
       'CLOUDSDK_PYTHON',
@@ -735,6 +751,13 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_CACHE_PATH',
       'PROMPTFOO_CONFIG_DIR',
       'PROMPTFOO_PASS_RATE_THRESHOLD',
+      'PROMPTFOO_CACHE_TTL',
+      'PROMPTFOO_DISABLE_SHARING',
+      'PROMPTFOO_STRIP_GRADING_RESULT',
+      'PROMPTFOO_STRIP_RESPONSE_OUTPUT',
+      'PROMPTFOO_STRIP_PROMPT_TEXT',
+      'PROMPTFOO_STRIP_TEST_VARS',
+      'PROMPTFOO_STRIP_METADATA',
       'PROMPTFOO_DISABLE_VAR_EXPANSION',
       'PROMPTFOO_DISABLE_REF_PARSER',
       'PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS',
@@ -747,6 +770,10 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_FAILED_TEST_EXIT_CODE',
       'PROMPTFOO_LOG_DIR',
       'PROMPTFOO_MEDIA_PATH',
+      'SHAREPOINT_BASE_URL',
+      'SHAREPOINT_CERT_PATH',
+      'SHAREPOINT_CLIENT_ID',
+      'SHAREPOINT_TENANT_ID',
     ])('should reject process startup variable %s from environment files', async (variableName) => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
@@ -948,6 +975,16 @@ describe('GitHub Action Main', () => {
 
         expect(mockCore.setFailed).toHaveBeenCalledWith(
           expect.stringContaining('OPENAI_BASE_URL'),
+        );
+        expect(dotenv.config).toHaveBeenCalledWith(
+          expect.objectContaining({
+            path: expect.stringMatching(/(?:^|[/\\])\.env\.vault$/),
+          }),
+        );
+        expect(mockCore.info).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /Loading environment variables from .*\.env\.vault$/,
+          ),
         );
         expect(mockExec.exec).not.toHaveBeenCalled();
         expect(process.env.OPENAI_BASE_URL).toBe(originalBaseUrl);
