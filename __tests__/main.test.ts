@@ -818,6 +818,34 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
 
+    test('should reject a null byte in manually specified changed files without leaking the path', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: 'docs/MANUAL_NUL_SECRET_MARKER.md\0prompts/fake.txt',
+          },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file path contains a null byte; refusing to process unsafe file list',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) => String(call[0]).includes('MANUAL_NUL_SECRET_MARKER')),
+      ).toBe(false);
+    });
+
     test('should preserve whitespace in workflow dependency paths with CRLF separators', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -1469,6 +1497,51 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject a null byte in a pull-request API filename without leaking the path', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/API_NUL_SECRET_MARKER.md\0prompts/fake.txt' },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file path contains a null byte; refusing to process unsafe file list',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) => String(call[0]).includes('API_NUL_SECRET_MARKER')),
+      ).toBe(false);
+    });
+
+    test('should reject a null byte in a renamed pull-request API previous filename without leaking the path', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'docs/renamed.md',
+          previous_filename:
+            'docs/PREVIOUS_NUL_SECRET_MARKER.md\0prompts/fake.txt',
+          status: 'renamed',
+        },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file path contains a null byte; refusing to process unsafe file list',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) =>
+            String(call[0]).includes('PREVIOUS_NUL_SECRET_MARKER'),
+          ),
+      ).toBe(false);
     });
 
     test('should preserve a newline in a single pull-request dependency filename', async () => {

@@ -39861,7 +39861,15 @@ async function run() {
     const octokit = getOctokit(githubToken);
     const event = context2.eventName;
     let changedFiles = "";
-    const encodeChangedFiles = (files) => files.length > 0 ? `${files.join("\0")}\0` : "";
+    const encodeChangedFiles = (files) => {
+      if (files.some((file) => file.includes("\0"))) {
+        throw new PromptfooActionError(
+          "Changed file path contains a null byte; refusing to process unsafe file list",
+          ErrorCodes.INVALID_CONFIGURATION
+        );
+      }
+      return files.length > 0 ? `${files.join("\0")}\0` : "";
+    };
     const formatChangedFilesForLog = (files) => files.split("\0").filter(Boolean).map((file) => JSON.stringify(file)).join(", ");
     let isPullRequest = false;
     let pullRequestNumber;

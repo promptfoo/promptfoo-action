@@ -377,8 +377,15 @@ export async function run(): Promise<void> {
 
     const event = github.context.eventName;
     let changedFiles = '';
-    const encodeChangedFiles = (files: string[]): string =>
-      files.length > 0 ? `${files.join('\0')}\0` : '';
+    const encodeChangedFiles = (files: string[]): string => {
+      if (files.some((file) => file.includes('\0'))) {
+        throw new PromptfooActionError(
+          'Changed file path contains a null byte; refusing to process unsafe file list',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+      return files.length > 0 ? `${files.join('\0')}\0` : '';
+    };
     const formatChangedFilesForLog = (files: string): string =>
       files
         .split('\0')
