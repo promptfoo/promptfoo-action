@@ -102,6 +102,8 @@ const PROMPT_FILE_EXTENSIONS = new Set([
   'rb',
   'pl',
 ]);
+const EXEC_PROVIDER_INTERPRETER_PATTERN =
+  /^(?:env|python(?:\d+(?:\.\d+)*)?|pypy(?:\d+(?:\.\d+)*)?|node|deno|bun|tsx|ts-node|ruby|bash|sh|zsh|pwsh|powershell|cmd)(?:\.exe)?$/i;
 const GLOB_MAGIC_OPTIONS = {
   magicalBraces: true,
   nonegate: true,
@@ -585,6 +587,33 @@ export function extractFileDependencies(
       );
       if (prefix) {
         const providerPath = value.slice(prefix.length);
+        if (prefix === 'exec:') {
+          if (providerPath.length > MAX_DEPENDENCY_REFERENCE_LENGTH) return;
+          const providerParts =
+            providerPath.match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? [];
+          const scriptPaths = providerParts
+            .map((part) => part.replace(/^['"]|['"]$/g, ''))
+            .filter(
+              (part) =>
+                !part.startsWith('-') &&
+                !EXEC_PROVIDER_INTERPRETER_PATTERN.test(
+                  part.slice(
+                    Math.max(part.lastIndexOf('/'), part.lastIndexOf('\\')) + 1,
+                  ),
+                ) &&
+                (part.startsWith('file://') ||
+                  /[\\/]/.test(part) ||
+                  hasPromptFileExtension(part)),
+            );
+          for (const scriptPath of scriptPaths) {
+            processCompatibleFileUrl(
+              scriptPath.startsWith('file://')
+                ? scriptPath
+                : `file://${scriptPath}`,
+            );
+          }
+          return;
+        }
         processCompatibleFileUrl(
           providerPath.startsWith('file://')
             ? providerPath
@@ -1247,6 +1276,7 @@ export function extractFileDependencies(
     };
     const extractTestRuntimeFiles = (test: Record<string, unknown>): void => {
       extractRuntimeFileReferences(test.assertScoringFunction);
+      extractGradingProvider(test.provider);
       if (!isTraversableRecord(test.options)) return;
       extractGradingProvider(test.options.provider);
       for (const field of [
@@ -1325,6 +1355,13 @@ export function extractFileDependencies(
         );
         return;
       }
+      if (
+        /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(testPath) &&
+        !/^[A-Za-z]:[\\/]/.test(testPath) &&
+        !testPath.startsWith('file://')
+      ) {
+        return;
+      }
       const testsPath = stripSpreadsheetSheetSelector(testPath);
       processCompatibleFileUrl(
         testsPath.startsWith('file://') ? testsPath : `file://${testsPath}`,
@@ -1361,6 +1398,7 @@ export function extractFileDependencies(
         extractTestValues(tests.tests);
       }
       if ('config' in tests) {
+        extractRuntimeFileReferences(tests.config);
         extractTestValues(tests.config);
       }
     };

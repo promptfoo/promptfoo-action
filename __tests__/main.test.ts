@@ -539,6 +539,25 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should preserve a POSIX backslash-escaped action prompt literal during preflight and enumeration', async () => {
+      const prompt = 'prompts\\*.txt';
+      withInputs({ prompts: prompt });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(prompt, {
+        cwd: process.cwd(),
+        nodir: true,
+        braceExpandMax: 1024,
+      });
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test.each([
       {
         label: 'prompt-only change',

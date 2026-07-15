@@ -890,6 +890,49 @@ targets:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should extract interpreter-backed executable provider and target scripts', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'exec: python providers/chain.py --mode eval'
+  - 'exec: /usr/bin/python3 providers/absolute-interpreter.py'
+  - 'exec: "./.venv/bin/python" "provider scripts/quoted.py" --verbose'
+  - 'exec:node --loader ts-node/esm providers/loader-target.ts --verbose'
+  - 'exec:'
+  - 'exec: --verbose'
+targets:
+  - id: 'exec:node targets/run.js --verbose'
+  - id: 'exec:"/opt/node/bin/node" targets/absolute-node.js --verbose'
+  - id: 'exec:node --require ./setup/register.js targets/node-target.js'
+  - id: 'exec:python file://targets/prefixed.py'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/chain.py',
+      'providers/absolute-interpreter.py',
+      'provider scripts/quoted.py',
+      'ts-node/esm',
+      'providers/loader-target.ts',
+      'targets/run.js',
+      'targets/absolute-node.js',
+      'setup/register.js',
+      'targets/node-target.js',
+      'targets/prefixed.py',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should ignore an oversized executable provider command without affecting siblings', () => {
+    mockFs.readFileSync.mockReturnValue(
+      `providers:\n  - 'exec:${'a'.repeat(65_537)}.py'\n  - 'exec:python providers/safe.py'\n`,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/safe.py']);
+  });
+
   it.each([
     'providers: file://providers/external.yaml',
     'targets: file://providers/external.yml',
@@ -1688,6 +1731,49 @@ ${vars}
 
     expect(deps).toEqual([dependency]);
     expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should traverse file references nested in a test generator config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: file://generators/build.py
+  config:
+    examples: file://data/examples.json
+    nested:
+      rubric: file://rubrics/quality.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'generators/build.py',
+      'data/examples.json',
+      'rubrics/quality.txt',
+    ]);
+  });
+
+  it.each([
+    'az://myaccount/evals/tests.json',
+    's3://bucket/evals/tests.yaml',
+    'https://example.test/evals/tests.csv',
+  ])('should not create local watches for a remote structured test URL: %s', (tests) => {
+    mockFs.readFileSync.mockReturnValue(`tests: '${tests}'\n`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should not classify a Windows drive-absolute structured test path as a remote URL', () => {
+    mockFs.readFileSync.mockReturnValue("tests: 'C://repo/evals/tests.yaml'\n");
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency: foreign absolute paths are not supported',
+    );
   });
 
   it.each([
@@ -3332,6 +3418,28 @@ tests:
       'graders/mapped.rb:Clients::grade',
     ]);
     expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should extract direct file-backed test and default-test provider overrides', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  provider: file://graders/default-provider.py:grade
+tests:
+  - provider: file://graders/test-provider.py:grade
+  - provider:
+      id: python:graders/object-provider.py:grade
+      config:
+        request: file://fixtures/request.json
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'graders/default-provider.py',
+      'graders/test-provider.py',
+      'fixtures/request.json',
+      'graders/object-provider.py',
+    ]);
   });
 
   it('should extract runtime test and assertion transform, rubric, and scoring files without widening inline expressions', () => {
