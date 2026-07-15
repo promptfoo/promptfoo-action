@@ -217,13 +217,17 @@ prompts:
   ./tools/my generator: generated prompt
   tools/my other generator: another generated prompt
   prompts with spaces/*.tmpl: globbed prompt
+  prompt assets/my generator: spaced executable prompt
+  prompt assets/my generator*: spaced globbed prompt
 `);
     mockGlob.hasMagic.mockImplementation((value: string) =>
       value.includes('*'),
     );
-    mockGlob.sync.mockReturnValue([
-      '/test/working/prompts with spaces/generate.tmpl',
-    ]);
+    mockGlob.sync.mockImplementation((pattern: string) =>
+      pattern.includes('prompt assets')
+        ? ['/test/working/prompt assets/my generator-v2']
+        : ['/test/working/prompts with spaces/generate.tmpl'],
+    );
 
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
@@ -232,6 +236,9 @@ prompts:
       'tools/my other generator',
       'prompts with spaces/generate.tmpl',
       'prompts with spaces',
+      'prompt assets/my generator',
+      'prompt assets/my generator-v2',
+      'prompt assets',
     ]);
   });
 
@@ -262,6 +269,54 @@ prompts:
       '../config/prompts/chat.json',
       '../config/partials/user.txt',
     ]);
+  });
+
+  it('should resolve environment templates in nested mapped prompt references', () => {
+    vi.stubEnv('PARTIAL_DIR', 'resolved');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return 'messages:\n  - content: file://partials/{{ env.PARTIAL_DIR }}/system.txt\n';
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'partials/resolved/system.txt']);
+  });
+
+  it('should prefer config environment values in nested mapped prompt references', () => {
+    vi.stubEnv('PARTIAL_DIR', 'process-value');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'env:\n  PARTIAL_DIR: config-value\nprompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return 'messages:\n  - content: file://partials/{{ env["PARTIAL_DIR"] }}/system.txt\n';
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'partials/config-value/system.txt']);
+  });
+
+  it.each([
+    '{{ env.MISSING_PARTIAL }}',
+    "{{ env.MISSING_PARTIAL | default('resolved') }}",
+  ])('should conservatively watch nested prompt references with an unresolved template: %s', (template) => {
+    vi.stubEnv('MISSING_PARTIAL', undefined);
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return `messages:\n  - content: file://partials/${template}/system.txt\n`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Templated prompt file dependencies'),
+    );
   });
 
   it('should support Promptfoo legacy YAML tags in mapped configs and prompts', () => {
@@ -869,6 +924,21 @@ shared: &shared
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('YAML $ref dependencies'),
     );
+  });
+
+  it.each([
+    ['quoted prompt', `prompts:\n  - 'Show {"$ref":"not-a-file"} to the user'`],
+    [
+      'block prompt',
+      'prompts:\n  - |-\n    Show {"$ref":"not-a-file"} to the user',
+    ],
+  ])('should ignore $ref text inside an inline %s', (_name, configContent) => {
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should match Promptfoo backslash-separated prompt globs on POSIX', () => {

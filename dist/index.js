@@ -36309,6 +36309,7 @@ function normalizeConfigFilePath(filePath, platform2 = process.platform) {
 }
 function extractFileDependencies(configPath, executionCwd = process.cwd()) {
   const dependencies = /* @__PURE__ */ new Set();
+  let hasDynamicPromptDependencies = false;
   const configDir = path5.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
@@ -36324,20 +36325,29 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       debug("Config file is empty or invalid");
       return [];
     }
-    if (/(?:^|[,{]|\n)\s*(?:-\s*)?(?:\?\s*)?["']?\$ref["']?\s*:/m.test(
-      configContent
-    )) {
-      warning(
-        "YAML $ref dependencies cannot be extracted statically; watching all repository changes"
-      );
-      return ["./"];
-    }
     const config2 = load(configContent, {
       schema: YAML_LOAD_SCHEMA
     });
     if (!config2) {
       debug("Config file is empty or invalid");
       return [];
+    }
+    const visitedConfig = /* @__PURE__ */ new WeakSet();
+    const pendingConfig = [config2];
+    while (pendingConfig.length > 0) {
+      const value = pendingConfig.pop();
+      if (typeof value !== "object" || value === null) continue;
+      if (visitedConfig.has(value)) continue;
+      visitedConfig.add(value);
+      if (Object.keys(value).includes("$ref")) {
+        warning(
+          "YAML $ref dependencies cannot be extracted statically; watching all repository changes"
+        );
+        return ["./"];
+      }
+      for (const entry of Object.values(value)) {
+        pendingConfig.push(entry);
+      }
     }
     const resolveConfigDependency = (filePath, source) => {
       try {
@@ -36440,7 +36450,19 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         while (pending.length > 0) {
           const value = pending.pop();
           if (typeof value === "string" && value.startsWith("file://")) {
-            processFileUrl(value);
+            const renderedReference = value.replace(
+              /\{\{\s*env(?:\.(\w+)|\[['"]([^'"]+)['"]\])\s*\}\}/g,
+              (match, dotName, bracketName) => {
+                const name = dotName ?? bracketName;
+                const configuredValue = config2.env?.[name];
+                return typeof configuredValue === "string" ? configuredValue : process.env[name] ?? match;
+              }
+            );
+            if (/\{\{[\s\S]*?\}\}/.test(renderedReference)) {
+              hasDynamicPromptDependencies = true;
+              continue;
+            }
+            processFileUrl(renderedReference);
           } else if (typeof value === "object" && value !== null) {
             if (visited.has(value)) continue;
             visited.add(value);
@@ -36489,9 +36511,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           reference
         );
         const hasUriScheme = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(reference);
-        const pathSegments = reference.split(/[\\/]/);
-        const hasPathLikeSegment = !hasUriScheme && pathSegments.length > 1 && pathSegments.some((segment) => segment && !/\s/.test(segment));
-        const looksLikePath = isExecutable || reference.startsWith("file://") || (!/\s/.test(reference) || hasPathPrefix || hasPathLikeSegment) && (reference.includes("*") || /[\\/]/.test(reference)) || reference.charAt(reference.length - 3) === "." || reference.charAt(reference.length - 4) === "." || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|zsh|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
+        const hasPathLikeSeparator = !hasUriScheme && /[\\/]/.test(reference) && !/(?:\s[\\/]|[\\/]\s)/.test(reference);
+        const looksLikePath = isExecutable || reference.startsWith("file://") || (!/\s/.test(reference) || hasPathPrefix || hasPathLikeSeparator) && (reference.includes("*") || /[\\/]/.test(reference)) || reference.charAt(reference.length - 3) === "." || reference.charAt(reference.length - 4) === "." || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|zsh|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
           reference
         );
         if (looksLikePath) {
@@ -36625,6 +36646,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
       }
+    }
+    if (hasDynamicPromptDependencies) {
+      warning(
+        "Templated prompt file dependencies cannot be extracted statically; watching all repository changes"
+      );
+      return ["./"];
     }
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);

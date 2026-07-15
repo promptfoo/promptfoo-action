@@ -29,6 +29,7 @@ type TestEntry = {
 };
 
 export interface PromptfooConfig {
+  env?: Record<string, unknown>;
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: PromptEntry[] | Record<string, string>;
   tests?: string | TestEntry | Array<string | TestEntry>;
@@ -88,6 +89,7 @@ export function extractFileDependencies(
   executionCwd = process.cwd(),
 ): string[] {
   const dependencies = new Set<string>();
+  let hasDynamicPromptDependencies = false;
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
@@ -106,17 +108,6 @@ export function extractFileDependencies(
       return [];
     }
 
-    if (
-      /(?:^|[,{]|\n)\s*(?:-\s*)?(?:\?\s*)?["']?\$ref["']?\s*:/m.test(
-        configContent,
-      )
-    ) {
-      core.warning(
-        'YAML $ref dependencies cannot be extracted statically; watching all repository changes',
-      );
-      return ['./'];
-    }
-
     const config = loadYaml(configContent, {
       schema: YAML_LOAD_SCHEMA,
     }) as PromptfooConfig;
@@ -124,6 +115,24 @@ export function extractFileDependencies(
     if (!config) {
       core.debug('Config file is empty or invalid');
       return [];
+    }
+
+    const visitedConfig = new WeakSet<object>();
+    const pendingConfig: unknown[] = [config];
+    while (pendingConfig.length > 0) {
+      const value = pendingConfig.pop();
+      if (typeof value !== 'object' || value === null) continue;
+      if (visitedConfig.has(value)) continue;
+      visitedConfig.add(value);
+      if (Object.keys(value).includes('$ref')) {
+        core.warning(
+          'YAML $ref dependencies cannot be extracted statically; watching all repository changes',
+        );
+        return ['./'];
+      }
+      for (const entry of Object.values(value)) {
+        pendingConfig.push(entry);
+      }
     }
 
     const resolveConfigDependency = (
@@ -262,7 +271,25 @@ export function extractFileDependencies(
         while (pending.length > 0) {
           const value = pending.pop();
           if (typeof value === 'string' && value.startsWith('file://')) {
-            processFileUrl(value);
+            const renderedReference = value.replace(
+              /\{\{\s*env(?:\.(\w+)|\[['"]([^'"]+)['"]\])\s*\}\}/g,
+              (
+                match,
+                dotName: string | undefined,
+                bracketName: string | undefined,
+              ) => {
+                const name = (dotName ?? bracketName) as string;
+                const configuredValue = config.env?.[name];
+                return typeof configuredValue === 'string'
+                  ? configuredValue
+                  : (process.env[name] ?? match);
+              },
+            );
+            if (/\{\{[\s\S]*?\}\}/.test(renderedReference)) {
+              hasDynamicPromptDependencies = true;
+              continue;
+            }
+            processFileUrl(renderedReference);
           } else if (typeof value === 'object' && value !== null) {
             if (visited.has(value)) continue;
             visited.add(value);
@@ -326,15 +353,14 @@ export function extractFileDependencies(
           reference,
         );
         const hasUriScheme = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(reference);
-        const pathSegments = reference.split(/[\\/]/);
-        const hasPathLikeSegment =
+        const hasPathLikeSeparator =
           !hasUriScheme &&
-          pathSegments.length > 1 &&
-          pathSegments.some((segment) => segment && !/\s/.test(segment));
+          /[\\/]/.test(reference) &&
+          !/(?:\s[\\/]|[\\/]\s)/.test(reference);
         const looksLikePath =
           isExecutable ||
           reference.startsWith('file://') ||
-          ((!/\s/.test(reference) || hasPathPrefix || hasPathLikeSegment) &&
+          ((!/\s/.test(reference) || hasPathPrefix || hasPathLikeSeparator) &&
             (reference.includes('*') || /[\\/]/.test(reference))) ||
           reference.charAt(reference.length - 3) === '.' ||
           reference.charAt(reference.length - 4) === '.' ||
@@ -544,6 +570,13 @@ export function extractFileDependencies(
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
       }
+    }
+
+    if (hasDynamicPromptDependencies) {
+      core.warning(
+        'Templated prompt file dependencies cannot be extracted statically; watching all repository changes',
+      );
+      return ['./'];
     }
 
     // Convert absolute paths back to relative paths from working directory
