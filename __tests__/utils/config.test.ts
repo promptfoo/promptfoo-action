@@ -1366,6 +1366,117 @@ vars:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should allow an external config to reference absolute checkout dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/external/promptfooconfig.yaml')) {
+        return `
+providers: file:///test/working/evals/providers/provider.py:call_api
+defaultTest: file:///test/working/evals/defaults/default.yaml
+`;
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: /test/working/evals/data/context.yaml';
+      }
+      if (String(filePath).endsWith('evals/data/context.yaml')) {
+        return 'context: file:///test/working/evals/fixtures/context.txt';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    const deps = extractFileDependencies('/test/external/promptfooconfig.yaml');
+    expect(deps).toEqual([
+      'evals/providers/provider.py',
+      'evals/defaults/default.yaml',
+      'evals/data/context.yaml',
+      'evals/fixtures/context.txt',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should allow external-config globs and matches inside the checkout', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/external/promptfooconfig.yaml')) {
+        return 'defaultTest: file:///test/working/evals/defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: /test/working/evals/data/*.yaml';
+      }
+      if (String(filePath).endsWith('evals/data/context.yaml')) {
+        return 'context: file:///test/working/evals/fixtures/context.txt';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/evals/data/context.yaml']);
+    const deps = extractFileDependencies('/test/external/promptfooconfig.yaml');
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/context.yaml',
+      'evals/data',
+      'evals/fixtures/context.txt',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should reject external-config glob matches that traverse a symlink outside both roots', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/external/promptfooconfig.yaml')) {
+        return 'defaultTest: file:///test/working/evals/defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: /test/working/evals/data/*/*.yaml';
+      }
+      if (String(filePath).endsWith('evals/data/safe/context.yaml')) {
+        return 'context: file:///test/working/evals/fixtures/context.txt';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/evals/data/leak/secret.yaml',
+      '/test/working/evals/data/safe/context.yaml',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('evals/data/leak/secret.yaml')
+        ? '/test/secrets/secret.yaml'
+        : String(filePath),
+    );
+    const deps = extractFileDependencies('/test/external/promptfooconfig.yaml');
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/safe/context.yaml',
+      'evals/data',
+      'evals/fixtures/context.txt',
+    ]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('glob match must stay within the repository'),
+    );
+  });
+
+  it('should ignore glob matches whose real path cannot be verified', () => {
+    mockFs.readFileSync.mockReturnValue('providers: [file://providers/*.py]');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/evals/providers/denied.py']);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/providers/denied.py')) {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      return String(filePath);
+    });
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+    expect(deps).toEqual(['evals/providers/']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('resolved path cannot be verified'),
+    );
+  });
+
   it('should track provider, options, and assertion file fields in a file-backed defaultTest', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
