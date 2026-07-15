@@ -1790,13 +1790,14 @@ providers:
     expect(mockGlob.hasMagic).toHaveBeenCalledWith('providers/{one,two}.py', {
       magicalBraces: true,
       braceExpandMax: 1_024,
+      windowsPathsNoEscape: true,
     });
     expect(mockGlob.sync).toHaveBeenCalledWith(
       [
         '/test/repository/providers/one.py',
         '/test/repository/providers/two.py',
       ],
-      { nodir: true, braceExpandMax: 1_024 },
+      { nodir: true, braceExpandMax: 1_024, windowsPathsNoEscape: true },
     );
   });
 
@@ -1848,6 +1849,7 @@ providers:
 
   it.each([
     'providers/{1..1000000000}.yaml',
+    String.raw`providers\{1..1000000000}.yaml`,
     String.raw`providers/\\{1..1000000000}.yaml`,
     'providers/[{1..5000000}].yaml',
     `providers/{${'0'.repeat(32_000)}1..1024}.yaml`,
@@ -1866,6 +1868,34 @@ providers:
     expect(mockGlob.sync).not.toHaveBeenCalled();
     expect(core.warning).toHaveBeenCalledWith(
       'Ignoring an invalid or oversized config dependency glob. Watching the repository workspace conservatively.',
+    );
+  });
+
+  it('should expand a bounded Windows-style numeric provider glob', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(
+      String.raw`providers:
+  - file://providers\{1..2}.yaml
+`,
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        Boolean(options?.magicalBraces && value.includes('{')),
+    );
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['providers/']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      [
+        '/test/repository/providers/1.yaml',
+        '/test/repository/providers/2.yaml',
+      ],
+      expect.objectContaining({
+        braceExpandMax: 1_024,
+        nodir: true,
+        windowsPathsNoEscape: true,
+      }),
     );
   });
 
@@ -4459,6 +4489,7 @@ providers:
   });
 
   it.each([
+    String.raw`providers\{safe,../../outside}/*.py`,
     '{foo),../providers}/*.py',
     '{foo),/absolute}/*.py',
     '{foo),C:/absolute}/*.py',

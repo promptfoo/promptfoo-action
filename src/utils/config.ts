@@ -379,13 +379,15 @@ function mayRenderFileUrl(value: string): boolean {
 }
 
 function hasGlobMagic(pattern: string): boolean | undefined {
-  if (!canSafelyInspectGlob(pattern)) {
+  const normalizedPattern = pattern.replace(/\\/g, '/');
+  if (!canSafelyInspectGlob(normalizedPattern)) {
     return undefined;
   }
   try {
-    return glob.hasMagic(pattern, {
+    return glob.hasMagic(normalizedPattern, {
       magicalBraces: true,
       braceExpandMax: MAX_BRACE_EXPANSIONS,
+      windowsPathsNoEscape: true,
     });
   } catch {
     return undefined;
@@ -581,15 +583,17 @@ export function extractFileDependencies(configPath: string): string[] {
         return [];
       }
 
-      const filePath = isHttpTransform
-        ? httpTransformFilePath(renderedFileUrl)
-        : isScriptProvider
-          ? scriptProviderFilePath(renderedFileUrl)
-          : isProvider
-            ? providerFilePath(renderedFileUrl, allowJavascript)
-            : isAssertion
-              ? assertionFilePath(renderedFileUrl)
-              : renderedFileUrl.slice('file://'.length);
+      const filePath = (
+        isHttpTransform
+          ? httpTransformFilePath(renderedFileUrl)
+          : isScriptProvider
+            ? scriptProviderFilePath(renderedFileUrl)
+            : isProvider
+              ? providerFilePath(renderedFileUrl, allowJavascript)
+              : isAssertion
+                ? assertionFilePath(renderedFileUrl)
+                : renderedFileUrl.slice('file://'.length)
+      ).replace(/\\/g, '/');
       const displayPath = isHttpTransform
         ? fileUrl.startsWith('file://')
           ? httpTransformFilePath(fileUrl)
@@ -668,6 +672,7 @@ export function extractFileDependencies(configPath: string): string[] {
         const matches = glob.sync(safePatterns, {
           nodir: true,
           braceExpandMax: MAX_BRACE_EXPANSIONS,
+          windowsPathsNoEscape: true,
         });
         if (matches.length > MAX_GLOB_MATCHES) {
           watchDependencyRoots();
