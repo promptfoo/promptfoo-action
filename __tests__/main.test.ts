@@ -277,6 +277,9 @@ describe('GitHub Action Main', () => {
 
   describe('run function', () => {
     test('should successfully run evaluation when prompt files change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+      ]);
       await run();
 
       expect(mockOctokit.paginate).toHaveBeenCalledWith(
@@ -435,6 +438,78 @@ describe('GitHub Action Main', () => {
       expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
       expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
         forgedAnnotation,
+      );
+    });
+
+    test('should skip an unrelated change when an unchanged prompt filename contains a newline', async () => {
+      const forgedAnnotation = 'UNCHANGED_PROMPT_SKIP_CANARY_019F62C3';
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        `prompts/prompt\n::error::${forgedAnnotation}.txt`,
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        forgedAnnotation,
+      );
+    });
+
+    test('should reject a dependency-triggered prompt glob match outside the working directory', async () => {
+      const secretPath = '../secrets/OUTSIDE_PROMPT_CANARY_019F62C3.txt';
+      withInputs({ prompts: '../secrets/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/current.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([secretPath]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/current.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must stay within the repository workspace and working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        'OUTSIDE_PROMPT_CANARY_019F62C3',
+      );
+    });
+
+    test('should reject a dependency-triggered prompt symlink that escapes the checkout', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/current.py' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/link.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/current.py',
+      ]);
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const filePath = String(value);
+        if (filePath.endsWith('/prompts/link.txt')) {
+          return '/private/secrets/OUTSIDE_PROMPT_CANARY_019F62C3.txt';
+        }
+        return filePath;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must stay within the repository workspace and working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        'OUTSIDE_PROMPT_CANARY_019F62C3',
       );
     });
 
@@ -1434,6 +1509,34 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should accurately describe a dependency-triggered PR evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/current.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/remaining.txt',
+        'prompts/unchanged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/current.py',
+      ]);
+
+      await run();
+
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluated prompt files: prompts/remaining.txt, prompts/unchanged.txt',
+          ),
+        }),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.not.stringContaining('LLM prompt was modified'),
+        }),
+      );
+    });
+
     test('should run when the final file is deleted from a provider glob directory', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers/deleted.py' },
@@ -1664,7 +1767,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
 
       // Should still fail the action after posting the comment

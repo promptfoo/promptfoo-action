@@ -71,6 +71,44 @@ function validateCheckoutConfigPath(
   );
 }
 
+function validateCheckoutPromptFiles(
+  promptFiles: string[],
+  workingDirectory: string,
+  workspaceRoot: string,
+): void {
+  if (promptFiles.length === 0) {
+    return;
+  }
+
+  try {
+    const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+    const realWorkingDirectory = fs.realpathSync(workingDirectory);
+    for (const promptFile of promptFiles) {
+      const absolutePath = path.resolve(workingDirectory, promptFile);
+      if (
+        !isPathInside(workingDirectory, absolutePath) ||
+        !isPathInside(workspaceRoot, absolutePath)
+      ) {
+        throw new Error('unsafe lexical prompt path');
+      }
+      const realPromptPath = fs.realpathSync(absolutePath);
+      if (
+        !isPathInside(realWorkingDirectory, realPromptPath) ||
+        !isPathInside(realWorkspaceRoot, realPromptPath)
+      ) {
+        throw new Error('unsafe canonical prompt path');
+      }
+    }
+    return;
+  } catch {
+    // A selected repository-controlled path that cannot be canonicalized is unsafe.
+  }
+
+  throw new Error(
+    'Prompt file paths must stay within the repository workspace and working directory.',
+  );
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -568,12 +606,6 @@ export async function run(): Promise<void> {
       }
     }
 
-    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
-      throw new Error(
-        'Prompt file paths cannot contain carriage returns or line feeds.',
-      );
-    }
-
     const configChanged =
       changedFilesList.length > 0 &&
       changedFilesList.includes(configRepositoryPath);
@@ -616,6 +648,24 @@ export async function run(): Promise<void> {
           core.info('Detected changes in config file dependencies');
         }
       }
+    }
+
+    const evaluationPromptFiles =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (
+      !useConfigPrompts &&
+      evaluationPromptFiles.some((file) => /[\r\n]/.test(file))
+    ) {
+      throw new Error(
+        'Prompt file paths cannot contain carriage returns or line feeds.',
+      );
+    }
+    if (!useConfigPrompts) {
+      validateCheckoutPromptFiles(
+        evaluationPromptFiles,
+        workingDirectory,
+        workspaceRoot,
+      );
     }
 
     if (
@@ -677,8 +727,6 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    const evaluationPromptFiles =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
     if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         '--prompts',
@@ -913,8 +961,14 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
-      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+      const evaluatedFiles = evaluationPromptFiles.join(', ');
+      const description =
+        useConfigPrompts || evaluationPromptFiles.length === 0
+          ? '⚠️ Evaluation used prompts defined in the Promptfoo config.'
+          : configChanged || dependencyChanged || changedFilesList.length === 0
+            ? `⚠️ Evaluated prompt files: ${evaluatedFiles}`
+            : `⚠️ LLM prompt was modified in these files: ${evaluatedFiles}`;
+      let body = `${description}
 
 | Success | Failure |
 |---------|---------|
