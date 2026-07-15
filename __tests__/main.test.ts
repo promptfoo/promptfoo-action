@@ -569,6 +569,24 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should preserve an escaped literal brace in a POSIX-absolute prompt glob', async () => {
+      const literal = '\\{left,right\\}'.repeat(16);
+      const absoluteGlob = path.join(process.cwd(), `prompts/${literal}.txt`);
+      withInputs({ prompts: absoluteGlob });
+      mockOctokit.paginate.mockResolvedValue([]);
+      mockGlob.sync.mockReturnValue([
+        `prompts/${'{left,right}'.repeat(16)}.txt`,
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        absoluteGlob,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should resolve prompt changes relative to working-directory', async () => {
       withInputs({
         'working-directory': 'evals',
@@ -1359,6 +1377,28 @@ describe('GitHub Action Main', () => {
         }),
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should report config prompts when a config change has no matching action prompt files', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Promptfoo evaluated the prompts configured in the config file.',
+          ),
+        }),
+      );
+      expect(
+        String(mockOctokit.rest.issues.createComment.mock.calls[0][0].body),
+      ).not.toContain('Promptfoo evaluated these prompt files:');
     });
 
     test('should deduplicate overlapping prompt globs during dependency-triggered evaluation', async () => {

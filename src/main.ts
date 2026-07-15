@@ -956,8 +956,11 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const evaluatedPromptFiles = promptFilesToEvaluate.join(', ');
-      let body = `⚠️ Promptfoo evaluated these prompt files: ${evaluatedPromptFiles}
+      const evaluatedPromptSummary =
+        !useConfigPrompts && promptFilesToEvaluate.length > 0
+          ? `Promptfoo evaluated these prompt files: ${promptFilesToEvaluate.join(', ')}`
+          : 'Promptfoo evaluated the prompts configured in the config file.';
+      let body = `⚠️ ${evaluatedPromptSummary}
 
 | Success | Failure |
 |---------|---------|

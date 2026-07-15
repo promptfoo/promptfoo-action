@@ -18,7 +18,8 @@ export function validateGlobPattern(
   }
 
   const usesWindowsSeparators =
-    path.sep === '\\' || path.win32.isAbsolute(globPattern);
+    path.sep === '\\' ||
+    (!path.isAbsolute(globPattern) && path.win32.isAbsolute(globPattern));
   let braceDepth = 0;
   let inCharacterClass = false;
   let braceExpansionCount = 1;

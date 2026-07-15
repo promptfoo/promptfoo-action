@@ -1295,7 +1295,7 @@ export function extractFileDependencies(configPath: string): string[] {
     if (watchWorkspace || watchDynamicDependency) {
       dependencies.add(cwd);
       core.warning(
-        'Unable to statically resolve all config extension dependencies. Watching the repository workspace for changes.',
+        'Unable to statically resolve all config file dependencies. Watching the repository workspace for changes.',
       );
     }
 

@@ -720,6 +720,18 @@ prompts:
     expect(deps).toEqual(['./']);
   });
 
+  it('should preserve escaped literal braces in a POSIX-absolute config dependency path', () => {
+    const literal = '\\{left,right\\}'.repeat(16);
+    mockFs.readFileSync.mockReturnValue(
+      `providers:\n  - 'file:///test/working/providers/${literal}.py'`,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([`providers/${literal}.py`]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['huge numeric range', 'file://providers/{1..1000000000}/*.py'],
     ['malformed brace', 'file://providers/{safe,../outside/*.py'],
@@ -1396,7 +1408,7 @@ scenarios:
 
     expect(deps).toEqual(['./']);
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('Watching the repository workspace'),
+      'Unable to statically resolve all config file dependencies. Watching the repository workspace for changes.',
     );
   });
 
