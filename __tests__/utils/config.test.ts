@@ -85,6 +85,21 @@ providers:
     expect(deps).toEqual(['../config/providers/provider.py']);
   });
 
+  it('should extract callable Unicode Python and Go provider selectors', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.py:café
+  - file://providers/provider.go:调用
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.py',
+      '../config/providers/provider.go',
+    ]);
+  });
+
   it('should extract function-qualified Ruby and Go providers including Ruby bang methods', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -271,6 +286,31 @@ providers:
     ]);
   });
 
+  it('should preserve nested Ruby-colon filenames and extract callable CJS hyphen exports', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('provider.yaml')) {
+        return `
+id: openai:chat:gpt-4
+config:
+  template: file://templates/context.rb:prod
+  tools: file://tools/tools.cjs:get-tools
+`;
+      }
+      return `
+providers:
+  - file://providers/provider.yaml
+`;
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.yaml',
+      '../config/templates/context.rb:prod',
+      '../config/tools/tools.cjs',
+    ]);
+  });
+
   it('should preserve absolute file references nested in provider YAML', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
@@ -397,6 +437,36 @@ providers: file://providers/provider.yaml
     );
   });
 
+  it('should conservatively watch an executable provider symlink outside the workspace without reading it', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath.endsWith('/providers/external.py')) {
+        return '/test/outside/external.py';
+      }
+      return filePath;
+    });
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/providers/external.py')) {
+        throw new Error('SCRIPT_SYMLINK_SECRET_CANARY');
+      }
+      return `
+providers:
+  - file://providers/external.py
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'SCRIPT_SYMLINK_SECRET_CANARY',
+    );
+  });
+
   it('should reject a provider YAML symlink outside the workspace without leaking its contents', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.realpathSync.mockImplementation((value: unknown) => {
@@ -455,7 +525,7 @@ providers:
   it.each([
     ['ENOENT', ['providers/missing.py']],
     ['ENOTDIR', ['providers/missing.py']],
-    ['EACCES', []],
+    ['EACCES', ['./']],
   ])('should handle %s while checking a provider dependency real path', (code, expected) => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.realpathSync.mockImplementation((value: unknown) => {

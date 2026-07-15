@@ -36290,13 +36290,8 @@ function providerFilePath(fileUrl, allowJavascript = false) {
   const functionSeparator = rawPath.lastIndexOf(":");
   const scriptPath = rawPath.slice(0, functionSeparator);
   const functionName = rawPath.slice(functionSeparator + 1);
-  const isRuby = /\.rb$/i.test(scriptPath);
-  const isSupportedScript = /\.(?:py|go|rb)$/i.test(scriptPath) || allowJavascript && /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(scriptPath);
-  const isValidFunctionName = isRuby ? /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[!?]?$/.test(
-    functionName
-  ) : /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
-    functionName
-  );
+  const isSupportedScript = /\.py$/i.test(scriptPath) || (allowJavascript ? /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(scriptPath) : /\.(?:go|rb)$/i.test(scriptPath));
+  const isValidFunctionName = /^[^\\/:\0]+$/u.test(functionName);
   if (functionSeparator > 1 && isSupportedScript && isValidFunctionName) {
     return scriptPath;
   }
@@ -36430,7 +36425,11 @@ function extractFileDependencies(configPath) {
       const providerPaths = processFileUrl(provider, true, allowJavascript);
       const isProviderConfig = /\.(?:ya?ml|json)$/i.test(providerPath);
       if (providerPaths.length === 0) {
-        if (isProviderConfig) {
+        const isContainedReference = isPathInside(
+          dependencyRoot,
+          path5.resolve(configDir, providerPath)
+        );
+        if (isProviderConfig || providerPath.length > 0 && !providerPath.includes("\0") && isContainedReference && !le(providerPath)) {
           dependencies.add(`${dependencyRoot}${path5.sep}`);
         }
         return;
