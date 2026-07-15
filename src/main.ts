@@ -861,9 +861,24 @@ export async function run(): Promise<void> {
       }
     }
 
+    const actionEnvPaths = new Set(
+      envFiles
+        .split(',')
+        .map((envFile) => envFile.trim())
+        .filter(Boolean)
+        .map((envFile) =>
+          toRepositoryPath(
+            path.relative(
+              workspaceRoot,
+              path.resolve(workingDirectory, envFile),
+            ),
+          ),
+        ),
+    );
     const configChanged =
       changedFilesList.length > 0 &&
       changedFilesList.some((changedFile) => {
+        if (actionEnvPaths.has(changedFile)) return true;
         if (configRepositoryPaths.has(changedFile)) return true;
         if (!configGlobMatcher) return false;
         const absoluteChangedFile = path.resolve(workspaceRoot, changedFile);

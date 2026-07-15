@@ -2735,6 +2735,23 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should run when an action-level environment file changes', async () => {
+      withInputs({ 'env-files': '.env.eval', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: '.env.eval' }]);
+      mockGlob.sync.mockReturnValue(['prompts/unchanged.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([]);
+      mockFs.existsSync.mockReturnValue(true);
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockReturnValue({ error: null });
+
+      await run();
+
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test.each([
       ['no surviving match', []],
       ['a surviving sibling', ['prompts/surviving.txt']],

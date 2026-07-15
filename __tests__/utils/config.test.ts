@@ -1574,6 +1574,35 @@ targets:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should conservatively watch runtime-root multipart paths computed from template or env values', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https
+    config:
+      url: https://example.test/upload
+      multipart:
+        parts:
+          - kind: file
+            name: fixture
+            source:
+              type: path
+              path: '{{ fixture }}'
+          - kind: file
+            name: env-media
+            source:
+              type: path
+              path: '{{ env.MEDIA_REF }}'
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+      '/test/working/evals',
+    );
+
+    expect(deps).toContain('evals/');
+    expect(deps).toContain('./');
+  });
+
   it('should extract HTTP validator, auth, and TLS paths from provider and target maps', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -4488,6 +4517,8 @@ prompts:
     "{{ env ['PROMPT-FILE'] }}",
     "{{ (env)['PROMPT-FILE'] }}",
     "{{\u00a0(env)['PROMPT-FILE']\u00a0}}",
+    "{{ ((env))['PROMPT-FILE'] }}",
+    "{{ (env | default({}))['PROMPT-FILE'] }}",
     '{{- env.PROMPT_FILE -}}',
     "{{- env['PROMPT-FILE'] -}}",
     '{{ env.TEST_PROMPT_PATH }}/prompt.txt',
@@ -4500,6 +4531,27 @@ prompts:
     );
 
     expect(deps).toEqual(['evals/', `evals/${prompt}`, './']);
+  });
+
+  it('should track root-level ElevenLabs audio prompt extensions', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: elevenlabs:alignment
+prompts:
+  - sample.flac
+  - sample.opus
+  - sample.webm
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+      '/test/working/evals',
+    );
+
+    expect(deps).toEqual([
+      'evals/sample.flac',
+      'evals/sample.opus',
+      'evals/sample.webm',
+    ]);
   });
 
   it('should conservatively watch a Nunjucks block that can emit an env-backed file prompt', () => {

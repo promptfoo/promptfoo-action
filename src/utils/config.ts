@@ -172,6 +172,7 @@ const PROMPT_FILE_EXTENSIONS = new Set([
   'csv',
   'cts',
   'exe',
+  'flac',
   'js',
   'json',
   'jsonl',
@@ -179,9 +180,11 @@ const PROMPT_FILE_EXTENSIONS = new Set([
   'md',
   'mjs',
   'mts',
+  'opus',
   'py',
   'ts',
   'txt',
+  'webm',
   'yml',
   'yaml',
   'sh',
@@ -1028,6 +1031,7 @@ export function extractFileDependencies(
       }
       if (hasTemplate) {
         dependencies.add(`${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`);
+        dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
         watchCheckoutForExternalTemplate();
         return;
       }
@@ -1312,9 +1316,11 @@ export function extractFileDependencies(
         const isFileUrl = reference.startsWith('file://');
         const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
         const isEnvironmentTemplate =
-          /^\s*\{\{-?\s*(?:\(\s*env\s*\)|env)(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(
-            reference,
-          );
+          /^\s*\{\{-?/.test(reference) &&
+          /-?\}\}\s*$/.test(reference) &&
+          /\benv\b/.test(reference) &&
+          reference.indexOf('{{', reference.indexOf('{{') + 2) < 0 &&
+          reference.indexOf('}}') === reference.lastIndexOf('}}');
         if (
           !declaredFile &&
           !isExecutable &&
