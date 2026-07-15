@@ -283,6 +283,9 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_AUTHOR',
     'CI',
     'PROMPTFOO_DISABLE_SHARING',
+    'PROMPTFOO_DISABLE_TELEMETRY',
+    'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
     'PROMPTFOO_DISABLE_ERROR_LOG',
     'PROMPTFOO_DISABLE_DEBUG_LOG',
     'PROMPTFOO_STRIP_GRADING_RESULT',
@@ -295,9 +298,6 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS',
     'PROMPTFOO_DISABLE_CONVERSATION_VAR',
     'PROMPTFOO_DISABLE_OBJECT_STRINGIFY',
-    'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
-    'PROMPTFOO_DISABLE_REMOTE_GENERATION',
-    'PROMPTFOO_DISABLE_TELEMETRY',
     'PROMPTFOO_SELF_HOSTED',
     'PROMPTFOO_DISABLE_TEMPLATING',
     'PROMPTFOO_STRICT_FILES',
@@ -453,6 +453,18 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     );
     // Isolation: nothing from the rejected file leaks, so a workflow-set key
     // and host cannot be paired with an attacker value.
+    expect(target).toEqual({ EXISTING: 'keep' });
+  });
+
+  test.each([
+    'PROMPTFOO_DISABLE_TELEMETRY',
+    'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+  ])('rejects privacy control %s without leaking sibling values', (key) => {
+    const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
+    const file = writeEnv('.env', `SAFE=must-not-merge\n${key}=false\n`);
+
+    expect(() => loadEnvironmentFile(file, target)).toThrow(key);
     expect(target).toEqual({ EXISTING: 'keep' });
   });
 

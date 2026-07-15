@@ -935,6 +935,9 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_AUTHOR',
       'CI',
       'PROMPTFOO_DISABLE_SHARING',
+      'PROMPTFOO_DISABLE_TELEMETRY',
+      'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+      'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
       'PROMPTFOO_DISABLE_ERROR_LOG',
       'PROMPTFOO_DISABLE_DEBUG_LOG',
       'PROMPTFOO_STRIP_GRADING_RESULT',
@@ -947,9 +950,6 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS',
       'PROMPTFOO_DISABLE_CONVERSATION_VAR',
       'PROMPTFOO_DISABLE_OBJECT_STRINGIFY',
-      'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
-      'PROMPTFOO_DISABLE_REMOTE_GENERATION',
-      'PROMPTFOO_DISABLE_TELEMETRY',
       'PROMPTFOO_SELF_HOSTED',
       'PROMPTFOO_DISABLE_TEMPLATING',
       'PROMPTFOO_STRICT_FILES',
@@ -1556,6 +1556,22 @@ describe('GitHub Action Main', () => {
         AZURE_OPENAI_API_KEY: 'env-azure-key',
         ANTHROPIC_API_KEY: 'env-anthropic-key',
         HF_API_TOKEN: 'env-huggingface-key',
+        HF_TOKEN: 'env-hf-token',
+        HUGGING_FACE_HUB_TOKEN: 'env-hugging-face-hub-token',
+        GOOGLE_API_KEY: 'env-google-api-key',
+        GEMINI_API_KEY: 'env-gemini-api-key',
+        GOOGLE_GENERATIVE_AI_API_KEY: 'env-google-generative-ai-key',
+        REPLICATE_API_TOKEN: 'env-replicate-api-token',
+        AZURE_API_KEY: 'env-azure-api-key',
+        AZURE_CLIENT_SECRET: 'env-azure-client-secret',
+        CF_AIG_TOKEN: 'env-cf-aig-token',
+        DATABRICKS_TOKEN: 'env-databricks-token',
+        FAL_KEY: 'env-fal-key',
+        ABLIT_KEY: 'env-ablit-key',
+        LANGFUSE_SECRET_KEY: 'env-langfuse-secret-key',
+        WATSONX_AI_APIKEY: 'env-watsonx-api-key',
+        COMETAPI_KEY: 'env-comet-api-key',
+        mIxEd_CuStOm_aPi_KeY: 'env-mixed-case-api-key',
         AWS_ACCESS_KEY_ID: 'env-aws-access-key-id',
         AWS_SECRET_ACCESS_KEY: 'env-aws-secret-access-key',
         REPLICATE_API_KEY: 'env-replicate-key',
@@ -1575,8 +1591,12 @@ describe('GitHub Action Main', () => {
       const dotenv = await import('dotenv');
       (dotenv.config as Mock).mockImplementation(
         (options?: { processEnv?: Record<string, string> }) => {
-          Object.assign(options?.processEnv ?? process.env, providerKeys);
-          return { parsed: providerKeys };
+          const parsed = {
+            ...providerKeys,
+            AWS_SAGEMAKER_MAX_TOKENS: 'do-not-mask-max-tokens',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
         },
       );
 
@@ -1586,8 +1606,53 @@ describe('GitHub Action Main', () => {
         for (const value of Object.values(providerKeys)) {
           expect(mockCore.setSecret).toHaveBeenCalledWith(value);
         }
+        expect(mockCore.setSecret).not.toHaveBeenCalledWith(
+          'do-not-mask-max-tokens',
+        );
       } finally {
         for (const key of Object.keys(providerKeys)) {
+          const value = originals[key];
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+        delete process.env.AWS_SAGEMAKER_MAX_TOKENS;
+      }
+    });
+
+    test('should mask trusted provider aliases before skipping unrelated changes', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      const providerValues = {
+        HF_TOKEN: 'trusted-hf-token',
+        GOOGLE_API_KEY: 'trusted-google-api-key',
+        GEMINI_API_KEY: 'trusted-gemini-api-key',
+        AWS_BEARER_TOKEN_BEDROCK: 'trusted-bedrock-token',
+        WATSONX_AI_BEARER_TOKEN: 'trusted-watsonx-token',
+        mIxEd_CuStOm_aPi_KeY: 'trusted-mixed-case-api-key',
+        AWS_SAGEMAKER_MAX_TOKENS: 'do-not-mask-max-tokens',
+        AZURE_TOKEN_SCOPE: 'do-not-mask-token-scope',
+      };
+      const originals = Object.fromEntries(
+        Object.keys(providerValues).map((key) => [key, process.env[key]]),
+      );
+      Object.assign(process.env, providerValues);
+
+      try {
+        await run();
+
+        for (const [key, value] of Object.entries(providerValues)) {
+          if (key.endsWith('_MAX_TOKENS') || key.endsWith('_TOKEN_SCOPE')) {
+            expect(mockCore.setSecret).not.toHaveBeenCalledWith(value);
+          } else {
+            expect(mockCore.setSecret).toHaveBeenCalledWith(value);
+          }
+        }
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        for (const key of Object.keys(providerValues)) {
           const value = originals[key];
           if (value === undefined) {
             delete process.env[key];

@@ -37026,9 +37026,9 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_DISABLE_REF_PARSER",
   "PROMPTFOO_DISABLE_REMOTE_GENERATION",
   "PROMPTFOO_DISABLE_SHARING",
+  "PROMPTFOO_DISABLE_TELEMETRY",
   "PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS",
   "PROMPTFOO_DISABLE_TEMPLATING",
-  "PROMPTFOO_DISABLE_TELEMETRY",
   "PROMPTFOO_DISABLE_VAR_EXPANSION",
   "PROMPTFOO_FAILED_TEST_EXIT_CODE",
   "PROMPTFOO_INSECURE_SSL",
@@ -37967,31 +37967,15 @@ async function run() {
         vertexApiKey,
         cohereApiKey,
         mistralApiKey,
-        groqApiKey,
-        process.env.OPENAI_API_KEY,
-        process.env.AZURE_OPENAI_API_KEY,
-        process.env.ANTHROPIC_API_KEY,
-        process.env.HF_API_TOKEN,
-        process.env.AWS_ACCESS_KEY_ID,
-        process.env.AWS_SECRET_ACCESS_KEY,
-        process.env.REPLICATE_API_KEY,
-        process.env.PALM_API_KEY,
-        process.env.VERTEX_API_KEY,
-        process.env.COHERE_API_KEY,
-        process.env.MISTRAL_API_KEY,
-        process.env.GROQ_API_KEY,
-        process.env.DATABRICKS_TOKEN,
-        process.env.CLAWDBOT_GATEWAY_TOKEN,
-        process.env.CLAWDBOT_GATEWAY_PASSWORD,
-        process.env.OPENCLAW_GATEWAY_TOKEN,
-        process.env.OPENCLAW_GATEWAY_PASSWORD,
-        process.env.PROMPTFOO_API_KEY,
-        ...Object.entries(process.env).filter(
-          ([name]) => /(?:^|_)(?:API_KEY|API_TOKEN|TOKEN|SECRET|PASSWORD|PRIVATE_KEY|BEARER(?:_TOKEN)?|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY)$/i.test(
-            name
-          )
-        ).map(([, value]) => value)
+        groqApiKey
       ];
+      for (const [name, value] of Object.entries(process.env)) {
+        if (value && (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
+          name
+        ) || /(?:^|_)BEARER_TOKEN(?:_|$)/i.test(name) || name.toUpperCase() === "FAL_KEY" || name.toUpperCase() === "ABLIT_KEY")) {
+          apiKeys.push(value);
+        }
+      }
       for (const key of apiKeys) {
         if (key) {
           setSecret(key);
