@@ -468,6 +468,118 @@ prompts:
     expect(deps).toContain('../config/prompts/prompt2.txt');
   });
 
+  it('should extract executable prompt, scenario, filter, and HTTP-transform dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - prompts/main.txt
+  - prompts/globbed/*.md
+providers:
+  - id: https
+    config:
+      transformRequest: file://hooks/request.js:transform
+      transformResponse: file://hooks/response.cjs:transform
+      responseParser: file://hooks/parser.mts:parse
+      sessionParser: file://hooks/session.cts:parse
+      session:
+        responseParser: file://hooks/endpoint.ts:parse
+tests:
+  path: file://generators/build.py:generate
+scenarios:
+  - scenarios/shared.yaml
+  - tests: scenarios/cases.yaml
+  - tests:
+      - scenarios/extra.yaml
+      - path: file://scenarios/generate.js:build
+    config:
+      - vars:
+          input: file://scenarios/context.json
+        assert:
+          - type: python
+            value: file://scenarios/check.py:validate
+        provider: file://scenarios/provider.rb:call_api
+nunjucksFilters:
+  direct: filters/format.js
+  globbed: filters/custom/**/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockImplementation((value: string) => {
+      if (value.endsWith('/prompts/globbed/*.md')) {
+        return ['/test/config/prompts/globbed/one.md'];
+      }
+      if (value.endsWith('/filters/custom/**/*.js')) {
+        return ['/test/config/filters/custom/one.js'];
+      }
+      return [];
+    });
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/prompts/main.txt',
+      '../config/prompts/globbed/one.md',
+      '../config/prompts/globbed',
+      '../config/hooks/request.js',
+      '../config/hooks/response.cjs',
+      '../config/hooks/parser.mts',
+      '../config/hooks/session.cts',
+      '../config/hooks/endpoint.ts',
+      '../config/generators/build.py',
+      '../config/scenarios/shared.yaml',
+      '../config/scenarios/cases.yaml',
+      '../config/scenarios/extra.yaml',
+      '../config/scenarios/generate.js',
+      '../config/scenarios/context.json',
+      '../config/scenarios/check.py',
+      '../config/scenarios/provider.rb',
+      '../config/filters/format.js',
+      '../config/filters/custom/one.js',
+      '../config/filters/custom/',
+    ]);
+  });
+
+  it('should safely ignore malformed scenario and Nunjucks-filter entries', () => {
+    mockFs.readFileSync.mockReturnValue(`
+scenarios:
+  - false
+  - null
+  - tests: 42
+  - tests:
+      - false
+      - {}
+      - path: 42
+nunjucksFilters:
+  invalid: false
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should reject foreign Windows absolute and drive-relative dependencies before resolution', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'file://C:/outside/provider.py'
+  - 'file://C:\\outside\\provider.py'
+  - 'file://C:outside\\provider.py'
+tests:
+  - 'file://\\\\server\\share\\cases.yaml'
+  - $ref: 'D:\\outside\\cases.yaml#/0'
+defaultTest: 'file://E:outside\\defaults.yaml'
+nunjucksFilters:
+  absolute: 'F:\\outside\\filter.js'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect((core.warning as Mock).mock.calls.flat().join('\n')).not.toMatch(
+      /(?:\r|\n)::(?:error|warning)::/,
+    );
+  });
+
   it.each([
     ['scalar', 'prompts: file://prompts/prompt.txt'],
     ['legacy map', 'prompts:\n  file://prompts/prompt.txt: labeled-prompt'],

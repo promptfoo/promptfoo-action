@@ -47,6 +47,14 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function isForeignWindowsPath(filePath: string): boolean {
+  return (
+    path.sep === '/' &&
+    (/^[a-z]:/i.test(filePath) ||
+      (path.win32.isAbsolute(filePath) && !path.isAbsolute(filePath)))
+  );
+}
+
 function warnSafe(message: string): void {
   core.warning(
     message
@@ -352,7 +360,10 @@ export function extractFileDependencies(
       if (
         expandedPaths.some((expandedPath) => {
           const traversalPath = expandedPath.replace(/\[\.\]/g, '.');
-          return !isSafeDependency(path.resolve(configDir, traversalPath));
+          return (
+            isForeignWindowsPath(traversalPath) ||
+            !isSafeDependency(path.resolve(configDir, traversalPath))
+          );
         })
       ) {
         warnSafe(
@@ -1189,6 +1200,51 @@ export function extractFileDependencies(
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
         extractNestedFileUrls({ provider: test.provider, assert: test.assert });
+      }
+    }
+
+    const extendedConfig = config as unknown as Record<string, unknown>;
+    const scenarios = extendedConfig.scenarios;
+    if (Array.isArray(scenarios)) {
+      for (const scenario of scenarios) {
+        if (typeof scenario === 'string') {
+          processTestFile(scenario);
+          continue;
+        }
+        if (typeof scenario !== 'object' || scenario === null) {
+          continue;
+        }
+        const scenarioConfig = scenario as Record<string, unknown>;
+        const scenarioTests = Array.isArray(scenarioConfig.tests)
+          ? scenarioConfig.tests
+          : [scenarioConfig.tests];
+        for (const scenarioTest of scenarioTests) {
+          if (typeof scenarioTest === 'string') {
+            processTestFile(scenarioTest);
+          } else if (
+            typeof scenarioTest === 'object' &&
+            scenarioTest !== null &&
+            'path' in scenarioTest &&
+            typeof scenarioTest.path === 'string'
+          ) {
+            processTestFile(scenarioTest.path);
+          }
+        }
+        extractNestedFileUrls(scenarioConfig.config);
+      }
+    }
+
+    const nunjucksFilters = extendedConfig.nunjucksFilters;
+    if (typeof nunjucksFilters === 'object' && nunjucksFilters !== null) {
+      for (const filterPath of Object.values(nunjucksFilters)) {
+        if (typeof filterPath === 'string') {
+          processFilePath(
+            expandAndTrackEnvTemplates(filterPath),
+            'Nunjucks filter file dependency',
+            true,
+            true,
+          );
+        }
       }
     }
 
