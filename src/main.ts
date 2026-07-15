@@ -551,7 +551,6 @@ export async function run(): Promise<void> {
             }
           } catch {
             core.warning('Skipping invalid config dependency glob pattern');
-            return false;
           }
 
           // Check if the dependency is a directory and any changed file is within it

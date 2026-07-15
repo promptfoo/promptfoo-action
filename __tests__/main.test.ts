@@ -1217,6 +1217,31 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
+    test('should match an unusual dependency directory when glob detection throws', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/data/[broken/context.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) => {
+        if (value.includes('[broken')) throw new TypeError('invalid pattern');
+        return value.includes('*');
+      });
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/data/[broken/',
+      ]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Skipping invalid config dependency glob pattern',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should detect dependency directories without a trailing slash', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },
