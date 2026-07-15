@@ -450,6 +450,23 @@ providers:
     ]);
   });
 
+  it('should extract HTTP status validators including named JavaScript exports', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/default
+    config:
+      validateStatus: file://validators/status.js
+  - id: https://example.test/named
+    config:
+      validateStatus: file://validators/named-status.js:validateStatus
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['validators/status.js', 'validators/named-status.js']);
+  });
+
   it('should extract HTTP auth and credential paths from provider-map entries', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
