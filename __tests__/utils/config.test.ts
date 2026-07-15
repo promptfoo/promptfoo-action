@@ -536,6 +536,29 @@ providers:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
+  it.each([
+    '[{]',
+    '[}]',
+    '[{}]',
+  ])('should conservatively track an optimized brace character class %s as a pattern', (characterClass) => {
+    const rawPath = `/test/working/evals/providers/${characterClass}.yaml`;
+    mockFs.readFileSync.mockReturnValue(
+      `providers:\n  - 'file://providers/${characterClass}.yaml'`,
+    );
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (filePath.toString() === rawPath) {
+        throw new Error('optimized character class must not be realpathed');
+      }
+      return filePath.toString();
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockFs.realpathSync).not.toHaveBeenCalledWith(rawPath);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it('should match runtime no-escape semantics for a backslash-prefixed numeric brace range', () => {
     const reference = 'providers/\\{1..16}.py';
     expect(
@@ -1762,30 +1785,30 @@ providers:
 providers:
   - id: https
     config:
-      validateStatus: 'file://validators/status\\{literal}.JS:validateStatus'
-      transformRequest: 'file://hooks/request\\{literal}.TS:run'
-      transformResponse: 'file://hooks/response\\{literal}.js:transform'
-      responseParser: 'file://hooks/legacy\\{literal}.CJS:parse'
-      sessionParser: 'file://hooks/session\\{literal}.MTS:parse'
+      validateStatus: 'file://validators\\STATUS\\{one,two}.JS:validateStatus'
+      transformRequest: 'file://hooks\\request\\*.TS:run'
+      transformResponse: 'file://hooks\\response\\[literal].js:transform'
+      responseParser: 'file://hooks\\nested\\legacy\\{literal}.CJS:parse'
+      sessionParser: 'file://hooks\\session\\*.MTS:parse'
       session:
-        responseParser: 'file://hooks/endpoint\\{literal}.ts:parse'
+        responseParser: 'file://hooks\\nested\\endpoint\\[literal].ts:parse'
 `);
 
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([
-      'validators/status\\{literal}.JS:validateStatus',
-      'validators/status\\{literal}.JS',
-      'hooks/request\\{literal}.TS:run',
-      'hooks/request\\{literal}.TS',
-      'hooks/response\\{literal}.js:transform',
-      'hooks/response\\{literal}.js',
-      'hooks/legacy\\{literal}.CJS:parse',
-      'hooks/legacy\\{literal}.CJS',
-      'hooks/session\\{literal}.MTS:parse',
-      'hooks/session\\{literal}.MTS',
-      'hooks/endpoint\\{literal}.ts:parse',
-      'hooks/endpoint\\{literal}.ts',
+      'validators\\STATUS\\{one,two}.JS:validateStatus',
+      'validators\\STATUS\\{one,two}.JS',
+      'hooks\\request\\*.TS:run',
+      'hooks\\request\\*.TS',
+      'hooks\\response\\[literal].js:transform',
+      'hooks\\response\\[literal].js',
+      'hooks\\nested\\legacy\\{literal}.CJS:parse',
+      'hooks\\nested\\legacy\\{literal}.CJS',
+      'hooks\\session\\*.MTS:parse',
+      'hooks\\session\\*.MTS',
+      'hooks\\nested\\endpoint\\[literal].ts:parse',
+      'hooks\\nested\\endpoint\\[literal].ts',
     ]);
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
@@ -2069,6 +2092,40 @@ scenarios:
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['evals/tls/test.pem', 'evals/tls/scenario.pem']);
+  });
+
+  it('should preserve literal HTTP hook and auth paths in inline scenario options', () => {
+    mockFs.readFileSync.mockReturnValue(`
+scenarios:
+  - config:
+      - options:
+          provider:
+            id: https://scenario.example
+            config:
+              validateStatus: 'file://validators\\numeric\\{1..1000000000}.JS:validate'
+              transformRequest: 'file://hooks\\request\\{one,two}.TS:transform'
+              transformResponse: 'file://hooks\\response\\*.js:transform'
+              session:
+                responseParser: 'file://hooks\\session\\[literal].TS:parse'
+              auth:
+                type: file
+                path: 'file://auth\\tokens\\{one,two}.py:get_auth'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/validators\\numeric\\{1..1000000000}.JS:validate',
+      'evals/validators\\numeric\\{1..1000000000}.JS',
+      'evals/hooks\\request\\{one,two}.TS:transform',
+      'evals/hooks\\request\\{one,two}.TS',
+      'evals/hooks\\response\\*.js:transform',
+      'evals/hooks\\response\\*.js',
+      'evals/hooks\\session\\[literal].TS:parse',
+      'evals/hooks\\session\\[literal].TS',
+      'evals/auth\\tokens\\{one,two}.py',
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
   it('should extract executed provider, test, assertion, and extension hooks', () => {

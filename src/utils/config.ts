@@ -974,7 +974,9 @@ export function extractFileDependencies(configPath: string): string[] {
         markUnsafeDependency();
       }
       if ('provider' in optionRecord) processProvider(optionRecord.provider);
-      if (extractNestedFileReferences(optionRecord)) {
+      const providerSpecificOptions = { ...optionRecord };
+      delete providerSpecificOptions.provider;
+      if (extractNestedFileReferences(providerSpecificOptions)) {
         markUnsafeDependency();
       }
     };
