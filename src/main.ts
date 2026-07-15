@@ -283,10 +283,18 @@ export async function run(): Promise<void> {
     // Validate it first so selected env-files can still override application
     // values while no repository-controlled process setting reaches the child.
     const implicitEnvFilePath = path.join(workingDirectory, '.env');
-    if (fs.existsSync(implicitEnvFilePath)) {
-      core.info(`Loading environment variables from ${implicitEnvFilePath}`);
-      loadEnvironmentFile(implicitEnvFilePath);
-      core.info(`Successfully loaded ${implicitEnvFilePath}`);
+    const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
+    const implicitEnvExists = fs.existsSync(implicitEnvFilePath);
+    const implicitFilePath = implicitEnvExists
+      ? implicitEnvFilePath
+      : implicitVaultFilePath;
+    if (
+      implicitEnvExists ||
+      (process.env.DOTENV_KEY && fs.existsSync(implicitVaultFilePath))
+    ) {
+      core.info(`Loading environment variables from ${implicitFilePath}`);
+      loadEnvironmentFile(implicitFilePath, process.env, false);
+      core.info(`Successfully loaded ${implicitFilePath}`);
     }
 
     // Load explicitly selected .env files after the implicit default.

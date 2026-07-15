@@ -89,14 +89,17 @@ describe('findForbiddenEnvFileKey', () => {
     'PKG_CONFIG_LIBDIR',
     'PKG_CONFIG_SYSROOT_DIR',
     'AWS_CA_BUNDLE',
+    'AWS_BEARER_TOKEN_BEDROCK',
     'CURL_CA_BUNDLE',
     'requests_ca_bundle',
     'PERL5OPT',
     'PERL5LIB',
     'PYTHONHOME',
+    'PYTHON',
     'PYTHONPATH',
     'pythonuserbase',
     'PROMPTFOO_PYTHON',
+    'NODE_GYP_FORCE_PYTHON',
     'RUBYOPT',
     'RUBYLIB',
     'RUBYGEMS_GEMDEPS',
@@ -120,10 +123,16 @@ describe('findForbiddenEnvFileKey', () => {
     'OPENAI_BASE_URL',
     'openai_api_base_url',
     'OPENAI_API_HOST',
+    'OPENAI_ORGANIZATION',
+    'OPENAI_ORG_ID',
+    'OPENAI_PROJECT_ID',
     'ANTHROPIC_BASE_URL',
     'aPi_HoSt',
     'AWS_ENDPOINT_URL',
     'AWS_PROFILE',
+    'AWS_BEDROCK_REGION',
+    'AWS_REGION',
+    'AWS_DEFAULT_REGION',
     'aws_default_profile',
     'AWS_WEB_IDENTITY_TOKEN_FILE',
     'AWS_ROLE_ARN',
@@ -140,6 +149,12 @@ describe('findForbiddenEnvFileKey', () => {
     'AWS_ENDPOINT_URL_SAGEMAKER_RUNTIME',
     'AZURE_OPENAI_API_HOST',
     'AZURE_POD_IDENTITY_AUTHORITY_HOST',
+    'AZURE_STORAGE_CONNECTION_STRING',
+    'AZURE_TOKEN_CREDENTIALS',
+    'AZURE_ADDITIONALLY_ALLOWED_TENANTS',
+    'AZURE_TENANT_ID',
+    'AZURE_TOKEN_SCOPE',
+    'AZURE_REGIONAL_AUTHORITY_NAME',
     'IDENTITY_ENDPOINT',
     'IDENTITY_HEADER',
     'IDENTITY_SERVER_THUMBPRINT',
@@ -149,12 +164,20 @@ describe('findForbiddenEnvFileKey', () => {
     'AZURE_FEDERATED_TOKEN_FILE',
     'AZURE_CLIENT_CERTIFICATE_PATH',
     'GOOGLE_APPLICATION_CREDENTIALS',
+    'GOOGLE_GENAI_USE_VERTEXAI',
+    'GOOGLE_CLOUD_PROJECT',
+    'GOOGLE_CLOUD_QUOTA_PROJECT',
+    'GOOGLE_PROJECT_ID',
     'GOOGLE_API_CERTIFICATE_CONFIG',
     'google_external_account_allow_executables',
     'GOOGLE_GHA_CREDS_PATH',
+    'GOOGLE_LOCATION',
+    'GOOGLE_CLOUD_LOCATION',
     'GCE_METADATA_HOST',
     'gce_metadata_ip',
     'METADATA_SERVER_DETECTION',
+    'VERTEX_REGION',
+    'VERTEX_PROJECT_ID',
     'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
     'cloudsdk_config',
     'CLOUDSDK_PYTHON',
@@ -182,6 +205,13 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_CACHE_PATH',
     'PROMPTFOO_CONFIG_DIR',
     'PROMPTFOO_PASS_RATE_THRESHOLD',
+    'PROMPTFOO_CACHE_TTL',
+    'PROMPTFOO_DISABLE_SHARING',
+    'PROMPTFOO_STRIP_GRADING_RESULT',
+    'PROMPTFOO_STRIP_RESPONSE_OUTPUT',
+    'PROMPTFOO_STRIP_PROMPT_TEXT',
+    'PROMPTFOO_STRIP_TEST_VARS',
+    'PROMPTFOO_STRIP_METADATA',
     'PROMPTFOO_DISABLE_VAR_EXPANSION',
     'PROMPTFOO_DISABLE_REF_PARSER',
     'PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS',
@@ -194,6 +224,10 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_FAILED_TEST_EXIT_CODE',
     'PROMPTFOO_LOG_DIR',
     'PROMPTFOO_MEDIA_PATH',
+    'SHAREPOINT_BASE_URL',
+    'SHAREPOINT_CERT_PATH',
+    'SHAREPOINT_CLIENT_ID',
+    'SHAREPOINT_TENANT_ID',
     'GIT_SSH_COMMAND',
     'git_config_count',
     'GIT_EXTERNAL_DIFF',
@@ -324,6 +358,25 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
 
     expect(target.SETTING).toBe('second');
     expect(target.ONLY_FIRST).toBe('1');
+  });
+
+  test('preserves trusted application credentials when implicit loading disables override', () => {
+    const target: NodeJS.ProcessEnv = {
+      PROMPTFOO_API_KEY: 'trusted-promptfoo-key',
+      OPENAI_API_KEY: 'trusted-openai-key',
+    };
+    const file = writeEnv(
+      '.env',
+      'OPENAI_API_KEY=attacker-key\nCUSTOM_SETTING=allowed\n',
+    );
+
+    loadEnvironmentFile(file, target, false);
+
+    expect(target).toEqual({
+      PROMPTFOO_API_KEY: 'trusted-promptfoo-key',
+      OPENAI_API_KEY: 'trusted-openai-key',
+      CUSTOM_SETTING: 'allowed',
+    });
   });
 
   test('preserves process controls that came from the trusted workflow environment', () => {

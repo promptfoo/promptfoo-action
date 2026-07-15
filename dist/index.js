@@ -36455,21 +36455,26 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "ANTHROPIC_BASE_URL",
   "API_HOST",
   "APPDATA",
+  "AWS_BEARER_TOKEN_BEDROCK",
+  "AWS_BEDROCK_REGION",
   "AWS_CA_BUNDLE",
   "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
   "AWS_CONTAINER_CREDENTIALS_FULL_URI",
   "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
   "AWS_CONFIG_FILE",
   "AWS_DEFAULT_PROFILE",
+  "AWS_DEFAULT_REGION",
   "AWS_EC2_METADATA_SERVICE_ENDPOINT",
   "AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE",
   "AWS_ENDPOINT_URL",
   "AWS_LOGIN_CACHE_DIRECTORY",
   "AWS_PROFILE",
+  "AWS_REGION",
   "AWS_ROLE_ARN",
   "AWS_ROLE_SESSION_NAME",
   "AWS_SHARED_CREDENTIALS_FILE",
   "AWS_WEB_IDENTITY_TOKEN_FILE",
+  "AZURE_ADDITIONALLY_ALLOWED_TENANTS",
   "AZURE_AI_PROJECT_URL",
   "AZURE_API_BASE_URL",
   "AZURE_API_HOST",
@@ -36481,6 +36486,11 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "AZURE_OPENAI_API_HOST",
   "AZURE_OPENAI_BASE_URL",
   "AZURE_POD_IDENTITY_AUTHORITY_HOST",
+  "AZURE_REGIONAL_AUTHORITY_NAME",
+  "AZURE_STORAGE_CONNECTION_STRING",
+  "AZURE_TENANT_ID",
+  "AZURE_TOKEN_CREDENTIALS",
+  "AZURE_TOKEN_SCOPE",
   "AR",
   "BASH_ENV",
   "CDP_DOMAIN",
@@ -36543,8 +36553,14 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "GOOGLE_API_HOST",
   "GOOGLE_API_CERTIFICATE_CONFIG",
   "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_CLOUD_QUOTA_PROJECT",
   "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES",
+  "GOOGLE_GENAI_USE_VERTEXAI",
   "GOOGLE_GHA_CREDS_PATH",
+  "GOOGLE_LOCATION",
+  "GOOGLE_PROJECT_ID",
   "HOME",
   "HTTP_PROXY",
   "HTTPS_PROXY",
@@ -36567,6 +36583,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "NVIDIA_API_BASE_URL",
   "NODE_DEBUG",
   "NODE_DEBUG_NATIVE",
+  "NODE_GYP_FORCE_PYTHON",
   "NODE_EXTRA_CA_CERTS",
   "NODE_OPTIONS",
   "NODE_PATH",
@@ -36577,6 +36594,9 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "OPENAI_API_BASE_URL",
   "OPENAI_API_HOST",
   "OPENAI_BASE_URL",
+  "OPENAI_ORGANIZATION",
+  "OPENAI_ORG_ID",
+  "OPENAI_PROJECT_ID",
   "OPENCLAW_CONFIG_PATH",
   "OPENCLAW_GATEWAY_PORT",
   "OPENCLAW_GATEWAY_URL",
@@ -36602,12 +36622,14 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST",
   "PORTKEY_API_BASE_URL",
   "PROMPTFOO_CACHE_PATH",
+  "PROMPTFOO_CACHE_TTL",
   "PROMPTFOO_CA_CERT_PATH",
   "PROMPTFOO_CLOUD_API_URL",
   "PROMPTFOO_CONFIG_DIR",
   "PROMPTFOO_DISABLE_CONVERSATION_VAR",
   "PROMPTFOO_DISABLE_OBJECT_STRINGIFY",
   "PROMPTFOO_DISABLE_REF_PARSER",
+  "PROMPTFOO_DISABLE_SHARING",
   "PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS",
   "PROMPTFOO_DISABLE_TEMPLATING",
   "PROMPTFOO_DISABLE_VAR_EXPANSION",
@@ -36635,6 +36657,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PUPPETEER_EXECUTABLE_PATH",
   "PYTHONEXECUTABLE",
   "PYTHONHOME",
+  "PYTHON",
   "PYTHONPATH",
   "PYTHONSTARTUP",
   "PYTHONUSERBASE",
@@ -36645,12 +36668,16 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "SHELL",
   "SHAREPOINT_BASE_URL",
   "SHAREPOINT_CERT_PATH",
+  "SHAREPOINT_CLIENT_ID",
+  "SHAREPOINT_TENANT_ID",
   "SSL_CERT_DIR",
   "SSL_CERT_FILE",
   "SNOWFLAKE_ACCOUNT_IDENTIFIER",
   "USERPROFILE",
   "VERCEL_AI_GATEWAY_BASE_URL",
   "VERTEX_API_HOST",
+  "VERTEX_REGION",
+  "VERTEX_PROJECT_ID",
   "VOYAGE_API_BASE_URL",
   "XAI_API_BASE_URL",
   "XDG_CONFIG_HOME"
@@ -36664,7 +36691,8 @@ var FORBIDDEN_ENV_FILE_PREFIXES = [
   "DYLD_",
   "GIT_",
   "LD_",
-  "NPM_CONFIG_"
+  "NPM_CONFIG_",
+  "PROMPTFOO_STRIP_"
 ];
 var FORBIDDEN_AUTH_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_API_KEY",
@@ -36683,7 +36711,7 @@ function findForbiddenAuthKey(environment) {
     (key) => FORBIDDEN_AUTH_KEYS.has(key.toUpperCase())
   );
 }
-function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
+function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, override = true) {
   const fileEnvironment = {};
   const result = dotenv.config({
     path: envFilePath,
@@ -36715,7 +36743,9 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
     );
   }
   for (const [key, value] of Object.entries(fileEnvironment)) {
-    targetEnvironment[key] = value;
+    if (override || targetEnvironment[key] === void 0) {
+      targetEnvironment[key] = value;
+    }
   }
 }
 
@@ -37225,10 +37255,13 @@ async function run() {
       }
     }
     const implicitEnvFilePath = path6.join(workingDirectory, ".env");
-    if (fs7.existsSync(implicitEnvFilePath)) {
-      info(`Loading environment variables from ${implicitEnvFilePath}`);
-      loadEnvironmentFile(implicitEnvFilePath);
-      info(`Successfully loaded ${implicitEnvFilePath}`);
+    const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
+    const implicitEnvExists = fs7.existsSync(implicitEnvFilePath);
+    const implicitFilePath = implicitEnvExists ? implicitEnvFilePath : implicitVaultFilePath;
+    if (implicitEnvExists || process.env.DOTENV_KEY && fs7.existsSync(implicitVaultFilePath)) {
+      info(`Loading environment variables from ${implicitFilePath}`);
+      loadEnvironmentFile(implicitFilePath, process.env, false);
+      info(`Successfully loaded ${implicitFilePath}`);
     }
     if (envFiles) {
       const envFileList = envFiles.split(",").map((f) => f.trim()).filter(Boolean);

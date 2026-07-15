@@ -586,6 +586,7 @@ describe('GitHub Action Main', () => {
       'GIT_CONFIG_COUNT',
       'RUBYOPT',
       'PYTHONHOME',
+      'PYTHON',
       'PYTHONPATH',
       'pythonuserbase',
       'PERL5LIB',
@@ -598,6 +599,7 @@ describe('GitHub Action Main', () => {
       'GEM_PATH',
       'GEM_SPEC_CACHE',
       'PROMPTFOO_PYTHON',
+      'NODE_GYP_FORCE_PYTHON',
       'PROMPTFOO_RUBY',
       'playwright_browsers_path',
       'PLAYWRIGHT_DOWNLOAD_HOST',
@@ -661,15 +663,22 @@ describe('GitHub Action Main', () => {
       'PKG_CONFIG_LIBDIR',
       'PKG_CONFIG_SYSROOT_DIR',
       'AWS_CA_BUNDLE',
+      'AWS_BEARER_TOKEN_BEDROCK',
       'CURL_CA_BUNDLE',
       'requests_ca_bundle',
       'OPENAI_BASE_URL',
       'openai_api_base_url',
       'OPENAI_API_HOST',
+      'OPENAI_ORGANIZATION',
+      'OPENAI_ORG_ID',
+      'OPENAI_PROJECT_ID',
       'ANTHROPIC_BASE_URL',
       'aPi_HoSt',
       'AWS_ENDPOINT_URL',
       'AWS_PROFILE',
+      'AWS_BEDROCK_REGION',
+      'AWS_REGION',
+      'AWS_DEFAULT_REGION',
       'aws_default_profile',
       'AWS_WEB_IDENTITY_TOKEN_FILE',
       'AWS_ROLE_ARN',
@@ -686,6 +695,12 @@ describe('GitHub Action Main', () => {
       'AWS_ENDPOINT_URL_SAGEMAKER_RUNTIME',
       'AZURE_OPENAI_API_HOST',
       'AZURE_POD_IDENTITY_AUTHORITY_HOST',
+      'AZURE_STORAGE_CONNECTION_STRING',
+      'AZURE_TOKEN_CREDENTIALS',
+      'AZURE_ADDITIONALLY_ALLOWED_TENANTS',
+      'AZURE_TENANT_ID',
+      'AZURE_TOKEN_SCOPE',
+      'AZURE_REGIONAL_AUTHORITY_NAME',
       'IDENTITY_ENDPOINT',
       'IDENTITY_HEADER',
       'IDENTITY_SERVER_THUMBPRINT',
@@ -695,12 +710,20 @@ describe('GitHub Action Main', () => {
       'AZURE_FEDERATED_TOKEN_FILE',
       'AZURE_CLIENT_CERTIFICATE_PATH',
       'GOOGLE_APPLICATION_CREDENTIALS',
+      'GOOGLE_GENAI_USE_VERTEXAI',
+      'GOOGLE_CLOUD_PROJECT',
+      'GOOGLE_CLOUD_QUOTA_PROJECT',
+      'GOOGLE_PROJECT_ID',
       'GOOGLE_API_CERTIFICATE_CONFIG',
       'google_external_account_allow_executables',
       'GOOGLE_GHA_CREDS_PATH',
+      'GOOGLE_LOCATION',
+      'GOOGLE_CLOUD_LOCATION',
       'GCE_METADATA_HOST',
       'gce_metadata_ip',
       'METADATA_SERVER_DETECTION',
+      'VERTEX_REGION',
+      'VERTEX_PROJECT_ID',
       'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
       'cloudsdk_config',
       'CLOUDSDK_PYTHON',
@@ -728,6 +751,13 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_CACHE_PATH',
       'PROMPTFOO_CONFIG_DIR',
       'PROMPTFOO_PASS_RATE_THRESHOLD',
+      'PROMPTFOO_CACHE_TTL',
+      'PROMPTFOO_DISABLE_SHARING',
+      'PROMPTFOO_STRIP_GRADING_RESULT',
+      'PROMPTFOO_STRIP_RESPONSE_OUTPUT',
+      'PROMPTFOO_STRIP_PROMPT_TEXT',
+      'PROMPTFOO_STRIP_TEST_VARS',
+      'PROMPTFOO_STRIP_METADATA',
       'PROMPTFOO_DISABLE_VAR_EXPANSION',
       'PROMPTFOO_DISABLE_REF_PARSER',
       'PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS',
@@ -740,6 +770,10 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_FAILED_TEST_EXIT_CODE',
       'PROMPTFOO_LOG_DIR',
       'PROMPTFOO_MEDIA_PATH',
+      'SHAREPOINT_BASE_URL',
+      'SHAREPOINT_CERT_PATH',
+      'SHAREPOINT_CLIENT_ID',
+      'SHAREPOINT_TENANT_ID',
     ])('should reject process startup variable %s from environment files', async (variableName) => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
@@ -869,6 +903,101 @@ describe('GitHub Action Main', () => {
         );
       } finally {
         delete process.env.CUSTOM_PROVIDER_SETTING;
+      }
+    });
+
+    test('should preserve trusted workflow credentials when loading the implicit .env', async () => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalPromptfooKey = process.env.PROMPTFOO_API_KEY;
+      const originalOpenaiKey = process.env.OPENAI_API_KEY;
+      process.env.PROMPTFOO_API_KEY = 'trusted-promptfoo-key';
+      process.env.OPENAI_API_KEY = 'trusted-openai-key';
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = {
+            OPENAI_API_KEY: 'attacker-key',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({
+            PROMPTFOO_API_KEY: 'trusted-promptfoo-key',
+            OPENAI_API_KEY: 'trusted-openai-key',
+          }),
+        );
+      } finally {
+        if (originalPromptfooKey === undefined) {
+          delete process.env.PROMPTFOO_API_KEY;
+        } else {
+          process.env.PROMPTFOO_API_KEY = originalPromptfooKey;
+        }
+        if (originalOpenaiKey === undefined) {
+          delete process.env.OPENAI_API_KEY;
+        } else {
+          process.env.OPENAI_API_KEY = originalOpenaiKey;
+        }
+      }
+    });
+
+    test('should reject an implicit .env.vault when the plaintext .env is absent', async () => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env.vault`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      const originalBaseUrl = process.env.OPENAI_BASE_URL;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { OPENAI_BASE_URL: 'http://attacker.invalid/v1' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('OPENAI_BASE_URL'),
+        );
+        expect(dotenv.config).toHaveBeenCalledWith(
+          expect.objectContaining({
+            path: expect.stringMatching(/(?:^|[/\\])\.env\.vault$/),
+          }),
+        );
+        expect(mockCore.info).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /Loading environment variables from .*\.env\.vault$/,
+          ),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.OPENAI_BASE_URL).toBe(originalBaseUrl);
+      } finally {
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+        if (originalBaseUrl === undefined) {
+          delete process.env.OPENAI_BASE_URL;
+        } else {
+          process.env.OPENAI_BASE_URL = originalBaseUrl;
+        }
       }
     });
 
