@@ -276,6 +276,7 @@ export function extractFileDependencies(configPath: string): string[] {
       extensions.push(...extensionList);
     }
 
+    const fileSchemeLength = 'file://'.length;
     for (const extension of extensions) {
       if (typeof extension !== 'string') {
         if (
@@ -298,11 +299,11 @@ export function extractFileDependencies(configPath: string): string[] {
       const hookSeparator = extension.lastIndexOf(':');
       const windowsDrive = /^file:\/\/\/?[A-Za-z]:[\\/]/.test(extension);
       const windowsDriveSeparator = windowsDrive
-        ? extension.indexOf(':', 'file://'.length)
+        ? extension.indexOf(':', fileSchemeLength)
         : -1;
       const candidateFileUrl = extension.slice(0, hookSeparator);
       const hasHookSuffix =
-        hookSeparator > 8 &&
+        hookSeparator > fileSchemeLength &&
         hookSeparator !== windowsDriveSeparator &&
         (/\.(?:[cm]?js|[cm]?ts)$/i.test(candidateFileUrl) ||
           candidateFileUrl.endsWith('.py'));
