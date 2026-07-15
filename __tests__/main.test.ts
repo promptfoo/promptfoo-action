@@ -1473,6 +1473,31 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      'filename',
+      'previous_filename',
+    ] as const)('should reject a PR %s containing a null byte before path matching', async (field) => {
+      const secret = 'PR_NUL_PATH_SECRET_CANARY_019F62C3';
+      mockOctokit.paginate.mockResolvedValue([
+        field === 'filename'
+          ? { filename: `providers/current.py\0${secret}` }
+          : {
+              filename: 'providers/renamed.py',
+              previous_filename: `providers/current.py\0${secret}`,
+            },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file paths must not contain null bytes.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(secret);
+    });
+
+    test.each([
       'push',
       'workflow_dispatch',
     ] as const)('should run when a referenced provider is renamed in a %s diff', async (eventName) => {
@@ -1536,6 +1561,37 @@ describe('GitHub Action Main', () => {
         expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
+    });
+
+    test.each([
+      'action input',
+      'workflow input',
+    ] as const)('should reject a manual %s file list containing a null byte before logging', async (source) => {
+      const secret = 'MANUAL_NUL_PATH_SECRET_CANARY_019F62C3';
+      const files = `providers/current.py\0${secret}`;
+      if (source === 'action input') {
+        withInputs({ 'workflow-files': files });
+      }
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: source === 'workflow input' ? { files } : {},
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file paths must not contain null bytes.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(secret);
     });
 
     test('should preserve a leading space in a manual dependency path', async () => {

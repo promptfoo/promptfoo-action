@@ -469,6 +469,15 @@ export async function run(): Promise<void> {
           per_page: 100,
         },
       );
+      if (
+        pullRequestFiles.some(
+          (file) =>
+            file.filename.includes('\0') ||
+            file.previous_filename?.includes('\0'),
+        )
+      ) {
+        throw new Error('Changed file paths must not contain null bytes.');
+      }
       if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
         core.warning(
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
@@ -497,6 +506,9 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
+        if (filesInput.includes('\0')) {
+          throw new Error('Changed file paths must not contain null bytes.');
+        }
         changedFiles = filesInput;
         const manualFiles: string[] = filesInput
           .split(/\r?\n/)
