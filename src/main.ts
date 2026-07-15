@@ -55,8 +55,7 @@ function validatePromptGlob(pattern: string): void {
 
   const braces: Array<{ start: number; nested: boolean }> = [];
   let escapedBraceClosers = 0;
-  let numericBraceExpansions = BigInt(1);
-  let commaBraceExpansions = BigInt(1);
+  let braceExpansions = BigInt(1);
   let escaped = false;
   let inCharacterClass = false;
   for (let index = 0; index < pattern.length; index++) {
@@ -97,8 +96,8 @@ function validatePromptGlob(pattern: string): void {
 
     const body = pattern.slice(brace.start, index);
     if (!body.includes('..')) {
-      commaBraceExpansions *= BigInt(body.split(',').length);
-      if (commaBraceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
+      braceExpansions *= BigInt(body.split(',').length);
+      if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
         throw invalidPromptGlobError();
       }
       continue;
@@ -124,21 +123,16 @@ function validatePromptGlob(pattern: string): void {
     const distance = end >= start ? end - start : start - end;
     const increment = step > BigInt(0) ? step : -step;
     const count = distance / increment + BigInt(1);
-    numericBraceExpansions *= count;
+    braceExpansions *= count;
     const paddedWidth = Math.max(parts[0].length, parts[1].length);
     if (
-      numericBraceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) ||
+      braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) ||
       count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)
     ) {
       throw invalidPromptGlobError();
     }
   }
-  if (
-    escaped ||
-    escapedBraceClosers > 0 ||
-    inCharacterClass ||
-    braces.length > 0
-  ) {
+  if (escaped || inCharacterClass || braces.length > 0) {
     throw invalidPromptGlobError();
   }
 }

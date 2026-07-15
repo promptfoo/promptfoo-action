@@ -1802,6 +1802,22 @@ describe('loadConfigEnvironmentFiles', () => {
     expect(target.CUSTOM_PROVIDER_SETTING).toBe('explicit-vault');
   });
 
+  test('loads a config envPath vault companion when plaintext is absent', () => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.production\n',
+    );
+    process.env.DOTENV_KEY = writeVault(
+      '.env.production.vault',
+      'CUSTOM_PROVIDER_SETTING=vault-only\n',
+    );
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('vault-only');
+  });
+
   test('falls back to all plaintext env paths when the last vault is absent', () => {
     const target: NodeJS.ProcessEnv = {};
     const configPath = writeFile(

@@ -592,13 +592,16 @@ describe('GitHub Action Main', () => {
       ['zero numeric step', 'prompts/{1..4..0}.txt'],
       ['malformed numeric range', 'prompts/{1..many}.txt'],
       ['oversized brace product', `prompts/${'{a,b}'.repeat(11)}.txt`],
+      [
+        'combined numeric and comma brace product',
+        `prompts/${'{a,b}'.repeat(10)}{1..1024}.txt`,
+      ],
       ['unbalanced brace', 'prompts/{first,second.txt'],
       ['unexpected closing brace', 'prompts/first}.txt'],
       ['unclosed character class', 'prompts/[first.txt'],
       ['null byte', 'prompts/first\0.txt'],
       ['control byte', 'prompts/first\t.txt'],
       ['trailing escape', 'prompts/first\\'],
-      ['unclosed escaped brace', 'prompts/\\{first.txt'],
       ['oversized pattern', `prompts/${'a'.repeat(65_537)}.txt`],
     ])('should reject an unsafe prompt glob before expansion: %s', async (_reason, promptGlob) => {
       withInputs({ prompts: promptGlob });
@@ -610,6 +613,21 @@ describe('GitHub Action Main', () => {
         expect.stringContaining('Invalid prompt glob'),
       );
       expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should permit an unmatched escaped opening brace in a prompt glob', async () => {
+      const promptGlob = 'prompts/\\{draft/*.txt';
+      withInputs({ prompts: promptGlob });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        promptGlob,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
     test.each([

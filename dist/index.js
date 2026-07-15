@@ -38333,14 +38333,13 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
       );
     }
   };
-  for (const envFilePath of envFilePaths) {
-    validateEnvFile(envFilePath);
-  }
   const lastEnvFilePath = envFilePaths[envFilePaths.length - 1];
-  if (process.env.DOTENV_KEY && lastEnvFilePath) {
-    const vaultPath = lastEnvFilePath.endsWith(".vault") ? lastEnvFilePath : `${lastEnvFilePath}.vault`;
-    if (fs7.existsSync(vaultPath)) {
-      validateEnvFile(vaultPath);
+  const vaultPath = process.env.DOTENV_KEY && lastEnvFilePath ? lastEnvFilePath.endsWith(".vault") ? lastEnvFilePath : `${lastEnvFilePath}.vault` : void 0;
+  if (vaultPath && fs7.existsSync(vaultPath)) {
+    validateEnvFile(vaultPath);
+  } else {
+    for (const envFilePath of envFilePaths) {
+      validateEnvFile(envFilePath);
     }
   }
   if (envFilePaths.length > 0) {
@@ -38682,8 +38681,7 @@ function validatePromptGlob(pattern) {
   }
   const braces = [];
   let escapedBraceClosers = 0;
-  let numericBraceExpansions = BigInt(1);
-  let commaBraceExpansions = BigInt(1);
+  let braceExpansions = BigInt(1);
   let escaped = false;
   let inCharacterClass = false;
   for (let index = 0; index < pattern.length; index++) {
@@ -38723,8 +38721,8 @@ function validatePromptGlob(pattern) {
     if (brace.nested) continue;
     const body = pattern.slice(brace.start, index);
     if (!body.includes("..")) {
-      commaBraceExpansions *= BigInt(body.split(",").length);
-      if (commaBraceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
+      braceExpansions *= BigInt(body.split(",").length);
+      if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
         throw invalidPromptGlobError();
       }
       continue;
@@ -38750,13 +38748,13 @@ function validatePromptGlob(pattern) {
     const distance = end >= start ? end - start : start - end;
     const increment = step > BigInt(0) ? step : -step;
     const count = distance / increment + BigInt(1);
-    numericBraceExpansions *= count;
+    braceExpansions *= count;
     const paddedWidth = Math.max(parts[0].length, parts[1].length);
-    if (numericBraceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) || count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)) {
+    if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) || count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)) {
       throw invalidPromptGlobError();
     }
   }
-  if (escaped || escapedBraceClosers > 0 || inCharacterClass || braces.length > 0) {
+  if (escaped || inCharacterClass || braces.length > 0) {
     throw invalidPromptGlobError();
   }
 }

@@ -930,17 +930,18 @@ export function loadConfigEnvironmentFiles(
     }
   };
 
-  for (const envFilePath of envFilePaths) {
-    validateEnvFile(envFilePath);
-  }
-
   const lastEnvFilePath = envFilePaths[envFilePaths.length - 1];
-  if (process.env.DOTENV_KEY && lastEnvFilePath) {
-    const vaultPath = lastEnvFilePath.endsWith('.vault')
-      ? lastEnvFilePath
-      : `${lastEnvFilePath}.vault`;
-    if (fs.existsSync(vaultPath)) {
-      validateEnvFile(vaultPath);
+  const vaultPath =
+    process.env.DOTENV_KEY && lastEnvFilePath
+      ? lastEnvFilePath.endsWith('.vault')
+        ? lastEnvFilePath
+        : `${lastEnvFilePath}.vault`
+      : undefined;
+  if (vaultPath && fs.existsSync(vaultPath)) {
+    validateEnvFile(vaultPath);
+  } else {
+    for (const envFilePath of envFilePaths) {
+      validateEnvFile(envFilePath);
     }
   }
 
