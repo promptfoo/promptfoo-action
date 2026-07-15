@@ -97,7 +97,10 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Helper function to process file:// paths with glob support
     const processFileUrl = (fileUrl: string): void => {
-      const filePath = fileUrl.replace('file://', '');
+      let filePath = fileUrl.replace('file://', '');
+      if (/^\/[A-Za-z]:[\\/]/.test(filePath)) {
+        filePath = filePath.slice(1);
+      }
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
@@ -243,24 +246,66 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Process extension hook files
-    const extensions = [
-      ...(config.extensions ?? []),
-      ...(config.commandLineOptions?.extension ?? []),
-    ];
+    const extensions: unknown[] = [];
+    let watchWorkspace = false;
+    for (const extensionList of [
+      config.extensions,
+      config.commandLineOptions?.extension,
+    ]) {
+      if (extensionList == null) {
+        continue;
+      }
+      if (!Array.isArray(extensionList)) {
+        watchWorkspace = true;
+        continue;
+      }
+      extensions.push(...extensionList);
+    }
+
     for (const extension of extensions) {
-      if (typeof extension !== 'string' || !extension.startsWith('file://')) {
+      if (typeof extension !== 'string') {
+        if (
+          extension !== null &&
+          typeof extension === 'object' &&
+          '$ref' in extension
+        ) {
+          watchWorkspace = true;
+        }
+        continue;
+      }
+      if (!extension.startsWith('file://')) {
+        continue;
+      }
+      if (extension.includes('{{') || extension.includes('{%')) {
+        watchWorkspace = true;
         continue;
       }
 
       const hookSeparator = extension.lastIndexOf(':');
+      const windowsDrive = /^file:\/\/\/?[A-Za-z]:[\\/]/.test(extension);
+      const windowsDriveSeparator = windowsDrive
+        ? extension.indexOf(':', 'file://'.length)
+        : -1;
       processFileUrl(
-        hookSeparator > 8 ? extension.slice(0, hookSeparator) : extension,
+        hookSeparator > 8 && hookSeparator !== windowsDriveSeparator
+          ? extension.slice(0, hookSeparator)
+          : extension,
+      );
+    }
+
+    if (watchWorkspace) {
+      dependencies.add(`${dependencyRoot}${path.sep}`);
+      core.warning(
+        'Unable to statically resolve all config extension dependencies. Watching the repository workspace for changes.',
       );
     }
 
     // Convert absolute paths back to relative paths from working directory
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
+      if (relativePath === '') {
+        return './';
+      }
       const repositoryPath = relativePath.split(path.sep).join('/');
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {

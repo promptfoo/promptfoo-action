@@ -197,6 +197,71 @@ commandLineOptions:
     ]);
   });
 
+  it('should conservatively watch the workspace for referenced extension lists', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.js
+extensions:
+  $ref: '#/shared/extensions'
+commandLineOptions:
+  extension:
+    $ref: '#/shared/cliExtensions'
+shared:
+  extensions:
+    - file://hooks/shared.js:beforeAll
+  cliExtensions:
+    - file://hooks/cli-shared.js:afterAll
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.js', './']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
+  it('should conservatively watch the workspace for env-templated extensions', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.js
+extensions:
+  - file://{{ env.HOOK_PATH }}:beforeAll
+commandLineOptions:
+  extension:
+    - file://{{ env.CLI_HOOK_PATH }}:afterAll
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.js', './']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
+  it('should conservatively watch the workspace for referenced extension entries', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.js
+extensions:
+  - $ref: '#/shared/extension'
+commandLineOptions:
+  extension:
+    - $ref: '#/shared/cliExtension'
+shared:
+  extension: file://hooks/shared.js:beforeAll
+  cliExtension: file://hooks/cli-shared.js:afterAll
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.js', './']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
   it('should ignore remote and malformed extension entries', () => {
     mockFs.readFileSync.mockReturnValue(`
 extensions:
@@ -223,6 +288,26 @@ extensions:
     expect(deps).toEqual([]);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
+  it('should preserve canonical Windows file URLs without a hook suffix during containment checks', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///C:/repo/hooks/default.js
+commandLineOptions:
+  extension:
+    - file:///C:/repo/hooks/cli-default.js
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('C:/repo/hooks/default.js'),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('C:/repo/hooks/cli-default.js'),
     );
   });
 

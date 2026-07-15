@@ -36332,7 +36332,10 @@ function extractFileDependencies(configPath) {
       }
     };
     const processFileUrl = (fileUrl) => {
-      const filePath = fileUrl.replace("file://", "");
+      let filePath = fileUrl.replace("file://", "");
+      if (/^\/[A-Za-z]:[\\/]/.test(filePath)) {
+        filePath = filePath.slice(1);
+      }
       const absolutePath = resolveConfigDependency(
         filePath,
         "config file dependency"
@@ -36436,21 +36439,53 @@ function extractFileDependencies(configPath) {
         extractAssertFiles(test.assert);
       }
     }
-    const extensions = [
-      ...config2.extensions ?? [],
-      ...config2.commandLineOptions?.extension ?? []
-    ];
+    const extensions = [];
+    let watchWorkspace = false;
+    for (const extensionList of [
+      config2.extensions,
+      config2.commandLineOptions?.extension
+    ]) {
+      if (extensionList == null) {
+        continue;
+      }
+      if (!Array.isArray(extensionList)) {
+        watchWorkspace = true;
+        continue;
+      }
+      extensions.push(...extensionList);
+    }
     for (const extension of extensions) {
-      if (typeof extension !== "string" || !extension.startsWith("file://")) {
+      if (typeof extension !== "string") {
+        if (extension !== null && typeof extension === "object" && "$ref" in extension) {
+          watchWorkspace = true;
+        }
+        continue;
+      }
+      if (!extension.startsWith("file://")) {
+        continue;
+      }
+      if (extension.includes("{{") || extension.includes("{%")) {
+        watchWorkspace = true;
         continue;
       }
       const hookSeparator = extension.lastIndexOf(":");
+      const windowsDrive = /^file:\/\/\/?[A-Za-z]:[\\/]/.test(extension);
+      const windowsDriveSeparator = windowsDrive ? extension.indexOf(":", "file://".length) : -1;
       processFileUrl(
-        hookSeparator > 8 ? extension.slice(0, hookSeparator) : extension
+        hookSeparator > 8 && hookSeparator !== windowsDriveSeparator ? extension.slice(0, hookSeparator) : extension
+      );
+    }
+    if (watchWorkspace) {
+      dependencies.add(`${dependencyRoot}${path5.sep}`);
+      warning(
+        "Unable to statically resolve all config extension dependencies. Watching the repository workspace for changes."
       );
     }
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
+      if (relativePath === "") {
+        return "./";
+      }
       const repositoryPath = relativePath.split(path5.sep).join("/");
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
         return `${repositoryPath}/`;
@@ -37141,6 +37176,9 @@ async function run() {
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
         );
         dependencyChanged = dependencies.some((dep) => {
+          if (dep === "./") {
+            return true;
+          }
           if (changedFilesList.includes(dep)) {
             return true;
           }
