@@ -39960,6 +39960,11 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const isSafeDependency = (targetPath) => isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
+  const addConservativeWatchRoots = () => {
+    for (const root of /* @__PURE__ */ new Set([dependencyRoot, cwd])) {
+      dependencies.add(`${root.replace(/[\\/]+$/, "")}${path6.sep}`);
+    }
+  };
   let configParsed = false;
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
@@ -40048,7 +40053,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       const uncommentedPath = stripNunjucksComments(filePath);
       const expandedPath = expandEnvTemplates(filePath);
       if (expandedPath !== uncommentedPath) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        addConservativeWatchRoots();
       }
       return expandedPath;
     };
@@ -40097,7 +40102,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         MAX_BRACE_EXPANSIONS,
         useWindowsPathsNoEscape
       )) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        addConservativeWatchRoots();
         warnSafe(
           normalizedPath.length > MAX_PROVIDER_REFERENCE_LENGTH ? "Failed to parse config dependency glob: pattern is invalid or exceeds the maximum expansion size; conservatively watching the dependency root" : "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
         );
@@ -40116,14 +40121,14 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           braceExpandMax: MAX_BRACE_EXPANSIONS + 1
         }) : [normalizedPath];
       } catch (error2) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        addConservativeWatchRoots();
         warnSafe(
           `Failed to parse config dependency glob (${source}): ${error2 instanceof Error ? error2.message : String(error2)}; conservatively watching the dependency root`
         );
         return [];
       }
       if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        addConservativeWatchRoots();
         warnSafe(
           "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
         );
@@ -40231,7 +40236,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
     const processProviderFile = (providerId) => {
       const expandedProviderId = expandAndTrackEnvTemplates(providerId);
       if (expandedProviderId.startsWith("exec:")) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        addConservativeWatchRoots();
         return;
       }
       const providerPath = getLocalProviderPath(expandedProviderId);
@@ -40392,7 +40397,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       }
       const nestedTest = value;
       if (typeof nestedTest.$id === "string") {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        addConservativeWatchRoots();
       }
       extractVarFiles(nestedTest.vars, testBaseDir);
       extractAssertFiles(nestedTest.assert);
@@ -40552,7 +40557,6 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         return;
       }
       inspectedTestFiles.add(inspectionKey);
-      let inspectionRoot = dependencyRoot;
       try {
         const realTestFile = fs6.realpathSync(testFile);
         const containingRoot = getRealDependencyRoots().find(
@@ -40565,29 +40569,22 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           );
           return;
         }
-        inspectionRoot = containingRoot.lexical;
         if (/\.(?:xlsx?|py|[cm]?[jt]s)$/i.test(realTestFile)) {
-          dependencies.add(
-            `${containingRoot.lexical.replace(/[\\/]+$/, "")}${path6.sep}`
-          );
+          addConservativeWatchRoots();
           return;
         }
         let fileSize;
         try {
           fileSize = fs6.statSync(realTestFile).size;
         } catch {
-          dependencies.add(
-            `${containingRoot.lexical.replace(/[\\/]+$/, "")}${path6.sep}`
-          );
+          addConservativeWatchRoots();
           warnSafe(
             `Skipping structured dependency "${testFile}": file could not be inspected safely; conservatively watching the dependency root`
           );
           return;
         }
         if (fileSize > MAX_INSPECTED_FILE_SIZE) {
-          dependencies.add(
-            `${containingRoot.lexical.replace(/[\\/]+$/, "")}${path6.sep}`
-          );
+          addConservativeWatchRoots();
           warnSafe(
             `Skipping structured dependency "${testFile}": file exceeds the maximum inspection size; conservatively watching the dependency root`
           );
@@ -40611,9 +40608,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
                 warnSafe(
                   `Failed to inspect CSV assertion in test file dependency "${testFile}"`
                 );
-                dependencies.add(
-                  `${containingRoot.lexical.replace(/[\\/]+$/, "")}${path6.sep}`
-                );
+                addConservativeWatchRoots();
                 continue;
               }
               for (const assertionValue of values) {
@@ -40681,7 +40676,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           );
         }
       } catch {
-        dependencies.add(`${inspectionRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        addConservativeWatchRoots();
         warnSafe(`Failed to inspect test file dependency "${testFile}"`);
       }
     };
@@ -40696,7 +40691,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       const fileName = path6.basename(filePath);
       const sheetIndex = fileName.indexOf("#");
       if (sheetIndex !== -1 && (fileName.length > MAX_PROVIDER_REFERENCE_LENGTH || /[\0\r\n]/.test(fileName))) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        addConservativeWatchRoots();
         warnSafe(
           "Skipping invalid or oversized test file reference; conservatively watching the dependency root"
         );
@@ -41940,7 +41935,7 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const evaluationDescription = evaluationPromptFiles.length ? `\u26A0\uFE0F Evaluated prompt files: ${evaluationPromptFiles.join(", ")}` : "\u26A0\uFE0F Evaluated config-defined prompts";
+      const evaluationDescription = !useConfigPrompts && evaluationPromptFiles.length ? `\u26A0\uFE0F Evaluated prompt files: ${evaluationPromptFiles.join(", ")}` : "\u26A0\uFE0F Evaluated config-defined prompts";
       let body = `${evaluationDescription}
 
 | Success | Failure |
@@ -41971,7 +41966,7 @@ async function run() {
         ["Success", output.results.stats.successes.toString()],
         ["Failure", output.results.stats.failures.toString()]
       ]);
-      if (evaluationPromptFiles.length > 0) {
+      if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
         summary2.addList(evaluationPromptFiles);
       }
