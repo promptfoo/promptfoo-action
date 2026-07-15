@@ -922,6 +922,25 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should not log resolved config dependency paths', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/SECRET_DEPENDENCY_MARKER.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        'Found 1 file dependencies in config',
+      );
+      expect(
+        mockCore.debug.mock.calls.some((call) =>
+          String(call[0]).includes('SECRET_DEPENDENCY_MARKER'),
+        ),
+      ).toBe(false);
+    });
+
     test('should run when a file inside a dependency directory changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },

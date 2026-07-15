@@ -137,6 +137,22 @@ providers: file:///test/working/providers/custom.py:call_api
     expect(deps).toEqual(['providers/custom.py']);
   });
 
+  it('should preserve a Windows drive colon in a file provider path', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      mockFs.readFileSync.mockReturnValue(
+        'providers: file:///C:/repository/providers/provider.py:custom_call',
+      );
+
+      const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+      expect(deps).toEqual(['../config/C:/repository/providers/provider.py']);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
   it('should strip class-method selectors from Python and Ruby providers', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -248,6 +264,92 @@ targets: file://targets/custom.py:call_api
     expect(deps).toEqual(['providers/custom.py']);
   });
 
+  it('should resolve whole-value env templates to file providers', () => {
+    process.env.PROVIDER_PATH = 'file://providers/scalar.py:call_api';
+    process.env.PROVIDER_FILE = 'file://providers/wrapped.py:call_api';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "{{ env.PROVIDER_PATH }}"
+  - id: "{{ env.PROVIDER_FILE }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/providers/scalar.py',
+      'evals/providers/wrapped.py',
+    ]);
+  });
+
+  it('should conservatively watch unsupported whole-value provider templates', () => {
+    process.env.PROVIDER_PATH = 'file://providers/hidden.py:call_api';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "{{ env['PROVIDER_PATH'] }}"
+  - id: "{{ env.PROVIDER_PATH | default('file://providers/default.py') }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
+  it('should conservatively watch provider paths and map keys with control tags', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "file://{% if env.PROVIDER_PATH %}providers/custom.py{% endif %}"
+  - "{% if env.PROVIDER_PATH %}file://providers/mapped.py{% endif %}":
+      config:
+        temperature: 0
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
+  it('should conservatively watch nested provider paths and map keys with comment tags', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    config:
+      tools: file://tools/{# comment #}custom.js:getTools
+  - "{# comment #}file://providers/mapped.py:call_api":
+      config:
+        temperature: 0
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
+  it('should normalize a Windows drive after provider-path templating', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      process.env.PROVIDER_PATH =
+        '/C:/repository/providers/provider.py:custom_call';
+      mockFs.readFileSync.mockReturnValue(
+        'providers: "file://{{ env.PROVIDER_PATH }}"',
+      );
+
+      const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+      expect(deps).toEqual(['../config/C:/repository/providers/provider.py']);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
   it('should prefer top-level config env for templated provider paths', () => {
     process.env.PROVIDER_PATH = '../providers/old.py:call_api';
     process.env.PROVIDER_FILE = 'current.py:call_api';
@@ -356,6 +458,114 @@ id: "file://providers/{{ env.PROVIDER_FILE }}.py:call_api"
     expect(deps).toEqual(['evals/providers.yaml', 'evals/providers/prod.py']);
   });
 
+  it('should prefer bare provider-file env over top-level config env', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? `
+env:
+  PROVIDER_FILE: suite
+providers: file://providers.yaml
+`
+        : `
+env:
+  PROVIDER_FILE: provider
+id: "file://providers/{{ env.PROVIDER_FILE }}.py:call_api"
+`,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/providers.yaml',
+      'evals/providers/provider.py',
+    ]);
+  });
+
+  it('should prefer bare provider-file env in an array over top-level config env', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? `
+env:
+  PROVIDER_FILE: suite
+providers:
+  - file://providers.yaml
+`
+        : `
+env:
+  PROVIDER_FILE: provider
+id: "file://providers/{{ env.PROVIDER_FILE }}.py:call_api"
+`,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/providers.yaml',
+      'evals/providers/provider.py',
+    ]);
+  });
+
+  it('should prefer suite env for a wrapped provider-file without local env', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? `
+env:
+  PROVIDER_FILE: suite
+providers:
+  - id: file://providers.yaml
+`
+        : `
+env:
+  PROVIDER_FILE: provider
+id: "file://providers/{{ env.PROVIDER_FILE }}.py:call_api"
+`,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers.yaml', 'evals/providers/suite.py']);
+  });
+
+  it('should prefer an outer provider-file env over nested provider-file defaults', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return `
+env:
+  PROVIDER_FILE: suite
+providers: file://outer.yaml
+`;
+      }
+      if (filePath.endsWith('outer.yaml')) {
+        return `
+env:
+  PROVIDER_FILE: outer
+id: file://inner.yaml
+`;
+      }
+      return `
+env:
+  PROVIDER_FILE: inner
+id: "file://providers/{{ env.PROVIDER_FILE }}.py:call_api"
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/outer.yaml',
+      'evals/inner.yaml',
+      'evals/providers/outer.py',
+    ]);
+  });
+
   it('should revisit provider files under distinct env contexts', () => {
     mockFs.readFileSync.mockImplementation((filePath: string) =>
       filePath.endsWith('promptfooconfig.yaml')
@@ -439,6 +649,39 @@ config:
         .mocked(core.warning)
         .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
     ).toBe(false);
+  });
+
+  it('should not leak an unsafe literal provider path in warnings', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://../../outside/SECRET_MARKER.yaml',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
+  });
+
+  it('should not treat provider env values as file dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    env:
+      TOKEN_FILE: file://../../outside/SECRET_MARKER.txt
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should conservatively watch the workspace for unresolved provider templates', () => {
@@ -572,6 +815,47 @@ providers:
     expect(deps).toEqual(['providers/current.py']);
   });
 
+  it('should prefer suite env for a provider-map file reference', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? `
+env:
+  PROVIDER_FILE: suite
+providers:
+  - file://providers.yaml:
+      config:
+        temperature: 0
+`
+        : `
+env:
+  PROVIDER_FILE: provider
+id: "file://providers/{{ env.PROVIDER_FILE }}.py:call_api"
+`,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers.yaml', 'evals/providers/suite.py']);
+  });
+
+  it('should resolve a whole-value env template in a provider-map key', () => {
+    process.env.PROVIDER_PATH = 'file://providers/custom.py:call_api';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "{{ env.PROVIDER_PATH }}":
+      config:
+        temperature: 0
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/custom.py']);
+  });
+
   it('should ignore unsafe nested references in a provider config file', () => {
     mockFs.readFileSync.mockImplementation((filePath: string) =>
       filePath.endsWith('promptfooconfig.yaml')
@@ -651,7 +935,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/deleted.py']);
+    expect(deps).toEqual(['../config/', '../config/providers/deleted.py']);
   });
 
   it('should validate the parent when realpath reports ENOTDIR', () => {
@@ -704,7 +988,7 @@ providers:
     expect(deps).toEqual(['../config/providers/private.py']);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining(
-        'Skipping unsafe config dependency content "providers/private.py"; its path may still be tracked for change detection',
+        'Skipping unsafe config dependency content; its path may still be tracked for change detection',
       ),
     );
   });
@@ -721,11 +1005,46 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/private.py']);
+    expect(deps).toEqual(['../config/', '../config/providers/private.py']);
     expect(
       vi
         .mocked(core.warning)
         .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
+  });
+
+  it('should conservatively watch dependencies when the root real path is inaccessible', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((filePath: string) => {
+      if (filePath === '/test/repository') {
+        throw Object.assign(new Error('ROOT_REALPATH_SECRET_MARKER'), {
+          code: 'EACCES',
+        });
+      }
+      return filePath;
+    });
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - file://prompts/prompt.txt
+tests:
+  - vars:
+      context: file://vars/context.txt
+    assert:
+      - type: javascript
+        value: file://assertions/check.js
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) =>
+          String(call[0]).includes('ROOT_REALPATH_SECRET_MARKER'),
+        ),
     ).toBe(false);
   });
 
@@ -745,6 +1064,63 @@ providers:
       '../config/providers/custom.py',
       '../config/shared/tools.py',
     ]);
+  });
+
+  it('should conservatively stop an env-mutating recursive YAML alias', () => {
+    process.env.PROVIDER_FILE = 'seed';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - &provider
+    id: file://providers/custom.py:call_api
+    env:
+      PROVIDER_FILE: "{{ env.PROVIDER_FILE }}x"
+    config:
+      nested: *provider
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.py', '../config/']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Provider dependency traversal stopped; conservatively watching the dependency root',
+    );
+  });
+
+  it('should conservatively stop an env-mutating provider-file cycle', () => {
+    process.env.PROVIDER_FILE = 'seed';
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'providers: file://providers.yaml'
+        : `
+config:
+  env:
+    PROVIDER_FILE: "{{ env.PROVIDER_FILE }}x"
+  nested: file://providers.yaml
+`,
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers.yaml', '../config/']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Provider dependency traversal stopped; conservatively watching the dependency root',
+    );
+  });
+
+  it('should conservatively bound provider dependency traversal', () => {
+    const providers = Array.from(
+      { length: 1100 },
+      (_, index) => `  - file://providers/provider-${index}.py`,
+    ).join('\n');
+    mockFs.readFileSync.mockReturnValue(`providers:\n${providers}`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toContain('../config/');
+    expect(deps.length).toBeLessThan(1101);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Provider dependency traversal stopped; conservatively watching the dependency root',
+    );
   });
 
   it('should handle repeated and empty nested provider config files', () => {
@@ -770,11 +1146,11 @@ targets:
       if (filePath.endsWith('promptfooconfig.yaml')) {
         return `
 providers:
-  - file://invalid.yaml
-  - file://unreadable.json
+  - file://invalid-SECRET_MARKER.yaml
+  - file://unreadable-SECRET_MARKER.json
 `;
       }
-      if (filePath.endsWith('invalid.yaml')) {
+      if (filePath.endsWith('invalid-SECRET_MARKER.yaml')) {
         throw new Error('invalid provider config');
       }
       throw 'permission denied';
@@ -783,14 +1159,12 @@ providers:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([
-      '../config/invalid.yaml',
-      '../config/unreadable.json',
+      '../config/invalid-SECRET_MARKER.yaml',
+      '../config/',
+      '../config/unreadable-SECRET_MARKER.json',
     ]);
     expect(core.warning).toHaveBeenCalledWith(
-      'Failed to extract nested provider dependencies from "invalid.yaml"; tracking the provider config file only',
-    );
-    expect(core.warning).toHaveBeenCalledWith(
-      'Failed to extract nested provider dependencies from "unreadable.json"; tracking the provider config file only',
+      'Failed to extract nested provider dependencies; conservatively watching the dependency root',
     );
     expect(
       vi
@@ -798,7 +1172,35 @@ providers:
         .mock.calls.some(
           (call) =>
             String(call[0]).includes('invalid provider config') ||
-            String(call[0]).includes('permission denied'),
+            String(call[0]).includes('permission denied') ||
+            String(call[0]).includes('SECRET_MARKER'),
+        ),
+    ).toBe(false);
+  });
+
+  it('should conservatively watch when a nested provider config uses an unsupported YAML tag', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'providers: file://providers.yaml'
+        : `
+id: openai:gpt-4
+config:
+  created: !!timestamp 2025-01-01T00:00:00Z
+  tools: file://tools/TIMESTAMP_SECRET_MARKER.js
+`,
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers.yaml', '../config/']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract nested provider dependencies; conservatively watching the dependency root',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) =>
+          String(call[0]).includes('TIMESTAMP_SECRET_MARKER'),
         ),
     ).toBe(false);
   });
@@ -939,11 +1341,31 @@ shared: &shared
   });
 
   it('should handle invalid YAML gracefully', () => {
-    mockFs.readFileSync.mockReturnValue('invalid: yaml: content:');
+    mockFs.readFileSync.mockReturnValue(
+      'invalid: yaml: ROOT_YAML_SECRET_MARKER:',
+    );
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toHaveLength(0);
+    expect(deps).toEqual(['../config/']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract dependencies from config; conservatively watching the dependency root',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) =>
+          String(call[0]).includes('ROOT_YAML_SECRET_MARKER'),
+        ),
+    ).toBe(false);
+  });
+
+  it('should conservatively watch the workspace for an invalid root config', () => {
+    mockFs.readFileSync.mockReturnValue('invalid: yaml: content:');
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
   });
 
   it('should handle file read errors gracefully', () => {
@@ -953,7 +1375,7 @@ shared: &shared
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toHaveLength(0);
+    expect(deps).toEqual(['../config/']);
   });
 
   it('should handle non-Error file read failures gracefully', () => {
@@ -963,7 +1385,7 @@ shared: &shared
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual([]);
+    expect(deps).toEqual(['../config/']);
   });
 
   it('should ignore dependencies that escape the config directory', () => {
