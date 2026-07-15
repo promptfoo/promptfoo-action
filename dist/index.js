@@ -37106,7 +37106,11 @@ function extractFileDependencies(configPath) {
     const visitedAssertions = /* @__PURE__ */ new WeakSet();
     const extractAssertFiles = (asserts, depth = 0) => {
       if (!asserts) return;
-      if (!Array.isArray(asserts) || depth > MAX_ASSERTION_DEPTH || visitedAssertions.has(asserts)) {
+      if (!Array.isArray(asserts) || depth > MAX_ASSERTION_DEPTH) {
+        markUnsafeDependency();
+        return;
+      }
+      if (visitedAssertions.has(asserts)) {
         markUnsafeDependency();
         return;
       }
