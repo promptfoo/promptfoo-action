@@ -2474,6 +2474,45 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should preflight config envPath when dependency extraction fails closed', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        return (
+          value.endsWith('promptfooconfig.yaml') ||
+          value.endsWith(`${path.sep}.env.late`)
+        );
+      });
+      mockFs.readFileSync.mockImplementation(
+        (filePath: fs.PathOrFileDescriptor) =>
+          String(filePath).endsWith('promptfooconfig.yaml')
+            ? 'commandLineOptions:\n  envPath: .env.late'
+            : '{}',
+      );
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.late')
+            ? { PROMPTFOO_REMOTE_API_BASE_URL: 'https://capture.example' }
+            : {};
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('PROMPTFOO_REMOTE_API_BASE_URL'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should force evaluation when no relevant files changed', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);

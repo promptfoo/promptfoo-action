@@ -36283,13 +36283,14 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
   const maxConfigBytes = 2 * 1024 * 1024;
   const maxConfigNodes = 1e4;
   const maxConfigRefs = 100;
+  const maxGlobPatternLength = 64 * 1024;
   try {
     if (!isPathInside(cwd, resolvedWorkingDirectory)) {
       throw new Error(
         "Promptfoo working directory must stay within the repository workspace"
       );
     }
-    if (le(configPath, {
+    if (configPath.length > maxGlobPatternLength || le(configPath, {
       magicalBraces: true,
       windowsPathsNoEscape: true
     }) || configPath.includes("{{")) {
@@ -36625,6 +36626,9 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
     };
     const processFileUrl = (fileUrl) => {
       const filePath = fileUrl.replace("file://", "");
+      if (filePath.length > maxGlobPatternLength) {
+        throw new Error("Config file dependency pattern is too long");
+      }
       const absolutePath = resolveConfigDependency(
         filePath,
         "config file dependency"

@@ -62,6 +62,7 @@ export function extractFileDependencies(
   const maxConfigBytes = 2 * 1024 * 1024;
   const maxConfigNodes = 10_000;
   const maxConfigRefs = 100;
+  const maxGlobPatternLength = 64 * 1024;
 
   try {
     if (!isPathInside(cwd, resolvedWorkingDirectory)) {
@@ -70,6 +71,7 @@ export function extractFileDependencies(
       );
     }
     if (
+      configPath.length > maxGlobPatternLength ||
       glob.hasMagic(configPath, {
         magicalBraces: true,
         windowsPathsNoEscape: true,
@@ -544,6 +546,9 @@ export function extractFileDependencies(
     // Helper function to process file:// paths with glob support
     const processFileUrl = (fileUrl: string): void => {
       const filePath = fileUrl.replace('file://', '');
+      if (filePath.length > maxGlobPatternLength) {
+        throw new Error('Config file dependency pattern is too long');
+      }
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',

@@ -892,6 +892,41 @@ tests:
     expect(extractFileDependencies(configPath)).toEqual(['./']);
   });
 
+  it('fails closed before inspecting an oversized root config pattern', () => {
+    const configPath = `/test/working/${'a'.repeat(70_000)}.yaml`;
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.length > 65_536) throw new TypeError('pattern is too long');
+      return false;
+    });
+
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before inspecting an oversized file dependency pattern', () => {
+    const oversizedDependency = `providers/${'a'.repeat(70_000)}*.js`;
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - file://providers/safe.js',
+        `  - file://${oversizedDependency}`,
+      ].join('\n'),
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.length > 65_536) throw new TypeError('pattern is too long');
+      return value.includes('*');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(
+      mockGlob.hasMagic.mock.calls.some(
+        ([value]: [string]) => value.length > 65_536,
+      ),
+    ).toBe(false);
+  });
+
   it.each([
     "$ref: '../outside.yaml'\n",
     "$ref: './computed.ts'\n",
