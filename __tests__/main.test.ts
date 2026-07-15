@@ -94,6 +94,7 @@ vi.mock('fs', async () => {
   return {
     ...actual,
     readFileSync: vi.fn(),
+    realpathSync: vi.fn(),
     existsSync: vi.fn(),
     unlinkSync: vi.fn(),
     promises: {
@@ -129,6 +130,7 @@ const mockExec = exec as unknown as {
 };
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
@@ -246,6 +248,9 @@ function setupCommonMocks(): MockOctokit {
     }),
   );
   mockFs.existsSync.mockReturnValue(false);
+  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+    String(filePath),
+  );
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -303,8 +308,40 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
+    });
+
+    test('should reject an in-checkout config symlink that resolves outside the workspace', async () => {
+      withInputs({ config: 'shared-link/promptfooconfig.yaml' });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        return value.endsWith('/shared-link/promptfooconfig.yaml')
+          ? '/outside/promptfooconfig.yaml'
+          : value;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Config file resolves outside the repository workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed when an in-checkout config path cannot be resolved', async () => {
+      mockFs.realpathSync.mockImplementation(() => {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Config file resolves outside the repository workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should reject a changed PR prompt whose filename contains a newline', async () => {
@@ -425,6 +462,29 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalledWith(
         'npx',
         expect.any(Array),
+        expect.any(Object),
+      );
+    });
+
+    test('should process a removed prompt when the prompt-glob input uses CRLF lines', async () => {
+      withInputs({ prompts: 'prompts/*.txt\r\nprompts/**/*.md\r\n' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/*.txt' ? ['prompts/remaining.txt'] : [],
+      );
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/*.txt',
         expect.any(Object),
       );
     });
@@ -2124,6 +2184,87 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
 
+    test('should preserve leading and trailing spaces in a manually specified dependency path', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: ' providers/spaced.py \r\n' } },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' providers/spaced.py ',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should preserve leading and trailing spaces in the workflow-files action input', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      const rawFile = ' providers/spaced.py ';
+      mockCore.getInput.mockImplementation((name, options) => {
+        if (name === 'workflow-files') {
+          return options?.trimWhitespace === false ? rawFile : rawFile.trim();
+        }
+        return DEFAULT_INPUTS[name] || '';
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([rawFile]);
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('workflow-files', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should reject a NUL in a manually specified filename before logging or resolving it', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'prompts/changed.txt\0::error::forged' } },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Manually specified filenames cannot contain NUL characters.',
+      );
+      expect(mockFs.existsSync).not.toHaveBeenCalledWith(
+        expect.stringContaining('::error::forged'),
+      );
+      expect(
+        mockCore.info.mock.calls.every(
+          ([message]) => !message.includes('::error::forged'),
+        ),
+      ).toBe(true);
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should handle workflow_dispatch with custom base comparison', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -2389,7 +2530,114 @@ describe('GitHub Action Main', () => {
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
       );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/changed.txt',
+          'prompts/unchanged.txt',
+        ]),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluated prompt files: prompts/changed.txt, prompts/unchanged.txt',
+          ),
+        }),
+      );
+    });
+
+    test('should preserve all input prompt matches when a prompt and config change together', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+        { filename: 'promptfooconfig.yaml', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/unchanged.txt',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/changed.txt',
+          'prompts/unchanged.txt',
+        ]),
+      );
+    });
+
+    test('should reject an unchanged CRLF prompt selected for a dependency-triggered full evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+        { filename: 'data/context.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/policy\n::error::forged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should accurately describe a dependency-triggered PR evaluation using config prompts', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/unchanged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
       expect(mockExec.exec.mock.calls[0][1]).not.toContain('--prompts');
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluation used prompts defined in the Promptfoo config.',
+          ),
+        }),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.not.stringContaining('prompts/unchanged.txt'),
+        }),
+      );
+    });
+
+    test('should not log an unsafe config-dependency filename while detecting its change', async () => {
+      const dependency = 'data/policy\n::error::forged.json';
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+        { filename: dependency, status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/changed.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        'Found 1 file dependencies in config',
+      );
+      expect(
+        mockCore.debug.mock.calls.every(
+          ([message]) => !message.includes(dependency),
+        ),
+      ).toBe(true);
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+      );
     });
 
     test('should run when a file inside a dependency directory changes', async () => {
@@ -2417,7 +2665,40 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(mockFsUtils.isDirectory).toHaveBeenCalledWith('data');
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when the last matching config-glob dependency is deleted', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/removed.json', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data']);
+      mockFsUtils.isDirectory.mockReturnValue(false);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      './',
+      '/',
+    ])('should run when a root dependency watcher %s observes a changed file', async (dependency) => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/removed.json', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
@@ -2564,7 +2845,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
 
       // Should still fail the action after posting the comment
@@ -2876,6 +3157,35 @@ describe('GitHub Action Main', () => {
         3,
       );
       expect(mockCore.summary.write).toHaveBeenCalled();
+    });
+
+    test('should omit action prompt globs from a dependency-triggered config-prompt summary', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockResolvedValue('M\0data/context.json\0');
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/unchanged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain('--prompts');
+      expect(mockCore.summary.addHeading).not.toHaveBeenCalledWith(
+        'Evaluated Files',
+        3,
+      );
+      expect(mockCore.summary.addList).not.toHaveBeenCalled();
     });
 
     test('should handle non-Error failures', async () => {
