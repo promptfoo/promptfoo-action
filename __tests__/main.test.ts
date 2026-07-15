@@ -776,6 +776,40 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
 
+    test.each([
+      'workflow payload',
+      'action input',
+    ])('should reject NUL-containing manual files from the %s', async (source) => {
+      const hostileFile = 'data/context.json\0FORGED-NUL-MANUAL';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: source === 'workflow payload' ? { files: hostileFile } : {},
+        },
+        configurable: true,
+      });
+      if (source === 'action input') {
+        mockCore.getInput.mockImplementation((name: string) =>
+          name === 'workflow-files' ? hostileFile : DEFAULT_INPUTS[name] || '',
+        );
+      }
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file path contains an invalid NUL character.',
+      );
+      expect(mockCore.info.mock.calls.join('\n')).not.toContain(
+        'FORGED-NUL-MANUAL',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
     test('should parse CRLF-separated prompt globs without stripping significant spaces', async () => {
       withInputs({
         prompts: 'prompts/ leading/*.txt\r\nprompts/trailing *.txt\r\n',
@@ -1117,6 +1151,34 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'filename',
+      'previous_filename',
+    ])('should reject a NUL-containing GitHub API %s before change detection', async (field) => {
+      const hostileFile = 'data/context.json\0FORGED-NUL-API';
+      mockOctokit.paginate.mockResolvedValue([
+        field === 'filename'
+          ? { filename: hostileFile }
+          : {
+              filename: 'archived/context.json',
+              previous_filename: hostileFile,
+              status: 'renamed',
+            },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file path contains an invalid NUL character.',
+      );
+      expect(mockCore.info.mock.calls.join('\n')).not.toContain(
+        'FORGED-NUL-API',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
     });
 
     test('should preserve significant whitespace in GitHub API filenames', async () => {

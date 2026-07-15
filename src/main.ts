@@ -42,6 +42,8 @@ const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const MAX_DEPENDENCY_GLOB_PATTERN_LENGTH = 65_536;
 const MAX_PROMPT_BRACE_EXPANSIONS = 1024;
+const INVALID_CHANGED_FILE_PATH_ERROR =
+  'Changed file path contains an invalid NUL character.';
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
@@ -382,6 +384,15 @@ export async function run(): Promise<void> {
           per_page: 100,
         },
       );
+      if (
+        pullRequestFiles.some(
+          (file) =>
+            file.filename.includes('\0') ||
+            file.previous_filename?.includes('\0'),
+        )
+      ) {
+        throw new Error(INVALID_CHANGED_FILE_PATH_ERROR);
+      }
       if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
         core.warning(
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
@@ -409,6 +420,9 @@ export async function run(): Promise<void> {
         workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
 
       if (filesInput) {
+        if (filesInput.includes('\0')) {
+          throw new Error(INVALID_CHANGED_FILE_PATH_ERROR);
+        }
         // Option 1: Use provided file list
         const manualLines = filesInput
           .split(/\r?\n/)
