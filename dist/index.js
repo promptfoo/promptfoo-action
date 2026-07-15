@@ -38977,7 +38977,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         );
       }
     };
-    const configuredProviders = config2.targets ?? config2.providers;
+    const configuredProviders = config2.targets || config2.providers;
     if (configuredProviders) {
       const providers = typeof configuredProviders === "string" ? [configuredProviders] : configuredProviders;
       for (const provider of providers) {
