@@ -38647,11 +38647,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         for (const match2 of matches) {
           const absoluteMatch = path6.resolve(match2);
-          let physicalMatch = absoluteMatch;
+          let physicalMatch;
           try {
-            if (fs6.existsSync(absoluteMatch)) {
-              physicalMatch = fs6.realpathSync(absoluteMatch);
-            }
+            physicalMatch = fs6.realpathSync(absoluteMatch);
           } catch {
             warning(
               `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`
@@ -38877,14 +38875,22 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (!isDependencyPathInside(absolutePromptFile) || !/\.(?:jsonl?|ya?ml)$/i.test(absolutePromptFile)) {
           continue;
         }
+        let physicalPromptFile;
         try {
-          const physicalPromptFile = fs6.existsSync(absolutePromptFile) ? fs6.realpathSync(absolutePromptFile) : absolutePromptFile;
-          if (!isDependencyPathInside(physicalPromptFile)) {
-            warning(
-              `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within the repository workspace`
-            );
-            continue;
-          }
+          physicalPromptFile = fs6.realpathSync(absolutePromptFile);
+        } catch {
+          warning(
+            `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`
+          );
+          continue;
+        }
+        if (!isPhysicalDependencyPathInside(physicalPromptFile)) {
+          warning(
+            `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`
+          );
+          continue;
+        }
+        try {
           if (visitedStructuredFiles.has(physicalPromptFile)) continue;
           visitedStructuredFiles.add(physicalPromptFile);
           const promptContent = fs6.readFileSync(physicalPromptFile, "utf8");
@@ -39319,7 +39325,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     });
   } catch (error2) {
     const message = error2 instanceof Error ? error2.message : String(error2);
-    throw new Error(`Failed to extract dependencies from config: ${message}`);
+    throw new Error(
+      `Failed to extract dependencies from config: ${sanitizeDependencyDisplayPath(message)}`
+    );
   }
 }
 
@@ -39635,6 +39643,7 @@ function formatRepeatCommentMarkdown(summary2) {
 // src/main.ts
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
+var MAX_DEPENDENCY_GLOB_PATTERN_LENGTH = 65536;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
@@ -39979,31 +39988,33 @@ async function run() {
       );
     }
     const promptFiles = [];
+    const allPromptFiles = [];
     const changedFilesList = changedFiles.split("\0").filter((file) => file);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
         nodir: true
       });
+      const allMatches = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...allMatches);
       if (changedFilesList.length > 0) {
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
           );
-          return repositoryFile !== configRepositoryPath && changedFilesList.includes(repositoryFile);
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
         promptFiles.push(...allMatches);
       }
     }
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error(
         "Prompt file paths containing CR or LF characters are not supported."
       );
@@ -40021,14 +40032,26 @@ async function run() {
           if (dep === "." || dep === "./" || dep === "" || dep === "/") {
             return true;
           }
-          if (le(dep, {
-            windowsPathsNoEscape: true,
-            magicalBraces: true,
-            braceExpandMax: 1024
-          }) && changedFilesList.some(
-            (changedFile) => path7.matchesGlob(changedFile, dep)
-          )) {
-            return true;
+          if (dep.length <= MAX_DEPENDENCY_GLOB_PATTERN_LENGTH) {
+            try {
+              if (le(dep, {
+                windowsPathsNoEscape: true,
+                magicalBraces: true,
+                braceExpandMax: 1024
+              }) && changedFilesList.some(
+                (changedFile) => path7.matchesGlob(changedFile, dep)
+              )) {
+                return true;
+              }
+            } catch {
+              warning(
+                "Could not inspect a config dependency glob; falling back to direct and directory checks."
+              );
+            }
+          } else {
+            warning(
+              "Config dependency glob is too long; falling back to direct and directory checks."
+            );
           }
           if (changedFilesList.includes(dep)) {
             return true;
@@ -40079,8 +40102,12 @@ async function run() {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
-    if (!useConfigPrompts && !configChanged && !dependencyChanged && promptFiles.length > 0) {
-      promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
+    const selectedPromptFiles = configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (!useConfigPrompts && selectedPromptFiles.length > 0) {
+      promptfooArgs = promptfooArgs.concat([
+        "--prompts",
+        ...selectedPromptFiles
+      ]);
     }
     if (noShare) {
       promptfooArgs.push("--no-share");
