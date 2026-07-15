@@ -140,7 +140,7 @@ function renderEnvironmentTemplates(
   value: string,
   env: Record<string, string | undefined>,
 ): string {
-  return value.replace(/\{\{(?:[^}]|\}(?!\}))*\}\}/g, (template) => {
+  const renderTemplate = (template: string): string => {
     const expression = template.slice(2, -2).trim();
     const variable = expression.match(
       /^env(?:\.(\w+)|\[['"]([^'"]+)['"]\])(?=\s*(?:\||$))/,
@@ -188,7 +188,37 @@ function renderEnvironmentTemplates(
     }
 
     return rendered ?? template;
-  });
+  };
+
+  const parts: string[] = [];
+  let cursor = 0;
+  let start = value.indexOf('{{', cursor);
+  while (start !== -1) {
+    const end = value.indexOf('}}', start + 2);
+    if (end === -1) break;
+    parts.push(value.slice(cursor, start));
+    parts.push(renderTemplate(value.slice(start, end + 2)));
+    cursor = end + 2;
+    start = value.indexOf('{{', cursor);
+  }
+  parts.push(value.slice(cursor));
+  return parts.join('');
+}
+
+function hasNunjucksTemplate(value: string): boolean {
+  const expressionStart = value.indexOf('{{');
+  const blockStart = value.indexOf('{%');
+  const start =
+    expressionStart === -1
+      ? blockStart
+      : blockStart === -1
+        ? expressionStart
+        : Math.min(expressionStart, blockStart);
+  if (start === -1) return false;
+  return (
+    value.indexOf('}}', start + 2) !== -1 ||
+    value.indexOf('%}', start + 2) !== -1
+  );
 }
 
 function renderPathEnvironmentVariables(
@@ -466,9 +496,18 @@ export function extractFileDependencies(
           ? '[redacted]'
           : displayFileUrl.replace('file://', ''),
       );
+      const hasCaseVariantJavascriptSelector =
+        stripFunctionSuffix &&
+        /\.(?:[cm]?[jt]s):[^/\\]+$/i.test(rawFilePath) &&
+        !/\.(?:[cm]?[jt]s):[^/\\]+$/.test(rawFilePath);
+      if (hasCaseVariantJavascriptSelector) {
+        processFileUrl(fileUrl, false, displayFileUrl, redactDisplayPath);
+      }
       const filePath = normalizeConfigFilePath(
         stripFunctionSuffix
-          ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/, '$1')
+          ? rawFilePath
+              .replace(/(\.(?:[cm]?[jt]s)):[^/\\]+$/i, '$1')
+              .replace(/(\.(?:py|go|rb)):[^/\\]+$/, '$1')
           : rawFilePath,
       );
       const globPath = filePath.replace(/\\/g, '/');
@@ -624,7 +663,7 @@ export function extractFileDependencies(
       ) {
         const authPath = (auth as { path: string }).path;
         const renderedPath = renderEnvironmentTemplates(authPath, env);
-        if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedPath)) {
+        if (hasNunjucksTemplate(renderedPath)) {
           hasDynamicPromptDependencies = true;
         } else {
           processFileUrl(
@@ -645,7 +684,7 @@ export function extractFileDependencies(
           const credentialPath = (container as Record<string, unknown>)[key];
           if (typeof credentialPath !== 'string') continue;
           const renderedPath = renderEnvironmentTemplates(credentialPath, env);
-          if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedPath)) {
+          if (hasNunjucksTemplate(renderedPath)) {
             hasDynamicPromptDependencies = true;
             continue;
           }
@@ -678,7 +717,7 @@ export function extractFileDependencies(
         }
         const sourcePath = (source as { path: string }).path;
         const renderedPath = renderEnvironmentTemplates(sourcePath, env);
-        if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedPath)) {
+        if (hasNunjucksTemplate(renderedPath)) {
           hasDynamicPromptDependencies = true;
           continue;
         }
@@ -707,7 +746,8 @@ export function extractFileDependencies(
     ): void => {
       const rawPath = promptPath
         .replace(/^file:\/\//, '')
-        .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/, '$1');
+        .replace(/(\.(?:[cm]?[jt]s)):[^/\\]+$/i, '$1')
+        .replace(/(\.(?:py|go|rb)):[^/\\]+$/, '$1');
       const normalizedPath = normalizeConfigFilePath(rawPath).replace(
         /\\/g,
         '/',
@@ -772,7 +812,7 @@ export function extractFileDependencies(
             const renderedReference = stripNunjucksComments(
               renderEnvironmentTemplates(value, env),
             );
-            if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedReference)) {
+            if (hasNunjucksTemplate(renderedReference)) {
               hasDynamicPromptDependencies = true;
               continue;
             }
@@ -902,16 +942,13 @@ export function extractFileDependencies(
         const value = pending.pop();
         if (typeof value === 'string') {
           if (!value.startsWith('file://')) {
-            if (
-              value.includes('file://') &&
-              /\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(value)
-            ) {
+            if (value.includes('file://') && hasNunjucksTemplate(value)) {
               hasDynamicPromptDependencies = true;
             }
             continue;
           }
           const renderedReference = renderEnvironmentTemplates(value, env);
-          if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedReference)) {
+          if (hasNunjucksTemplate(renderedReference)) {
             hasDynamicPromptDependencies = true;
             continue;
           }
@@ -938,7 +975,7 @@ export function extractFileDependencies(
         knownHttpProvider = false,
       ): void => {
         const renderedReference = renderEnvironmentTemplates(reference, env);
-        if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedReference)) {
+        if (hasNunjucksTemplate(renderedReference)) {
           hasDynamicPromptDependencies = true;
           return;
         }
@@ -1095,7 +1132,7 @@ export function extractFileDependencies(
           scenario,
           templateEnv,
         );
-        if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedScenario)) {
+        if (hasNunjucksTemplate(renderedScenario)) {
           hasDynamicPromptDependencies = true;
           continue;
         }
@@ -1122,7 +1159,7 @@ export function extractFileDependencies(
           filterPath,
           templateEnv,
         );
-        if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedFilterPath)) {
+        if (hasNunjucksTemplate(renderedFilterPath)) {
           hasDynamicPromptDependencies = true;
           continue;
         }
@@ -1308,7 +1345,10 @@ export function extractFileDependencies(
       for (const value of values) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
-          if (/\.(?:[cm]?[jt]s|py|go|rb):[^/\\]+$/.test(value)) {
+          if (
+            /\.(?:[cm]?[jt]s):[^/\\]+$/i.test(value) ||
+            /\.(?:py):[^/\\]+$/.test(value)
+          ) {
             processFileUrl(value, true);
           }
         } else if (
@@ -1348,7 +1388,10 @@ export function extractFileDependencies(
           assert.value.startsWith('file://')
         ) {
           processFileUrl(assert.value);
-          if (/\.(?:[cm]?[jt]s|py|go|rb):[^/\\]+$/.test(assert.value)) {
+          if (
+            /\.(?:[cm]?[jt]s):[^/\\]+$/i.test(assert.value) ||
+            /\.(?:py|rb):[^/\\]+$/.test(assert.value)
+          ) {
             processFileUrl(assert.value, true);
           }
         } else if (

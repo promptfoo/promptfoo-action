@@ -491,6 +491,27 @@ prompts:
     ).toEqual(['prompts/chat.yaml', 'partials/{#path-note']);
   });
 
+  it('should scan repeated unterminated Nunjucks delimiters in linear time', () => {
+    const delimiters = '{{'.repeat(16_384);
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      auth:
+        type: file
+        path: "${delimiters}"
+`);
+
+    const started = performance.now();
+    const dependencies = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+    const elapsedMs = performance.now() - started;
+
+    expect(dependencies).toHaveLength(1);
+    expect(elapsedMs).toBeLessThan(1_000);
+  });
+
   it.each([
     'cjs',
     'cts',
@@ -520,6 +541,7 @@ prompts:
     '{{ env.PARTIAL_DIR | custom_filter }}',
     '{{ vars.partial_dir }}',
     '{% if env.PARTIAL_DIR %}resolved{% endif %}',
+    '{{ vars.partial_dir }}{% if env.PARTIAL_DIR %}resolved{% endif %}',
   ])('should conservatively watch nested prompt references with an unresolved template: %s', (template) => {
     vi.stubEnv('MISSING_PARTIAL', undefined);
     vi.stubEnv('PARTIAL_DIR', 'resolved');
@@ -1333,13 +1355,12 @@ tests:
 
     expect(deps).toEqual([
       '../config/data/context.rb:v2',
-      '../config/data/context.rb',
       '../config/expected/output.py:v3',
       '../config/expected/output.py',
     ]);
   });
 
-  it('should track executable variable and assertion files with function selectors', () => {
+  it('should track supported executable selectors and preserve unsupported literal suffixes', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
   - vars:
@@ -1364,11 +1385,18 @@ tests:
       expect.arrayContaining([
         '../config/vars/build.cjs',
         '../config/vars/build.py',
-        '../config/vars/build.rb',
-        '../config/vars/build.go',
+        '../config/vars/build.rb:generate_value',
+        '../config/vars/build.go:GenerateValue',
         '../config/validators/check.cjs',
         '../config/validators/check.py',
         '../config/validators/check.rb',
+        '../config/validators/check.go:Check',
+      ]),
+    );
+    expect(deps).not.toEqual(
+      expect.arrayContaining([
+        '../config/vars/build.rb',
+        '../config/vars/build.go',
         '../config/validators/check.go',
       ]),
     );
@@ -1821,6 +1849,7 @@ providers:
       'evals/validators/status.js',
       'evals/validators/named-status.mjs',
       'evals/validators/UPPER.JS:validateStatus',
+      'evals/validators/UPPER.JS',
     ]);
   });
 
