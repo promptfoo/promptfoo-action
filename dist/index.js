@@ -38679,6 +38679,7 @@ function validatePromptGlob(pattern) {
     invalidGlob();
   }
   let braceStart = -1;
+  let escapedBraceClosers = 0;
   let inCharacterClass = false;
   let braceExpansions = 1;
   for (let index = 0; index < pattern.length; index++) {
@@ -38686,6 +38687,9 @@ function validatePromptGlob(pattern) {
     if (path7.sep === "/" && character === "\\") {
       if (index + 1 >= pattern.length) {
         invalidGlob();
+      }
+      if (pattern[index + 1] === "{") {
+        escapedBraceClosers++;
       }
       index++;
       continue;
@@ -38709,6 +38713,10 @@ function validatePromptGlob(pattern) {
       continue;
     }
     if (braceStart === -1) {
+      if (escapedBraceClosers > 0) {
+        escapedBraceClosers--;
+        continue;
+      }
       invalidGlob();
     }
     const group = pattern.slice(braceStart + 1, index);
@@ -38736,7 +38744,7 @@ function validatePromptGlob(pattern) {
     }
     braceStart = -1;
   }
-  if (braceStart !== -1 || inCharacterClass) {
+  if (braceStart !== -1 || escapedBraceClosers > 0 || inCharacterClass) {
     invalidGlob();
   }
 }

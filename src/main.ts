@@ -54,6 +54,7 @@ function validatePromptGlob(pattern: string): void {
   }
 
   let braceStart = -1;
+  let escapedBraceClosers = 0;
   let inCharacterClass = false;
   let braceExpansions = 1;
   for (let index = 0; index < pattern.length; index++) {
@@ -61,6 +62,9 @@ function validatePromptGlob(pattern: string): void {
     if (path.sep === '/' && character === '\\') {
       if (index + 1 >= pattern.length) {
         invalidGlob();
+      }
+      if (pattern[index + 1] === '{') {
+        escapedBraceClosers++;
       }
       index++;
       continue;
@@ -84,6 +88,10 @@ function validatePromptGlob(pattern: string): void {
       continue;
     }
     if (braceStart === -1) {
+      if (escapedBraceClosers > 0) {
+        escapedBraceClosers--;
+        continue;
+      }
       invalidGlob();
     }
 
@@ -128,7 +136,7 @@ function validatePromptGlob(pattern: string): void {
     braceStart = -1;
   }
 
-  if (braceStart !== -1 || inCharacterClass) {
+  if (braceStart !== -1 || escapedBraceClosers > 0 || inCharacterClass) {
     invalidGlob();
   }
 }

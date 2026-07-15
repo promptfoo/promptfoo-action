@@ -436,6 +436,7 @@ describe('GitHub Action Main', () => {
     test.each([
       ['oversized numeric range', 'prompts/{1..1000000000}.txt'],
       ['numeric range in character class', 'prompts/[{1..1000000000}].txt'],
+      ['even-slash numeric range', 'prompts/\\\\{1..1000000000}.txt'],
       ['over-limit numeric range', 'prompts/{1..1025}.txt'],
       [
         'zero-padded numeric amplification',
@@ -452,6 +453,7 @@ describe('GitHub Action Main', () => {
       ['null byte', 'prompts/first\0.txt'],
       ['control byte', 'prompts/first\t.txt'],
       ['trailing escape', 'prompts/first\\'],
+      ['unclosed escaped brace', 'prompts/\\{first.txt'],
       ['oversized pattern', `prompts/${'a'.repeat(65_537)}.txt`],
     ])('should reject an unsafe prompt glob before expansion: %s', async (_reason, promptGlob) => {
       withInputs({ prompts: promptGlob });
@@ -467,6 +469,7 @@ describe('GitHub Action Main', () => {
 
     test.each([
       'prompts/literal\\*.txt',
+      'prompts/\\{1..1000000000}.txt',
       'prompts/[ab].txt',
       'prompts/[[:alpha:]].txt',
       'prompts/[[:digit:]].txt',
