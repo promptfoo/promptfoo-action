@@ -25,6 +25,10 @@ type TestVars = string | string[] | { [key: string]: unknown };
 type TestAssertion = {
   type?: string;
   value?: string | { file?: string };
+  provider?: unknown;
+  contextTransform?: unknown;
+  transform?: unknown;
+  rubricPrompt?: unknown;
   assert?: TestAssertion[];
 };
 
@@ -60,6 +64,10 @@ const JAVASCRIPT_SELECTOR_EXTENSIONS = new Set([
   'mjs',
   'mts',
   'ts',
+]);
+const TRANSFORM_SELECTOR_EXTENSIONS = new Set([
+  ...JAVASCRIPT_SELECTOR_EXTENSIONS,
+  'py',
 ]);
 const JAVASCRIPT_FILE_REFERENCE_FIELDS = new Set([
   'validateStatus',
@@ -127,9 +135,12 @@ export interface PromptfooConfig {
   tests?: unknown;
   scenarios?: unknown;
   nunjucksFilters?: Record<string, string>;
+  extensions?: unknown;
   defaultTest?: {
     vars?: TestVars;
     assert?: TestAssertion[];
+    assertScoringFunction?: unknown;
+    options?: Record<string, unknown>;
   };
 }
 
@@ -542,6 +553,8 @@ export function extractFileDependencies(
       stripFunctionSelector(value, ASSERTION_SELECTOR_EXTENSIONS);
     const stripJavascriptFunctionSelector = (value: string): string =>
       stripFunctionSelector(value, JAVASCRIPT_SELECTOR_EXTENSIONS);
+    const stripTransformFunctionSelector = (value: string): string =>
+      stripFunctionSelector(value, TRANSFORM_SELECTOR_EXTENSIONS);
     const processCompatibleFileUrl = (
       value: string,
       stripReferenceSelector = stripProviderFunctionSelector,
@@ -818,7 +831,7 @@ export function extractFileDependencies(
           !declaredFile &&
           !isExecutable &&
           !isFileUrl &&
-          (reference.length > 65_536 ||
+          (reference.length > MAX_DEPENDENCY_REFERENCE_LENGTH ||
             ['\n', 'portkey://', 'langfuse://', 'helicone://'].some((value) =>
               reference.includes(value),
             ))
@@ -1027,12 +1040,9 @@ export function extractFileDependencies(
           }
 
           try {
-            let promptEntryExists =
-              isPromptGlob || fs.existsSync(absolutePromptFile);
-            if (!promptEntryExists) {
+            if (!isPromptGlob && !fs.existsSync(absolutePromptFile)) {
               try {
                 fs.lstatSync(absolutePromptFile);
-                promptEntryExists = true;
               } catch (error) {
                 if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
                   continue;
@@ -1166,6 +1176,77 @@ export function extractFileDependencies(
     };
 
     // Extract assert files
+    const extractGradingProvider = (provider: unknown): void => {
+      if (typeof provider === 'string') {
+        if (provider.startsWith('file://')) {
+          processCompatibleFileUrl(provider);
+        }
+        processFileBackedProviderReference(provider);
+        watchExternalProviderConfig(provider);
+        return;
+      }
+      if (!isTraversableRecord(provider)) return;
+
+      visitProviderReferences(provider);
+      const entries = Object.entries(provider);
+      const providerId =
+        typeof provider.id === 'string'
+          ? provider.id
+          : entries.length === 1
+            ? entries[0][0]
+            : undefined;
+      if (!providerId) return;
+      if (providerId.startsWith('file://')) {
+        processCompatibleFileUrl(providerId);
+      }
+      processFileBackedProviderReference(providerId);
+      watchExternalProviderConfig(providerId);
+      if (/^https?(?::|$)/.test(providerId) || /\{[{%#]/.test(providerId)) {
+        dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
+      }
+    };
+    const extractRuntimeFileReferences = (
+      value: unknown,
+      stripReferenceSelector = stripTransformFunctionSelector,
+      visitedRuntimeValues = new WeakSet<object>(),
+    ): void => {
+      if (typeof value === 'string') {
+        if (value.startsWith('file://')) {
+          addHttpProviderPath(value, stripReferenceSelector);
+        }
+        return;
+      }
+      if (!Array.isArray(value) && !isTraversableRecord(value)) return;
+      if (visitedRuntimeValues.has(value)) return;
+      visitedRuntimeValues.add(value);
+      for (const nestedValue of Array.isArray(value)
+        ? value
+        : Object.values(value)) {
+        extractRuntimeFileReferences(
+          nestedValue,
+          stripReferenceSelector,
+          visitedRuntimeValues,
+        );
+      }
+    };
+    const extractTestRuntimeFiles = (test: Record<string, unknown>): void => {
+      extractRuntimeFileReferences(test.assertScoringFunction);
+      if (!isTraversableRecord(test.options)) return;
+      extractGradingProvider(test.options.provider);
+      for (const field of [
+        'postprocess',
+        'transform',
+        'transformVars',
+        'rubricPrompt',
+      ]) {
+        extractRuntimeFileReferences(
+          test.options[field],
+          field === 'rubricPrompt'
+            ? stripJavascriptFunctionSelector
+            : stripTransformFunctionSelector,
+        );
+      }
+    };
     const visitedAssertValues = new WeakSet<object>();
     const extractAssertFiles = (asserts?: TestAssertion[]): void => {
       if (!Array.isArray(asserts) || visitedAssertValues.has(asserts)) return;
@@ -1197,6 +1278,13 @@ export function extractFileDependencies(
             dependencies.add(absolutePath);
           }
         }
+        extractGradingProvider(assert.provider);
+        extractRuntimeFileReferences(assert.contextTransform);
+        extractRuntimeFileReferences(assert.transform);
+        extractRuntimeFileReferences(
+          assert.rubricPrompt,
+          stripJavascriptFunctionSelector,
+        );
         extractAssertFiles(assert.assert);
       }
     };
@@ -1204,6 +1292,7 @@ export function extractFileDependencies(
     // Process defaultTest
     if (isTraversableRecord(config.defaultTest)) {
       extractVarFiles(config.defaultTest.vars);
+      extractTestRuntimeFiles(config.defaultTest);
       extractAssertFiles(config.defaultTest.assert);
     }
 
@@ -1250,6 +1339,7 @@ export function extractFileDependencies(
         extractTestPath(tests.path);
       }
       extractVarFiles(tests.vars as TestVars | undefined);
+      extractTestRuntimeFiles(tests);
       extractAssertFiles(tests.assert as TestAssertion[] | undefined);
       if ('tests' in tests) {
         extractTestValues(tests.tests);
@@ -1261,6 +1351,20 @@ export function extractFileDependencies(
 
     extractTestValues(config.tests);
     extractTestValues(config.scenarios);
+
+    const extensions =
+      typeof config.extensions === 'string'
+        ? [config.extensions]
+        : Array.isArray(config.extensions)
+          ? config.extensions
+          : [];
+    for (const extension of extensions) {
+      if (typeof extension !== 'string' || !extension) continue;
+      addHttpProviderPath(
+        extension.startsWith('file://') ? extension : `file://${extension}`,
+        stripTransformFunctionSelector,
+      );
+    }
 
     if (isTraversableRecord(config.nunjucksFilters)) {
       for (const filterPath of Object.values(config.nunjucksFilters)) {

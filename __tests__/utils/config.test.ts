@@ -3094,6 +3094,164 @@ tests:
     expect(deps).toContain('../config/validators/custom.js');
   });
 
+  it('should extract file-backed grading providers from inline assertions and test options', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  options:
+    provider: file://graders/default-options.py:grade
+  assert:
+    - type: llm-rubric
+      provider: file://graders/default.js:grade
+tests:
+  - options:
+      provider: python:graders/test-options.py:grade
+    assert:
+      - type: llm-rubric
+        provider: exec:graders/run.sh
+      - type: llm-rubric
+        provider:
+          id: file://graders/object.py:grade
+          config:
+            request: file://fixtures/request.json
+      - type: llm-rubric
+        provider:
+          'ruby:graders/mapped.rb:Clients::grade':
+            label: mapped
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'graders/default-options.py',
+      'graders/default.js',
+      'graders/test-options.py',
+      'graders/run.sh',
+      'graders/object.py',
+      'fixtures/request.json',
+      'graders/mapped.rb',
+      'graders/mapped.rb:Clients::grade',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should extract runtime test and assertion transform, rubric, and scoring files without widening inline expressions', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  assertScoringFunction: file://scoring/default.py:score
+  options:
+    postprocess: file://transforms/default-post.py:post
+    transformVars: file://transforms/default-vars.py:vars
+    rubricPrompt: file://rubrics/default.txt
+tests:
+  - assertScoringFunction: file://scoring/test.js:score
+    options:
+      transform: file://transforms/test.py:transform
+      transformVars: 'vars.input.toUpperCase()'
+      rubricPrompt:
+        - file://rubrics/one.txt
+        - content: file://rubrics/two.txt
+    assert:
+      - type: context-faithfulness
+        contextTransform: file://transforms/context.py:context
+        transform: file://transforms/assert.py:transform
+        rubricPrompt: file://rubrics/assert.txt
+      - type: context-relevance
+        contextTransform: 'output.context.join(" ")'
+        transform: 'output.answer'
+        rubricPrompt: 'Judge the answer clearly.'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'scoring/default.py',
+      'transforms/default-post.py',
+      'transforms/default-vars.py',
+      'rubrics/default.txt',
+      'scoring/test.js',
+      'transforms/test.py',
+      'rubrics/one.txt',
+      'rubrics/two.txt',
+      'transforms/context.py',
+      'transforms/assert.py',
+      'rubrics/assert.txt',
+    ]);
+    expect(deps).not.toContain('./');
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should fail closed for HTTP graders and safely ignore malformed or cyclic grading metadata', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  options:
+    rubricPrompt: &rubric
+      - *rubric
+      - file://rubrics/cyclic.txt
+tests:
+  - assert:
+      - type: llm-rubric
+        provider:
+          first: openai:gpt-4
+          second: anthropic:claude
+      - type: llm-rubric
+        provider:
+          id: http
+          config:
+            auth:
+              type: file
+              path: ./auth/grader.ts
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['rubrics/cyclic.txt', './']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should not enumerate binary grading metadata while preserving sibling dependencies', () => {
+    const binary = Buffer.alloc(1024 * 1024, 7).toString('base64');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/safe.py
+defaultTest:
+  options:
+    rubricPrompt: !!binary ${binary}
+`);
+    const startedAt = performance.now();
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/safe.py']);
+    expect(performance.now() - startedAt).toBeLessThan(1500);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should extract JavaScript and Python extension-hook files and ignore invalid entries', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/before.js:beforeAll
+  - hooks/after.py:afterEach
+  - null
+  - ''
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['hooks/before.js', 'hooks/after.py']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should extract a scalar extension-hook file', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'extensions: file://hooks/single.js:afterAll\n',
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['hooks/single.js']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should extract nested assert-set validators and preserve siblings after a cyclic alias', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
