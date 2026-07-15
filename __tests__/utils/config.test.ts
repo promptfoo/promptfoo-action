@@ -338,14 +338,16 @@ providers:
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - id: openai:gpt-4
-    label: "build {{ vars.NAME }}"
+    label: "{{ 'file://display/' + env.API_KEY }}"
     config:
       header: "{% if vars.FLAG %}enabled{% endif %}"
       headers:
         "{{ env.API_KEY }}": literal
         Authorization: "Bearer {{ env.API_KEY }}"
+        X-Message: "{{ 'file://display/' + env.API_KEY }}"
       body:
         prompt: "hello {{ prompt }} {{ env.API_KEY | upper }}"
+        message: "{{ 'file://display/' + env.API_KEY }}"
         metadata:
           type: file
           path: "{{ env.API_KEY | upper }}"

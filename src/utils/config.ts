@@ -396,7 +396,8 @@ export function extractFileDependencies(configPath: string): string[] {
           if (
             (isProviderReference && /\{\{|\{%|\{#/.test(renderedProvider)) ||
             (isFileBearingConfigValue && unresolvedLeadingEnvTemplate) ||
-            unresolvedComputedFileTemplate
+            (unresolvedComputedFileTemplate &&
+              (grandparentKey === 'config' || isFileBearingConfigValue))
           ) {
             dependencies.add(
               `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,

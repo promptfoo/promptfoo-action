@@ -38339,7 +38339,7 @@ function extractFileDependencies(configPath) {
         const unresolvedLeadingEnvTemplate = /^\s*\{\{-?(?:[^}]|\}(?!\}))*\benv(?:\.|\[)/.test(renderedProvider);
         const unresolvedComputedFileTemplate = /^\s*\{\{-?(?:[^}]|\}(?!\}))*['"]file:\/\//.test(renderedProvider);
         if (!renderedProvider.startsWith("file://")) {
-          if (isProviderReference && /\{\{|\{%|\{#/.test(renderedProvider) || isFileBearingConfigValue && unresolvedLeadingEnvTemplate || unresolvedComputedFileTemplate) {
+          if (isProviderReference && /\{\{|\{%|\{#/.test(renderedProvider) || isFileBearingConfigValue && unresolvedLeadingEnvTemplate || unresolvedComputedFileTemplate && (grandparentKey === "config" || isFileBearingConfigValue)) {
             dependencies.add(
               `${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`
             );
