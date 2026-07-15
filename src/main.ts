@@ -21,7 +21,13 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
-import { normalizeGlobSeparators, preflightGlob } from './utils/glob';
+import {
+  createBoundedGlobFs,
+  createContainedGlobIgnore,
+  hasUnsafeGlobTraversal,
+  normalizeGlobSeparators,
+  preflightGlob,
+} from './utils/glob';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -54,6 +60,26 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
       !relativePath.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relativePath))
   );
+}
+
+function resolvePhysicalGlobPrefix(
+  absolutePattern: string,
+): string | undefined {
+  const root = path.parse(absolutePattern).root;
+  let prefix = root;
+  for (const segment of path.relative(root, absolutePattern).split(path.sep)) {
+    if (/[*?[\]{}()!+@]/.test(segment)) break;
+    prefix = path.join(prefix, segment);
+  }
+  while (true) {
+    try {
+      return fs.realpathSync(prefix);
+    } catch {
+      const parent = path.dirname(prefix);
+      if (parent === prefix) return undefined;
+      prefix = parent;
+    }
+  }
 }
 
 /**
@@ -243,10 +269,114 @@ export async function run(): Promise<void> {
         'Working directory must stay within the repository workspace',
       );
     }
-    const configAbsolutePath = path.resolve(workingDirectory, configPath);
-    const configRepositoryPath = toRepositoryPath(
-      path.relative(workspaceRoot, configAbsolutePath),
+    const globTraversal = { entries: 0, exhausted: false };
+    let configPaths = [configPath];
+    if (configPath.length > MAX_DEPENDENCY_GLOB_LENGTH) {
+      throw new Error('Config glob is malformed or exceeds supported limits');
+    }
+    const configPattern = normalizeGlobSeparators(configPath, true);
+    if (
+      preflightGlob(configPattern, {
+        maxLength: MAX_DEPENDENCY_GLOB_LENGTH,
+        maxBraceExpansions: MAX_PROMPT_BRACE_EXPANSIONS,
+        windowsPathsNoEscape: true,
+      }) !== 'safe'
+    ) {
+      throw new Error('Config glob is malformed or exceeds supported limits');
+    }
+    if (/[*?[\]{}()]/.test(configPattern)) {
+      const expandedConfigPatterns = braceExpand(configPattern, {
+        braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
+      });
+      if (expandedConfigPatterns.length > MAX_PROMPT_BRACE_EXPANSIONS) {
+        throw new Error('Config glob is malformed or exceeds supported limits');
+      }
+      if (
+        hasUnsafeGlobTraversal(configPath) ||
+        expandedConfigPatterns.some((expandedPattern) => {
+          const absolutePattern = path.resolve(
+            workingDirectory,
+            expandedPattern,
+          );
+          const physicalPrefix = resolvePhysicalGlobPrefix(absolutePattern);
+          return (
+            hasUnsafeGlobTraversal(expandedPattern, true) ||
+            !isPathInside(workspaceRoot, absolutePattern) ||
+            !physicalPrefix ||
+            !isPathInside(physicalWorkspaceRoot, physicalPrefix)
+          );
+        })
+      ) {
+        throw new Error(
+          'Config glob static prefixes must stay within the repository workspace',
+        );
+      }
+      try {
+        configPaths = glob.sync(configPattern, {
+          cwd: workingDirectory,
+          nodir: true,
+          braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
+          windowsPathsNoEscape: true,
+          ignore: createContainedGlobIgnore(
+            [physicalWorkspaceRoot],
+            fs.realpathSync,
+            globTraversal,
+          ),
+          fs: createBoundedGlobFs(
+            fs.opendirSync,
+            globTraversal,
+            [physicalWorkspaceRoot],
+            fs.realpathSync,
+          ),
+        });
+        if (globTraversal.exhausted) {
+          throw new Error('Config glob traversal budget was exceeded');
+        }
+      } catch {
+        throw new Error('Could not safely enumerate config glob matches');
+      }
+      if (
+        configPaths.length === 0 ||
+        configPaths.length > MAX_PROMPT_BRACE_EXPANSIONS
+      ) {
+        throw new Error(
+          'Config glob must resolve to between 1 and 1024 config files',
+        );
+      }
+      for (const candidate of configPaths) {
+        const absoluteCandidate = path.resolve(workingDirectory, candidate);
+        let physicalCandidate: string;
+        try {
+          physicalCandidate = fs.realpathSync(absoluteCandidate);
+        } catch {
+          throw new Error('Could not safely resolve a config glob match');
+        }
+        if (
+          !isPathInside(workspaceRoot, absoluteCandidate) ||
+          !isPathInside(physicalWorkspaceRoot, physicalCandidate)
+        ) {
+          throw new Error(
+            'Config glob matches must stay within the repository workspace',
+          );
+        }
+      }
+    }
+    const configAbsolutePaths = configPaths.map((candidate) =>
+      path.resolve(workingDirectory, candidate),
     );
+    const configRepositoryPaths = new Set(
+      configAbsolutePaths.map((candidate) =>
+        toRepositoryPath(path.relative(workspaceRoot, candidate)),
+      ),
+    );
+    const configGlobMatcher = /[*?[\]{}()]/.test(configPattern)
+      ? new Minimatch(configPattern, {
+          ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+          braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
+          platform: 'linux',
+          windowsPathsNoEscape: true,
+        })
+      : undefined;
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
     });
@@ -563,14 +693,42 @@ export async function run(): Promise<void> {
             maxLength: MAX_DEPENDENCY_GLOB_LENGTH,
             maxBraceExpansions: MAX_PROMPT_BRACE_EXPANSIONS,
             windowsPathsNoEscape,
-          }) !== 'safe' ||
-          braceExpand(globPattern, {
-            braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
-          }).length > MAX_PROMPT_BRACE_EXPANSIONS
+          }) !== 'safe'
         ) {
           promptGlobFailed = true;
           core.warning(
             'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+          );
+          continue;
+        }
+        const expandedPromptPatterns = braceExpand(globPattern, {
+          braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
+        });
+        if (expandedPromptPatterns.length > MAX_PROMPT_BRACE_EXPANSIONS) {
+          promptGlobFailed = true;
+          core.warning(
+            'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+          );
+          continue;
+        }
+        if (
+          expandedPromptPatterns.some((expandedPattern) => {
+            const absolutePattern = path.resolve(
+              workingDirectory,
+              expandedPattern,
+            );
+            const physicalPrefix = resolvePhysicalGlobPrefix(absolutePattern);
+            return (
+              hasUnsafeGlobTraversal(expandedPattern, windowsPathsNoEscape) ||
+              !isPathInside(workspaceRoot, absolutePattern) ||
+              !physicalPrefix ||
+              !isPathInside(physicalWorkspaceRoot, physicalPrefix)
+            );
+          })
+        ) {
+          promptGlobFailed = true;
+          core.warning(
+            'Ignoring unsafe prompt glob: static prefix must stay within the repository workspace',
           );
           continue;
         }
@@ -579,7 +737,21 @@ export async function run(): Promise<void> {
           nodir: true,
           braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
           ...(windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}),
+          ignore: createContainedGlobIgnore(
+            [physicalWorkspaceRoot],
+            fs.realpathSync,
+            globTraversal,
+          ),
+          fs: createBoundedGlobFs(
+            fs.opendirSync,
+            globTraversal,
+            [physicalWorkspaceRoot],
+            fs.realpathSync,
+          ),
         });
+        if (globTraversal.exhausted) {
+          throw new Error('Prompt glob traversal budget was exceeded');
+        }
       } catch {
         promptGlobFailed = true;
         core.warning(
@@ -614,7 +786,7 @@ export async function run(): Promise<void> {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, absoluteFile),
           );
-          return repositoryFile !== configRepositoryPath;
+          return !configRepositoryPaths.has(repositoryFile);
         })
         .map((file) =>
           toRepositoryPath(
@@ -643,15 +815,26 @@ export async function run(): Promise<void> {
 
     const configChanged =
       changedFilesList.length > 0 &&
-      changedFilesList.includes(configRepositoryPath);
+      changedFilesList.some((changedFile) => {
+        if (configRepositoryPaths.has(changedFile)) return true;
+        if (!configGlobMatcher) return false;
+        const absoluteChangedFile = path.resolve(workspaceRoot, changedFile);
+        const configCandidate = path.isAbsolute(configPattern)
+          ? absoluteChangedFile
+          : toRepositoryPath(
+              path.relative(workingDirectory, absoluteChangedFile),
+            );
+        return configGlobMatcher.match(configCandidate);
+      });
 
     // Extract dependencies from config file
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(
-        configAbsolutePath,
-        workingDirectory,
-      ).map(toRepositoryPath);
+      const dependencies = configAbsolutePaths
+        .flatMap((candidate) =>
+          extractFileDependencies(candidate, workingDirectory, globTraversal),
+        )
+        .map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(`Found ${dependencies.length} file dependencies in config`);
 
@@ -792,7 +975,7 @@ export async function run(): Promise<void> {
       workingDirectory,
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
-    let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
+    let promptfooArgs = ['eval', '-c', ...configPaths, '-o', outputFile];
     if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         '--prompts',

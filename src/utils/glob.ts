@@ -1,3 +1,22 @@
+import type { Dirent } from 'node:fs';
+import { Minimatch } from 'minimatch';
+import * as path from 'path';
+
+type GlobPathEntry = {
+  fullpath: () => string;
+  isSymbolicLink: () => boolean;
+};
+
+type GlobDirectory = {
+  closeSync: () => void;
+  readSync: () => Dirent | null;
+};
+
+export type GlobTraversalBudget = {
+  entries: number;
+  exhausted: boolean;
+};
+
 type GlobPreflightOptions = {
   maxLength: number;
   maxBraceExpansions: number;
@@ -6,6 +25,87 @@ type GlobPreflightOptions = {
 
 export type GlobPreflightResult = 'safe' | 'invalid' | 'too-many-braces';
 const MAX_GLOB_DELIMITER_DEPTH = 128;
+const MAX_EXTGLOB_TOKENS = 1024;
+const MAX_EXTGLOB_DEPTH = 64;
+const MAX_GLOB_TRAVERSAL_ENTRIES = 4096;
+
+export function createBoundedGlobFs(
+  openDirectory: (filePath: string) => GlobDirectory,
+  traversal: GlobTraversalBudget,
+  physicalRoots: string[],
+  realpath: (filePath: string) => string,
+): { readdirSync: (filePath: string) => Dirent[] } {
+  return {
+    readdirSync: (filePath) => {
+      if (traversal.exhausted) return [];
+      try {
+        const physicalPath = realpath(filePath);
+        if (
+          !physicalRoots.some((root) => {
+            const relativePath = path.relative(root, physicalPath);
+            return (
+              relativePath === '' ||
+              (relativePath !== '..' &&
+                !relativePath.startsWith(`..${path.sep}`) &&
+                !path.isAbsolute(relativePath))
+            );
+          })
+        ) {
+          traversal.exhausted = true;
+          return [];
+        }
+      } catch {
+        traversal.exhausted = true;
+        return [];
+      }
+      const directory = openDirectory(filePath);
+      const entries: Dirent[] = [];
+      try {
+        while (true) {
+          const entry = directory.readSync();
+          if (!entry) return entries;
+          if (++traversal.entries > MAX_GLOB_TRAVERSAL_ENTRIES) {
+            traversal.exhausted = true;
+            return [];
+          }
+          entries.push(entry);
+        }
+      } finally {
+        directory.closeSync();
+      }
+    },
+  };
+}
+
+export function createContainedGlobIgnore(
+  physicalRoots: string[],
+  realpath: (filePath: string) => string,
+  traversal?: GlobTraversalBudget,
+): { childrenIgnored: (entry: GlobPathEntry) => boolean } {
+  return {
+    childrenIgnored: (entry) => {
+      if (traversal && ++traversal.entries > MAX_GLOB_TRAVERSAL_ENTRIES) {
+        traversal.exhausted = true;
+        return true;
+      }
+      if (!entry.isSymbolicLink()) return false;
+      try {
+        const physicalPath = realpath(entry.fullpath());
+        return !physicalRoots.some((root) => {
+          const relativePath = path.relative(root, physicalPath);
+          return (
+            relativePath === '' ||
+            (relativePath !== '..' &&
+              !relativePath.startsWith(`..${path.sep}`) &&
+              !path.isAbsolute(relativePath))
+          );
+        });
+      } catch {
+        return true;
+      }
+    },
+  };
+}
 
 export function normalizeGlobSeparators(
   value: string,
@@ -36,6 +136,31 @@ export function normalizeGlobSeparators(
   return normalized;
 }
 
+export function hasUnsafeGlobTraversal(
+  value: string,
+  windowsPathsNoEscape = false,
+): boolean {
+  let sawMagic = false;
+  const traversalPattern = windowsPathsNoEscape
+    ? normalizeGlobSeparators(value, true)
+    : value;
+  for (const segment of traversalPattern.split('/')) {
+    const segmentHasMagic = /[*?[\]{}()!+@]/.test(segment);
+    if (
+      (sawMagic || segmentHasMagic) &&
+      new Minimatch(segment, {
+        dot: true,
+        nobrace: true,
+        nonegate: true,
+      }).match('..')
+    ) {
+      return true;
+    }
+    sawMagic ||= segmentHasMagic;
+  }
+  return false;
+}
+
 /**
  * Checks untrusted glob syntax without invoking minimatch's brace parser.
  * Numeric ranges need special handling because some brace-expansion versions
@@ -59,6 +184,8 @@ export function preflightGlob(
   }
 
   const expectedClosers: Array<{ closer: string; opener: number }> = [];
+  let extglobTokens = 0;
+  let extglobDepth = 0;
   for (let index = 0; index < value.length; index++) {
     const character = value.charAt(index);
     if (!windowsPathsNoEscape && character === '\\') {
@@ -97,7 +224,15 @@ export function preflightGlob(
       index > 0 &&
       '*+?@!'.includes(value.charAt(index - 1))
     ) {
-      if (expectedClosers.length >= MAX_GLOB_DELIMITER_DEPTH) return 'invalid';
+      if (
+        expectedClosers.length >= MAX_GLOB_DELIMITER_DEPTH ||
+        extglobTokens >= MAX_EXTGLOB_TOKENS ||
+        extglobDepth >= MAX_EXTGLOB_DEPTH
+      ) {
+        return 'invalid';
+      }
+      extglobTokens++;
+      extglobDepth++;
       expectedClosers.push({ closer: ')', opener: index });
       continue;
     }
@@ -105,6 +240,7 @@ export function preflightGlob(
 
     const opener = expectedClosers.pop();
     if (!opener || opener.closer !== character) return 'invalid';
+    if (character === ')') extglobDepth--;
     if (character !== '}') continue;
 
     const body = value.slice(opener.opener + 1, index);

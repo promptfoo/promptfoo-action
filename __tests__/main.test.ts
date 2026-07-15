@@ -412,11 +412,19 @@ describe('GitHub Action Main', () => {
         cwd: process.cwd(),
         nodir: true,
         braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
       });
       expect(mockGlob.sync).toHaveBeenNthCalledWith(2, 'prompt two/*.txt', {
         cwd: process.cwd(),
         nodir: true,
         braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
       });
       const args = mockExec.exec.mock.calls[0][1] as string[];
       expect(args).toEqual(
@@ -447,6 +455,10 @@ describe('GitHub Action Main', () => {
         cwd: process.cwd(),
         nodir: true,
         braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
       });
       expect(mockExec.exec).toHaveBeenCalled();
     });
@@ -467,6 +479,10 @@ describe('GitHub Action Main', () => {
         cwd: process.cwd(),
         nodir: true,
         braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
       });
       expect(mockCore.warning).toHaveBeenCalledWith(
         'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
@@ -549,6 +565,10 @@ describe('GitHub Action Main', () => {
         cwd: process.cwd(),
         nodir: true,
         braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
       });
       expect(mockCore.warning).not.toHaveBeenCalledWith(
         'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
@@ -568,6 +588,10 @@ describe('GitHub Action Main', () => {
         cwd: process.cwd(),
         nodir: true,
         braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
       });
       expect(mockCore.warning).not.toHaveBeenCalledWith(
         'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
@@ -589,6 +613,10 @@ describe('GitHub Action Main', () => {
         cwd: process.cwd(),
         nodir: true,
         braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
       });
       expect(mockCore.warning).not.toHaveBeenCalledWith(
         'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
@@ -638,6 +666,10 @@ describe('GitHub Action Main', () => {
         cwd: process.cwd(),
         nodir: true,
         braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
         windowsPathsNoEscape: true,
       });
       expect(mockCore.warning).not.toHaveBeenCalledWith(
@@ -701,6 +733,506 @@ describe('GitHub Action Main', () => {
         'LLM evaluation used prompts from the config file',
       );
       expect(comment).not.toContain('LLM evaluation included these files:');
+    });
+
+    test('should expand a primary multi-config glob for extraction and evaluation', async () => {
+      withInputs({ config: 'configs/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'configs/two.yaml' },
+      ]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('*'),
+      );
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === 'configs/*.yaml'
+          ? ['configs/one.yaml', 'configs/two.yaml']
+          : ['prompts/prompt1.txt'],
+      );
+
+      await run();
+
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledTimes(2);
+      expect(mockConfig.extractFileDependencies).toHaveBeenNthCalledWith(
+        1,
+        path.join(process.cwd(), 'configs/one.yaml'),
+        process.cwd(),
+        expect.objectContaining({
+          entries: expect.any(Number),
+          exhausted: false,
+        }),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenNthCalledWith(
+        2,
+        path.join(process.cwd(), 'configs/two.yaml'),
+        process.cwd(),
+        expect.objectContaining({
+          entries: expect.any(Number),
+          exhausted: false,
+        }),
+      );
+      expect(mockConfig.extractFileDependencies.mock.calls[0]?.[2]).toBe(
+        mockConfig.extractFileDependencies.mock.calls[1]?.[2],
+      );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.slice(0, 7)).toEqual([
+        'promptfoo@latest',
+        'eval',
+        '-c',
+        'configs/one.yaml',
+        'configs/two.yaml',
+        '-o',
+        expect.any(String),
+      ]);
+    });
+
+    test('should normalize a backslash-separated primary config glob on POSIX', async () => {
+      withInputs({ config: 'configs\\*.yaml', prompts: '' });
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === 'configs/*.yaml' ? ['configs/one.yaml'] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith('configs/*.yaml', {
+        cwd: process.cwd(),
+        nodir: true,
+        braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
+        windowsPathsNoEscape: true,
+      });
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('configs/one.yaml');
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should expand an extglob-only primary config pattern', async () => {
+      withInputs({ config: 'configs/@(one|two).yaml', prompts: '' });
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === 'configs/@(one|two).yaml'
+          ? ['configs/one.yaml', 'configs/two.yaml']
+          : [],
+      );
+
+      await run();
+
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledTimes(2);
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('configs/one.yaml');
+      expect(args).toContain('configs/two.yaml');
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should evaluate when a primary config-glob member is deleted and another member survives', async () => {
+      withInputs({ config: 'configs/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'configs/deleted.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === 'configs/*.yaml'
+          ? ['configs/surviving.yaml']
+          : ['prompts/unchanged.txt'],
+      );
+      mockConfig.extractFileDependencies.mockReturnValue([]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/unchanged.txt');
+    });
+
+    test('should evaluate when an absolute primary config-glob member is deleted', async () => {
+      const config = path.join(process.cwd(), 'configs', '*.yaml');
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'configs/deleted.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === config
+          ? [path.join(process.cwd(), 'configs', 'surviving.yaml')]
+          : ['prompts/unchanged.txt'],
+      );
+      mockConfig.extractFileDependencies.mockReturnValue([]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/unchanged.txt');
+    });
+
+    test.each([
+      {
+        label: 'lexical escape',
+        prompts: '../SENSITIVE-REVIEW-TOKEN/**/*.txt',
+        physicalEscape: false,
+      },
+      {
+        label: 'escaping symlink prefix',
+        prompts: 'linked/**/*.txt',
+        physicalEscape: true,
+      },
+      {
+        label: 'escaping brace alternative',
+        prompts: '{prompts,../SENSITIVE-REVIEW-TOKEN}/**/*.txt',
+        physicalEscape: false,
+      },
+      {
+        label: 'post-magic traversal',
+        prompts: 'prompts/**/../../SENSITIVE-REVIEW-TOKEN/*.txt',
+        physicalEscape: false,
+      },
+      {
+        label: 'bracket-encoded traversal',
+        prompts: 'prompts/**/[.][.]/[.][.]/SENSITIVE-REVIEW-TOKEN/*.txt',
+        physicalEscape: false,
+      },
+      {
+        label: 'hybrid traversal',
+        prompts: 'prompts/**/[.]{.,x}/SENSITIVE-REVIEW-TOKEN/*.txt',
+        physicalEscape: false,
+      },
+      {
+        label: 'POSIX-escaped traversal',
+        prompts: 'prompts/**/\\.\\./\\.\\./SENSITIVE-REVIEW-TOKEN/*.txt',
+        physicalEscape: false,
+      },
+      {
+        label: 'hybrid POSIX-escaped traversal',
+        prompts: 'prompts/**/[.]\\./[.]\\./SENSITIVE-REVIEW-TOKEN/*.txt',
+        physicalEscape: false,
+      },
+      {
+        label: 'mixed POSIX-escaped traversal',
+        prompts: 'prompts/**/.\\./.\\./SENSITIVE-REVIEW-TOKEN/*.txt',
+        physicalEscape: false,
+      },
+    ])('should reject an action-prompt glob $label before enumeration', async ({
+      prompts,
+      physicalEscape,
+    }) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockImplementation(() => {
+        throw new Error('escaped prompt prefix should not be enumerated');
+      });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        physicalEscape && String(filePath).endsWith('/linked')
+          ? '/private/tmp/SENSITIVE-REVIEW-TOKEN'
+          : String(filePath),
+      );
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: static prefix must stay within the repository workspace',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+    });
+
+    test('should fall back to an existing action-prompt prefix ancestor before enumeration', async () => {
+      withInputs({ prompts: 'missing/nested/*.txt' });
+      mockGlob.sync.mockReturnValue([]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (String(filePath).endsWith('/missing/nested')) {
+          throw new Error('ENOENT');
+        }
+        return String(filePath);
+      });
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith('missing/nested/*.txt', {
+        cwd: process.cwd(),
+        nodir: true,
+        braceExpandMax: 1024,
+        fs: expect.objectContaining({ readdirSync: expect.any(Function) }),
+        ignore: expect.objectContaining({
+          childrenIgnored: expect.any(Function),
+        }),
+      });
+    });
+
+    test('should reject an action-prompt glob when no prefix ancestor can be resolved', async () => {
+      withInputs({ prompts: 'missing/nested/*.txt' });
+      let workspaceResolutions = 0;
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (String(filePath) === process.cwd() && workspaceResolutions++ < 2) {
+          return String(filePath);
+        }
+        throw new Error('ENOENT: SENSITIVE-REVIEW-TOKEN');
+      });
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: static prefix must stay within the repository workspace',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+    });
+
+    test.each([
+      '{configs,../SENSITIVE-REVIEW-TOKEN}/*.yaml',
+      'configs/**/../../SENSITIVE-REVIEW-TOKEN/*.yaml',
+      'configs/**/[.][.]/[.][.]/SENSITIVE-REVIEW-TOKEN/*.yaml',
+      'configs/**/{.,x}[.]/SENSITIVE-REVIEW-TOKEN/*.yaml',
+      'configs/**/\\.\\./\\.\\./SENSITIVE-REVIEW-TOKEN/*.yaml',
+    ])('should reject a primary config-glob traversal before enumeration (%s)', async (config) => {
+      withInputs({ config });
+      mockGlob.sync.mockImplementation(() => {
+        throw new Error('escaped config prefix should not be enumerated');
+      });
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Config glob static prefixes must stay within the repository workspace',
+        ),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      {
+        label: 'lexical escape',
+        matches: ['../SENSITIVE-REVIEW-TOKEN/config.yaml'],
+        physicalEscape: false,
+        expected:
+          'Config glob matches must stay within the repository workspace',
+      },
+      {
+        label: 'escaping symlink',
+        matches: ['configs/linked.yaml'],
+        physicalEscape: true,
+        expected:
+          'Config glob matches must stay within the repository workspace',
+      },
+    ])('should reject a primary config-glob $label before evaluation', async ({
+      matches,
+      physicalEscape,
+      expected,
+    }) => {
+      withInputs({ config: 'configs/*.yaml' });
+      mockGlob.sync.mockReturnValue(matches);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        physicalEscape && String(filePath).endsWith('/configs/linked.yaml')
+          ? '/private/tmp/SENSITIVE-REVIEW-TOKEN/config.yaml'
+          : String(filePath),
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(expected),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      {
+        label: 'enumeration',
+        stage: 'glob',
+        expected: 'Could not safely enumerate config glob matches',
+      },
+      {
+        label: 'realpath',
+        stage: 'realpath',
+        expected: 'Could not safely resolve a config glob match',
+      },
+    ])('should sanitize a primary config-glob $label error', async ({
+      stage,
+      expected,
+    }) => {
+      withInputs({ config: 'configs/*.yaml' });
+      if (stage === 'glob') {
+        mockGlob.sync.mockImplementation(() => {
+          throw new Error('SENSITIVE-REVIEW-TOKEN');
+        });
+      } else {
+        mockGlob.sync.mockReturnValue(['configs/one.yaml']);
+        mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+          if (String(filePath).endsWith('/configs/one.yaml')) {
+            throw new Error('SENSITIVE-REVIEW-TOKEN');
+          }
+          return String(filePath);
+        });
+      }
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(expected),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed when a primary config glob exhausts its traversal budget', async () => {
+      withInputs({ config: 'configs/**/*.yaml', prompts: '' });
+      mockGlob.sync.mockImplementation((_pattern, options) => {
+        const childrenIgnored = (
+          options as {
+            ignore?: { childrenIgnored?: (entry: unknown) => boolean };
+          }
+        ).ignore?.childrenIgnored;
+        for (let index = 0; index < 4097; index++) {
+          childrenIgnored?.({
+            fullpath: () => `SENSITIVE-REVIEW-TOKEN/${index}`,
+            isSymbolicLink: () => false,
+          });
+        }
+        return [];
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Could not safely enumerate config glob matches',
+        ),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed when an action prompt glob exhausts its traversal budget', async () => {
+      withInputs({ prompts: 'prompts/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockImplementation((_pattern, options) => {
+        const childrenIgnored = (
+          options as {
+            ignore?: { childrenIgnored?: (entry: unknown) => boolean };
+          }
+        ).ignore?.childrenIgnored;
+        for (let index = 0; index < 4097; index++) {
+          childrenIgnored?.({
+            fullpath: () => `SENSITIVE-REVIEW-TOKEN/${index}`,
+            isSymbolicLink: () => false,
+          });
+        }
+        return [];
+      });
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should share the traversal budget across multiple action prompt globs', async () => {
+      withInputs({ prompts: 'prompts/one/**/*.txt\nprompts/two/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockImplementation((_pattern, options) => {
+        const childrenIgnored = (
+          options as {
+            ignore?: { childrenIgnored?: (entry: unknown) => boolean };
+          }
+        ).ignore?.childrenIgnored;
+        for (let index = 0; index < 2049; index++) {
+          childrenIgnored?.({
+            fullpath: () => `SENSITIVE-REVIEW-TOKEN/${index}`,
+            isSymbolicLink: () => false,
+          });
+        }
+        return [];
+      });
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(2);
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      ['no matches', []],
+      [
+        'too many matches',
+        Array.from({ length: 1025 }, (_, index) => `configs/${index}.yaml`),
+      ],
+    ])('should bound a primary config glob with %s', async (_label, matches) => {
+      withInputs({ config: 'configs/*.yaml' });
+      mockGlob.sync.mockReturnValue(matches);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Config glob must resolve to between 1 and 1024 config files',
+        ),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'configs/{1..1000000000}.yaml',
+      `configs/${'{one,two}'.repeat(11)}.yaml`,
+      'configs/invalid\0config.yaml',
+      `configs/${'a'.repeat(65_537)}*.yaml`,
+      `configs/${'@(x)'.repeat(15_000)}.yaml`,
+    ])('should reject an unsafe primary config glob before enumeration', async (config) => {
+      withInputs({ config });
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Config glob is malformed or exceeds supported limits',
+        ),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an action prompt glob with excessive sequential extglob tokens before parsing', async () => {
+      withInputs({ prompts: `prompts/${'@(x)'.repeat(15_000)}.txt` });
+      mockGlob.sync.mockImplementation(() => {
+        throw new Error('SENSITIVE-REVIEW-TOKEN reached prompt glob parsing');
+      });
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
     });
 
     test.each([
@@ -817,6 +1349,10 @@ describe('GitHub Action Main', () => {
       expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
         path.join(process.cwd(), 'evals', 'promptfooconfig.yaml'),
         path.join(process.cwd(), 'evals'),
+        expect.objectContaining({
+          entries: expect.any(Number),
+          exhausted: false,
+        }),
       );
     });
 
@@ -2281,13 +2817,14 @@ describe('GitHub Action Main', () => {
 
       expect(performance.now() - started).toBeLessThan(5000);
       expect(posixMatcher).not.toHaveBeenCalled();
-      expect(minimatchMatcher).toHaveBeenCalledTimes(2000);
+      expect(minimatchMatcher).toHaveBeenCalledTimes(2001);
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test.each([
       'prompts/{1..1000000000}.txt',
       'prompts/[{1..5000000}].txt',
+      `prompts/${'@(x)'.repeat(15_000)}.txt`,
     ])('should preflight a hostile config dependency before glob matching: %s', async (dependency) => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);
