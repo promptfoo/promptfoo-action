@@ -36398,6 +36398,12 @@ function extractFileDependencies(configPath) {
           selector
         ) ? candidatePath : providerPath;
         const resolvedPaths = processFileUrl(`file://${cleanPath}`);
+        if (resolvedPaths.length === 0 && cleanPath && !cleanPath.includes("\0") && !le(cleanPath)) {
+          const lexicalPath = path5.resolve(configDir, cleanPath);
+          if (isPathInside(dependencyRoot, lexicalPath)) {
+            dependencies.add(lexicalPath);
+          }
+        }
         for (const absolutePath of resolvedPaths) {
           if (!/\.(?:ya?ml|json)$/i.test(absolutePath) || visitedProviderConfigs.has(absolutePath)) {
             continue;

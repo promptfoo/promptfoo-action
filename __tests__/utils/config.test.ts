@@ -306,9 +306,11 @@ providers:
         : filePath,
     );
 
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
 
-    expect(deps).toEqual([]);
+    expect(deps).toEqual(['evals/providers.yaml']);
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
     expect(
       mockFs.readFileSync.mock.calls.some((call) =>
@@ -347,7 +349,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual([]);
+    expect(deps).toEqual(['../config/providers/private.py']);
     expect(
       vi
         .mocked(core.warning)

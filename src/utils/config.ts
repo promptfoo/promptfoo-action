@@ -184,6 +184,18 @@ export function extractFileDependencies(configPath: string): string[] {
             : providerPath;
 
         const resolvedPaths = processFileUrl(`file://${cleanPath}`);
+        if (
+          resolvedPaths.length === 0 &&
+          cleanPath &&
+          !cleanPath.includes('\0') &&
+          !glob.hasMagic(cleanPath)
+        ) {
+          const lexicalPath = path.resolve(configDir, cleanPath);
+          if (isPathInside(dependencyRoot, lexicalPath)) {
+            dependencies.add(lexicalPath);
+          }
+        }
+
         for (const absolutePath of resolvedPaths) {
           if (
             !/\.(?:ya?ml|json)$/i.test(absolutePath) ||
