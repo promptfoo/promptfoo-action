@@ -38,8 +38,9 @@ export function createBoundedGlobFs(
   return {
     readdirSync: (filePath) => {
       if (traversal.exhausted) return [];
+      let physicalPath: string;
       try {
-        const physicalPath = realpath(filePath);
+        physicalPath = realpath(filePath);
         if (
           !physicalRoots.some((root) => {
             const relativePath = path.relative(root, physicalPath);
@@ -58,7 +59,7 @@ export function createBoundedGlobFs(
         traversal.exhausted = true;
         return [];
       }
-      const directory = openDirectory(filePath);
+      const directory = openDirectory(physicalPath);
       const entries: Dirent[] = [];
       try {
         while (true) {

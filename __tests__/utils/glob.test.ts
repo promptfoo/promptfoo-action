@@ -84,6 +84,24 @@ describe('createBoundedGlobFs', () => {
     expect(small.closed()).toBe(true);
     expect(smallTraversal).toEqual({ entries: 2, exhausted: false });
 
+    const canonical = makeDirectory(1);
+    let openedPath = '';
+    const canonicalTraversal = { entries: 0, exhausted: false };
+    const canonicalFs = createBoundedGlobFs(
+      (filePath) => {
+        openedPath = filePath;
+        return canonical.handle;
+      },
+      canonicalTraversal,
+      ['/workspace'],
+      () => '/workspace/canonical',
+    );
+    expect(
+      canonicalFs.readdirSync('/workspace/retargetable-link'),
+    ).toHaveLength(1);
+    expect(openedPath).toBe('/workspace/canonical');
+    expect(canonical.closed()).toBe(true);
+
     const large = makeDirectory(5000);
     const largeTraversal = { entries: 0, exhausted: false };
     const largeFs = createBoundedGlobFs(
