@@ -36432,6 +36432,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
   const maxGlobPatternLength = 64 * 1024;
   const maxGlobBraceExpansions = 1024;
   let requiresFullEvaluation = false;
+  let warnedUnsafeDependency = false;
   try {
     if (!isPathInside(cwd, resolvedWorkingDirectory)) {
       throw new Error(
@@ -37031,11 +37032,14 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         if (String(error2).includes("resolved path")) {
           requiresFullEvaluation = true;
         }
-        warning(
-          `Ignoring unsafe config dependency "${sanitizeLogText(filePath)}": ${sanitizeLogText(
-            String(error2).replace(/^(?:[A-Za-z]+)?Error: /, "")
-          )}`
-        );
+        if (!warnedUnsafeDependency) {
+          warnedUnsafeDependency = true;
+          warning(
+            `Ignoring unsafe config dependency "${sanitizeLogText(filePath)}": ${sanitizeLogText(
+              String(error2).replace(/^(?:[A-Za-z]+)?Error: /, "")
+            )}`
+          );
+        }
         return void 0;
       }
     };
@@ -39095,14 +39099,9 @@ async function run() {
         `This action is designed to run on pull request, push, or workflow_dispatch events, but a "${event}" event was received. Will process all matching prompt files.`
       );
     }
-    const promptFiles = /* @__PURE__ */ new Map();
-    const allPromptFiles = /* @__PURE__ */ new Map();
-    const addPromptFile = (files, file) => {
-      const resolvedFile = path7.resolve(workingDirectory, file);
-      if (!files.has(resolvedFile)) {
-        files.set(resolvedFile, file);
-      }
-    };
+    const allPromptFiles = [];
+    const changedPromptFiles = [];
+    const seenPromptFiles = /* @__PURE__ */ new Set();
     const containsQuotedControlPath = !changedFiles.includes("\0") && /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
       changedFiles
     );
@@ -39112,28 +39111,20 @@ async function run() {
         cwd: workingDirectory,
         nodir: true
       });
-      const allMatches = matches.filter((file) => {
+      for (const file of matches) {
         const repositoryFile = toRepositoryPath(
           path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
         );
-        return repositoryFile !== configRepositoryPath;
-      });
-      for (const file of allMatches) {
-        addPromptFile(allPromptFiles, file);
-      }
-      if (changedFilesList.length > 0) {
-        const changedMatches = allMatches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
-          );
-          return changedFilesList.includes(repositoryFile);
-        });
-        for (const file of changedMatches) {
-          addPromptFile(promptFiles, file);
+        if (repositoryFile === configRepositoryPath) {
+          continue;
         }
-      } else {
-        for (const file of allMatches) {
-          addPromptFile(promptFiles, file);
+        if (seenPromptFiles.has(repositoryFile)) {
+          continue;
+        }
+        seenPromptFiles.add(repositoryFile);
+        allPromptFiles.push(file);
+        if (changedFilesList.includes(repositoryFile)) {
+          changedPromptFiles.push(file);
         }
       }
     }
@@ -39167,11 +39158,11 @@ async function run() {
         }
       }
     }
-    if (!forceRun && promptFiles.size < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
+    if (!forceRun && changedPromptFiles.length < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
-    const evaluatedPromptFiles = useConfigPrompts ? [] : forceRun || configChanged || dependencyChanged ? Array.from(allPromptFiles.values()) : Array.from(promptFiles.values());
+    const evaluatedPromptFiles = useConfigPrompts ? [] : forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? allPromptFiles : changedPromptFiles;
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
         "Invalid prompt file path: line breaks are not allowed.",
@@ -39188,7 +39179,7 @@ async function run() {
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${JSON.stringify(Array.from(promptFiles.values()))}`
+        `Processing all matching prompt files: ${JSON.stringify(evaluatedPromptFiles)}`
       );
     }
     const configEnvironment = { ...process.env };

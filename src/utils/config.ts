@@ -298,6 +298,7 @@ export function extractFileDependencies(
   const maxGlobPatternLength = 64 * 1024;
   const maxGlobBraceExpansions = 1024;
   let requiresFullEvaluation = false;
+  let warnedUnsafeDependency = false;
 
   try {
     if (!isPathInside(cwd, resolvedWorkingDirectory)) {
@@ -1125,11 +1126,14 @@ export function extractFileDependencies(
         if (String(error).includes('resolved path')) {
           requiresFullEvaluation = true;
         }
-        core.warning(
-          `Ignoring unsafe config dependency "${sanitizeLogText(filePath)}": ${sanitizeLogText(
-            String(error).replace(/^(?:[A-Za-z]+)?Error: /, ''),
-          )}`,
-        );
+        if (!warnedUnsafeDependency) {
+          warnedUnsafeDependency = true;
+          core.warning(
+            `Ignoring unsafe config dependency "${sanitizeLogText(filePath)}": ${sanitizeLogText(
+              String(error).replace(/^(?:[A-Za-z]+)?Error: /, ''),
+            )}`,
+          );
+        }
         return undefined;
       }
     };

@@ -373,6 +373,25 @@ providers:
     );
   });
 
+  it('bounds warnings for many foreign Windows dependency paths', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': JSON.stringify({
+        providers: Array.from(
+          { length: 128 },
+          (_, index) => `file://C:/outside/provider-${index}.py`,
+        ),
+      }),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+    expect(core.warning).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('uses an unsupported Windows path'),
+    );
+  });
+
   it.each([
     'C:\\outside\\options.yaml',
     'C:/outside/options.yaml',
