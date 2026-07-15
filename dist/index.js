@@ -38449,7 +38449,7 @@ function extractFileDependencies(configPath) {
     let providerValuesVisited = 0;
     let providerValueLimitReached = false;
     let providerConfigLimitReached = false;
-    const processProviderValue = (value, isProviderReference = false, providerOverrides = {}, externalProviderConfig = false, callerProviderContext = false, isFileBearingConfigValue = false, parentKey, grandparentKey, providerDepth = 0) => {
+    const processProviderValue = (value, isProviderReference = false, providerOverrides = {}, externalProviderConfig = false, callerProviderContext = false, httpProviderContext = false, isFileBearingConfigValue = false, parentKey, grandparentKey, providerDepth = 0) => {
       if (providerValueLimitReached) {
         return;
       }
@@ -38507,6 +38507,7 @@ function extractFileDependencies(configPath) {
               providerOverrides,
               externalProviderConfig,
               callerProviderContext,
+              httpProviderContext,
               isFileBearingConfigValue,
               parentKey,
               grandparentKey,
@@ -38530,12 +38531,18 @@ function extractFileDependencies(configPath) {
           ...externalProviderConfig && callerProviderContext ? configOverrides : {},
           ...providerOverrides
         };
+        const providerId = value.id;
+        const renderedProviderId = typeof providerId === "string" ? renderEnvTemplate(providerId, {
+          ...configEnvironment,
+          ...nestedProviderOverrides
+        }) : void 0;
+        const nestedHttpProviderContext = httpProviderContext || renderedProviderId !== void 0 && /^https?:\/\//i.test(renderedProviderId);
         const authType = value.type;
         const renderedAuthType = typeof authType === "string" ? renderEnvTemplate(authType, {
           ...configEnvironment,
           ...nestedProviderOverrides
         }) : void 0;
-        const isHttpAuthContext = parentKey === "auth" && grandparentKey === "config" && (providerDepth === 2 || providerDepth === 3);
+        const isHttpAuthContext = nestedHttpProviderContext && parentKey === "auth" && grandparentKey === "config" && (providerDepth === 2 || providerDepth === 3);
         if (isHttpAuthContext && typeof value.path === "string" && renderedAuthType !== void 0 && /\{\{|\{%|\{#/.test(renderedAuthType)) {
           dependencies.add(`${dependencyRoot}${path6.sep}`);
         }
@@ -38569,7 +38576,7 @@ function extractFileDependencies(configPath) {
           if (key === "env" || key === "path" && fileAuthPath !== void 0) {
             continue;
           }
-          if ((providerDepth === 2 || providerDepth === 3) && grandparentKey === "config" && (parentKey === "signatureAuth" || parentKey === "tls") && HTTP_CREDENTIAL_PATH_KEYS.has(key) && typeof nestedValue === "string") {
+          if (nestedHttpProviderContext && (providerDepth === 2 || providerDepth === 3) && grandparentKey === "config" && (parentKey === "signatureAuth" || parentKey === "tls") && HTTP_CREDENTIAL_PATH_KEYS.has(key) && typeof nestedValue === "string") {
             const credentialEnvironment = {
               ...configEnvironment,
               ...nestedProviderOverrides
@@ -38611,6 +38618,7 @@ function extractFileDependencies(configPath) {
           };
           const inspectProviderKey = key.trimStart().startsWith("file://") || isProviderReference && mayRenderFileUrl(key);
           const renderedProviderKey = renderEnvTemplate(key, environment);
+          const mappedHttpProviderContext = nestedHttpProviderContext || /^https?:\/\//i.test(renderedProviderKey);
           if (inspectProviderKey && renderedProviderKey.startsWith("file://")) {
             processProviderReference(key, true, mappedProviderOverrides, true);
           } else if (inspectProviderKey && /\{\{|\{%|\{#/.test(renderedProviderKey)) {
@@ -38622,6 +38630,7 @@ function extractFileDependencies(configPath) {
             nestedProviderOverrides,
             false,
             key === "id",
+            mappedHttpProviderContext,
             FILE_BEARING_PROVIDER_KEYS.has(key) || (parentKey === "response_format" || parentKey === "responseFormat") && (key === "schema" || key === "json_schema") || parentKey === "json_schema" && key === "schema",
             key,
             parentKey,

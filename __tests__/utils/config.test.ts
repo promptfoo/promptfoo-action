@@ -463,6 +463,57 @@ providers:
     ]);
   });
 
+  it('should extract HTTP auth and credential paths from targets', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: https://example.test
+    config:
+      auth:
+        type: file
+        path: ./auth/target-token.ts
+      signatureAuth:
+        privateKeyPath: ./credentials/target-key.pem
+      tls:
+        caPath: ./credentials/target-ca.pem
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([
+      'auth/target-token.ts',
+      'credentials/target-key.pem',
+      'credentials/target-ca.pem',
+    ]);
+  });
+
+  it('should ignore bare HTTP-only auth and credential paths on non-HTTP providers', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:chat:gpt-4
+    config:
+      auth:
+        type: file
+        path: ./auth/not-an-http-token.ts
+      signatureAuth:
+        privateKeyPath: ./credentials/not-an-http-key.pem
+      tls:
+        caPath: ./credentials/not-an-http-ca.pem
+  - openai:chat:gpt-4:
+      config:
+        auth:
+          type: file
+          path: ./auth/not-a-mapped-http-token.ts
+        tls:
+          caPath: ./credentials/not-a-mapped-http-ca.pem
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
   it('should extract an HTTP file-auth path when its auth type is templated', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
