@@ -36273,6 +36273,13 @@ var MAX_TRANSITIVE_CONFIG_BYTES = 1024 * 1024;
 var MAX_NESTED_CONFIG_VALUES = 1e5;
 var TRANSITIVE_CONFIG_EXTENSION = /\.(?:yaml|yml|json|jsonl|csv|xlsx|xls)(?:#[^\r\n]*)?$/i;
 var BINARY_TRANSITIVE_CONFIG_EXTENSION = /\.(?:xlsx|xls)(?:#[^\r\n]*)?$/i;
+function normalizeProviderEntries(providers) {
+  if (Array.isArray(providers)) return providers;
+  if (typeof providers === "string" || typeof providers === "object" && providers !== null) {
+    return [providers];
+  }
+  return [];
+}
 var TRANSITIVE_NESTED_EXTENSIONS = /* @__PURE__ */ new Set([
   "yaml",
   "yml",
@@ -36698,10 +36705,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       }
       const record = next.value;
       for (const providers of [record.providers, record.targets]) {
-        if (!Array.isArray(providers)) {
-          continue;
-        }
-        for (const entry of providers) {
+        for (const entry of normalizeProviderEntries(providers)) {
           if (typeof entry === "string") {
             nestedFileUrls.push(...normalizeProviderFileUrls(entry));
             continue;
@@ -36819,9 +36823,12 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
                 if ((partRecord.kind === "file" || containsEnvTemplate(partRecord.kind)) && typeof source === "object" && source !== null && (source.type === "path" || containsEnvTemplate(
                   source.type
                 )) && typeof source.path === "string") {
-                  nestedFilePaths.push(
-                    source.path
-                  );
+                  const sourcePath = source.path;
+                  if (sourcePath.startsWith("file://")) {
+                    nestedFileUrls.push(sourcePath);
+                  } else {
+                    nestedFilePaths.push(sourcePath);
+                  }
                 }
               }
             }
@@ -37153,20 +37160,14 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         dependencies.add(absolutePath);
       }
     };
-    if (config2.providers) {
-      for (const provider of config2.providers) {
-        if (typeof provider === "string") {
-          for (const fileUrl of normalizeProviderFileUrls(provider)) {
-            inspectTransitiveReference(fileUrl);
-            if (TRANSITIVE_CONFIG_EXTENSION.test(fileUrl.slice("file://".length))) {
-              throw new Error(
-                "External Promptfoo provider configs require a full evaluation"
-              );
-            }
-            processFileUrl(fileUrl);
-          }
-        } else if (typeof provider === "object" && provider !== null && typeof provider.id === "string") {
-          for (const fileUrl of normalizeProviderFileUrls(provider.id)) {
+    for (const providers of [config2.providers, config2.targets]) {
+      for (const provider of normalizeProviderEntries(providers)) {
+        if (typeof provider !== "string" && (typeof provider !== "object" || provider === null)) {
+          continue;
+        }
+        const providerIds = typeof provider === "string" ? [provider] : typeof provider.id === "string" ? [provider.id] : Object.keys(provider);
+        for (const providerId of providerIds) {
+          for (const fileUrl of normalizeProviderFileUrls(providerId)) {
             inspectTransitiveReference(fileUrl);
             if (TRANSITIVE_CONFIG_EXTENSION.test(fileUrl.slice("file://".length))) {
               throw new Error(
@@ -37233,8 +37234,9 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       processHookReference(mapped.transform);
     };
     for (const providers of [config2.providers, config2.targets]) {
-      if (!providers) continue;
-      for (const provider of providers) processProviderHooks(provider);
+      for (const provider of normalizeProviderEntries(providers)) {
+        processProviderHooks(provider);
+      }
     }
     const isPromptReference = (reference) => {
       if (!reference || reference.length > maxGlobPatternLength || reference.includes("\0")) {
@@ -38661,91 +38663,101 @@ function formatRepeatCommentMarkdown(summary2) {
 // src/main.ts
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
-var MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
 var PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
+var MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
+function invalidPromptGlobError() {
+  return new PromptfooActionError(
+    "Invalid prompt glob: the pattern could not be expanded safely.",
+    ErrorCodes.INVALID_CONFIGURATION,
+    "Use valid prompt glob patterns with bounded brace expansion."
+  );
+}
 function validatePromptGlob(pattern) {
-  const invalidGlob = () => {
-    throw new PromptfooActionError(
-      "Invalid prompt glob: the pattern could not be expanded safely.",
-      ErrorCodes.INVALID_CONFIGURATION,
-      "Use valid prompt glob patterns with bounded brace expansion."
-    );
-  };
   const hasControlCharacter = [...pattern].some((character) => {
     const code = character.charCodeAt(0);
     return code < 32 || code === 127;
   });
   if (pattern.length > MAX_PROMPT_GLOB_LENGTH || hasControlCharacter) {
-    invalidGlob();
+    throw invalidPromptGlobError();
   }
-  let braceStart = -1;
+  const braces = [];
   let escapedBraceClosers = 0;
+  let numericBraceExpansions = BigInt(1);
+  let commaBraceExpansions = BigInt(1);
+  let escaped = false;
   let inCharacterClass = false;
-  let braceExpansions = 1;
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
-    if (path7.sep === "/" && character === "\\") {
-      if (index + 1 >= pattern.length) {
-        invalidGlob();
-      }
-      if (pattern[index + 1] === "{") {
-        escapedBraceClosers++;
-      }
-      index++;
+    if (escaped) {
+      if (character === "{") escapedBraceClosers++;
+      if (character === "}" && escapedBraceClosers > 0) escapedBraceClosers--;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
       continue;
     }
     if (character === "[") {
       inCharacterClass = true;
       continue;
     }
-    if (inCharacterClass && character === "]") {
+    if (character === "]") {
       inCharacterClass = false;
       continue;
     }
     if (character === "{") {
-      if (braceStart !== -1) {
-        invalidGlob();
-      }
-      braceStart = index;
+      if (braces.length > 0) braces[braces.length - 1].nested = true;
+      braces.push({ start: index + 1, nested: false });
       continue;
     }
-    if (character !== "}") {
-      continue;
-    }
-    if (braceStart === -1) {
+    if (character !== "}") continue;
+    const brace = braces.pop();
+    if (!brace) {
       if (escapedBraceClosers > 0) {
         escapedBraceClosers--;
         continue;
       }
-      invalidGlob();
+      throw invalidPromptGlobError();
     }
-    const group = pattern.slice(braceStart + 1, index);
-    const range = group.split("..");
-    let expansionCount = group.split(",").length;
-    const hasNumericRange = range.length > 1 && range.some((entry) => /^-?\d/.test(entry));
-    if (hasNumericRange && !((range.length === 2 || range.length === 3) && range.every((entry) => /^-?\d+$/.test(entry)))) {
-      invalidGlob();
-    }
-    if ((range.length === 2 || range.length === 3) && range.every((entry) => /^-?\d+$/.test(entry))) {
-      const values = range.map(Number);
-      const [start, end, rawStep = 1] = values;
-      if (values.some((value) => !Number.isSafeInteger(value)) || rawStep === 0 || !Number.isSafeInteger(end - start)) {
-        invalidGlob();
+    if (brace.nested) continue;
+    const body = pattern.slice(brace.start, index);
+    if (!body.includes("..")) {
+      commaBraceExpansions *= BigInt(body.split(",").length);
+      if (commaBraceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
+        throw invalidPromptGlobError();
       }
-      expansionCount = Math.floor(Math.abs(end - start) / Math.abs(rawStep)) + 1;
-      const endpointWidth = Math.max(range[0].length, range[1].length);
-      if (expansionCount * endpointWidth > MAX_PROMPT_GLOB_LENGTH) {
-        invalidGlob();
-      }
+      continue;
     }
-    braceExpansions *= expansionCount;
-    if (braceExpansions > PROMPT_GLOB_BRACE_EXPANSION_LIMIT) {
-      invalidGlob();
+    const parts = body.split("..");
+    const numeric = parts.every((part) => /^-?\d+$/.test(part));
+    const numericLike = parts.some((part) => /^-?\d/.test(part));
+    if (!numeric) {
+      if (numericLike) throw invalidPromptGlobError();
+      continue;
     }
-    braceStart = -1;
+    if (parts.length !== 2 && parts.length !== 3) {
+      throw invalidPromptGlobError();
+    }
+    const values = parts.map((part) => Number(part));
+    if (values.some((value) => !Number.isSafeInteger(value))) {
+      throw invalidPromptGlobError();
+    }
+    const start = BigInt(parts[0]);
+    const end = BigInt(parts[1]);
+    const step = parts.length === 3 ? BigInt(parts[2]) : BigInt(1);
+    if (step === BigInt(0)) throw invalidPromptGlobError();
+    const distance = end >= start ? end - start : start - end;
+    const increment = step > BigInt(0) ? step : -step;
+    const count = distance / increment + BigInt(1);
+    numericBraceExpansions *= count;
+    const paddedWidth = Math.max(parts[0].length, parts[1].length);
+    if (numericBraceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) || count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)) {
+      throw invalidPromptGlobError();
+    }
   }
-  if (braceStart !== -1 || escapedBraceClosers > 0 || inCharacterClass) {
-    invalidGlob();
+  if (escaped || escapedBraceClosers > 0 || inCharacterClass || braces.length > 0) {
+    throw invalidPromptGlobError();
   }
 }
 function toRepositoryPath(filePath) {
@@ -39213,14 +39225,20 @@ async function run() {
     const changedFilesList = containsQuotedControlPath ? [] : changedFiles.split(changedFiles.includes("\0") ? "\0" : "\n").filter(Boolean);
     for (const globPattern of promptFilesGlobs) {
       validatePromptGlob(globPattern);
-      const matches = Ui(globPattern, {
-        cwd: workingDirectory,
-        nodir: true,
-        braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT
-      });
+      let matches;
+      try {
+        matches = Ui(globPattern, {
+          cwd: workingDirectory,
+          nodir: true,
+          braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT
+        });
+      } catch {
+        throw invalidPromptGlobError();
+      }
       for (const file of matches) {
+        const resolvedPromptPath = path7.resolve(workingDirectory, file);
         const repositoryFile = toRepositoryPath(
-          path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
+          path7.relative(workspaceRoot, resolvedPromptPath)
         );
         if (repositoryFile === configRepositoryPath) {
           continue;
@@ -39229,9 +39247,12 @@ async function run() {
           continue;
         }
         seenPromptFiles.add(repositoryFile);
-        allPromptFiles.push(file);
+        const promptFile = toRepositoryPath(
+          path7.relative(workingDirectory, resolvedPromptPath)
+        );
+        allPromptFiles.push(promptFile);
         if (changedFilesList.includes(repositoryFile)) {
-          changedPromptFiles.push(file);
+          changedPromptFiles.push(promptFile);
         }
       }
     }

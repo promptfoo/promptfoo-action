@@ -1185,6 +1185,68 @@ providers:
     ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
   });
 
+  it('tracks a file URL multipart upload dependency', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      multipart:',
+        '        parts:',
+        '          - kind: file',
+        '            source:',
+        '              type: path',
+        '              path: file://fixtures/sample-report45.pdf',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'fixtures/sample-report45.pdf',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it.each([
+    '  - file://targets.yaml',
+    '  - "file://targets.yaml": {}',
+  ])('fails closed for a transitive target provider config dependency (%s)', (target) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': `targets:\n${target}\n`,
+      '/test/working/targets.yaml': [
+        'id: https',
+        'config:',
+        '  transformResponse: file://parsers/response.js:parse',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it.each([
+    'providers',
+    'targets',
+  ])('tracks an HTTP transform from a singleton %s object', (key) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        `${key}:`,
+        '  id: https',
+        '  config:',
+        '    transformResponse: file://parsers/response.js:parse',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'parsers/response.js',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
   it('fails closed for an env expression that can emit a file URL but ignores ordinary filtered env text', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': [
@@ -1440,9 +1502,9 @@ providers:
     ).toEqual([
       'providers/build.py',
       'providers/build.go',
+      'providers/build.rb',
       'providers/build.JS:callApi',
       'providers/build.JS',
-      'providers/build.rb',
       'targets/build.js',
       ...implicitConfigDependencies('promptfooconfig.yaml'),
     ]);

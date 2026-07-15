@@ -26,8 +26,14 @@ export interface PromptfooConfig {
     envPath?: string | string[];
     [key: string]: unknown;
   };
-  providers?: Array<string | { id?: string; [key: string]: unknown }>;
-  targets?: Array<string | { id?: string; [key: string]: unknown }>;
+  providers?:
+    | string
+    | { id?: string; [key: string]: unknown }
+    | Array<string | { id?: string; [key: string]: unknown }>;
+  targets?:
+    | string
+    | { id?: string; [key: string]: unknown }
+    | Array<string | { id?: string; [key: string]: unknown }>;
   prompts?:
     | string
     | Record<string, string>
@@ -63,6 +69,19 @@ const MAX_NESTED_CONFIG_VALUES = 100_000;
 const TRANSITIVE_CONFIG_EXTENSION =
   /\.(?:yaml|yml|json|jsonl|csv|xlsx|xls)(?:#[^\r\n]*)?$/i;
 const BINARY_TRANSITIVE_CONFIG_EXTENSION = /\.(?:xlsx|xls)(?:#[^\r\n]*)?$/i;
+
+function normalizeProviderEntries(
+  providers: unknown,
+): Array<string | Record<string, unknown>> {
+  if (Array.isArray(providers)) return providers;
+  if (
+    typeof providers === 'string' ||
+    (typeof providers === 'object' && providers !== null)
+  ) {
+    return [providers as string | Record<string, unknown>];
+  }
+  return [];
+}
 const TRANSITIVE_NESTED_EXTENSIONS = new Set([
   'yaml',
   'yml',
@@ -675,10 +694,7 @@ export function extractFileDependencies(
 
       const record = next.value as Record<string, unknown>;
       for (const providers of [record.providers, record.targets]) {
-        if (!Array.isArray(providers)) {
-          continue;
-        }
-        for (const entry of providers) {
+        for (const entry of normalizeProviderEntries(providers)) {
           if (typeof entry === 'string') {
             nestedFileUrls.push(...normalizeProviderFileUrls(entry));
             continue;
@@ -836,9 +852,13 @@ export function extractFileDependencies(
                     )) &&
                   typeof (source as Record<string, unknown>).path === 'string'
                 ) {
-                  nestedFilePaths.push(
-                    (source as Record<string, unknown>).path as string,
-                  );
+                  const sourcePath = (source as Record<string, unknown>)
+                    .path as string;
+                  if (sourcePath.startsWith('file://')) {
+                    nestedFileUrls.push(sourcePath);
+                  } else {
+                    nestedFilePaths.push(sourcePath);
+                  }
                 }
               }
             }
@@ -1277,26 +1297,22 @@ export function extractFileDependencies(
     };
 
     // Extract provider files
-    if (config.providers) {
-      for (const provider of config.providers) {
-        if (typeof provider === 'string') {
-          for (const fileUrl of normalizeProviderFileUrls(provider)) {
-            inspectTransitiveReference(fileUrl);
-            if (
-              TRANSITIVE_CONFIG_EXTENSION.test(fileUrl.slice('file://'.length))
-            ) {
-              throw new Error(
-                'External Promptfoo provider configs require a full evaluation',
-              );
-            }
-            processFileUrl(fileUrl);
-          }
-        } else if (
-          typeof provider === 'object' &&
-          provider !== null &&
-          typeof provider.id === 'string'
+    for (const providers of [config.providers, config.targets]) {
+      for (const provider of normalizeProviderEntries(providers)) {
+        if (
+          typeof provider !== 'string' &&
+          (typeof provider !== 'object' || provider === null)
         ) {
-          for (const fileUrl of normalizeProviderFileUrls(provider.id)) {
+          continue;
+        }
+        const providerIds =
+          typeof provider === 'string'
+            ? [provider]
+            : typeof provider.id === 'string'
+              ? [provider.id]
+              : Object.keys(provider);
+        for (const providerId of providerIds) {
+          for (const fileUrl of normalizeProviderFileUrls(providerId)) {
             inspectTransitiveReference(fileUrl);
             if (
               TRANSITIVE_CONFIG_EXTENSION.test(fileUrl.slice('file://'.length))
@@ -1373,8 +1389,9 @@ export function extractFileDependencies(
     };
 
     for (const providers of [config.providers, config.targets]) {
-      if (!providers) continue;
-      for (const provider of providers) processProviderHooks(provider);
+      for (const provider of normalizeProviderEntries(providers)) {
+        processProviderHooks(provider);
+      }
     }
 
     const isPromptReference = (reference: string): boolean => {

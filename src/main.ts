@@ -777,8 +777,9 @@ export async function run(): Promise<void> {
         throw invalidPromptGlobError();
       }
       for (const file of matches) {
+        const resolvedPromptPath = path.resolve(workingDirectory, file);
         const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          path.relative(workspaceRoot, resolvedPromptPath),
         );
         if (repositoryFile === configRepositoryPath) {
           continue;
@@ -787,9 +788,12 @@ export async function run(): Promise<void> {
           continue;
         }
         seenPromptFiles.add(repositoryFile);
-        allPromptFiles.push(file);
+        const promptFile = toRepositoryPath(
+          path.relative(workingDirectory, resolvedPromptPath),
+        );
+        allPromptFiles.push(promptFile);
         if (changedFilesList.includes(repositoryFile)) {
-          changedPromptFiles.push(file);
+          changedPromptFiles.push(promptFile);
         }
       }
     }
