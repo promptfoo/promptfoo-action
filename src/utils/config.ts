@@ -16,6 +16,7 @@ import {
 import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import { isDirectory } from './fs';
+import { getGlobRangeError, normalizeGlobPattern } from './glob';
 
 type PromptEntry =
   | string
@@ -566,6 +567,19 @@ export function extractFileDependencies(
         core.warning(`Ignoring ${source}: pattern is too long`);
         return undefined;
       }
+      const rangeError = getGlobRangeError(globPath, MAX_BRACE_EXPANSIONS);
+      if (rangeError) {
+        hasUnboundedGlobDependencies = true;
+        warnUnsafeDependency(
+          'config dependency glob range',
+          `Skipping ${source} glob with ${
+            rangeError === 'invalid'
+              ? 'an invalid brace range'
+              : 'too many brace alternatives'
+          }; conservatively watching all repository changes`,
+        );
+        return undefined;
+      }
       try {
         return glob.hasMagic(globPath, globOptions);
       } catch {
@@ -644,7 +658,7 @@ export function extractFileDependencies(
       const filePath = normalizeConfigFilePath(
         selector?.pathWithoutSelector ?? rawFilePath,
       );
-      const globPath = filePath.replace(/\\/g, '/');
+      const globPath = normalizeGlobPattern(filePath);
       const hasGlobMagic = tryHasGlobMagic(globPath, 'config dependency');
       if (hasGlobMagic === undefined) return;
 
@@ -911,9 +925,8 @@ export function extractFileDependencies(
       const rawPath =
         getFileFunctionSelector(pathWithoutPrefix)?.pathWithoutSelector ??
         pathWithoutPrefix;
-      const normalizedPath = normalizeConfigFilePath(rawPath).replace(
-        /\\/g,
-        '/',
+      const normalizedPath = normalizeGlobPattern(
+        normalizeConfigFilePath(rawPath),
       );
       const isPromptGlob = tryHasGlobMagic(
         normalizedPath,
@@ -1842,7 +1855,7 @@ export function extractFileDependencies(
       return ['./'];
     }
 
-    // Convert absolute paths back to relative paths from working directory
+    // Convert absolute paths back to paths relative to the repository root.
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
       const repositoryPath = relativePath.split(path.sep).join('/');

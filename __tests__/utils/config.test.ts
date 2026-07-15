@@ -4039,6 +4039,82 @@ prompts:
     );
   });
 
+  it('should bound comma-only brace expansion before glob enumeration', () => {
+    const alternatives = Array.from({ length: 1025 }, (_, index) => index).join(
+      ',',
+    );
+    mockFs.readFileSync.mockReturnValue(
+      `providers: file://providers/{${alternatives}}.py`,
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        options?.magicalBraces === true && value.includes('{'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('too many brace alternatives'),
+    );
+  });
+
+  it.each([
+    [
+      'providers: file://providers/{1..1000000000}.py',
+      'too many brace alternatives',
+    ],
+    [
+      'providers: file://providers/[{1..5000000}].py',
+      'too many brace alternatives',
+    ],
+    [
+      String.raw`providers: 'file://providers/\\{1..5000000}.py'`,
+      'too many brace alternatives',
+    ],
+    ['tests:\n  - file://tests/{1..0..0}.yaml', 'an invalid brace range'],
+    [
+      `tests:\n  - file://tests/{${'0'.repeat(32_000)}1..1024}.yaml`,
+      'an invalid brace range',
+    ],
+    [
+      'prompts:\n  file://prompts/prompt_{1..1000000000}.txt: mapped prompts',
+      'too many brace alternatives',
+    ],
+  ])('should preflight unsafe dependency brace ranges before every glob sink', (configContent, warning) => {
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(expect.stringContaining(warning));
+  });
+
+  it('should preserve POSIX escaped brace and delimiter literals in config dependencies', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue(String.raw`
+providers:
+  - 'file://providers/\{1..1000000000\}.py'
+  - 'file://providers/\[literal\].py'
+  - 'file://providers/\(literal\).py'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      String.raw`providers/\{1..1000000000\}.py`,
+      String.raw`providers/\[literal\].py`,
+      String.raw`providers/\(literal\).py`,
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('brace range'),
+    );
+  });
+
   it('should preserve an explicitly mapped prompt directory after its last file is deleted', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:

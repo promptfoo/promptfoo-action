@@ -1336,6 +1336,26 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should fail closed before inspecting an unbounded dependency brace range', async () => {
+      const dependency = 'providers/{1..1000000000}.py';
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/deleted.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockGlob.hasMagic).not.toHaveBeenCalledWith(
+        dependency,
+        expect.any(Object),
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should run when dependency extraction conservatively watches the repository root', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers/dynamic-provider.py' },
@@ -1421,10 +1441,134 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should cap prompt-glob brace expansion during enumeration', async () => {
+      withInputs({ prompts: 'prompts/{first,second}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/first.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/{first,second}.txt',
+        expect.objectContaining({
+          cwd: process.cwd(),
+          nodir: true,
+          braceExpandMax: 1024,
+        }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      [
+        `prompts/${'x'.repeat(65_537)}.txt`,
+        'Prompt glob pattern is invalid or too large',
+      ],
+      [
+        'prompts/{first,second.txt',
+        'Prompt glob pattern is invalid or too large',
+      ],
+      ['prompts/{1..0..0}.txt', 'Prompt glob pattern is invalid or too large'],
+      ['prompts/{a..z..0}.txt', 'Prompt glob pattern is invalid or too large'],
+      [
+        'prompts/{000000000000000001..2}.txt',
+        'Prompt glob pattern is invalid or too large',
+      ],
+      [
+        `prompts/{${'0'.repeat(32_000)}1..1024}.txt`,
+        'Prompt glob pattern is invalid or too large',
+      ],
+      [
+        '{prompts),../outside}/*.txt',
+        'Prompt glob pattern is invalid or too large',
+      ],
+      ['prompts/[first.txt', 'Prompt glob pattern is invalid or too large'],
+      ['prompts/first\0.txt', 'Prompt glob pattern is invalid or too large'],
+      [
+        'prompts/{1..1025}.txt',
+        'Prompt glob pattern has too many brace alternatives',
+      ],
+      [
+        'prompts/{1..1000000000}.txt',
+        'Prompt glob pattern has too many brace alternatives',
+      ],
+      [
+        'prompts/[{1..5000000}].txt',
+        'Prompt glob pattern has too many brace alternatives',
+      ],
+      [
+        String.raw`prompts/\\{1..5000000}.txt`,
+        'Prompt glob pattern has too many brace alternatives',
+      ],
+      [
+        `prompts/{${Array.from({ length: 1025 }, (_, index) => index).join(',')}}.txt`,
+        'Prompt glob pattern has too many brace alternatives',
+      ],
+      [
+        '{prompts,../outside}/*.txt',
+        'Prompt glob patterns must stay within the repository working directory',
+      ],
+      [
+        'C:\\outside\\*.txt',
+        'Prompt glob patterns must stay within the repository working directory',
+      ],
+    ])('should reject an unsafe prompt glob before enumeration', async (prompts, expectedError) => {
+      withInputs({ prompts });
+
+      await run();
+
+      expect(
+        mockCore.setFailed,
+        `unexpected result for ${JSON.stringify(prompts.slice(0, 80))}`,
+      ).toHaveBeenCalledWith(`Error: ${expectedError}`);
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/{1..100000..1000}.txt',
+      'prompts/[{}]*.txt',
+      String.raw`prompts/\{1..1000000000\}.txt`,
+    ])('should accept a bounded prompt glob before enumeration', async (prompts) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/first.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should ignore an escaping prompt glob match returned during enumeration', async () => {
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        '../outside/leaked.txt',
+        'prompts/safe.txt',
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/safe.txt');
+      expect(args).not.toContain('../outside/leaked.txt');
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+      );
+    });
+
     test.each([
       ['', '../secrets/*.txt', '../secrets/token.txt'],
       ['evals', '../prompts/*.txt', '../prompts/outside-working.txt'],
-    ])('should not pass prompt matches outside the configured roots during a config-triggered evaluation', async (workingDirectory, promptGlob, escapedPrompt) => {
+    ])('should reject prompt globs outside the configured roots during a config-triggered evaluation', async (workingDirectory, promptGlob, _escapedPrompt) => {
       withInputs({
         prompts: promptGlob,
         'working-directory': workingDirectory,
@@ -1436,13 +1580,13 @@ describe('GitHub Action Main', () => {
             : 'promptfooconfig.yaml',
         },
       ]);
-      mockGlob.sync.mockReturnValue([escapedPrompt, 'prompts/safe.txt']);
-
       await run();
 
-      const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args).toContain('prompts/safe.txt');
-      expect(args).not.toContain(escapedPrompt);
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt glob patterns must stay within the repository working directory',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should not pass an escaping prompt symlink during a dependency-triggered evaluation', async () => {

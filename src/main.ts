@@ -4,6 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -22,6 +23,11 @@ import {
 } from './utils/errors';
 import { isDirectory } from './utils/fs';
 import {
+  getGlobRangeError,
+  hasBalancedGlobDelimiters,
+  normalizeGlobPattern,
+} from './utils/glob';
+import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
 } from './utils/inputs';
@@ -34,6 +40,7 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const MAX_DEPENDENCY_GLOB_PATTERN_LENGTH = 65_536;
+const MAX_PROMPT_BRACE_EXPANSIONS = 1024;
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
@@ -492,9 +499,52 @@ export async function run(): Promise<void> {
     const physicalWorkingDirectory = fs.realpathSync(workingDirectory);
 
     for (const globPattern of promptFilesGlobs) {
+      if (
+        globPattern.length > MAX_DEPENDENCY_GLOB_PATTERN_LENGTH ||
+        globPattern.includes('\0') ||
+        !hasBalancedGlobDelimiters(globPattern)
+      ) {
+        throw new Error('Prompt glob pattern is invalid or too large');
+      }
+      const rangeError = getGlobRangeError(
+        globPattern,
+        MAX_PROMPT_BRACE_EXPANSIONS,
+      );
+      if (rangeError === 'invalid') {
+        throw new Error('Prompt glob pattern is invalid or too large');
+      }
+      if (rangeError === 'too-many') {
+        throw new Error('Prompt glob pattern has too many brace alternatives');
+      }
+
+      const expandedPatterns = braceExpand(normalizeGlobPattern(globPattern), {
+        braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
+      });
+      if (expandedPatterns.length > MAX_PROMPT_BRACE_EXPANSIONS) {
+        throw new Error('Prompt glob pattern has too many brace alternatives');
+      }
+      if (
+        expandedPatterns.some((expandedPattern) => {
+          if (/^(?:[A-Za-z]:\/|\/\/)/.test(expandedPattern)) return true;
+          const absolutePattern = path.resolve(
+            workingDirectory,
+            expandedPattern,
+          );
+          return (
+            !isPathInside(workingDirectory, absolutePattern) ||
+            !isPathInside(workspaceRoot, absolutePattern)
+          );
+        })
+      ) {
+        throw new Error(
+          'Prompt glob patterns must stay within the repository working directory',
+        );
+      }
+
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,
+        braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
       });
       const allMatches = matches.filter((file) => {
         const absoluteFile = path.resolve(workingDirectory, file);
@@ -569,6 +619,13 @@ export async function run(): Promise<void> {
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
           if (dep === '.' || dep === './' || dep === '' || dep === '/') {
+            return true;
+          }
+
+          if (getGlobRangeError(dep, MAX_PROMPT_BRACE_EXPANSIONS)) {
+            core.warning(
+              'Config dependency glob contains an invalid or unbounded brace range; conservatively running evaluation.',
+            );
             return true;
           }
 
