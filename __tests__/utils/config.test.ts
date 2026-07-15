@@ -44,7 +44,9 @@ describe('extractFileDependencies', () => {
     mockFs.realpathSync.mockImplementation((filePath: string) => filePath);
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
     delete process.env.PROVIDER_PATH;
+    delete process.env.PROVIDER_FILE;
     delete process.env.PROVIDER_TOOLS_PATH;
+    delete process.env.MISSING_PROVIDER;
   });
 
   it('should extract file:// providers', () => {
@@ -244,6 +246,37 @@ targets: file://targets/custom.py:call_api
     expect(deps).toEqual(['providers/custom.py']);
   });
 
+  it('should prefer top-level config env for templated provider paths', () => {
+    process.env.PROVIDER_PATH = '../providers/old.py:call_api';
+    process.env.PROVIDER_FILE = 'current.py:call_api';
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROVIDER_PATH: ../providers/{{ env.PROVIDER_FILE }}
+  IGNORED_NUMBER: 7
+providers: "file://{{ env.PROVIDER_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/current.py']);
+  });
+
+  it('should conservatively watch unresolved templates in config env', () => {
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROVIDER_PATH: ../providers/{{ env.MISSING_PROVIDER }}
+providers: "file://{{ env.PROVIDER_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
   it('should resolve env-templated nested provider dependencies', () => {
     process.env.PROVIDER_TOOLS_PATH = '../shared/tools.js:getTools';
     mockFs.readFileSync.mockImplementation((filePath: string) =>
@@ -257,6 +290,24 @@ targets: file://targets/custom.py:call_api
     );
 
     expect(deps).toEqual(['evals/providers.yaml', 'shared/tools.js']);
+  });
+
+  it('should prefer provider env for templated nested dependencies', () => {
+    process.env.PROVIDER_TOOLS_PATH = '../tools/old.ts:getTools';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    env:
+      PROVIDER_TOOLS_PATH: ../tools/current.ts:getTools
+    config:
+      tools: "file://{{ env.PROVIDER_TOOLS_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['tools/current.ts']);
   });
 
   it('should distinguish callable nested JavaScript from literal Ruby paths', () => {
@@ -412,6 +463,22 @@ providers:
     ]);
   });
 
+  it('should use provider-map env for templated provider keys', () => {
+    process.env.PROVIDER_PATH = '../providers/old.py:call_api';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "file://{{ env.PROVIDER_PATH }}":
+      env:
+        PROVIDER_PATH: ../providers/current.py:call_api
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/current.py']);
+  });
+
   it('should ignore unsafe nested references in a provider config file', () => {
     mockFs.readFileSync.mockImplementation((filePath: string) =>
       filePath.endsWith('promptfooconfig.yaml')
@@ -455,6 +522,32 @@ providers:
     ).toBe(false);
   });
 
+  it('should not expand a provider glob through an escaping symlink ancestor', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://linked-root/**/*.yaml',
+    );
+    mockFs.realpathSync.mockImplementation((filePath: string) => {
+      if (filePath.includes('*')) {
+        throw Object.assign(new Error('missing glob path'), { code: 'ENOENT' });
+      }
+      if (filePath.endsWith('linked-root')) {
+        return '/private/outside-root';
+      }
+      return filePath;
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/private/outside-root/secret.yaml']);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it('should retain missing provider files when realpath reports ENOENT', () => {
     mockFs.readFileSync.mockReturnValue(
       'providers: file://providers/deleted.py:call_api',
@@ -466,6 +559,56 @@ providers:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/providers/deleted.py']);
+  });
+
+  it('should validate the parent when realpath reports ENOTDIR', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://providers/deleted.py:call_api',
+    );
+    mockFs.realpathSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('deleted.py')) {
+        throw Object.assign(new Error('missing'), { code: 'ENOTDIR' });
+      }
+      return filePath;
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/deleted.py']);
+  });
+
+  it('should stop safely when no provider-path ancestor can be resolved', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://providers/deleted.py:call_api',
+    );
+    let rootValidated = false;
+    mockFs.realpathSync.mockImplementation((filePath: string) => {
+      if (filePath === '/test/config' && !rootValidated) {
+        rootValidated = true;
+        return filePath;
+      }
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/deleted.py']);
+  });
+
+  it('should stop safely when a provider-path ancestor is inaccessible', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://providers/private.py',
+    );
+    mockFs.realpathSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('private.py')) {
+        throw Object.assign(new Error('access denied'), { code: 'EACCES' });
+      }
+      return filePath;
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/private.py']);
   });
 
   it('should ignore provider files when realpath cannot validate containment', () => {

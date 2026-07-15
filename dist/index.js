@@ -36541,11 +36541,24 @@ function extractFileDependencies(configPath) {
       }
       try {
         const realRoot = fs6.realpathSync(dependencyRoot);
-        const realPath = fs6.realpathSync(absolutePath);
-        return isPathInside(realRoot, realPath);
-      } catch (error2) {
-        const code = error2.code;
-        return code === "ENOENT" || code === "ENOTDIR";
+        let existingPath = absolutePath;
+        while (true) {
+          try {
+            return isPathInside(realRoot, fs6.realpathSync(existingPath));
+          } catch (error2) {
+            const code = error2.code;
+            if (code !== "ENOENT" && code !== "ENOTDIR") {
+              return false;
+            }
+            const parentPath = path5.dirname(existingPath);
+            if (parentPath === existingPath) {
+              return false;
+            }
+            existingPath = parentPath;
+          }
+        }
+      } catch {
+        return false;
       }
     };
     const resolveConfigDependency = (filePath, source, displayPath = filePath) => {
@@ -36581,7 +36594,7 @@ function extractFileDependencies(configPath) {
         displayPath
       );
       if (!absolutePath) {
-        return [];
+        return void 0;
       }
       const resolvedPaths = [];
       if (le(filePath)) {
@@ -36624,7 +36637,24 @@ function extractFileDependencies(configPath) {
     };
     const visitedProviderConfigs = /* @__PURE__ */ new Set();
     const visitedProviderValues = /* @__PURE__ */ new WeakSet();
-    const processProviderValue = (value, nestedReference = false) => {
+    const envTemplatePattern = /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+    const withEnvOverrides = (baseEnv, overrides) => {
+      if (typeof overrides !== "object" || overrides === null || Array.isArray(overrides)) {
+        return baseEnv;
+      }
+      const mergedEnv = { ...baseEnv };
+      for (const [key, value] of Object.entries(overrides)) {
+        if (typeof value === "string") {
+          mergedEnv[key] = value.replace(
+            envTemplatePattern,
+            (template, envKey) => baseEnv[envKey] ?? template
+          );
+        }
+      }
+      return mergedEnv;
+    };
+    const configEnv = withEnvOverrides(process.env, config2.env);
+    const processProviderValue = (value, nestedReference = false, activeEnv = configEnv) => {
       if (typeof value === "string") {
         if (!value.startsWith("file://")) {
           return;
@@ -36632,9 +36662,9 @@ function extractFileDependencies(configPath) {
         const rawProviderPath = value.slice("file://".length);
         let unresolvedTemplate = false;
         const providerPath = rawProviderPath.replace(
-          /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g,
+          envTemplatePattern,
           (template, key) => {
-            const envValue = process.env[key];
+            const envValue = activeEnv[key];
             if (envValue === void 0) {
               unresolvedTemplate = true;
               return template;
@@ -36659,11 +36689,18 @@ function extractFileDependencies(configPath) {
           selector
         );
         const cleanPath = selectorIndex > 1 && executablePattern.test(candidatePath) && isValidSelector ? candidatePath : providerPath;
-        const resolvedPaths = processFileUrl(`file://${cleanPath}`, value);
-        if (resolvedPaths.length === 0 && cleanPath && !cleanPath.includes("\0") && !le(cleanPath)) {
-          const lexicalPath = path5.resolve(configDir, cleanPath);
-          if (isPathInside(dependencyRoot, lexicalPath)) {
-            dependencies.add(lexicalPath);
+        const processedPaths = processFileUrl(`file://${cleanPath}`, value);
+        const resolvedPaths = processedPaths ?? [];
+        if (resolvedPaths.length === 0 && cleanPath) {
+          if (!processedPaths && le(cleanPath)) {
+            dependencies.add(
+              `${dependencyRoot.replace(/[\\/]+$/, "")}${path5.sep}`
+            );
+          } else if (!le(cleanPath) && !cleanPath.includes("\0")) {
+            const lexicalPath = path5.resolve(configDir, cleanPath);
+            if (isPathInside(dependencyRoot, lexicalPath)) {
+              dependencies.add(lexicalPath);
+            }
           }
         }
         for (const absolutePath of resolvedPaths) {
@@ -36678,7 +36715,7 @@ function extractFileDependencies(configPath) {
                 schema: CORE_SCHEMA.withTags(mergeTag)
               }
             );
-            processProviderValue(providerConfig, nestedReference);
+            processProviderValue(providerConfig, nestedReference, activeEnv);
           } catch {
             warning(
               `Failed to extract nested provider dependencies from "${rawProviderPath}"; tracking the provider config file only`
@@ -36696,15 +36733,24 @@ function extractFileDependencies(configPath) {
       visitedProviderValues.add(value);
       if (Array.isArray(value)) {
         for (const entry of value) {
-          processProviderValue(entry, nestedReference);
+          processProviderValue(entry, nestedReference, activeEnv);
         }
         return;
       }
+      const providerEnv = withEnvOverrides(
+        activeEnv,
+        "env" in value ? value.env : void 0
+      );
       for (const [key, nestedValue] of Object.entries(value)) {
         if (key.startsWith("file://")) {
-          processProviderValue(key, nestedReference);
+          const mappedProviderEnv = typeof nestedValue === "object" && nestedValue !== null && "env" in nestedValue ? withEnvOverrides(providerEnv, nestedValue.env) : providerEnv;
+          processProviderValue(key, nestedReference, mappedProviderEnv);
         }
-        processProviderValue(nestedValue, nestedReference || key !== "id");
+        processProviderValue(
+          nestedValue,
+          nestedReference || key !== "id",
+          providerEnv
+        );
       }
     };
     processProviderValue(config2.providers);
