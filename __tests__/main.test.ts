@@ -4,7 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
-import { minimatch } from 'minimatch';
+import { Minimatch, minimatch } from 'minimatch';
 import {
   afterEach,
   beforeEach,
@@ -1396,6 +1396,40 @@ describe('GitHub Action Main', () => {
       expect(mockGlob.sync).toHaveBeenCalled();
     });
 
+    test('should log normalized deduplicated prompts when workflow_dispatch has no changed-file information', async () => {
+      const absolutePattern = path.join(process.cwd(), 'prompts/*.txt');
+      const absolutePrompt = path.join(process.cwd(), 'prompts/shared.txt');
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      withInputs({ prompts: `${absolutePattern}\nprompts/*.txt` });
+      mockGitInterface.diff.mockResolvedValueOnce('');
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === absolutePattern
+          ? [absolutePrompt]
+          : pattern === 'prompts/*.txt'
+            ? ['prompts/shared.txt']
+            : [],
+      );
+
+      await run();
+
+      const processingLog = mockCore.info.mock.calls
+        .flat()
+        .find((line) =>
+          line.startsWith('Processing all matching prompt files:'),
+        );
+      expect(processingLog).toBe(
+        'Processing all matching prompt files: ["prompts/shared.txt"]',
+      );
+      expect(processingLog).not.toContain(absolutePrompt);
+    });
+
     test('should prioritize action inputs over workflow inputs', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -1548,7 +1582,7 @@ describe('GitHub Action Main', () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data/*.yaml']);
-      mockMinimatch.mockImplementationOnce(() => {
+      vi.spyOn(Minimatch.prototype, 'match').mockImplementationOnce(() => {
         throw new Error('invalid pattern\n::error::MATCHER_CANARY_019F62C3');
       });
 
@@ -1565,6 +1599,79 @@ describe('GitHub Action Main', () => {
       );
       expect(mockExec.exec).toHaveBeenCalled();
       expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should compile a bounded config dependency matcher once for 3000 changed files', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        Array.from(
+          { length: 3000 },
+          (_, index) => `M\0docs/file-${index}.md\0`,
+        ).join(''),
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        `${'{a,b}'.repeat(10)}/cases/*.yaml`,
+      ]);
+      mockMinimatch.mockReturnValue(false);
+      const make = vi.spyOn(Minimatch.prototype, 'make');
+
+      await run();
+
+      expect(mockMinimatch).not.toHaveBeenCalled();
+      expect(make).toHaveBeenCalledTimes(1);
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an unsafe config dependency matcher before compilation', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'data/[{1..5000000}].yaml',
+      ]);
+      const make = vi.spyOn(Minimatch.prototype, 'make');
+
+      await run();
+
+      expect(mockMinimatch).not.toHaveBeenCalled();
+      expect(make).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Skipping config dependency glob matching because the pattern exceeds the maximum expansion size',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should fail closed when a config dependency matcher exceeds the brace cap', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        `${'{a,b}'.repeat(11)}/cases/*.yaml`,
+      ]);
+      const make = vi.spyOn(Minimatch.prototype, 'make');
+
+      await run();
+
+      expect(make).toHaveBeenCalledTimes(1);
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Skipping config dependency glob matching because the pattern exceeds the maximum expansion size',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should trim CRLF workflow file entries when matching dependencies', async () => {

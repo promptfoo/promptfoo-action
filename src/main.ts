@@ -4,7 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { minimatch } from 'minimatch';
+import { Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -632,16 +632,35 @@ export async function run(): Promise<void> {
               'Skipping config dependency glob matching because the pattern exceeds the maximum length',
             );
             globMatchFailed = true;
+          } else if (
+            !isSafeGlobPattern(
+              dep,
+              MAX_GLOB_PATTERN_LENGTH,
+              MAX_GLOB_BRACE_EXPANSIONS,
+              true,
+            )
+          ) {
+            core.warning(
+              'Skipping config dependency glob matching because the pattern exceeds the maximum expansion size',
+            );
+            globMatchFailed = true;
           } else {
             try {
-              if (
+              const matcher = new Minimatch(dep, {
+                dot: true,
+                windowsPathsNoEscape: true,
+                magicalBraces: true,
+                braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
+                platform: 'linux',
+              });
+              if (matcher.set.length >= MAX_GLOB_BRACE_EXPANSIONS) {
+                core.warning(
+                  'Skipping config dependency glob matching because the pattern exceeds the maximum expansion size',
+                );
+                globMatchFailed = true;
+              } else if (
                 changedFilesList.some((changedFile) =>
-                  minimatch(changedFile, dep, {
-                    dot: true,
-                    windowsPathsNoEscape: true,
-                    magicalBraces: true,
-                    braceExpandMax: 1025,
-                  }),
+                  matcher.match(changedFile),
                 )
               ) {
                 return true;
@@ -732,7 +751,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`,
       );
     }
 
