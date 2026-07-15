@@ -41174,7 +41174,7 @@ async function run() {
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        changedFiles = filesInput.split("\n").filter(Boolean);
+        changedFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter(Boolean);
         info(`Using manually specified files: ${filesInput}`);
       } else {
         validateGitRevision(compareBase);
