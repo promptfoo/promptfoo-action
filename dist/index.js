@@ -36391,7 +36391,7 @@ function extractFileDependencies(configPath) {
     };
     const visitedProviderConfigs = /* @__PURE__ */ new Set();
     const visitedProviderValues = /* @__PURE__ */ new WeakSet();
-    const processProviderValue = (value) => {
+    const processProviderValue = (value, nestedReference = false) => {
       if (typeof value === "string") {
         if (!value.startsWith("file://")) {
           return;
@@ -36418,8 +36418,14 @@ function extractFileDependencies(configPath) {
         const selectorIndex = providerPath.lastIndexOf(":");
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
-        const selectorPattern = /\.rb$/i.test(candidatePath) ? /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[!?]?$/ : /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
-        const cleanPath = selectorIndex > 1 && /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(candidatePath) && selectorPattern.test(selector) ? candidatePath : providerPath;
+        const executablePattern = nestedReference ? /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i : /\.(?:py|go|rb)$/i;
+        const isJavascriptReference = /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(
+          candidatePath
+        );
+        const isValidSelector = /\.go$/i.test(candidatePath) ? /^(?:call_api|CallApi)$/.test(selector) : nestedReference && isJavascriptReference ? selector.length > 0 && !/[\\/:\0]/.test(selector) : /^[\p{L}_$][\p{L}\p{N}_$]*(?:\.[\p{L}_$][\p{L}\p{N}_$]*)*[!?]?$/u.test(
+          selector
+        );
+        const cleanPath = selectorIndex > 1 && executablePattern.test(candidatePath) && isValidSelector ? candidatePath : providerPath;
         const resolvedPaths = processFileUrl(`file://${cleanPath}`, value);
         if (resolvedPaths.length === 0 && cleanPath && !cleanPath.includes("\0") && !le(cleanPath)) {
           const lexicalPath = path5.resolve(configDir, cleanPath);
@@ -36439,7 +36445,7 @@ function extractFileDependencies(configPath) {
                 schema: CORE_SCHEMA.withTags(mergeTag)
               }
             );
-            processProviderValue(providerConfig);
+            processProviderValue(providerConfig, nestedReference);
           } catch {
             warning(
               `Failed to extract nested provider dependencies from "${rawProviderPath}"; tracking the provider config file only`
@@ -36457,15 +36463,15 @@ function extractFileDependencies(configPath) {
       visitedProviderValues.add(value);
       if (Array.isArray(value)) {
         for (const entry of value) {
-          processProviderValue(entry);
+          processProviderValue(entry, nestedReference);
         }
         return;
       }
       for (const [key, nestedValue] of Object.entries(value)) {
         if (key.startsWith("file://")) {
-          processProviderValue(key);
+          processProviderValue(key, nestedReference);
         }
-        processProviderValue(nestedValue);
+        processProviderValue(nestedValue, nestedReference || key !== "id");
       }
     };
     processProviderValue(config2.providers);

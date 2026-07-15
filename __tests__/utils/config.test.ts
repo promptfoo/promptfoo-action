@@ -85,7 +85,7 @@ providers: file://providers/custom.py:call_api
     expect(deps).toEqual(['../config/providers/custom.py']);
   });
 
-  it('should strip a function selector from an object file provider', () => {
+  it('should preserve an unsupported top-level TypeScript provider selector', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - id: file://providers/custom.ts:callApi
@@ -93,7 +93,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.ts']);
+    expect(deps).toEqual(['../config/providers/custom.ts:callApi']);
   });
 
   it('should strip function selectors from Go and Ruby file providers', () => {
@@ -109,6 +109,16 @@ providers:
       '../config/providers/main.go',
       '../config/providers/provider.rb',
     ]);
+  });
+
+  it('should preserve an unsupported Go provider selector', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://providers/main.go:generate',
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/main.go:generate']);
   });
 
   it('should preserve an absolute in-workspace file provider path', () => {
@@ -151,6 +161,16 @@ providers:
       '../config/providers/custom.rb',
       '../config/providers/other.rb',
     ]);
+  });
+
+  it('should strip a Unicode Python provider method selector', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: "file://providers/custom.py:café"',
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/custom.py']);
   });
 
   it('should preserve an invalid provider function selector as part of the path', () => {
@@ -237,6 +257,26 @@ targets: file://targets/custom.py:call_api
     );
 
     expect(deps).toEqual(['evals/providers.yaml', 'shared/tools.js']);
+  });
+
+  it('should distinguish callable nested JavaScript from literal Ruby paths', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'providers: file://providers.yaml'
+        : `
+config:
+  tools: file://shared/tools.cjs:get-tools
+  template: file://templates/context.rb:prod
+`,
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers.yaml',
+      '../config/shared/tools.cjs',
+      '../config/templates/context.rb:prod',
+    ]);
   });
 
   it('should reject unsafe env-templated provider paths without leaking values', () => {

@@ -174,7 +174,10 @@ export function extractFileDependencies(configPath: string): string[] {
     // Extract provider files
     const visitedProviderConfigs = new Set<string>();
     const visitedProviderValues = new WeakSet<object>();
-    const processProviderValue = (value: unknown): void => {
+    const processProviderValue = (
+      value: unknown,
+      nestedReference: boolean = false,
+    ): void => {
       if (typeof value === 'string') {
         if (!value.startsWith('file://')) {
           return;
@@ -203,13 +206,23 @@ export function extractFileDependencies(configPath: string): string[] {
         const selectorIndex = providerPath.lastIndexOf(':');
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
-        const selectorPattern = /\.rb$/i.test(candidatePath)
-          ? /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[!?]?$/
-          : /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
+        const executablePattern = nestedReference
+          ? /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i
+          : /\.(?:py|go|rb)$/i;
+        const isJavascriptReference = /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(
+          candidatePath,
+        );
+        const isValidSelector = /\.go$/i.test(candidatePath)
+          ? /^(?:call_api|CallApi)$/.test(selector)
+          : nestedReference && isJavascriptReference
+            ? selector.length > 0 && !/[\\/:\0]/.test(selector)
+            : /^[\p{L}_$][\p{L}\p{N}_$]*(?:\.[\p{L}_$][\p{L}\p{N}_$]*)*[!?]?$/u.test(
+                selector,
+              );
         const cleanPath =
           selectorIndex > 1 &&
-          /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(candidatePath) &&
-          selectorPattern.test(selector)
+          executablePattern.test(candidatePath) &&
+          isValidSelector
             ? candidatePath
             : providerPath;
 
@@ -242,7 +255,7 @@ export function extractFileDependencies(configPath: string): string[] {
                 schema: CORE_SCHEMA.withTags(mergeTag),
               },
             );
-            processProviderValue(providerConfig);
+            processProviderValue(providerConfig, nestedReference);
           } catch {
             core.warning(
               `Failed to extract nested provider dependencies from "${rawProviderPath}"; tracking the provider config file only`,
@@ -263,16 +276,16 @@ export function extractFileDependencies(configPath: string): string[] {
 
       if (Array.isArray(value)) {
         for (const entry of value) {
-          processProviderValue(entry);
+          processProviderValue(entry, nestedReference);
         }
         return;
       }
 
       for (const [key, nestedValue] of Object.entries(value)) {
         if (key.startsWith('file://')) {
-          processProviderValue(key);
+          processProviderValue(key, nestedReference);
         }
-        processProviderValue(nestedValue);
+        processProviderValue(nestedValue, nestedReference || key !== 'id');
       }
     };
 
