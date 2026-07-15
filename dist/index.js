@@ -38689,7 +38689,10 @@ function extractFileDependencies(configPath) {
       try {
         return le(filePath, globOptions);
       } catch {
-        warning("Skipping invalid config dependency glob pattern");
+        addDependencyRootWatchers();
+        warning(
+          "Skipping invalid config dependency glob pattern; conservatively watching the dependency root"
+        );
         return void 0;
       }
     };
@@ -38737,7 +38740,10 @@ function extractFileDependencies(configPath) {
             braceExpandMax: MAX_BRACE_EXPANSIONS + 1
           });
         } catch {
-          warning("Skipping invalid config dependency glob pattern");
+          addDependencyRootWatchers();
+          warning(
+            "Skipping invalid config dependency glob pattern; conservatively watching the dependency root"
+          );
           return [];
         }
         if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
@@ -38821,7 +38827,10 @@ function extractFileDependencies(configPath) {
             braceExpandMax: MAX_BRACE_EXPANSIONS
           });
         } catch {
-          warning("Skipping invalid config dependency glob pattern");
+          addDependencyRootWatchers();
+          warning(
+            "Skipping invalid config dependency glob pattern; conservatively watching the dependency root"
+          );
           return [];
         }
         const safeMatches = [];
@@ -40133,6 +40142,8 @@ async function run() {
       }
     };
     const changedFilesList = changedFiles.split("\0").filter((file) => file);
+    let realPromptWorkspaceRoot;
+    let realPromptWorkingDirectory;
     for (const globPattern of promptFilesGlobs) {
       if (globPattern.length > MAX_GLOB_PATTERN_LENGTH2 || globPattern.includes("\0") || !hasBalancedGlobDelimiters(globPattern, process.platform === "win32")) {
         throw new Error("Prompt glob pattern is invalid or too large");
@@ -40175,17 +40186,15 @@ async function run() {
             "Prompt file paths must stay within the repository working directory"
           );
         }
-        let realWorkspaceRoot;
-        let realWorkingDirectory;
         let realFile;
         try {
-          realWorkspaceRoot = fs7.realpathSync(workspaceRoot);
-          realWorkingDirectory = fs7.realpathSync(workingDirectory);
+          realPromptWorkspaceRoot ??= fs7.realpathSync(workspaceRoot);
+          realPromptWorkingDirectory ??= fs7.realpathSync(workingDirectory);
           realFile = fs7.realpathSync(absoluteFile);
         } catch {
           throw new Error("Prompt file path cannot be verified safely");
         }
-        if (!isPathInside2(realWorkingDirectory, realFile) || !isPathInside2(realWorkspaceRoot, realFile)) {
+        if (!isPathInside2(realPromptWorkingDirectory, realFile) || !isPathInside2(realPromptWorkspaceRoot, realFile)) {
           throw new Error(
             "Prompt file resolves outside the repository working directory"
           );
@@ -40279,7 +40288,7 @@ async function run() {
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`
+        useConfigPrompts ? "Processing prompts defined in the Promptfoo config." : `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`
       );
     }
     startGroup("Setting up cache");
@@ -40508,7 +40517,7 @@ async function run() {
         ["Success", output.results.stats.successes.toString()],
         ["Failure", output.results.stats.failures.toString()]
       ]);
-      if (evaluationPromptFiles.length > 0) {
+      if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
         summary2.addList(evaluationPromptFiles);
       }
