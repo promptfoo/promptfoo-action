@@ -553,6 +553,30 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      'prompts/{1..1001}/**/*.txt',
+      `prompts${'/**/..'.repeat(10)}/**/*.txt`,
+    ])('should not let a capped prompt glob mask a rename-out for %s', async (prompts) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archive/new.txt',
+          previous_filename: 'prompts/old.txt',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test.each([
       'darwin',
       'win32',
     ])('should detect a removed prompt with case differences on %s', async (platform) => {

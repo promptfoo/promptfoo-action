@@ -258,6 +258,7 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    let promptGlobMatchingCapped = false;
     const matchesPromptGlob = (repositoryFile?: string): boolean => {
       if (!repositoryFile) {
         return false;
@@ -284,6 +285,7 @@ export async function run(): Promise<void> {
           if (traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS) {
             // A conservative match avoids exponential traversal work while
             // still ensuring a deleted prompt cannot be skipped.
+            promptGlobMatchingCapped = true;
             return true;
           }
 
@@ -301,6 +303,7 @@ export async function run(): Promise<void> {
               traversalPatterns.length + parentCount + 1 >
               MAX_PROMPT_GLOB_VARIANTS
             ) {
+              promptGlobMatchingCapped = true;
               return true;
             }
 
@@ -342,7 +345,7 @@ export async function run(): Promise<void> {
             matchesPromptGlob(file.previous_filename) &&
             !matchesPromptGlob(file.filename)),
       );
-      if (monitoredPromptRemovedOrRenamedOut) {
+      if (promptGlobMatchingCapped || monitoredPromptRemovedOrRenamedOut) {
         core.warning(
           'A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files.',
         );
