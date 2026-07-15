@@ -137,7 +137,7 @@ function renderEnvTemplate(
   }
 
   return value.replace(
-    /\{\{\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*\}\}/g,
+    /\{\{-?\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*-?\}\}/g,
     (template, dotName: string | undefined, bracketName: string | undefined) =>
       environment[dotName ?? (bracketName as string)] ?? template,
   );
@@ -464,8 +464,11 @@ export function extractFileDependencies(configPath: string): string[] {
         if (!mayRenderFileUrl(value)) {
           return;
         }
-        if (!renderEnvTemplate(value, environment).startsWith('file://')) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+        const renderedValue = renderEnvTemplate(value, environment);
+        if (!renderedValue.startsWith('file://')) {
+          if (/\{\{|\{%|\{#/.test(renderedValue)) {
+            dependencies.add(`${dependencyRoot}${path.sep}`);
+          }
           return;
         }
         processProviderReference(
@@ -534,7 +537,7 @@ export function extractFileDependencies(configPath: string): string[] {
         const fileAuthPath =
           parentKey === 'auth' &&
           grandparentKey === 'config' &&
-          providerDepth === 2 &&
+          (providerDepth === 2 || providerDepth === 3) &&
           (value as { type?: unknown }).type === 'file' &&
           typeof (value as { path?: unknown }).path === 'string'
             ? (value as { path: string }).path
@@ -574,7 +577,7 @@ export function extractFileDependencies(configPath: string): string[] {
             continue;
           }
           if (
-            providerDepth === 2 &&
+            (providerDepth === 2 || providerDepth === 3) &&
             grandparentKey === 'config' &&
             (parentKey === 'signatureAuth' || parentKey === 'tls') &&
             HTTP_CREDENTIAL_PATH_KEYS.has(key) &&

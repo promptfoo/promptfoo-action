@@ -436,6 +436,32 @@ providers:
     ]);
   });
 
+  it('should extract HTTP auth and credential paths from provider-map entries', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - https://example.test:
+      env:
+        AUTH_PATH: ./auth/mapped-token.ts
+      config:
+        auth:
+          type: file
+          path: "{{ env.AUTH_PATH }}"
+        signatureAuth:
+          privateKeyPath: ./credentials/mapped-key.pem
+        tls:
+          caPath: ./credentials/mapped-ca.pem
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([
+      'auth/mapped-token.ts',
+      'credentials/mapped-key.pem',
+      'credentials/mapped-ca.pem',
+    ]);
+  });
+
   it('should extract plain and env-templated HTTP credential paths', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -739,6 +765,34 @@ tests:
     expect(
       extractFileDependencies('/test/repository/promptfooconfig.yaml'),
     ).toEqual([]);
+  });
+
+  it('should not conservatively watch a resolved non-file provider template', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROVIDER_ID: openai:chat:gpt-4
+providers:
+  - "{{ env.PROVIDER_ID }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should resolve whitespace-trimmed env templates in provider paths', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROVIDER_FILE: current
+providers:
+  - "file://providers/{{- env.PROVIDER_FILE -}}.py"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['providers/current.py']);
   });
 
   it('should ignore non-file objects and primitives across config sections', () => {
