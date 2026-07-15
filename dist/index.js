@@ -38321,6 +38321,9 @@ function isDirectory2(filePath) {
 // src/utils/config.ts
 var MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 var MAX_BRACE_EXPANSIONS = 1024;
+var MAX_NUMERIC_BRACE_RANGE = 1e5;
+var MAX_BRACE_DEPTH = 128;
+var MAX_EXTGLOB_DEPTH = 16;
 var MAX_STRUCTURED_FILE_SIZE = 10 * 1024 * 1024;
 var MAX_STRUCTURED_FILES = 128;
 var MAX_STRUCTURED_NODES = 5e4;
@@ -38348,6 +38351,10 @@ function isPathInside(baseDir, targetPath) {
 function sanitizeLogText(value) {
   return value.replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
+function fileUrlPath(value) {
+  const filePath = value.startsWith("file://") ? value.slice("file://".length) : value;
+  return process.platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(filePath) ? filePath.slice(1) : filePath;
+}
 function hasMismatchedGlobDelimiters(pattern) {
   let braceDepth = 0;
   let parenthesisDepth = 0;
@@ -38355,6 +38362,7 @@ function hasMismatchedGlobDelimiters(pattern) {
   let escaped = false;
   for (const character of pattern) {
     if (escaped) {
+      if (character === "}" && braceDepth > 0) braceDepth--;
       escaped = false;
       continue;
     }
@@ -38390,6 +38398,132 @@ function hasMismatchedGlobDelimiters(pattern) {
     }
   }
   return braceDepth > 0 || parenthesisDepth > 0 || inCharacterClass;
+}
+function hasExcessiveGlobDepth(pattern) {
+  let braceDepth = 0;
+  let extglobDepth = 0;
+  let extglobOperator = false;
+  let escaped = false;
+  let inCharacterClass = false;
+  const braceOperators = [];
+  const updateBraceOperator = (character, isEscaped = false) => {
+    const state = braceOperators[braceOperators.length - 1];
+    if (!state) return;
+    if (character === "," && !isEscaped) {
+      state.hasAlternatives = true;
+      state.hasOperatorAlternative ||= state.endsWithOperator;
+      state.endsWithOperator = false;
+      return;
+    }
+    state.endsWithOperator = !isEscaped && "*+?@!".includes(character);
+  };
+  for (const character of pattern) {
+    if (escaped) {
+      escaped = false;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "{") {
+      braceDepth++;
+      if (braceDepth > MAX_BRACE_DEPTH) return true;
+      braceOperators.push({
+        hasAlternatives: false,
+        hasOperatorAlternative: false,
+        endsWithOperator: false
+      });
+      extglobOperator = false;
+    } else if (character === "}" && braceDepth > 0) {
+      braceDepth--;
+      const state = braceOperators.pop();
+      const braceCanEndWithOperator = !!state && state.hasAlternatives && (state.hasOperatorAlternative || state.endsWithOperator);
+      const parentState = braceOperators[braceOperators.length - 1];
+      if (parentState) {
+        parentState.endsWithOperator = braceCanEndWithOperator;
+      }
+      extglobOperator = braceCanEndWithOperator;
+    } else if (character === "[") {
+      inCharacterClass = true;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
+    } else if (character === "]" && inCharacterClass) {
+      inCharacterClass = false;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
+    } else if (!inCharacterClass && character === "(" && extglobOperator) {
+      extglobDepth++;
+      if (extglobDepth > MAX_EXTGLOB_DEPTH) return true;
+      extglobOperator = false;
+    } else if (!inCharacterClass && character === ")" && extglobDepth > 0) {
+      extglobDepth--;
+      extglobOperator = false;
+    } else {
+      updateBraceOperator(character, inCharacterClass);
+      extglobOperator = !inCharacterClass && "*+?@!".includes(character);
+    }
+  }
+  return false;
+}
+function hasOversizedNumericBraceRange(pattern) {
+  for (const range2 of pattern.matchAll(
+    /(?<!\\)(?:\\\\)*\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g
+  )) {
+    if (range2.slice(1).some((value) => value && value.length > 16)) return true;
+    const start = Number(range2[1]);
+    const end = Number(range2[2]);
+    const step = Math.abs(Number(range2[3] ?? "1")) || 1;
+    if (Math.floor(Math.abs(end - start) / step) + 1 > MAX_NUMERIC_BRACE_RANGE) {
+      return true;
+    }
+  }
+  return false;
+}
+function hasExcessiveExpandedExtglobDepth(pattern) {
+  let extglobDepth = 0;
+  let extglobOperator = false;
+  let escaped = false;
+  let inCharacterClass = false;
+  for (const character of pattern) {
+    if (escaped) {
+      escaped = false;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "[") {
+      inCharacterClass = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "]" && inCharacterClass) {
+      inCharacterClass = false;
+      extglobOperator = false;
+      continue;
+    }
+    if (inCharacterClass) continue;
+    if (character === "(" && extglobOperator) {
+      extglobDepth++;
+      if (extglobDepth > MAX_EXTGLOB_DEPTH) return true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === ")" && extglobDepth > 0) {
+      extglobDepth--;
+      extglobOperator = false;
+      continue;
+    }
+    extglobOperator = "*+?@!".includes(character);
+  }
+  return false;
 }
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
@@ -38428,6 +38562,7 @@ function extractFileDependencies(configPath) {
     dependencies.add(cwd);
   };
   let configParsed = false;
+  let warnedForeignWindowsPath = false;
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
     if (!configContent.trim()) {
@@ -38454,6 +38589,8 @@ function extractFileDependencies(configPath) {
           throw new Error(`${source} contains an invalid line break`);
         }
         if (path6.win32.isAbsolute(filePath) && !path6.isAbsolute(filePath)) {
+          if (warnedForeignWindowsPath) return void 0;
+          warnedForeignWindowsPath = true;
           throw new Error(
             `${source} must stay within the repository workspace`
           );
@@ -38540,7 +38677,7 @@ function extractFileDependencies(configPath) {
       }
     };
     const processFileUrl = (fileUrl) => {
-      const filePath = fileUrl.replace("file://", "");
+      const filePath = fileUrlPath(fileUrl);
       if (filePath.length > MAX_GLOB_PATTERN_LENGTH) {
         watchWorkspace();
         warning(
@@ -38548,10 +38685,17 @@ function extractFileDependencies(configPath) {
         );
         return;
       }
-      if (filePath.includes("{") && hasMismatchedGlobDelimiters(filePath)) {
+      if (hasExcessiveGlobDepth(filePath) || filePath.includes("{") && hasMismatchedGlobDelimiters(filePath)) {
         watchWorkspace();
         warning(
           "Skipping a malformed config dependency glob; conservatively watching the repository workspace"
+        );
+        return;
+      }
+      if (filePath.includes("{") && hasOversizedNumericBraceRange(filePath)) {
+        watchWorkspace();
+        warning(
+          "Skipping an oversized numeric config dependency glob; conservatively watching the repository workspace"
         );
         return;
       }
@@ -38576,21 +38720,28 @@ function extractFileDependencies(configPath) {
       let isGlob;
       let expandedPaths;
       try {
+        expandedPaths = filePath.includes("{") ? braceExpand(filePath, globOptions) : [filePath];
+        if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
+          watchWorkspace();
+          warning(
+            "Skipping config dependency glob with too many brace alternatives; conservatively watching the repository workspace"
+          );
+          return;
+        }
+        if (expandedPaths.some(hasExcessiveExpandedExtglobDepth)) {
+          watchWorkspace();
+          warning(
+            "Skipping a malformed config dependency glob; conservatively watching the repository workspace"
+          );
+          return;
+        }
         isGlob = le(filePath, globOptions);
-        expandedPaths = isGlob ? braceExpand(filePath, globOptions) : [filePath];
       } catch (error2) {
         watchWorkspace();
         warning(
           `Failed to parse config dependency glob: ${sanitizeLogText(
             error2 instanceof Error ? error2.message : String(error2)
           )}; conservatively watching the repository workspace`
-        );
-        return;
-      }
-      if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-        watchWorkspace();
-        warning(
-          "Skipping config dependency glob with too many brace alternatives; conservatively watching the repository workspace"
         );
         return;
       }
@@ -38608,6 +38759,7 @@ function extractFileDependencies(configPath) {
         try {
           matches = Ui(safePatterns, {
             nodir: true,
+            nobrace: true,
             ...globOptions,
             braceExpandMax: MAX_BRACE_EXPANSIONS
           });
@@ -38651,7 +38803,7 @@ function extractFileDependencies(configPath) {
           }
         }
         const filePathRoot = path6.parse(filePath).root;
-        const pathParts = filePath.slice(filePathRoot.length).split(/[\\/]/);
+        const pathParts = filePath.slice(filePathRoot.length).split(process.platform === "win32" ? /[\\/]/ : "/");
         let basePath = filePathRoot;
         for (const part of pathParts) {
           let partHasMagic;
@@ -38671,7 +38823,8 @@ function extractFileDependencies(configPath) {
           }
           basePath = basePath ? path6.join(basePath, part) : part;
         }
-        dependencies.add(path6.resolve(configDir, basePath || "."));
+        const literalBasePath = process.platform === "win32" ? basePath : unescape(braceExpand(basePath, globOptions)[0], globOptions);
+        dependencies.add(path6.resolve(configDir, literalBasePath || "."));
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path6.sep}` : absolutePath;
         dependencies.add(directoryPath);
@@ -38680,7 +38833,7 @@ function extractFileDependencies(configPath) {
       }
     };
     const processFileSelector = (fileUrl, extension, options = {}) => {
-      const rawFilename = fileUrl.slice("file://".length);
+      const rawFilename = fileUrlPath(fileUrl);
       const colon = options.firstColon ? rawFilename.indexOf(":", /^[A-Za-z]:[\\/]/.test(rawFilename) ? 2 : 0) : rawFilename.lastIndexOf(":");
       const candidateFilename = rawFilename.slice(0, colon);
       const candidateExport = rawFilename.slice(colon + 1);
@@ -38715,7 +38868,7 @@ function extractFileDependencies(configPath) {
       return true;
     };
     const scanStructuredPrompt = (fileReference, onParsed, scanReferences = true) => {
-      let filePath = fileReference.startsWith("file://") ? fileReference.slice("file://".length) : fileReference;
+      let filePath = fileUrlPath(fileReference);
       const colon = filePath.lastIndexOf(":");
       if (colon !== -1 && TEST_FILE_SELECTOR.test(filePath.slice(0, colon))) {
         filePath = filePath.slice(0, colon);
@@ -38814,7 +38967,7 @@ function extractFileDependencies(configPath) {
       if (resolvedProviderId.startsWith("file://")) {
         const providerFile = baseDir === configDir ? resolvedProviderId : `file://${path6.resolve(
           baseDir,
-          resolvedProviderId.slice("file://".length)
+          fileUrlPath(resolvedProviderId)
         )}`;
         processFileSelector(providerFile, PROVIDER_FILE_SELECTOR);
         scanStructuredPrompt(providerFile, (parsed) => {
@@ -39044,7 +39197,7 @@ function extractFileDependencies(configPath) {
         if (!reserveStructuredEntries(values.length)) return;
         for (const value of values) {
           const resolvedValue = resolveEnvTemplate(value, config2.env);
-          const rawValue = resolvedValue.startsWith("file://") ? resolvedValue.slice("file://".length) : resolvedValue;
+          const rawValue = fileUrlPath(resolvedValue);
           processFileUrl(`file://${path6.resolve(baseDir, rawValue)}`);
           scanStructuredPrompt(path6.resolve(baseDir, rawValue));
         }
@@ -39109,7 +39262,7 @@ function extractFileDependencies(configPath) {
     const extractTestFiles = (tests, baseDir = configDir) => {
       if (typeof tests === "string") {
         const testPath = tests.replace(/(\.(?:xlsx|xls))#[^\\/]*$/i, "$1");
-        const rawTestPath = testPath.startsWith("file://") ? testPath.slice("file://".length) : testPath;
+        const rawTestPath = fileUrlPath(testPath);
         const absoluteTestPath = path6.resolve(baseDir, rawTestPath);
         processFileSelector(`file://${absoluteTestPath}`, TEST_FILE_SELECTOR);
         scanStructuredPrompt(
@@ -39516,6 +39669,163 @@ var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 var MAX_PROMPT_GLOB_VARIANTS = 1e3;
 var MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
+var MAX_PROMPT_NUMERIC_RANGE = 1e5;
+var MAX_PROMPT_BRACE_DEPTH = 128;
+var MAX_PROMPT_EXTGLOB_DEPTH = 16;
+function isSafePromptGlob(pattern) {
+  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || pattern.includes("\0")) {
+    return false;
+  }
+  let braceDepth = 0;
+  let activeBraceDepth = 0;
+  let extglobDepth = 0;
+  let extglobOperator = false;
+  let escapedOpeningBraces = 0;
+  let escaped = false;
+  let inCharacterClass = false;
+  const braceOperators = [];
+  const updateBraceOperator = (character, isEscaped = false) => {
+    const state = braceOperators[braceOperators.length - 1];
+    if (!state) return;
+    if (character === "," && !isEscaped) {
+      state.hasAlternatives = true;
+      state.hasOperatorAlternative ||= state.endsWithOperator;
+      state.endsWithOperator = false;
+      return;
+    }
+    state.endsWithOperator = !isEscaped && "*+?@!".includes(character);
+  };
+  for (const character of pattern) {
+    if (escaped) {
+      if (character === "{") escapedOpeningBraces++;
+      if (character === "}" && braceDepth > 0) braceDepth--;
+      updateBraceOperator(character, true);
+      escaped = false;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "{") {
+      braceDepth++;
+      activeBraceDepth++;
+      if (activeBraceDepth > MAX_PROMPT_BRACE_DEPTH) return false;
+      braceOperators.push({
+        hasAlternatives: false,
+        hasOperatorAlternative: false,
+        endsWithOperator: false
+      });
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "}") {
+      if (activeBraceDepth > 0) activeBraceDepth--;
+      const state = braceOperators.pop();
+      const braceCanEndWithOperator = !!state && state.hasAlternatives && (state.hasOperatorAlternative || state.endsWithOperator);
+      const parentState = braceOperators[braceOperators.length - 1];
+      if (parentState) {
+        parentState.endsWithOperator = braceCanEndWithOperator;
+      }
+      if (braceDepth === 0) {
+        if (escapedOpeningBraces === 0) return false;
+        escapedOpeningBraces--;
+        extglobOperator = false;
+        continue;
+      }
+      braceDepth--;
+      extglobOperator = braceCanEndWithOperator;
+      continue;
+    }
+    if (character === "[") {
+      inCharacterClass = true;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "]" && inCharacterClass) {
+      inCharacterClass = false;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
+      continue;
+    }
+    if (inCharacterClass) {
+      updateBraceOperator(character, true);
+      continue;
+    }
+    if (character === "(" && extglobOperator) {
+      extglobDepth++;
+      if (extglobDepth > MAX_PROMPT_EXTGLOB_DEPTH) return false;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === ")" && extglobDepth > 0) {
+      extglobDepth--;
+      extglobOperator = false;
+      continue;
+    }
+    updateBraceOperator(character);
+    extglobOperator = "*+?@!".includes(character);
+  }
+  if (braceDepth > 0 || inCharacterClass) return false;
+  for (const range2 of pattern.matchAll(
+    /(?<!\\)(?:\\\\)*\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g
+  )) {
+    if (range2.slice(1).some((value) => value && value.length > 16))
+      return false;
+    const start = Number(range2[1]);
+    const end = Number(range2[2]);
+    const step = Math.abs(Number(range2[3] ?? "1")) || 1;
+    if (Math.floor(Math.abs(end - start) / step) + 1 > MAX_PROMPT_NUMERIC_RANGE) {
+      return false;
+    }
+  }
+  return true;
+}
+function hasExcessiveExpandedExtglobDepth2(pattern) {
+  let extglobDepth = 0;
+  let extglobOperator = false;
+  let escaped = false;
+  let inCharacterClass = false;
+  for (const character of pattern) {
+    if (escaped) {
+      escaped = false;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "[") {
+      inCharacterClass = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === "]" && inCharacterClass) {
+      inCharacterClass = false;
+      extglobOperator = false;
+      continue;
+    }
+    if (inCharacterClass) continue;
+    if (character === "(" && extglobOperator) {
+      extglobDepth++;
+      if (extglobDepth > MAX_PROMPT_EXTGLOB_DEPTH) return true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === ")" && extglobDepth > 0) {
+      extglobDepth--;
+      extglobOperator = false;
+      continue;
+    }
+    extglobOperator = "*+?@!".includes(character);
+  }
+  return false;
+}
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
@@ -39698,9 +40008,17 @@ async function run() {
       toRepositoryPath(workingDirectory),
       { windowsPathsNoEscape: false, magicalBraces: true }
     );
-    const validPromptFilesGlobs = promptFilesGlobs.filter(
-      (pattern) => pattern.length <= MAX_PROMPT_GLOB_LENGTH
-    );
+    const validPromptFilesGlobs = promptFilesGlobs.filter((pattern) => {
+      if (!isSafePromptGlob(pattern)) return false;
+      if (!pattern.includes("{")) return true;
+      try {
+        return !braceExpand(pattern, {
+          braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1
+        }).some(hasExcessiveExpandedExtglobDepth2);
+      } catch {
+        return false;
+      }
+    });
     let promptGlobMatchingCapped = validPromptFilesGlobs.length !== promptFilesGlobs.length;
     let promptGlobMatchers;
     const getPromptGlobMatchers = () => {
@@ -39709,11 +40027,18 @@ async function run() {
       }
       const matchers = [];
       for (const pattern of validPromptFilesGlobs) {
-        const traversalPatterns = braceExpand(pattern, {
-          braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1
-        }).map(
-          (traversalPattern) => path7.isAbsolute(traversalPattern) ? traversalPattern : `${workingDirectoryPattern}/${traversalPattern}`
-        );
+        let traversalPatterns;
+        try {
+          traversalPatterns = braceExpand(pattern, {
+            braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1
+          }).map(
+            (traversalPattern) => path7.isAbsolute(traversalPattern) ? traversalPattern : `${workingDirectoryPattern}/${traversalPattern}`
+          );
+        } catch {
+          promptGlobMatchingCapped = true;
+          promptGlobMatchers = [];
+          return promptGlobMatchers;
+        }
         for (const traversalPattern of traversalPatterns) {
           if (traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS || matchers.length >= MAX_PROMPT_GLOB_VARIANTS || traversalPattern.length > MAX_PROMPT_GLOB_LENGTH) {
             promptGlobMatchingCapped = true;
@@ -40063,11 +40388,16 @@ async function run() {
     }
     const promptFiles = [];
     const allPromptFiles = [];
+    const seenPromptFiles = /* @__PURE__ */ new Set();
+    const repositoryKey = (file) => process.platform === "win32" ? file.toLowerCase() : file;
+    const configKey = repositoryKey(configRepositoryPath);
+    const changedFileKeys = new Set(changedFilesList.map(repositoryKey));
     let realWorkspaceRoot;
     for (const globPattern of validPromptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
-        nodir: true
+        nodir: true,
+        braceExpandMax: MAX_PROMPT_GLOB_VARIANTS
       });
       const allMatches = matches.filter((file) => {
         const absolutePrompt = path7.resolve(workingDirectory, file);
@@ -40096,15 +40426,21 @@ async function run() {
         const repositoryFile = toRepositoryPath(
           path7.relative(workspaceRoot, absolutePrompt)
         );
-        return repositoryFile !== configRepositoryPath;
-      });
+        const promptKey = repositoryKey(repositoryFile);
+        if (promptKey === configKey) return false;
+        if (seenPromptFiles.has(promptKey)) return false;
+        seenPromptFiles.add(promptKey);
+        return true;
+      }).map(
+        (file) => path7.isAbsolute(file) ? toRepositoryPath(path7.relative(workingDirectory, file)) : file
+      );
       allPromptFiles.push(...allMatches);
       if (changedFilesList.length > 0) {
         const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
           );
-          return changedFilesList.includes(repositoryFile);
+          return changedFileKeys.has(repositoryKey(repositoryFile));
         });
         promptFiles.push(...changedMatches);
       } else {
@@ -40117,7 +40453,7 @@ async function run() {
         ErrorCodes.INVALID_CONFIGURATION
       );
     }
-    const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
+    const configChanged = changedFilesList.length > 0 && changedFileKeys.has(configKey);
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
       const dependencies = extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
@@ -40127,11 +40463,12 @@ async function run() {
           if (dep === "./" || dep === "/") {
             return true;
           }
-          if (changedFilesList.includes(dep)) {
+          const dependencyKey = repositoryKey(dep);
+          if (changedFileKeys.has(dependencyKey)) {
             return true;
           }
-          const depDir = dep.endsWith("/") ? dep : `${dep}/`;
-          return changedFilesList.some(
+          const depDir = dependencyKey.endsWith("/") ? dependencyKey : `${dependencyKey}/`;
+          return Array.from(changedFileKeys).some(
             (changedFile) => changedFile.startsWith(depDir)
           );
         });
