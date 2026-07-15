@@ -38373,6 +38373,13 @@ function extractFileDependencies(configPath) {
       debug("Config file is empty or invalid");
       return [];
     }
+    const realDependencyRoots = dependencyRoots.flatMap((root) => {
+      try {
+        return [fs6.realpathSync(root)];
+      } catch {
+        return [];
+      }
+    });
     const resolveConfigDependency = (filePath, source) => {
       try {
         if (!filePath) {
@@ -38392,10 +38399,9 @@ function extractFileDependencies(configPath) {
         }
         return absolutePath;
       } catch (error2) {
+        const reason = String(error2).replace(/^(?:[A-Za-z]+)?Error: /, "");
         warning(
-          `Ignoring unsafe config dependency "${filePath}": ${String(
-            error2
-          ).replace(/^(?:[A-Za-z]+)?Error: /, "")}`
+          `Ignoring unsafe config dependency ${JSON.stringify(filePath)}: ${JSON.stringify(reason)}`
         );
         return void 0;
       }
@@ -38458,12 +38464,7 @@ function extractFileDependencies(configPath) {
         }
         const safePatterns = [];
         let unsafeAlternative = false;
-        let realDependencyRoots;
-        try {
-          realDependencyRoots = dependencyRoots.map(
-            (root) => fs6.realpathSync(root)
-          );
-        } catch {
+        if (realDependencyRoots.length === 0) {
           addDependencyRootWatchers();
           warning(
             "Skipping config dependency glob whose workspace root cannot be resolved; conservatively watching the dependency root"
@@ -38711,9 +38712,6 @@ function extractFileDependencies(configPath) {
       if (!absolutePath) return;
       processFileUrl(fileUrl, absolutePath);
       try {
-        const realDependencyRoots = dependencyRoots.map(
-          (root) => fs6.realpathSync(root)
-        );
         const realFilePath = fs6.realpathSync(absolutePath);
         if (!realDependencyRoots.some((root) => isPathInside(root, realFilePath))) {
           warning(
@@ -38782,9 +38780,6 @@ function extractFileDependencies(configPath) {
         if (inspectedVarFiles.has(varFile)) continue;
         inspectedVarFiles.add(varFile);
         try {
-          const realDependencyRoots = dependencyRoots.map(
-            (root) => fs6.realpathSync(root)
-          );
           const realVarFile = fs6.realpathSync(varFile);
           if (!realDependencyRoots.some((root) => isPathInside(root, realVarFile))) {
             warning(
@@ -38871,9 +38866,6 @@ function extractFileDependencies(configPath) {
           }
           if (defaultTestPath && !isDefaultTestGlob) {
             try {
-              const realDependencyRoots = dependencyRoots.map(
-                (root) => fs6.realpathSync(root)
-              );
               const realDefaultTestPath = fs6.realpathSync(defaultTestPath);
               if (!realDependencyRoots.some(
                 (root) => isPathInside(root, realDefaultTestPath)
@@ -38927,8 +38919,9 @@ function extractFileDependencies(configPath) {
       return repositoryPath;
     });
   } catch (error2) {
+    const reason = error2 instanceof Error ? error2.message : String(error2);
     warning(
-      `Failed to extract dependencies from config: ${error2 instanceof Error ? error2.message : String(error2)}`
+      `Failed to extract dependencies from config: ${JSON.stringify(reason)}`
     );
     return [];
   }
