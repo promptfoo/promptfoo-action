@@ -140,21 +140,49 @@ function getPathSuffix(filePath: string):
   if (filePath.length > MAX_GLOB_PATTERN_LENGTH || /[\0\r\n]/.test(filePath)) {
     return undefined;
   }
-  const separator = Math.max(
-    filePath.lastIndexOf('/'),
-    filePath.lastIndexOf('\\'),
-  );
-  const colon = filePath.indexOf(':', separator + 1);
-  if (colon === filePath.length - 1) return undefined;
-  const filenameEnd = colon === -1 ? filePath.length : colon;
-  const extensionStart = filePath.lastIndexOf('.', filenameEnd - 1);
+  let separator = -1;
+  let extensionStart = -1;
+  let selector:
+    | {
+        extension: string;
+        pathWithoutSelector: string;
+        hasSelector: true;
+      }
+    | undefined;
+  for (let index = 0; index < filePath.length; index += 1) {
+    const character = filePath[index];
+    if (character === '/' || character === '\\') {
+      separator = index;
+      extensionStart = -1;
+      continue;
+    }
+    if (character === '.') {
+      extensionStart = index;
+      continue;
+    }
+    if (
+      character !== ':' ||
+      extensionStart <= separator ||
+      index === filePath.length - 1
+    ) {
+      continue;
+    }
+    const extension = filePath.slice(extensionStart + 1, index);
+    if (!/^[A-Za-z0-9]{1,10}$/.test(extension)) continue;
+    selector = {
+      extension,
+      pathWithoutSelector: filePath.slice(0, index),
+      hasSelector: true,
+    };
+  }
+  if (selector) return selector;
   if (extensionStart <= separator) return undefined;
-  const extension = filePath.slice(extensionStart + 1, filenameEnd);
+  const extension = filePath.slice(extensionStart + 1);
   if (!/^[A-Za-z0-9]{1,10}$/.test(extension)) return undefined;
   return {
     extension,
-    pathWithoutSelector: filePath.slice(0, filenameEnd),
-    hasSelector: colon !== -1,
+    pathWithoutSelector: filePath,
+    hasSelector: false,
   };
 }
 
@@ -757,22 +785,30 @@ export function extractFileDependencies(
       if (
         typeof auth === 'object' &&
         auth !== null &&
-        (auth as { type?: unknown }).type === 'file' &&
         typeof (auth as { path?: unknown }).path === 'string'
       ) {
-        const authPath = (auth as { path: string }).path;
-        const renderedPath = renderEnvironmentTemplates(authPath, env);
-        if (hasNunjucksTemplate(renderedPath)) {
+        const authType = (auth as { type?: unknown }).type;
+        const renderedAuthType =
+          typeof authType === 'string'
+            ? renderEnvironmentTemplates(authType, env)
+            : undefined;
+        if (renderedAuthType && hasNunjucksTemplate(renderedAuthType)) {
           hasDynamicPromptDependencies = true;
-        } else {
-          processFileUrl(
-            renderedPath.startsWith('file://')
-              ? renderedPath
-              : `file://${renderedPath}`,
-            true,
-            authPath.startsWith('file://') ? authPath : `file://${authPath}`,
-            true,
-          );
+        } else if (renderedAuthType === 'file') {
+          const authPath = (auth as { path: string }).path;
+          const renderedPath = renderEnvironmentTemplates(authPath, env);
+          if (hasNunjucksTemplate(renderedPath)) {
+            hasDynamicPromptDependencies = true;
+          } else {
+            processFileUrl(
+              renderedPath.startsWith('file://')
+                ? renderedPath
+                : `file://${renderedPath}`,
+              true,
+              authPath.startsWith('file://') ? authPath : `file://${authPath}`,
+              true,
+            );
+          }
         }
       }
 
@@ -809,11 +845,20 @@ export function extractFileDependencies(
         if (
           typeof source !== 'object' ||
           source === null ||
-          (source as { type?: unknown }).type !== 'path' ||
           typeof (source as { path?: unknown }).path !== 'string'
         ) {
           continue;
         }
+        const sourceType = (source as { type?: unknown }).type;
+        const renderedSourceType =
+          typeof sourceType === 'string'
+            ? renderEnvironmentTemplates(sourceType, env)
+            : undefined;
+        if (renderedSourceType && hasNunjucksTemplate(renderedSourceType)) {
+          hasDynamicPromptDependencies = true;
+          continue;
+        }
+        if (renderedSourceType !== 'path') continue;
         const sourcePath = (source as { path: string }).path;
         const renderedPath = renderEnvironmentTemplates(sourcePath, env);
         if (hasNunjucksTemplate(renderedPath)) {
@@ -1482,6 +1527,12 @@ export function extractFileDependencies(
           if (selector?.isJavascript || selector?.extension === 'py') {
             processFileUrl(value, true);
           }
+        } else if (
+          typeof value === 'string' &&
+          value.includes('file://') &&
+          hasNunjucksTemplate(value)
+        ) {
+          hasDynamicPromptDependencies = true;
         } else if (
           typeof value === 'object' &&
           value !== null &&

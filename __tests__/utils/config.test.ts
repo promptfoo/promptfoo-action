@@ -1059,6 +1059,7 @@ prompts:
 
   it.each([
     ['exec:prompts/build.py:build', 'prompts/build.py'],
+    ['exec:file://prompts/build.py:build', 'prompts/build.py'],
     ['exec:prompts/build.sh', 'prompts/build.sh'],
   ])('should track an executable prompt script and its supported selector: %s', (prompt, dependency) => {
     mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
@@ -1519,6 +1520,18 @@ tests:
         '../config/validators/check.go',
       ]),
     );
+  });
+
+  it('should track JavaScript provider selectors containing path separators', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/build.js:handlers/default
+  - file://providers/build.mjs:handlers/nested/run
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/build.js', 'evals/providers/build.mjs']);
   });
 
   it('should extract nested assert-set validators while tolerating YAML alias cycles', () => {
@@ -2740,6 +2753,97 @@ providers:
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('pattern is too long'),
     );
+  });
+
+  it('should render env-computed HTTP provider and file discriminators before dependency extraction', () => {
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  HTTP_ID: https
+  AUTH_TYPE: FILE
+  SOURCE_TYPE: PATH
+providers:
+  - id: "{{ env.HTTP_ID | lower }}"
+    config:
+      url: https://example.test/api
+      auth:
+        type: "{{ env.AUTH_TYPE | lower }}"
+        path: credentials/token.txt
+      multipart:
+        parts:
+          - source:
+              type: "{{ env.SOURCE_TYPE | lower }}"
+              path: uploads/document.pdf
+  - id: http
+    config:
+      url: http://example.test/api
+      auth:
+        type: file
+        path: credentials/http-token.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/credentials/token.txt',
+      'evals/uploads/document.pdf',
+      'evals/credentials/http-token.txt',
+    ]);
+  });
+
+  it('should conservatively watch unresolved HTTP file discriminators and ignore non-file variants', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      auth:
+        type: "{{ env.MISSING_AUTH_TYPE }}"
+        path: credentials/token.txt
+      multipart:
+        parts:
+          - source:
+              type: "{{ env.MISSING_SOURCE_TYPE }}"
+              path: uploads/document.pdf
+          - source:
+              type: generated
+              path: uploads/generated.pdf
+          - source:
+              path: uploads/no-type.pdf
+  - id: https
+    config:
+      auth:
+        path: credentials/no-type.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should conservatively watch a Nunjucks block that can emit an env-backed file reference', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      context: "{% if env.USE_FILE %}file://{{ env.CONTEXT_FILE }}{% endif %}"
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should not widen ordinary filtered env text into a repository watcher', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      url: https://example.test/api
+      body:
+        message: "Result: {{ env.MESSAGE | upper }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([]);
   });
 
   it('should preserve sibling dependencies when a provider glob pattern is invalid', () => {
