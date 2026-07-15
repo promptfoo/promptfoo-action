@@ -295,6 +295,9 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS',
     'PROMPTFOO_DISABLE_CONVERSATION_VAR',
     'PROMPTFOO_DISABLE_OBJECT_STRINGIFY',
+    'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_TELEMETRY',
     'PROMPTFOO_SELF_HOSTED',
     'PROMPTFOO_DISABLE_TEMPLATING',
     'PROMPTFOO_STRICT_FILES',
@@ -562,15 +565,20 @@ describe('loadConfigEnvironmentFiles', () => {
     );
   });
 
-  test('rejects OpenSSL startup controls from a config-declared envPath', () => {
+  test.each([
+    'OPENSSL_MODULES',
+    'PROMPTFOO_DISABLE_TELEMETRY',
+    'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+  ])('rejects %s from a config-declared envPath', (variableName) => {
     const configPath = writeFile(
       'promptfooconfig.yaml',
       'commandLineOptions:\n  envPath: .env.late\n',
     );
-    writeFile('.env.late', 'OPENSSL_MODULES=./capture-provider\n');
+    writeFile('.env.late', `${variableName}=false\n`);
 
     expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
-      /OPENSSL_MODULES/,
+      new RegExp(variableName),
     );
   });
 

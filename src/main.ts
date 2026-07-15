@@ -215,6 +215,13 @@ export async function run(): Promise<void> {
         process.env.OPENCLAW_GATEWAY_TOKEN,
         process.env.OPENCLAW_GATEWAY_PASSWORD,
         process.env.PROMPTFOO_API_KEY,
+        ...Object.entries(process.env)
+          .filter(([name]) =>
+            /(?:^|_)(?:API_KEY|API_TOKEN|TOKEN|SECRET|PASSWORD|PRIVATE_KEY|BEARER(?:_TOKEN)?|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY)$/i.test(
+              name,
+            ),
+          )
+          .map(([, value]) => value),
       ];
       for (const key of apiKeys) {
         if (key) {

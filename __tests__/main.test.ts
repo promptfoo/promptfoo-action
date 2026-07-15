@@ -947,6 +947,9 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS',
       'PROMPTFOO_DISABLE_CONVERSATION_VAR',
       'PROMPTFOO_DISABLE_OBJECT_STRINGIFY',
+      'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+      'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+      'PROMPTFOO_DISABLE_TELEMETRY',
       'PROMPTFOO_SELF_HOSTED',
       'PROMPTFOO_DISABLE_TEMPLATING',
       'PROMPTFOO_STRICT_FILES',
@@ -1901,6 +1904,13 @@ describe('GitHub Action Main', () => {
                 CUSTOM_PROVIDER_SETTING: 'second',
                 OPENAI_API_KEY: 'config-openai-key',
                 DATABRICKS_TOKEN: 'config-databricks-token',
+                HF_TOKEN: 'config-hf-token',
+                GOOGLE_API_KEY: 'config-google-key',
+                GEMINI_API_KEY: 'config-gemini-key',
+                GOOGLE_GENERATIVE_AI_API_KEY: 'config-genai-key',
+                HUGGING_FACE_HUB_TOKEN: 'config-hf-hub-token',
+                REPLICATE_API_TOKEN: 'config-replicate-token',
+                OPENAI_MAX_TOKENS: 'not-a-secret',
               }
             : { CUSTOM_PROVIDER_SETTING: 'first' };
           Object.assign(options?.processEnv ?? process.env, parsed);
@@ -1917,16 +1927,40 @@ describe('GitHub Action Main', () => {
             CUSTOM_PROVIDER_SETTING: 'second',
             OPENAI_API_KEY: 'config-openai-key',
             DATABRICKS_TOKEN: 'config-databricks-token',
+            HF_TOKEN: 'config-hf-token',
+            GOOGLE_API_KEY: 'config-google-key',
+            GEMINI_API_KEY: 'config-gemini-key',
+            GOOGLE_GENERATIVE_AI_API_KEY: 'config-genai-key',
+            HUGGING_FACE_HUB_TOKEN: 'config-hf-hub-token',
+            REPLICATE_API_TOKEN: 'config-replicate-token',
           }),
         );
         expect(mockCore.setSecret).toHaveBeenCalledWith('config-openai-key');
         expect(mockCore.setSecret).toHaveBeenCalledWith(
           'config-databricks-token',
         );
+        for (const secret of [
+          'config-hf-token',
+          'config-google-key',
+          'config-gemini-key',
+          'config-genai-key',
+          'config-hf-hub-token',
+          'config-replicate-token',
+        ]) {
+          expect(mockCore.setSecret).toHaveBeenCalledWith(secret);
+        }
+        expect(mockCore.setSecret).not.toHaveBeenCalledWith('not-a-secret');
       } finally {
         delete process.env.CUSTOM_PROVIDER_SETTING;
         delete process.env.OPENAI_API_KEY;
         delete process.env.DATABRICKS_TOKEN;
+        delete process.env.HF_TOKEN;
+        delete process.env.GOOGLE_API_KEY;
+        delete process.env.GEMINI_API_KEY;
+        delete process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+        delete process.env.HUGGING_FACE_HUB_TOKEN;
+        delete process.env.REPLICATE_API_TOKEN;
+        delete process.env.OPENAI_MAX_TOKENS;
       }
     });
 
