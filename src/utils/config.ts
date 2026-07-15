@@ -24,6 +24,7 @@ const CONFIG_SCHEMA = CORE_SCHEMA.withTags(
   setTag,
 );
 const MAX_BRACE_EXPANSIONS = 1024;
+const MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 const HTTP_PROVIDER_FILE_PATH_KEYS = new Set([
   'privateKeyPath',
   'keystorePath',
@@ -70,7 +71,8 @@ interface PromptfooTestConfig {
 }
 
 export interface PromptfooConfig {
-  providers?: Array<string | { id?: string; [key: string]: unknown }>;
+  providers?: string | Array<string | { id?: string; [key: string]: unknown }>;
+  targets?: string | Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: PromptfooTestConfig[];
   defaultTest?: string | PromptfooTestConfig;
@@ -83,6 +85,16 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
     (relativePath !== '..' &&
       !relativePath.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relativePath))
+  );
+}
+
+function isHttpProviderId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    (value.startsWith('http:') ||
+      value.startsWith('https:') ||
+      value === 'http' ||
+      value === 'https')
   );
 }
 
@@ -151,6 +163,26 @@ export function extractFileDependencies(configPath: string): string[] {
       braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
     };
 
+    const isValidGlobLength = (filePath: string): boolean => {
+      if (filePath.length > MAX_GLOB_PATTERN_LENGTH) {
+        core.warning(
+          'Skipping config dependency that exceeds the maximum glob pattern length',
+        );
+        return false;
+      }
+      return true;
+    };
+
+    const getGlobMagic = (filePath: string): boolean | undefined => {
+      if (!isValidGlobLength(filePath)) return undefined;
+      try {
+        return glob.hasMagic(filePath, globOptions);
+      } catch {
+        core.warning('Skipping invalid config dependency glob pattern');
+        return undefined;
+      }
+    };
+
     const hasDynamicFilePath = (filePath: string): boolean =>
       /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}/.test(filePath);
 
@@ -170,13 +202,22 @@ export function extractFileDependencies(configPath: string): string[] {
         resolveConfigDependency(filePath, 'config file dependency');
         return [];
       }
+      if (!isValidGlobLength(filePath)) return [];
       if (watchDynamicFilePath(filePath)) return [];
 
       // Check if the path contains glob patterns
-      if (glob.hasMagic(filePath, globOptions)) {
-        const expandedPaths = braceExpand(filePath.replace(/\\/g, '/'), {
-          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-        });
+      const isGlob = getGlobMagic(filePath);
+      if (isGlob === undefined) return [];
+      if (isGlob) {
+        let expandedPaths: string[];
+        try {
+          expandedPaths = braceExpand(filePath.replace(/\\/g, '/'), {
+            braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+          });
+        } catch {
+          core.warning('Skipping invalid config dependency glob pattern');
+          return [];
+        }
         if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
           dependencies.add(`${dependencyRoot}${path.sep}`);
           core.warning(
@@ -242,11 +283,17 @@ export function extractFileDependencies(configPath: string): string[] {
         if (safePatterns.length === 0) return [];
 
         // It's a glob pattern, expand it
-        const matches = glob.sync(safePatterns, {
-          nodir: true,
-          ...globOptions,
-          braceExpandMax: MAX_BRACE_EXPANSIONS,
-        });
+        let matches: string[];
+        try {
+          matches = glob.sync(safePatterns, {
+            nodir: true,
+            ...globOptions,
+            braceExpandMax: MAX_BRACE_EXPANSIONS,
+          });
+        } catch {
+          core.warning('Skipping invalid config dependency glob pattern');
+          return [];
+        }
         const safeMatches: string[] = [];
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
@@ -268,12 +315,14 @@ export function extractFileDependencies(configPath: string): string[] {
           const pathParts = relativePattern
             .slice(pathRoot.length)
             .split(/[\\/]/);
-          let basePath = glob.hasMagic(relativePattern, globOptions)
+          const hasRelativeGlobMagic = getGlobMagic(relativePattern);
+          if (hasRelativeGlobMagic === undefined) continue;
+          let basePath = hasRelativeGlobMagic
             ? pathRoot
             : path.dirname(relativePattern);
-          if (glob.hasMagic(relativePattern, globOptions)) {
+          if (hasRelativeGlobMagic) {
             for (const part of pathParts) {
-              if (glob.hasMagic(part, globOptions)) break;
+              if (getGlobMagic(part) !== false) break;
               basePath = basePath ? path.join(basePath, part) : part;
             }
           }
@@ -306,9 +355,9 @@ export function extractFileDependencies(configPath: string): string[] {
         resolvedPath ??
         resolveConfigDependency(filePath, 'config file dependency');
       if (!absolutePath) return [];
-      if (isDirectory(absolutePath)) {
+      if (isDirectory(absolutePath) || /[\\/]$/.test(fileUrl)) {
         // It's a directory, preserve trailing slash if it was there
-        const directoryPath = fileUrl.endsWith('/')
+        const directoryPath = /[\\/]$/.test(fileUrl)
           ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
           : absolutePath;
         dependencies.add(directoryPath);
@@ -320,52 +369,34 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
-    // Extract provider files
-    if (config.providers) {
-      for (const provider of config.providers) {
-        if (typeof provider === 'string' && provider.startsWith('file://')) {
-          processFileUrl(provider);
-        } else if (
-          typeof provider === 'object' &&
-          provider.id?.startsWith('file://')
-        ) {
-          processFileUrl(provider.id);
-        }
-      }
-    }
-
-    // Extract prompt files
-    if (config.prompts) {
-      for (const prompt of config.prompts) {
-        if (typeof prompt === 'string' && prompt.startsWith('file://')) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === 'object' && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            'prompt file dependency',
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
-        }
-      }
-    }
-
-    type ProviderReferenceContext = 'provider' | 'config';
+    type ProviderReferenceContext =
+      | 'provider'
+      | 'http-provider'
+      | 'config'
+      | 'http-config';
     const visitedFileValues = new WeakSet<object>();
     const visitedNestedFileValues = new WeakSet<object>();
     const visitedProviderValues = new WeakSet<object>();
+    const visitedHttpProviderValues = new WeakSet<object>();
     const visitedProviderConfigValues = new WeakSet<object>();
+    const visitedHttpProviderConfigValues = new WeakSet<object>();
     const inspectedNestedFiles = new Set<string>();
     const extractFileReferences = (
       value: unknown,
       inspectNestedFiles = false,
       providerContext?: ProviderReferenceContext,
     ): void => {
+      if (typeof value === 'string' && value.includes('file://')) {
+        if (!isValidGlobLength(value)) return;
+        if (value.includes('\0')) {
+          resolveConfigDependency(value, 'config file dependency');
+          return;
+        }
+      }
       if (
         typeof value === 'string' &&
-        hasDynamicFilePath(value) &&
-        value.includes('file://')
+        value.includes('file://') &&
+        hasDynamicFilePath(value)
       ) {
         dependencies.add(`${dependencyRoot}${path.sep}`);
       } else if (typeof value === 'string' && value.startsWith('file://')) {
@@ -381,7 +412,8 @@ export function extractFileDependencies(configPath: string): string[] {
       } else if (Array.isArray(value)) {
         const visitedValues = !inspectNestedFiles
           ? visitedFileValues
-          : providerContext === 'provider'
+          : providerContext === 'provider' ||
+              providerContext === 'http-provider'
             ? visitedProviderValues
             : visitedNestedFileValues;
         if (visitedValues.has(value)) return;
@@ -398,13 +430,20 @@ export function extractFileDependencies(configPath: string): string[] {
           ? visitedFileValues
           : providerContext === 'provider'
             ? visitedProviderValues
-            : providerContext === 'config'
-              ? visitedProviderConfigValues
-              : visitedNestedFileValues;
+            : providerContext === 'http-provider'
+              ? visitedHttpProviderValues
+              : providerContext === 'config'
+                ? visitedProviderConfigValues
+                : providerContext === 'http-config'
+                  ? visitedHttpProviderConfigValues
+                  : visitedNestedFileValues;
         if (visitedValues.has(value)) return;
         visitedValues.add(value);
         if ('file' in value && typeof value.file === 'string') {
-          if (!watchDynamicFilePath(value.file)) {
+          const hasValidFileLength = isValidGlobLength(value.file);
+          if (hasValidFileLength && value.file.includes('\0')) {
+            resolveConfigDependency(value.file, 'config file dependency');
+          } else if (hasValidFileLength && !watchDynamicFilePath(value.file)) {
             const absolutePath = resolveConfigDependency(
               value.file,
               'config file dependency',
@@ -430,11 +469,15 @@ export function extractFileDependencies(configPath: string): string[] {
           }
         }
         const isProviderDefinition =
-          providerContext === 'provider' &&
+          (providerContext === 'provider' ||
+            providerContext === 'http-provider') &&
           ('id' in value || 'config' in value);
+        const isHttpProviderDefinition =
+          providerContext === 'http-provider' ||
+          ('id' in value && isHttpProviderId(value.id));
         for (const [key, item] of Object.entries(value)) {
           if (
-            providerContext === 'config' &&
+            providerContext === 'http-config' &&
             (key === 'signatureAuth' || key === 'tls') &&
             item &&
             typeof item === 'object'
@@ -453,7 +496,7 @@ export function extractFileDependencies(configPath: string): string[] {
             }
           }
           if (
-            providerContext === 'config' &&
+            providerContext === 'http-config' &&
             key === 'auth' &&
             item &&
             typeof item === 'object' &&
@@ -483,13 +526,18 @@ export function extractFileDependencies(configPath: string): string[] {
           }
           if (key !== 'file' && key !== 'id') {
             const nextProviderContext =
-              providerContext !== 'provider'
+              providerContext !== 'provider' &&
+              providerContext !== 'http-provider'
                 ? undefined
                 : key === 'config'
-                  ? 'config'
+                  ? isHttpProviderDefinition
+                    ? 'http-config'
+                    : 'config'
                   : isProviderDefinition
                     ? undefined
-                    : 'provider';
+                    : isHttpProviderId(key)
+                      ? 'http-provider'
+                      : providerContext;
             extractFileReferences(
               item,
               inspectNestedFiles,
@@ -509,7 +557,9 @@ export function extractFileDependencies(configPath: string): string[] {
         resolveConfigDependency(filePath, 'nested config file dependency');
         return;
       }
-      if (glob.hasMagic(filePath, globOptions)) {
+      const isNestedGlob = getGlobMagic(filePath);
+      if (isNestedGlob === undefined) return;
+      if (isNestedGlob) {
         processFileUrl(fileUrl);
         return;
       }
@@ -546,6 +596,26 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
+    const configuredProviders = config.targets || config.providers;
+    if (configuredProviders) {
+      extractFileReferences(configuredProviders, true, 'provider');
+    }
+
+    // Extract prompt files
+    if (config.prompts) {
+      for (const prompt of config.prompts) {
+        if (typeof prompt === 'string' && prompt.startsWith('file://')) {
+          processFileUrl(prompt);
+        } else if (typeof prompt === 'object' && prompt.file) {
+          const absolutePath = resolveConfigDependency(
+            prompt.file,
+            'prompt file dependency',
+          );
+          if (absolutePath) dependencies.add(absolutePath);
+        }
+      }
+    }
+
     // Extract test variable files and inspect external variable maps.
     const inspectedVarFiles = new Set<string>();
     const inspectedVarPaths = new Set<string>();
@@ -560,12 +630,15 @@ export function extractFileDependencies(configPath: string): string[] {
         resolveConfigDependency(rawFilePath, 'test variable file dependency');
         return;
       }
+      if (!isValidGlobLength(rawFilePath)) return;
       if (watchDynamicFilePath(rawFilePath)) return;
       const filePath = rawFilePath
         .replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, '$1')
         .replace(/(\.xlsx?)#.*$/i, '$1');
       const fileUrl = `file://${filePath}`;
-      const absolutePath = glob.hasMagic(filePath, globOptions)
+      const isVarGlob = getGlobMagic(filePath);
+      if (isVarGlob === undefined) return;
+      const absolutePath = isVarGlob
         ? path.resolve(configDir, filePath)
         : resolveConfigDependency(filePath, 'test variable file dependency');
       if (!absolutePath) return;
@@ -658,13 +731,15 @@ export function extractFileDependencies(configPath: string): string[] {
               'defaultTest file dependency',
             );
           }
-          const hasDynamicDefaultTestPath =
-            !hasInvalidDefaultTestPath && hasDynamicFilePath(defaultTestFile);
           const isDefaultTestGlob =
+            !hasInvalidDefaultTestPath && getGlobMagic(defaultTestFile);
+          const hasDynamicDefaultTestPath =
             !hasInvalidDefaultTestPath &&
-            glob.hasMagic(defaultTestFile, globOptions);
+            isDefaultTestGlob !== undefined &&
+            hasDynamicFilePath(defaultTestFile);
           const defaultTestPath =
             hasInvalidDefaultTestPath ||
+            isDefaultTestGlob === undefined ||
             hasDynamicDefaultTestPath ||
             isDefaultTestGlob
               ? undefined
@@ -675,7 +750,11 @@ export function extractFileDependencies(configPath: string): string[] {
           if (hasDynamicDefaultTestPath) {
             dependencies.add(`${dependencyRoot}${path.sep}`);
           }
-          if (!hasInvalidDefaultTestPath && !hasDynamicDefaultTestPath) {
+          if (
+            !hasInvalidDefaultTestPath &&
+            isDefaultTestGlob !== undefined &&
+            !hasDynamicDefaultTestPath
+          ) {
             processFileUrl(config.defaultTest);
           }
           if (defaultTestPath && !isDefaultTestGlob) {

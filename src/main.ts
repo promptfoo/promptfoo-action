@@ -33,6 +33,7 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
+const MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
@@ -364,7 +365,14 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
+        changedFiles = pullRequestFiles
+          .flatMap((file) =>
+            file.previous_filename
+              ? [file.filename, file.previous_filename]
+              : [file.filename],
+          )
+          .join('\0')
+          .concat('\0');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -381,20 +389,28 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
-        core.info(`Using manually specified files: ${changedFiles}`);
+        changedFiles = filesInput
+          .split(/\r?\n/)
+          .map((file: string) => file.trim())
+          .filter((file: string) => file)
+          .join('\0');
+        core.info(
+          `Using manually specified files: ${JSON.stringify(filesInput)}`,
+        );
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${JSON.stringify(changedFiles)}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -421,12 +437,14 @@ export async function run(): Promise<void> {
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${JSON.stringify(changedFiles)}`,
           );
         } catch (error) {
           core.warning(
@@ -449,7 +467,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split('\n').filter((f) => f);
+    const changedFilesList = changedFiles.split('\0').filter((file) => file);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -481,6 +499,12 @@ export async function run(): Promise<void> {
       }
     }
 
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error(
+        'Prompt file paths must not contain carriage-return or newline characters',
+      );
+    }
+
     const configChanged =
       changedFilesList.length > 0 &&
       changedFilesList.includes(configRepositoryPath);
@@ -506,16 +530,28 @@ export async function run(): Promise<void> {
             return true;
           }
 
-          if (
-            glob.hasMagic(dep, {
-              magicalBraces: true,
-              braceExpandMax: 1025,
-            }) &&
-            changedFilesList.some((changedFile) =>
-              path.posix.matchesGlob(changedFile, dep),
-            )
-          ) {
-            return true;
+          if (dep.length > MAX_GLOB_PATTERN_LENGTH) {
+            core.warning(
+              'Skipping config dependency that exceeds the maximum glob pattern length',
+            );
+            return false;
+          }
+
+          try {
+            if (
+              glob.hasMagic(dep, {
+                magicalBraces: true,
+                braceExpandMax: 1025,
+              }) &&
+              changedFilesList.some((changedFile) =>
+                path.posix.matchesGlob(changedFile, dep),
+              )
+            ) {
+              return true;
+            }
+          } catch {
+            core.warning('Skipping invalid config dependency glob pattern');
+            return false;
           }
 
           // Check if the dependency is a directory and any changed file is within it

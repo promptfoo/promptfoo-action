@@ -165,7 +165,7 @@ function setupCommonMocks(): MockOctokit {
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
-    'prompts/prompt1.txt\npromptfooconfig.yaml',
+    'prompts/prompt1.txt\0promptfooconfig.yaml\0',
   );
   mockCache.cleanupOldCache.mockResolvedValue(0);
   mockCache.createCacheManifest.mockResolvedValue();
@@ -622,6 +622,8 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -693,6 +695,8 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -741,7 +745,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using manually specified files: "prompts/file1.txt\\nprompts/file2.txt"',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
@@ -836,7 +840,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: action-input-file.txt',
+        'Using manually specified files: "action-input-file.txt"',
       );
       // Since we're providing files directly, diff shouldn't be called
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
@@ -885,6 +889,8 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -911,6 +917,136 @@ describe('GitHub Action Main', () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },
       ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve whitespace in a GitHub pull-request dependency filename', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' data/context.json ' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' data/context.json ',
+      ]);
+      await run();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve tab and whitespace in a push dependency filename', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      const dependency = ' data/context\tname.json ';
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+      mockGitInterface.diff.mockImplementationOnce(async (args: string[]) =>
+        args.includes('-z')
+          ? `${dependency}\0`
+          : '" data/context\\\\tname.json "',
+      );
+      await run();
+      expect(mockGitInterface.diff).toHaveBeenCalledWith(
+        expect.arrayContaining(['--name-only', '--no-renames', '-z']),
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve a newline in a GitHub pull-request dependency filename', async () => {
+      const dependency = 'data/context\nname.json';
+      mockOctokit.paginate.mockResolvedValue([{ filename: dependency }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+      await run();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when a referenced config dependency is renamed away', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'data/archived-context.json',
+          previous_filename: 'data/context.json',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'push',
+      'workflow_dispatch',
+    ])('should retain the old dependency name in a %s rename diff', async (eventName) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: eventName,
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value:
+          eventName === 'push'
+            ? { before: 'a'.repeat(40), after: 'b'.repeat(40) }
+            : { inputs: { base: 'main' } },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+      mockGitInterface.diff.mockImplementationOnce(async (args: string[]) =>
+        args.includes('--no-renames')
+          ? 'data/context.json\0data/archived-context.json\0'
+          : 'data/archived-context.json',
+      );
+
+      await run();
+
+      expect(mockGitInterface.diff).toHaveBeenCalledWith(
+        expect.arrayContaining(['--no-renames', '--name-only', '-z']),
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should normalize CRLF and whitespace in manual workflow files before dependency gating', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      withInputs({
+        'workflow-files': ' data/context.json \r\n\r\n README.md \r\n',
+      });
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
 
@@ -1004,6 +1140,55 @@ describe('GitHub Action Main', () => {
       );
       expect(mockExec.exec).toHaveBeenCalled();
       matchesGlob.mockRestore();
+    });
+
+    test('should skip an oversized dependency glob and still match later dependencies', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/data/deleted.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) => {
+        if (value.length > 65_536) throw new TypeError('pattern is too long');
+        return value.includes('*');
+      });
+      mockConfig.extractFileDependencies.mockReturnValue([
+        `evals/data/${'x'.repeat(65_536)}*.txt`,
+        'evals/data/*.txt',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should skip an invalid dependency glob and still match later dependencies', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/data/deleted.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) => {
+        if (value.includes('invalid')) throw new TypeError('invalid pattern');
+        return value.includes('*');
+      });
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/data/invalid*.txt',
+        'evals/data/*.txt',
+      ]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Skipping invalid config dependency glob pattern',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
     test('should detect dependency directories without a trailing slash', async () => {
@@ -1497,6 +1682,23 @@ describe('GitHub Action Main', () => {
   });
 
   describe('security validation', () => {
+    test('should reject a matched prompt filename that can forge a workflow annotation', async () => {
+      const prompt = 'prompts/prompt\n::error::forged-annotation.txt';
+      mockOctokit.paginate.mockResolvedValue([{ filename: prompt }]);
+      mockGlob.sync.mockReturnValue([prompt]);
+      await run();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must not contain carriage-return or newline characters',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(
+        mockCore.info.mock.calls.some(([message]) =>
+          String(message).includes('::error::forged-annotation'),
+        ),
+      ).toBe(false);
+    });
+
     test('should use the GitHub API instead of PR refs for changed files', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
@@ -1604,6 +1806,8 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',
