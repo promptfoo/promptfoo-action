@@ -39910,6 +39910,48 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           if (fileAuth && "type" in fileAuth && fileAuth.type === "file" && "path" in fileAuth && typeof fileAuth.path === "string") {
             processFileUrl(`file://${fileAuth.path}`, true);
           }
+          if (providerConfig) {
+            const securityGroups = [
+              [
+                "signatureAuth",
+                [
+                  "privateKeyPath",
+                  "keystorePath",
+                  "pfxPath",
+                  "certPath",
+                  "keyPath"
+                ]
+              ],
+              ["tls", ["certPath", "keyPath", "caPath", "pfxPath"]]
+            ];
+            for (const [groupKey, pathKeys] of securityGroups) {
+              const securityGroup = providerConfig[groupKey];
+              if (typeof securityGroup !== "object" || securityGroup === null) {
+                continue;
+              }
+              for (const pathKey of pathKeys) {
+                const assetPath = securityGroup[pathKey];
+                if (typeof assetPath === "string") {
+                  processFilePath(
+                    expandAndTrackEnvTemplates(assetPath),
+                    "provider security file dependency",
+                    true,
+                    true
+                  );
+                }
+              }
+            }
+            const responseFormat = providerConfig.response_format ?? providerConfig.responseFormat;
+            if (typeof responseFormat === "object" && responseFormat !== null) {
+              const format = responseFormat;
+              const jsonSchema = typeof format.json_schema === "object" && format.json_schema !== null ? format.json_schema : void 0;
+              for (const schema of [format.schema, jsonSchema?.schema]) {
+                if (typeof schema === "string") {
+                  expandAndTrackEnvTemplates(schema);
+                }
+              }
+            }
+          }
           const providerId = typeof item === "string" ? item : typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" ? item.id : void 0;
           const localProvider = providerId?.match(
             /^(?:file:\/\/|python:(?=[\s\S]+\.py(?::[^/\\]+)?$)|golang:(?=[\s\S]+\.go(?::[^/\\]+)?$)|ruby:(?=[\s\S]+\.rb(?::[^/\\]+)?$))([\s\S]+)$/i

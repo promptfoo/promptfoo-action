@@ -454,6 +454,69 @@ tests:
     ).toEqual([]);
   });
 
+  it('should track an aliased HTTP file-auth configuration', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - provider:
+      id: https://example.test/infer
+      config:
+        body: &file_auth
+          type: file
+          path: ./auth/get-token.ts
+        auth: *file_auth
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/auth/get-token.ts']);
+  });
+
+  it('should track security assets and computed schema refs from an external provider', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? [
+              '- provider:',
+              '    id: https://example.test/infer',
+              '    config:',
+              '      response_format:',
+              '        type: json_schema',
+              `        schema: "{{ 'file://schemas/' + env.SCHEMA }}"`,
+              '      signatureAuth:',
+              '        privateKeyPath: ./credentials/private.pem',
+              '        keystorePath: ./credentials/signing.jks',
+              '        pfxPath: ./credentials/signing.pfx',
+              '      tls:',
+              '        certPath: ./credentials/client.crt',
+              '        keyPath: ./credentials/client.key',
+              '        caPath: ./credentials/ca.pem',
+              '- provider:',
+              '    id: openai:gpt-4',
+              '    config:',
+              '      response_format:',
+              '        type: json_schema',
+              '        json_schema:',
+              `          schema: "{{ 'file://schemas/' + env.OTHER_SCHEMA }}"`,
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      'tests/cases.yaml',
+      'credentials/private.pem',
+      'credentials/signing.jks',
+      'credentials/signing.pfx',
+      'credentials/client.crt',
+      'credentials/client.key',
+      'credentials/ca.pem',
+      '/',
+    ]);
+  });
+
   it.each([
     'go',
     'rb',

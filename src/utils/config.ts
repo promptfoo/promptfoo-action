@@ -512,6 +512,58 @@ export function extractFileDependencies(
           ) {
             processFileUrl(`file://${fileAuth.path}`, true);
           }
+          if (providerConfig) {
+            const securityGroups: Array<[string, string[]]> = [
+              [
+                'signatureAuth',
+                [
+                  'privateKeyPath',
+                  'keystorePath',
+                  'pfxPath',
+                  'certPath',
+                  'keyPath',
+                ],
+              ],
+              ['tls', ['certPath', 'keyPath', 'caPath', 'pfxPath']],
+            ];
+            for (const [groupKey, pathKeys] of securityGroups) {
+              const securityGroup = (providerConfig as Record<string, unknown>)[
+                groupKey
+              ];
+              if (typeof securityGroup !== 'object' || securityGroup === null) {
+                continue;
+              }
+              for (const pathKey of pathKeys) {
+                const assetPath = (securityGroup as Record<string, unknown>)[
+                  pathKey
+                ];
+                if (typeof assetPath === 'string') {
+                  processFilePath(
+                    expandAndTrackEnvTemplates(assetPath),
+                    'provider security file dependency',
+                    true,
+                    true,
+                  );
+                }
+              }
+            }
+            const responseFormat =
+              (providerConfig as Record<string, unknown>).response_format ??
+              (providerConfig as Record<string, unknown>).responseFormat;
+            if (typeof responseFormat === 'object' && responseFormat !== null) {
+              const format = responseFormat as Record<string, unknown>;
+              const jsonSchema =
+                typeof format.json_schema === 'object' &&
+                format.json_schema !== null
+                  ? (format.json_schema as Record<string, unknown>)
+                  : undefined;
+              for (const schema of [format.schema, jsonSchema?.schema]) {
+                if (typeof schema === 'string') {
+                  expandAndTrackEnvTemplates(schema);
+                }
+              }
+            }
+          }
           const providerId =
             typeof item === 'string'
               ? item
