@@ -293,12 +293,24 @@ export function extractFileDependencies(
     return roots;
   };
   const maxConfigBytes = 2 * 1024 * 1024;
+  const maxConfigDepth = 64;
   const maxConfigNodes = 10_000;
   const maxConfigRefs = 100;
   const maxGlobPatternLength = 64 * 1024;
   const maxGlobBraceExpansions = 1024;
   let requiresFullEvaluation = false;
   let warnedUnsafeDependency = false;
+
+  const assertConfigDepth = (depth: number): void => {
+    if (depth > maxConfigDepth) {
+      throw new Error('Promptfoo config exceeds the dependency depth limit');
+    }
+  };
+  const assertConfigRefBudget = (refCount: number): void => {
+    if (refCount >= maxConfigRefs) {
+      throw new Error('Promptfoo config exceeds the dependency ref limit');
+    }
+  };
 
   try {
     if (!isPathInside(cwd, resolvedWorkingDirectory)) {
@@ -458,10 +470,14 @@ export function extractFileDependencies(
         }
       }
       const inspected = new WeakSet<object>();
-      const pending: unknown[] = [parsed];
+      const pending: Array<{ value: unknown; depth: number }> = [
+        { value: parsed, depth: 0 },
+      ];
       let nodeCount = 0;
       while (pending.length > 0) {
-        const value = pending.pop();
+        const next = pending.pop() as { value: unknown; depth: number };
+        const value = next.value;
+        assertConfigDepth(next.depth);
         if (
           typeof value !== 'object' ||
           value === null ||
@@ -478,7 +494,12 @@ export function extractFileDependencies(
             'Promptfoo config exceeds the dependency traversal limit',
           );
         }
-        pending.push(...Object.values(value));
+        pending.push(
+          ...Object.values(value).map((child) => ({
+            value: child,
+            depth: next.depth + 1,
+          })),
+        );
       }
       return parsed;
     };
@@ -863,11 +884,7 @@ export function extractFileDependencies(
         }
         const refKey = `${next.file}\0${next.context}\0${record.$ref}`;
         if (!discoveredRefs.has(refKey)) {
-          if (discoveredRefs.size >= maxConfigRefs) {
-            throw new Error(
-              'Promptfoo config exceeds the dependency ref limit',
-            );
-          }
+          assertConfigRefBudget(discoveredRefs.size);
           discoveredRefs.add(refKey);
           const referenced = resolveConfigRef(record.$ref, next.file);
           pending.push({
@@ -928,6 +945,7 @@ export function extractFileDependencies(
       if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         return false;
       }
+      assertConfigDepth(depth);
       const record = value as Record<string, unknown>;
       if (
         !refsDisabled &&
@@ -1021,6 +1039,7 @@ export function extractFileDependencies(
         if (inspectedRefs.has(inspectionKey)) {
           return false;
         }
+        assertConfigRefBudget(inspectedRefs.size);
         inspectedRefs.add(inspectionKey);
         const referenced = resolveConfigRef(record.$ref, sourceFile);
         return inspectEnvironmentDependencies(

@@ -2824,11 +2824,14 @@ tests:
   it('fails closed for excessive config depth or aggregate referenced nodes', () => {
     const configPath = '/test/working/promptfooconfig.yaml';
     let deeplyNested = 'true';
-    for (let depth = 0; depth < 102; depth++) {
+    for (let depth = 0; depth < 66; depth++) {
       deeplyNested = `{"value":${deeplyNested}}`;
     }
     mockConfigFiles({ [configPath]: deeplyNested });
     expect(extractFileDependencies(configPath)).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('dependency depth limit'),
+    );
 
     mockConfigFiles({
       [configPath]: `$ref: './base.yaml'\nitems:\n${'- {}\n'.repeat(5001)}`,
@@ -2853,6 +2856,26 @@ tests:
       'env/.env.absolute',
       ...implicitConfigDependencies('promptfooconfig.yaml'),
     ]);
+  });
+
+  it('bounds reads for a long commandLineOptions ref chain', () => {
+    const configPath = '/test/working/promptfooconfig.yaml';
+    const refs: Record<string, string> = {
+      [configPath]: "commandLineOptions:\n  $ref: './opts-0.yaml'\n",
+    };
+    for (let index = 0; index < 128; index++) {
+      refs[`/test/working/opts-${index}.yaml`] =
+        `$ref: './opts-${index + 1}.yaml'\n`;
+    }
+    mockConfigFiles(refs);
+
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
+    expect(mockFs.readFileSync.mock.calls.length).toBeLessThanOrEqual(101);
+    expect(
+      (core.warning as Mock).mock.calls.every(
+        ([message]) => !/[\r\n]/.test(String(message)),
+      ),
+    ).toBe(true);
   });
 
   it('fails closed when config traversal, size, or ref limits are exceeded', () => {

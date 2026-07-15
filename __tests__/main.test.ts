@@ -433,6 +433,54 @@ describe('GitHub Action Main', () => {
       expect(comment.body.match(/prompts\/first\.txt/g) || []).toHaveLength(1);
     });
 
+    test.each([
+      ['oversized numeric range', 'prompts/{1..1000000000}.txt'],
+      ['unsafe integer range', 'prompts/{1..999999999999999999999999}.txt'],
+      ['zero numeric step', 'prompts/{1..4..0}.txt'],
+      ['unbalanced brace', 'prompts/{first,second.txt'],
+      ['nested brace', 'prompts/{{first,second},third}.txt'],
+      ['unexpected closing brace', 'prompts/first}.txt'],
+      ['unclosed character class', 'prompts/[first.txt'],
+      ['null byte', 'prompts/first\0.txt'],
+      ['oversized pattern', `prompts/${'a'.repeat(65_537)}.txt`],
+    ])('should reject an unsafe prompt glob before expansion: %s', async (_reason, promptGlob) => {
+      withInputs({ prompts: promptGlob });
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid prompt glob'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/literal\\*.txt',
+      'prompts/[ab].txt',
+      'prompts/{first,second}.txt',
+    ])('should allow a bounded prompt glob before expansion: %s', async (promptGlob) => {
+      withInputs({ prompts: promptGlob });
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        promptGlob,
+        expect.objectContaining({ braceExpandMax: 10_000 }),
+      );
+    });
+
+    test('should pass the bounded brace expansion limit to prompt globbing', async () => {
+      withInputs({ prompts: 'prompts/{1..10000}.txt' });
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/{1..10000}.txt',
+        expect.objectContaining({ braceExpandMax: 10_000 }),
+      );
+    });
+
     test('should exclude the config file when a prompt glob also matches it', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'promptfooconfig.yaml' },

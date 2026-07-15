@@ -36427,12 +36427,23 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
     return roots;
   };
   const maxConfigBytes = 2 * 1024 * 1024;
+  const maxConfigDepth = 64;
   const maxConfigNodes = 1e4;
   const maxConfigRefs = 100;
   const maxGlobPatternLength = 64 * 1024;
   const maxGlobBraceExpansions = 1024;
   let requiresFullEvaluation = false;
   let warnedUnsafeDependency = false;
+  const assertConfigDepth = (depth) => {
+    if (depth > maxConfigDepth) {
+      throw new Error("Promptfoo config exceeds the dependency depth limit");
+    }
+  };
+  const assertConfigRefBudget = (refCount) => {
+    if (refCount >= maxConfigRefs) {
+      throw new Error("Promptfoo config exceeds the dependency ref limit");
+    }
+  };
   try {
     if (!isPathInside(cwd, resolvedWorkingDirectory)) {
       throw new Error(
@@ -36544,10 +36555,14 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         }
       }
       const inspected = /* @__PURE__ */ new WeakSet();
-      const pending2 = [parsed];
+      const pending2 = [
+        { value: parsed, depth: 0 }
+      ];
       let nodeCount = 0;
       while (pending2.length > 0) {
-        const value = pending2.pop();
+        const next = pending2.pop();
+        const value = next.value;
+        assertConfigDepth(next.depth);
         if (typeof value !== "object" || value === null || !Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype || inspected.has(value)) {
           continue;
         }
@@ -36558,7 +36573,12 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
             "Promptfoo config exceeds the dependency traversal limit"
           );
         }
-        pending2.push(...Object.values(value));
+        pending2.push(
+          ...Object.values(value).map((child2) => ({
+            value: child2,
+            depth: next.depth + 1
+          }))
+        );
       }
       return parsed;
     };
@@ -36847,11 +36867,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         }
         const refKey = `${next.file}\0${next.context}\0${record.$ref}`;
         if (!discoveredRefs.has(refKey)) {
-          if (discoveredRefs.size >= maxConfigRefs) {
-            throw new Error(
-              "Promptfoo config exceeds the dependency ref limit"
-            );
-          }
+          assertConfigRefBudget(discoveredRefs.size);
           discoveredRefs.add(refKey);
           const referenced = resolveConfigRef(record.$ref, next.file);
           pending.push({
@@ -36882,6 +36898,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       if (typeof value !== "object" || value === null || Array.isArray(value)) {
         return false;
       }
+      assertConfigDepth(depth);
       const record = value;
       if (!refsDisabled && !isCommandLineOptions && typeof record.$ref === "string" && typeof record.commandLineOptions === "object" && record.commandLineOptions !== null && ("$ref" in record.commandLineOptions || "envPath" in record.commandLineOptions)) {
         throw new Error("Ambiguous extended Promptfoo config envPath refs");
@@ -36943,6 +36960,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         if (inspectedRefs.has(inspectionKey)) {
           return false;
         }
+        assertConfigRefBudget(inspectedRefs.size);
         inspectedRefs.add(inspectionKey);
         const referenced = resolveConfigRef(record.$ref, sourceFile);
         return inspectEnvironmentDependencies(
@@ -38643,6 +38661,72 @@ function formatRepeatCommentMarkdown(summary2) {
 // src/main.ts
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
+var MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
+var PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1e4;
+function validatePromptGlob(pattern) {
+  const invalidGlob = () => {
+    throw new PromptfooActionError(
+      "Invalid prompt glob: the pattern could not be expanded safely.",
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Use valid prompt glob patterns with bounded brace expansion."
+    );
+  };
+  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || /[\0\r\n]/.test(pattern)) {
+    invalidGlob();
+  }
+  let braceStart = -1;
+  let inCharacterClass = false;
+  let braceExpansions = 1;
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (path7.sep === "/" && character === "\\") {
+      index++;
+      continue;
+    }
+    if (character === "[") {
+      inCharacterClass = true;
+      continue;
+    }
+    if (inCharacterClass) {
+      if (character === "]") {
+        inCharacterClass = false;
+      }
+      continue;
+    }
+    if (character === "{") {
+      if (braceStart !== -1) {
+        invalidGlob();
+      }
+      braceStart = index;
+      continue;
+    }
+    if (character !== "}") {
+      continue;
+    }
+    if (braceStart === -1) {
+      invalidGlob();
+    }
+    const group = pattern.slice(braceStart + 1, index);
+    const range = group.split("..");
+    let expansionCount = group.split(",").length;
+    if ((range.length === 2 || range.length === 3) && range.every((entry) => /^-?\d+$/.test(entry))) {
+      const values = range.map(Number);
+      const [start, end, rawStep = 1] = values;
+      if (values.some((value) => !Number.isSafeInteger(value)) || rawStep === 0 || !Number.isSafeInteger(end - start)) {
+        invalidGlob();
+      }
+      expansionCount = Math.floor(Math.abs(end - start) / Math.abs(rawStep)) + 1;
+    }
+    braceExpansions *= expansionCount;
+    if (braceExpansions > PROMPT_GLOB_BRACE_EXPANSION_LIMIT) {
+      invalidGlob();
+    }
+    braceStart = -1;
+  }
+  if (braceStart !== -1 || inCharacterClass) {
+    invalidGlob();
+  }
+}
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
@@ -39107,9 +39191,11 @@ async function run() {
     );
     const changedFilesList = containsQuotedControlPath ? [] : changedFiles.split(changedFiles.includes("\0") ? "\0" : "\n").filter(Boolean);
     for (const globPattern of promptFilesGlobs) {
+      validatePromptGlob(globPattern);
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
-        nodir: true
+        nodir: true,
+        braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT
       });
       for (const file of matches) {
         const repositoryFile = toRepositoryPath(
