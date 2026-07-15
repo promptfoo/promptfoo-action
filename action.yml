@@ -86,7 +86,7 @@ inputs:
     required: false
     default: 'false'
   env-files:
-    description: 'Comma-separated application .env files to load; process-control variables are rejected'
+    description: 'Comma-separated application .env files within working-directory; traversal, escaping symlinks, and process-control variables are rejected'
     required: false
     default: ''
   fail-on-threshold:

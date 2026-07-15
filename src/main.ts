@@ -316,6 +316,45 @@ export async function run(): Promise<void> {
     }
 
     const loadEnvironmentFiles = (): void => {
+      const resolveContainedEnvFile = (envFilePath: string): string => {
+        const resolvedPath = path.resolve(envFilePath);
+        const relativePath = path.relative(workingDirectory, resolvedPath);
+        if (
+          relativePath === '..' ||
+          relativePath.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(relativePath)
+        ) {
+          throw new PromptfooActionError(
+            `Environment file ${envFilePath} must stay within the working directory`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            `Choose an environment file within ${workingDirectory}`,
+          );
+        }
+
+        if (!fs.existsSync(resolvedPath)) {
+          return resolvedPath;
+        }
+
+        const realWorkingDirectory = path.resolve(
+          fs.realpathSync(workingDirectory).toString(),
+        );
+        const realPath = path.resolve(fs.realpathSync(resolvedPath).toString());
+        const realRelativePath = path.relative(realWorkingDirectory, realPath);
+        if (
+          realRelativePath === '..' ||
+          realRelativePath.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(realRelativePath)
+        ) {
+          throw new PromptfooActionError(
+            `Environment file ${envFilePath} must stay within the working directory`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            `Choose an environment file within ${workingDirectory}`,
+          );
+        }
+
+        return resolvedPath;
+      };
+
       // Promptfoo also loads workingDirectory/.env implicitly during startup.
       // Validate it first so selected env-files can still override application
       // values while no repository-controlled process setting reaches the child.
@@ -324,21 +363,24 @@ export async function run(): Promise<void> {
       const implicitEnvExists = fs.existsSync(implicitEnvFilePath);
       const implicitVaultExists =
         process.env.DOTENV_KEY && fs.existsSync(implicitVaultFilePath);
-      const implicitFilePath = implicitVaultExists
-        ? implicitVaultFilePath
-        : implicitEnvFilePath;
+      const implicitFilePath = resolveContainedEnvFile(
+        implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath,
+      );
       const explicitEnvFiles = envFiles
         .split(',')
         .map((envFile) => envFile.trim())
         .filter(Boolean)
         .map((envFile) => path.resolve(path.join(workingDirectory, envFile)))
         .map((envFilePath) => {
+          resolveContainedEnvFile(envFilePath);
           const vaultPath = envFilePath.endsWith('.vault')
             ? envFilePath
             : `${envFilePath}.vault`;
-          return process.env.DOTENV_KEY && fs.existsSync(vaultPath)
-            ? vaultPath
-            : envFilePath;
+          const effectivePath =
+            process.env.DOTENV_KEY && fs.existsSync(vaultPath)
+              ? vaultPath
+              : envFilePath;
+          return resolveContainedEnvFile(effectivePath);
         });
       const implicitFileIsExplicit =
         explicitEnvFiles.includes(implicitFilePath);
@@ -347,7 +389,11 @@ export async function run(): Promise<void> {
         !implicitFileIsExplicit
       ) {
         core.info(`Loading environment variables from ${implicitFilePath}`);
-        loadEnvironmentFile(implicitFilePath, process.env, false);
+        loadEnvironmentFile(
+          resolveContainedEnvFile(implicitFilePath),
+          process.env,
+          false,
+        );
         maskApiKeys();
         core.info(`Successfully loaded ${implicitFilePath}`);
       }
@@ -357,14 +403,14 @@ export async function run(): Promise<void> {
         for (const envFilePath of explicitEnvFiles) {
           if (fs.existsSync(envFilePath)) {
             core.info(`Loading environment variables from ${envFilePath}`);
-            loadEnvironmentFile(envFilePath);
+            loadEnvironmentFile(resolveContainedEnvFile(envFilePath));
             maskApiKeys();
             core.info(`Successfully loaded ${envFilePath}`);
           } else {
             throw new PromptfooActionError(
               `Environment file ${envFilePath} not found`,
               ErrorCodes.ENV_FILE_NOT_FOUND,
-              `Make sure the file path is correct relative to ${workingDirectory}`,
+              `Make sure the environment file exists within ${workingDirectory}`,
             );
           }
         }

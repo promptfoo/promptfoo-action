@@ -37570,19 +37570,54 @@ async function run() {
       }
     }
     const loadEnvironmentFiles = () => {
+      const resolveContainedEnvFile = (envFilePath) => {
+        const resolvedPath = path6.resolve(envFilePath);
+        const relativePath = path6.relative(workingDirectory, resolvedPath);
+        if (relativePath === ".." || relativePath.startsWith(`..${path6.sep}`) || path6.isAbsolute(relativePath)) {
+          throw new PromptfooActionError(
+            `Environment file ${envFilePath} must stay within the working directory`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            `Choose an environment file within ${workingDirectory}`
+          );
+        }
+        if (!fs7.existsSync(resolvedPath)) {
+          return resolvedPath;
+        }
+        const realWorkingDirectory = path6.resolve(
+          fs7.realpathSync(workingDirectory).toString()
+        );
+        const realPath = path6.resolve(fs7.realpathSync(resolvedPath).toString());
+        const realRelativePath = path6.relative(realWorkingDirectory, realPath);
+        if (realRelativePath === ".." || realRelativePath.startsWith(`..${path6.sep}`) || path6.isAbsolute(realRelativePath)) {
+          throw new PromptfooActionError(
+            `Environment file ${envFilePath} must stay within the working directory`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            `Choose an environment file within ${workingDirectory}`
+          );
+        }
+        return resolvedPath;
+      };
       const implicitEnvFilePath = path6.join(workingDirectory, ".env");
       const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
       const implicitEnvExists = fs7.existsSync(implicitEnvFilePath);
       const implicitVaultExists = process.env.DOTENV_KEY && fs7.existsSync(implicitVaultFilePath);
-      const implicitFilePath = implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath;
+      const implicitFilePath = resolveContainedEnvFile(
+        implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath
+      );
       const explicitEnvFiles = envFiles.split(",").map((envFile) => envFile.trim()).filter(Boolean).map((envFile) => path6.resolve(path6.join(workingDirectory, envFile))).map((envFilePath) => {
+        resolveContainedEnvFile(envFilePath);
         const vaultPath = envFilePath.endsWith(".vault") ? envFilePath : `${envFilePath}.vault`;
-        return process.env.DOTENV_KEY && fs7.existsSync(vaultPath) ? vaultPath : envFilePath;
+        const effectivePath = process.env.DOTENV_KEY && fs7.existsSync(vaultPath) ? vaultPath : envFilePath;
+        return resolveContainedEnvFile(effectivePath);
       });
       const implicitFileIsExplicit = explicitEnvFiles.includes(implicitFilePath);
       if ((implicitEnvExists || implicitVaultExists) && !implicitFileIsExplicit) {
         info(`Loading environment variables from ${implicitFilePath}`);
-        loadEnvironmentFile(implicitFilePath, process.env, false);
+        loadEnvironmentFile(
+          resolveContainedEnvFile(implicitFilePath),
+          process.env,
+          false
+        );
         maskApiKeys();
         info(`Successfully loaded ${implicitFilePath}`);
       }
@@ -37590,14 +37625,14 @@ async function run() {
         for (const envFilePath of explicitEnvFiles) {
           if (fs7.existsSync(envFilePath)) {
             info(`Loading environment variables from ${envFilePath}`);
-            loadEnvironmentFile(envFilePath);
+            loadEnvironmentFile(resolveContainedEnvFile(envFilePath));
             maskApiKeys();
             info(`Successfully loaded ${envFilePath}`);
           } else {
             throw new PromptfooActionError(
               `Environment file ${envFilePath} not found`,
               ErrorCodes.ENV_FILE_NOT_FOUND,
-              `Make sure the file path is correct relative to ${workingDirectory}`
+              `Make sure the environment file exists within ${workingDirectory}`
             );
           }
         }

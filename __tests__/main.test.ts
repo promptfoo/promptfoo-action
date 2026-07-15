@@ -94,6 +94,7 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn((filePath: fs.PathLike) => filePath.toString()),
     unlinkSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -129,6 +130,7 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
@@ -170,6 +172,9 @@ function setupCommonMocks(): MockOctokit {
   mockCache.logCacheMetrics.mockResolvedValue();
   mockConfig.extractFileDependencies.mockReturnValue([]);
   mockFsUtils.isDirectory.mockReturnValue(false);
+  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+    filePath.toString(),
+  );
 
   // Setup octokit mock
   const mockOctokit: MockOctokit = {
@@ -1180,6 +1185,152 @@ describe('GitHub Action Main', () => {
       );
       expect(mockCore.setFailed).not.toHaveBeenCalled();
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject an env file that lexically escapes the working directory', async () => {
+      withInputs({ 'env-files': '../outside.env' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockReturnValue({ error: null });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('must stay within the working directory'),
+      );
+      expect(dotenv.config).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      { envFiles: '', file: '.env', dotenvKey: undefined },
+      {
+        envFiles: '',
+        file: '.env.vault',
+        dotenvKey: 'trusted-dotenv-key',
+      },
+      { envFiles: '.env.local', file: '.env.local', dotenvKey: undefined },
+    ])('should reject an escaping $file symlink before loading it', async ({
+      envFiles,
+      file,
+      dotenvKey,
+    }) => {
+      withInputs({ 'env-files': envFiles });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}${file}`),
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return value.endsWith(`${path.sep}${file}`)
+          ? path.join(path.dirname(process.cwd()), 'outside.env')
+          : value;
+      });
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockReturnValue({ error: null });
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      if (dotenvKey === undefined) {
+        delete process.env.DOTENV_KEY;
+      } else {
+        process.env.DOTENV_KEY = dotenvKey;
+      }
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('must stay within the working directory'),
+        );
+        expect(dotenv.config).not.toHaveBeenCalled();
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
+    });
+
+    test('should preserve vault semantics for a contained .env.vault symlink', async () => {
+      withInputs({ 'env-files': '' });
+      const logicalPath = path.join(process.cwd(), '.env.vault');
+      const physicalPath = path.join(process.cwd(), 'configs', 'prod-secret');
+      mockFs.existsSync.mockImplementation(
+        (filePath: fs.PathLike) => filePath.toString() === logicalPath,
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString() === logicalPath
+          ? physicalPath
+          : filePath.toString(),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      (dotenv.config as Mock).mockReturnValue({ error: null });
+
+      try {
+        await run();
+
+        expect(dotenv.config).toHaveBeenCalledWith(
+          expect.objectContaining({ path: logicalPath }),
+        );
+        expect(dotenv.config).not.toHaveBeenCalledWith(
+          expect.objectContaining({ path: physicalPath }),
+        );
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+      } finally {
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
+    });
+
+    test('should not select a physical vault for a contained .env.local symlink', async () => {
+      withInputs({ 'env-files': '.env.local' });
+      const logicalPath = path.join(process.cwd(), '.env.local');
+      const physicalPath = path.join(process.cwd(), 'configs', 'dev.env');
+      const physicalVaultPath = `${physicalPath}.vault`;
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return value === logicalPath || value === physicalVaultPath;
+      });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString() === logicalPath
+          ? physicalPath
+          : filePath.toString(),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      const loadedPaths: string[] = [];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string }) => {
+          const requestedPath = options?.path ?? '';
+          loadedPaths.push(
+            requestedPath === physicalPath ? physicalVaultPath : requestedPath,
+          );
+          return { error: null };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(loadedPaths).toEqual([logicalPath]);
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+      } finally {
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
     });
 
     test('should preserve trusted workflow credentials when loading the implicit .env', async () => {
