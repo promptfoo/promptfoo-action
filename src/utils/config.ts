@@ -131,6 +131,23 @@ function providerFilePath(fileUrl: string, allowJavascript = false): string {
   return rawPath;
 }
 
+function fileReferencePath(fileUrl: string): string {
+  const encodedPath = fileUrl.slice('file://'.length);
+  const rawPath =
+    process.platform === 'win32' && /^\/[A-Za-z]:[\\/]/.test(encodedPath)
+      ? encodedPath.slice(1)
+      : encodedPath;
+  const functionSeparator = rawPath.lastIndexOf(':');
+  const scriptPath = rawPath.slice(0, functionSeparator);
+  if (
+    functionSeparator > 1 &&
+    /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/.test(scriptPath)
+  ) {
+    return scriptPath;
+  }
+  return rawPath;
+}
+
 function renderEnvTemplate(
   value: string,
   environment: TemplateEnvironment,
@@ -424,13 +441,13 @@ export function extractFileDependencies(configPath: string): string[] {
 
       const filePath = isProvider
         ? providerFilePath(renderedFileUrl, allowJavascript)
-        : renderedFileUrl.slice('file://'.length);
+        : fileReferencePath(renderedFileUrl);
       const displayPath = isProvider
         ? fileUrl.startsWith('file://')
           ? providerFilePath(fileUrl, allowJavascript)
           : fileUrl
         : fileUrl.startsWith('file://')
-          ? fileUrl.slice('file://'.length)
+          ? fileReferencePath(fileUrl)
           : fileUrl;
       if (filePath.includes('\0')) {
         resolveConfigDependency(

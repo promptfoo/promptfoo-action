@@ -367,6 +367,54 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should preserve intentional outer whitespace in action prompt glob inputs', async () => {
+      const inputs = {
+        ...DEFAULT_INPUTS,
+        prompts: ' prompts/*.txt\r\nprompts/*.md ',
+      };
+      mockCore.getInput.mockImplementation((name, options) => {
+        const value = inputs[name] || '';
+        return options?.trimWhitespace === false ? value : value.trim();
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' prompts/prompt1.txt' },
+        { filename: 'prompts/prompt2.md ' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) => {
+        if (pattern === ' prompts/*.txt') {
+          return [' prompts/prompt1.txt'];
+        }
+        if (pattern === 'prompts/*.md ') {
+          return ['prompts/prompt2.md '];
+        }
+        return [];
+      });
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('prompts', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        ' prompts/*.txt',
+        expect.any(Object),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/*.md ',
+        expect.any(Object),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          '--prompts',
+          ' prompts/prompt1.txt',
+          'prompts/prompt2.md ',
+        ]),
+        expect.any(Object),
+      );
+    });
+
     test('should reject an unchanged prompt filename before a dependency-triggered full evaluation', async () => {
       const forgedAnnotation = 'UNCHANGED_PROMPT_CANARY_019F62C3';
       const unsafePrompt = `prompts/prompt\n::error::${forgedAnnotation}.txt`;
@@ -1257,6 +1305,76 @@ describe('GitHub Action Main', () => {
 
       await run();
 
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should preserve outer spaces in an action workflow file list', async () => {
+      const inputs = {
+        ...DEFAULT_INPUTS,
+        'workflow-files': ' providers/leading.py\r\nproviders/trailing.py ',
+      };
+      mockCore.getInput.mockImplementation((name, options) => {
+        const value = inputs[name] || '';
+        return options?.trimWhitespace === false ? value : value.trim();
+      });
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' providers/leading.py',
+        'providers/trailing.py ',
+      ]);
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('workflow-files', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should ignore a whitespace-only action workflow file list and use the workflow input', async () => {
+      const inputs = {
+        ...DEFAULT_INPUTS,
+        'workflow-files': ' \t\r\n  ',
+      };
+      mockCore.getInput.mockImplementation((name, options) => {
+        const value = inputs[name] || '';
+        return options?.trimWhitespace === false ? value : value.trim();
+      });
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'providers/fallback.py' } },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/fallback.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Using manually specified files: providers/fallback.py',
+      );
       expect(mockExec.exec).toHaveBeenCalledWith(
         'npx',
         expect.arrayContaining(['promptfoo@latest', 'eval']),

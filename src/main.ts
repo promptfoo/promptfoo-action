@@ -245,7 +245,10 @@ export async function run(): Promise<void> {
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
-    const promptsInput = core.getInput('prompts', { required: false });
+    const promptsInput = core.getInput('prompts', {
+      required: false,
+      trimWhitespace: false,
+    });
     const promptFilesGlobs: string[] = promptsInput
       ? promptsInput.split(/\r?\n/).filter((line) => line.trim())
       : [];
@@ -298,6 +301,7 @@ export async function run(): Promise<void> {
     });
     const workflowFiles: string = core.getInput('workflow-files', {
       required: false,
+      trimWhitespace: false,
     });
     const workflowBase: string = core.getInput('workflow-base', {
       required: false,
@@ -440,7 +444,9 @@ export async function run(): Promise<void> {
       // 3. Run on all prompt files
 
       // Priority: action inputs > workflow inputs > defaults
-      const filesInput = workflowFiles || github.context.payload.inputs?.files;
+      const filesInput = workflowFiles.trim()
+        ? workflowFiles
+        : github.context.payload.inputs?.files;
       const compareBase: string =
         workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
 

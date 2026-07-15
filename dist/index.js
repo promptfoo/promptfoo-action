@@ -38136,6 +38136,16 @@ function providerFilePath(fileUrl, allowJavascript = false) {
   }
   return rawPath;
 }
+function fileReferencePath(fileUrl) {
+  const encodedPath = fileUrl.slice("file://".length);
+  const rawPath = process.platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(encodedPath) ? encodedPath.slice(1) : encodedPath;
+  const functionSeparator = rawPath.lastIndexOf(":");
+  const scriptPath = rawPath.slice(0, functionSeparator);
+  if (functionSeparator > 1 && /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/.test(scriptPath)) {
+    return scriptPath;
+  }
+  return rawPath;
+}
 function renderEnvTemplate(value, environment) {
   if (/^(?:1|true|yes|yup|yeppers)$/i.test(
     String(environment.PROMPTFOO_DISABLE_TEMPLATING ?? "")
@@ -38353,8 +38363,8 @@ function extractFileDependencies(configPath) {
         dependencies.add(`${dependencyRoot}${path6.sep}`);
         return [];
       }
-      const filePath = isProvider ? providerFilePath(renderedFileUrl, allowJavascript) : renderedFileUrl.slice("file://".length);
-      const displayPath = isProvider ? fileUrl.startsWith("file://") ? providerFilePath(fileUrl, allowJavascript) : fileUrl : fileUrl.startsWith("file://") ? fileUrl.slice("file://".length) : fileUrl;
+      const filePath = isProvider ? providerFilePath(renderedFileUrl, allowJavascript) : fileReferencePath(renderedFileUrl);
+      const displayPath = isProvider ? fileUrl.startsWith("file://") ? providerFilePath(fileUrl, allowJavascript) : fileUrl : fileUrl.startsWith("file://") ? fileReferencePath(fileUrl) : fileUrl;
       if (filePath.includes("\0")) {
         resolveConfigDependency(
           filePath,
@@ -39301,7 +39311,10 @@ async function run() {
     const githubToken = getInput("github-token", {
       required: true
     });
-    const promptsInput = getInput("prompts", { required: false });
+    const promptsInput = getInput("prompts", {
+      required: false,
+      trimWhitespace: false
+    });
     const promptFilesGlobs = promptsInput ? promptsInput.split(/\r?\n/).filter((line) => line.trim()) : [];
     const configPath = getInput("config", {
       required: true
@@ -39350,7 +39363,8 @@ async function run() {
       required: false
     });
     const workflowFiles = getInput("workflow-files", {
-      required: false
+      required: false,
+      trimWhitespace: false
     });
     const workflowBase = getInput("workflow-base", {
       required: false
@@ -39471,7 +39485,7 @@ async function run() {
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
-      const filesInput = workflowFiles || context2.payload.inputs?.files;
+      const filesInput = workflowFiles.trim() ? workflowFiles : context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
         changedFiles = filesInput;

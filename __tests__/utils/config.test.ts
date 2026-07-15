@@ -480,6 +480,7 @@ providers:
       env:
         AUTH_PATH: ./auth/mapped-token.ts
       config:
+        validateStatus: file://validators/mapped-status.js:validateStatus
         auth:
           type: file
           path: "{{ env.AUTH_PATH }}"
@@ -492,6 +493,7 @@ providers:
     expect(
       extractFileDependencies('/test/repository/promptfooconfig.yaml'),
     ).toEqual([
+      'validators/mapped-status.js',
       'auth/mapped-token.ts',
       'credentials/mapped-key.pem',
       'credentials/mapped-ca.pem',
@@ -536,6 +538,29 @@ targets:
     ]);
   });
 
+  it('should extract HTTP validators, auth, and TLS paths from target-map entries', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - https://example.test:
+      config:
+        validateStatus: file://validators/target-status.js:validateStatus
+        auth:
+          type: file
+          path: ./auth/target-mapped-token.ts
+        tls:
+          caPath: ./credentials/target-mapped-ca.pem
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([
+      'validators/target-status.js',
+      'auth/target-mapped-token.ts',
+      'credentials/target-mapped-ca.pem',
+    ]);
+  });
+
   it('should ignore bare HTTP-only auth and credential paths on non-HTTP providers', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -556,6 +581,15 @@ providers:
           path: ./auth/not-a-mapped-http-token.ts
         tls:
           caPath: ./credentials/not-a-mapped-http-ca.pem
+targets:
+  - openai:chat:gpt-4:
+      config:
+        validateStatus: status >= 200 && status < 300
+        auth:
+          type: file
+          path: ./auth/not-a-target-http-token.ts
+        tls:
+          caPath: ./credentials/not-a-target-http-ca.pem
 `);
 
     expect(
@@ -2756,6 +2790,62 @@ tests:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/data/context.txt');
     expect(deps).toContain('../config/data/examples.json');
+  });
+
+  it('should extract function-qualified Ruby and Go variable and assertion files', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      ruby: file://vars/build.rb:func
+      go: file://vars/build.go:Func
+    assert:
+      - type: javascript
+        value: file://validators/check.go:Check
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['vars/build.rb', 'vars/build.go', 'validators/check.go']);
+  });
+
+  it('should preserve uppercase Ruby and Go variable filenames with literal colons', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      ruby: file://vars/build.RB:func
+      go: file://vars/build.GO:Func
+    assert:
+      - type: javascript
+        value: file://validators/check.GO:Check
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([
+      'vars/build.RB:func',
+      'vars/build.GO:Func',
+      'validators/check.GO:Check',
+    ]);
+  });
+
+  it('should preserve a Windows drive colon in a function-qualified variable file', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      context: file:///C:/repository/vars/build.rb:func
+`);
+
+      expect(
+        extractFileDependencies('/test/config/promptfooconfig.yaml'),
+      ).toEqual(['../config/C:/repository/vars/build.rb']);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
   });
 
   it('should extract assert files', () => {
