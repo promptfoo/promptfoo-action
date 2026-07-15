@@ -198,12 +198,23 @@ prompts:
     'Explain *carefully* how this works',
     'Summarize https://example.com/docs for the user',
     'Compare this / that for clarity',
+    'Choose [pass/fail]',
+    'Use * for yes/no',
+    'Explain *carefully* for pass/fail',
+    'Return **bold** for yes/no',
+    'Choose [safe] for yes/no',
+    'Classify as [positive,negative] for pass/fail',
+    'What? Answer yes/no',
+    'Is it safe? choose pass/fail',
+    'Use regex (foo|bar)? for yes/no',
+    'Summarize [a-z] for input/output',
   ])('should ignore single-line inline prompt-map keys containing path markers: %s', (prompt) => {
     mockFs.readFileSync.mockReturnValue(
       `prompts:\n  "${prompt}": inline prompt\n`,
     );
-    mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) =>
+        value.includes('*') || value.includes('[') || value.includes('?'),
     );
 
     expect(
@@ -239,6 +250,83 @@ prompts:
       'prompt assets/my generator',
       'prompt assets/my generator-v2',
       'prompt assets',
+    ]);
+  });
+
+  it('should retain deleted prompt paths with whitespace-only segments', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  prompts/ /deleted-generator.longunknown: unknown executable
+  prompts/ /deleted-generator.xy: short executable
+  prompts/ /deleted generator: extensionless executable
+  prompt assets/ /my generator: multiword executable
+  prompt assets/ /my generator*: multiword executable glob
+  prompt assets/file?: question-mark executable glob
+  prompt assets/ /file?: spaced question-mark executable glob
+  prompt assets/file [a-z]: bracket executable glob
+  prompts/ /file [0-9]: spaced bracket executable glob
+  prompt assets/my *file*: asterisk executable glob
+  prompt assets/ /my **file**: spaced asterisk executable glob
+  prompt assets/my *file* draft: asterisk executable glob with suffix
+  prompt assets/file? draft: question-mark executable glob with suffix
+  prompt assets/file [a-z] draft: bracket executable glob with suffix
+`);
+    mockFs.existsSync.mockReturnValue(false);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) =>
+        value.includes('*') || value.includes('?') || value.includes('['),
+    );
+    mockGlob.sync.mockImplementation((pattern: string) => {
+      if (pattern.endsWith('/ /file?')) {
+        return ['/test/working/prompt assets/ /file1'];
+      }
+      if (pattern.endsWith('/file?')) {
+        return ['/test/working/prompt assets/file1'];
+      }
+      if (pattern.endsWith('/file [a-z]')) {
+        return ['/test/working/prompt assets/file a'];
+      }
+      if (pattern.endsWith('/file [0-9]')) {
+        return ['/test/working/prompts/ /file 1'];
+      }
+      if (pattern.endsWith('/my *file*')) {
+        return ['/test/working/prompt assets/my matched-file-v2'];
+      }
+      if (pattern.endsWith('/my **file**')) {
+        return ['/test/working/prompt assets/ /my matched-file-v3'];
+      }
+      if (pattern.endsWith('/my *file* draft')) {
+        return ['/test/working/prompt assets/my matched-file-v4 draft'];
+      }
+      if (pattern.endsWith('/file? draft')) {
+        return ['/test/working/prompt assets/file1 draft'];
+      }
+      if (pattern.endsWith('/file [a-z] draft')) {
+        return ['/test/working/prompt assets/file a draft'];
+      }
+      return ['/test/working/prompt assets/ /my generator-v2'];
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'prompts/ /deleted-generator.longunknown',
+      'prompts/ /deleted-generator.xy',
+      'prompts/ /deleted generator',
+      'prompt assets/ /my generator',
+      'prompt assets/ /my generator-v2',
+      'prompt assets/ ',
+      'prompt assets/file1',
+      'prompt assets',
+      'prompt assets/ /file1',
+      'prompt assets/file a',
+      'prompts/ /file 1',
+      'prompts/ ',
+      'prompt assets/my matched-file-v2',
+      'prompt assets/ /my matched-file-v3',
+      'prompt assets/my matched-file-v4 draft',
+      'prompt assets/file1 draft',
+      'prompt assets/file a draft',
     ]);
   });
 
@@ -299,11 +387,121 @@ prompts:
     ).toEqual(['prompts/chat.yaml', 'partials/config-value/system.txt']);
   });
 
+  it('should resolve built-in environment filters and defaults in nested mapped prompt references', () => {
+    vi.stubEnv('PARTIAL_DIR', 'process-value');
+    vi.stubEnv('MISSING_PARTIAL', undefined);
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'env:\n  PARTIAL_DIR: "  Config-Value  "\n  NON_STRING_PARTIAL: 1\nprompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return `messages:
+  - content: file://partials/{{ env.PARTIAL_DIR | trim | lower }}/system.txt
+  - content: file://partials/{{ env.MISSING_PARTIAL | default('fallback') | upper }}/user.txt
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'prompts/chat.yaml',
+      'partials/config-value/system.txt',
+      'partials/FALLBACK/user.txt',
+    ]);
+  });
+
+  it('should resolve nested config environment templates before mapped prompt references', () => {
+    vi.stubEnv('ROOT_PARTIAL_DIR', 'Config-Value');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'env:\n  PARTIAL_DIR: "{{ env.ROOT_PARTIAL_DIR | lower }}"\nprompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return 'messages:\n  - content: file://partials/{{ env.PARTIAL_DIR }}/system.txt\n';
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'partials/config-value/system.txt']);
+  });
+
+  it('should resolve scalar environment filters and empty-value defaults in nested mapped prompt references', () => {
+    vi.stubEnv('EXISTING_PARTIAL', 'existing');
+    vi.stubEnv('EMPTY_PARTIAL', '');
+    vi.stubEnv('INTEGER_PARTIAL', '12-items');
+    vi.stubEnv('INVALID_INTEGER_PARTIAL', 'items');
+    vi.stubEnv('FLOAT_PARTIAL', '1.5-items');
+    vi.stubEnv('INVALID_FLOAT_PARTIAL', 'items');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return `messages:
+  - content: file://partials/{{ env.EXISTING_PARTIAL | default('fallback') }}/existing.txt
+  - content: file://partials/{{ env.EMPTY_PARTIAL | d('fallback', true) }}/empty.txt
+  - content: file://partials/{{ env.INTEGER_PARTIAL | int | string }}/integer.txt
+  - content: file://partials/{{ env.INVALID_INTEGER_PARTIAL | int }}/invalid-integer.txt
+  - content: file://partials/{{ env.FLOAT_PARTIAL | float }}/float.txt
+  - content: file://partials/{{ env.INVALID_FLOAT_PARTIAL | float }}/invalid-float.txt
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'prompts/chat.yaml',
+      'partials/existing/existing.txt',
+      'partials/fallback/empty.txt',
+      'partials/12/integer.txt',
+      'partials/0/invalid-integer.txt',
+      'partials/1.5/float.txt',
+      'partials/0/invalid-float.txt',
+    ]);
+  });
+
+  it('should strip Nunjucks comments from nested mapped prompt references', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return 'messages:\n  - content: file://partials/{#path-note#}system.txt\n';
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'partials/system.txt']);
+  });
+
+  it.each([
+    'cjs',
+    'cts',
+    'js',
+    'mjs',
+    'mts',
+    'ts',
+    'py',
+    'go',
+    'rb',
+  ])('should strip executable selectors from nested mapped prompt references: %s', (extension) => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return `messages:\n  - content: file://partials/build.${extension}:generate\n`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', `partials/build.${extension}`]);
+  });
+
   it.each([
     '{{ env.MISSING_PARTIAL }}',
-    "{{ env.MISSING_PARTIAL | default('resolved') }}",
+    '{{ env.MISSING_PARTIAL | upper }}',
+    '{{ env.PARTIAL_DIR | custom_filter }}',
+    '{{ vars.partial_dir }}',
+    '{% if env.PARTIAL_DIR %}resolved{% endif %}',
   ])('should conservatively watch nested prompt references with an unresolved template: %s', (template) => {
     vi.stubEnv('MISSING_PARTIAL', undefined);
+    vi.stubEnv('PARTIAL_DIR', 'resolved');
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('promptfooconfig.yaml')) {
         return 'prompts:\n  file://prompts/chat.yaml: yaml prompt\n';
@@ -316,6 +514,49 @@ prompts:
     ).toEqual(['./']);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('Templated prompt file dependencies'),
+    );
+  });
+
+  it('should not expose expanded environment values in unsafe nested prompt warnings', () => {
+    vi.stubEnv('CUSTOM_RUNTIME_SECRET', 'SENSITIVE-REVIEW-TOKEN');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return 'messages:\n  - content: file://../outside/{{ env.CUSTOM_RUNTIME_SECRET }}/system.txt\n';
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('{{ env.CUSTOM_RUNTIME_SECRET }}'),
+    );
+    expect(vi.mocked(core.warning).mock.calls.join('\n')).not.toContain(
+      'SENSITIVE-REVIEW-TOKEN',
+    );
+  });
+
+  it('should not expose expanded environment values in unsafe nested prompt glob warnings', () => {
+    vi.stubEnv('CUSTOM_RUNTIME_SECRET', 'SENSITIVE-REVIEW-TOKEN');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  file://prompts/chat.yaml: yaml prompt\n';
+      }
+      return 'messages:\n  - content: file://partials/{{ env.CUSTOM_RUNTIME_SECRET }}/*.txt\n';
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/tmp/outside/secret.txt']);
+
+    extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('{{ env.CUSTOM_RUNTIME_SECRET }}'),
+    );
+    expect(vi.mocked(core.warning).mock.calls.join('\n')).not.toContain(
+      'SENSITIVE-REVIEW-TOKEN',
     );
   });
 
@@ -743,6 +984,51 @@ tests:
     ]);
   });
 
+  it.each([
+    ['xlsx string', 'tests: file://tests/test_cases.xlsx#Sheet2'],
+    ['xls string', 'tests: file://tests/test_cases.xls#My Data Sheet'],
+    ['xlsx path', 'tests:\n  path: file://tests/test_cases.xlsx#Sheet2'],
+    ['xls bare path', 'tests:\n  path: tests/test_cases.xls#2'],
+  ])('should strip spreadsheet sheet selectors from %s test dependencies', (_name, section) => {
+    mockFs.readFileSync.mockReturnValue(`${section}\n`);
+
+    const extension = section.includes('.xlsx') ? 'xlsx' : 'xls';
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([`tests/test_cases.${extension}`]);
+  });
+
+  it('should strip spreadsheet sheet selectors before expanding test globs', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: file://tests/*.{xlsx,xls}#Sheet2\n',
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => value.includes('*') || value.includes('{'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/tests/first.xlsx',
+      '/test/working/tests/second.xls',
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['tests/first.xlsx', 'tests/second.xls', 'tests']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/working/tests/*.{xlsx,xls}',
+      expect.objectContaining({ windowsPathsNoEscape: true }),
+    );
+  });
+
+  it('should preserve fragments on non-spreadsheet test dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: file://tests/test_cases.yaml#literal-fragment\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['tests/test_cases.yaml#literal-fragment']);
+  });
+
   it('should tolerate self-referential generator config objects and arrays', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
@@ -932,6 +1218,10 @@ shared: &shared
       'block prompt',
       'prompts:\n  - |-\n    Show {"$ref":"not-a-file"} to the user',
     ],
+    [
+      'metadata value',
+      'metadata:\n  note: |-\n    $ref: not-a-file.yaml#/definitions/example\nprompts:\n  - inline prompt',
+    ],
   ])('should ignore $ref text inside an inline %s', (_name, configContent) => {
     mockFs.readFileSync.mockReturnValue(configContent);
 
@@ -939,6 +1229,104 @@ shared: &shared
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([]);
     expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'tool parameters',
+      `providers:
+  - id: openai:gpt-4o
+    config:
+      tools:
+        - type: function
+          function:
+            name: example
+            parameters:
+              type: object
+              properties:
+                item:
+                  $ref: '#/$defs/item'
+              $defs:
+                item:
+                  type: string`,
+    ],
+    [
+      'function parameters',
+      `providers:
+  - id: openai:gpt-4o
+    config:
+      functions:
+        - name: example
+          parameters:
+            type: object
+            properties:
+              item:
+                $ref: '#/$defs/item'
+            $defs:
+              item:
+                type: string`,
+    ],
+  ])('should ignore parsed $ref keys inside provider %s schemas', (_name, section) => {
+    mockFs.readFileSync.mockReturnValue(`prompts: []\n${section}\n`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should tolerate provider tools and functions without parameter schemas while scanning parsed $ref keys', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - openai:gpt-4o-mini:
+      label: no config
+  - openai:gpt-4o:
+      config:
+        functions:
+          - name: without_parameters
+          - name: null_parameters
+            parameters: null
+        tools:
+          - type: web_search
+          - type: function
+            function:
+              name: without_parameters
+          - type: function
+            function:
+              name: null_parameters
+              parameters: null
+prompts: []
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should detect parsed $ref aliases that are also used by provider parameter schemas', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      schema: &shared
+        $ref: external.yaml#/schema
+providers:
+  - id: openai:gpt-4o
+    config:
+      tools:
+        - type: function
+          function:
+            name: example
+            parameters: *shared
+prompts: []
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('YAML $ref dependencies'),
+    );
   });
 
   it('should match Promptfoo backslash-separated prompt globs on POSIX', () => {

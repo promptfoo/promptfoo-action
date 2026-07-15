@@ -920,6 +920,25 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should not expose config dependency paths in debug logs', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/unrelated.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'prompts/SENSITIVE-REVIEW-TOKEN/system.txt',
+      ]);
+
+      await run();
+
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        'Found 1 file dependencies in config',
+      );
+      expect(mockCore.debug.mock.calls.join('\n')).not.toContain(
+        'SENSITIVE-REVIEW-TOKEN',
+      );
+    });
+
     test('should fail closed when dependency extraction fails', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers/provider.py' },

@@ -80,6 +80,75 @@ export function normalizeConfigFilePath(
     : filePath;
 }
 
+function stripSpreadsheetSheetSelector(filePath: string): string {
+  const hashIndex = filePath.indexOf('#');
+  if (hashIndex === -1) return filePath;
+
+  const pathWithoutSheet = filePath.slice(0, hashIndex);
+  if (
+    /\.(?:xlsx|xls)$/i.test(pathWithoutSheet) ||
+    /\{[^/\\{}]*(?:xlsx|xls)[^/\\{}]*\}$/i.test(pathWithoutSheet)
+  ) {
+    return pathWithoutSheet;
+  }
+  return filePath;
+}
+
+function renderEnvironmentTemplates(
+  value: string,
+  env: Record<string, string | undefined>,
+): string {
+  return value.replace(/\{\{(?:[^}]|\}(?!\}))*\}\}/g, (template) => {
+    const expression = template.slice(2, -2).trim();
+    const variable = expression.match(
+      /^env(?:\.(\w+)|\[['"]([^'"]+)['"]\])(?=\s*(?:\||$))/,
+    );
+    if (!variable) return template;
+
+    const name = variable[1] ?? variable[2];
+    const filters = expression
+      .slice(variable[0].length)
+      .split('|')
+      .slice(1)
+      .map((filter) => filter.trim());
+    let rendered = env[name];
+
+    for (const filter of filters) {
+      const defaultFilter = filter.match(
+        /^(?:default|d)\(\s*(['"])(.*?)\1(?:\s*,\s*(true|false))?\s*\)$/,
+      );
+      if (defaultFilter) {
+        if (
+          rendered === undefined ||
+          (defaultFilter[3] === 'true' && rendered.length === 0)
+        ) {
+          rendered = defaultFilter[2];
+        }
+        continue;
+      }
+
+      if (rendered === undefined) return template;
+      if (filter === 'lower') {
+        rendered = rendered.toLowerCase();
+      } else if (filter === 'upper') {
+        rendered = rendered.toUpperCase();
+      } else if (filter === 'trim') {
+        rendered = rendered.trim();
+      } else if (filter === 'string') {
+        rendered = String(rendered);
+      } else if (filter === 'int') {
+        rendered = String(Number.parseInt(rendered, 10) || 0);
+      } else if (filter === 'float') {
+        rendered = String(Number.parseFloat(rendered) || 0);
+      } else {
+        return template;
+      }
+    }
+
+    return rendered ?? template;
+  });
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -117,6 +186,50 @@ export function extractFileDependencies(
       return [];
     }
 
+    const parameterSchemaOwners = new WeakSet<object>();
+    if (Array.isArray(config.providers)) {
+      for (const provider of config.providers) {
+        if (typeof provider !== 'object' || provider === null) continue;
+        const providerOptions = provider.config
+          ? provider
+          : Object.values(provider).find(
+              (entry) => typeof entry === 'object' && entry !== null,
+            );
+        if (typeof providerOptions !== 'object' || providerOptions === null) {
+          continue;
+        }
+        const providerConfig = (
+          providerOptions as { config?: Record<string, unknown> }
+        ).config;
+        if (!providerConfig) continue;
+
+        const functions = providerConfig.functions;
+        if (Array.isArray(functions)) {
+          for (const entry of functions) {
+            const parameters = (entry as { parameters?: unknown }).parameters;
+            if (typeof parameters === 'object' && parameters !== null) {
+              parameterSchemaOwners.add(entry as object);
+            }
+          }
+        }
+
+        const tools = providerConfig.tools;
+        if (Array.isArray(tools)) {
+          for (const entry of tools) {
+            const toolFunction = (entry as { function?: unknown }).function;
+            if (typeof toolFunction !== 'object' || toolFunction === null) {
+              continue;
+            }
+            const parameters = (toolFunction as { parameters?: unknown })
+              .parameters;
+            if (typeof parameters === 'object' && parameters !== null) {
+              parameterSchemaOwners.add(toolFunction as object);
+            }
+          }
+        }
+      }
+    }
+
     const visitedConfig = new WeakSet<object>();
     const pendingConfig: unknown[] = [config];
     while (pendingConfig.length > 0) {
@@ -130,7 +243,8 @@ export function extractFileDependencies(
         );
         return ['./'];
       }
-      for (const entry of Object.values(value)) {
+      for (const [key, entry] of Object.entries(value)) {
+        if (key === 'parameters' && parameterSchemaOwners.has(value)) continue;
         pendingConfig.push(entry);
       }
     }
@@ -138,6 +252,7 @@ export function extractFileDependencies(
     const resolveConfigDependency = (
       filePath: string,
       source: string,
+      displayPath = filePath,
     ): string | undefined => {
       try {
         if (!filePath) {
@@ -157,7 +272,7 @@ export function extractFileDependencies(
         return absolutePath;
       } catch (error) {
         core.warning(
-          `Ignoring unsafe config dependency "${filePath}": ${String(
+          `Ignoring unsafe config dependency "${displayPath}": ${String(
             error,
           ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
         );
@@ -165,12 +280,26 @@ export function extractFileDependencies(
       }
     };
 
+    const configuredEnv = Object.fromEntries(
+      Object.entries(config.env ?? {}).flatMap(([name, value]) =>
+        typeof value === 'string'
+          ? [[name, renderEnvironmentTemplates(value, process.env)]]
+          : [],
+      ),
+    );
+    const templateEnv: Record<string, string | undefined> = {
+      ...process.env,
+      ...configuredEnv,
+    };
+
     // Helper function to process file:// paths with glob support
     const processFileUrl = (
       fileUrl: string,
       stripFunctionSuffix = false,
+      displayFileUrl = fileUrl,
     ): void => {
       const rawFilePath = fileUrl.replace('file://', '');
+      const displayFilePath = displayFileUrl.replace('file://', '');
       const filePath = normalizeConfigFilePath(
         stripFunctionSuffix
           ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1')
@@ -182,6 +311,7 @@ export function extractFileDependencies(
       const absolutePath = resolveConfigDependency(
         hasGlobMagic ? globPath : filePath,
         'config file dependency',
+        displayFilePath,
       );
       if (!absolutePath) {
         return;
@@ -200,7 +330,9 @@ export function extractFileDependencies(
             dependencies.add(absoluteMatch);
           } else {
             core.warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+              `Ignoring unsafe config dependency match "${
+                displayFileUrl === fileUrl ? match : displayFilePath
+              }": config file dependency glob match must stay within the repository workspace`,
             );
           }
         }
@@ -271,25 +403,15 @@ export function extractFileDependencies(
         while (pending.length > 0) {
           const value = pending.pop();
           if (typeof value === 'string' && value.startsWith('file://')) {
-            const renderedReference = value.replace(
-              /\{\{\s*env(?:\.(\w+)|\[['"]([^'"]+)['"]\])\s*\}\}/g,
-              (
-                match,
-                dotName: string | undefined,
-                bracketName: string | undefined,
-              ) => {
-                const name = (dotName ?? bracketName) as string;
-                const configuredValue = config.env?.[name];
-                return typeof configuredValue === 'string'
-                  ? configuredValue
-                  : (process.env[name] ?? match);
-              },
-            );
-            if (/\{\{[\s\S]*?\}\}/.test(renderedReference)) {
+            const renderedReference = renderEnvironmentTemplates(
+              value,
+              templateEnv,
+            ).replace(/\{#[\s\S]*?#\}/g, '');
+            if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedReference)) {
               hasDynamicPromptDependencies = true;
               continue;
             }
-            processFileUrl(renderedReference);
+            processFileUrl(renderedReference, true, value);
           } else if (typeof value === 'object' && value !== null) {
             if (visited.has(value)) continue;
             visited.add(value);
@@ -353,10 +475,20 @@ export function extractFileDependencies(
           reference,
         );
         const hasUriScheme = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(reference);
+        const firstSeparator = reference.search(/[\\/]/);
+        const leadingSegment =
+          firstSeparator === -1
+            ? reference
+            : reference.slice(0, firstSeparator);
         const hasPathLikeSeparator =
           !hasUriScheme &&
           /[\\/]/.test(reference) &&
-          !/(?:\s[\\/]|[\\/]\s)/.test(reference);
+          !/\s[\\/]\s/.test(reference) &&
+          !/(?:^|\s)[*?](?=\s|$)/.test(leadingSegment) &&
+          !/(?:^|\s)\*{1,2}\S+?\*{1,2}\s+\S/.test(leadingSegment) &&
+          !/(?:^|\s)\[[^\]]*[\\/][^\]]*\](?=\s|$)/.test(reference) &&
+          !/(?:^|\s)\[[^\]]+\]\s+\S/.test(leadingSegment) &&
+          !/\?\s+\S/.test(leadingSegment);
         const looksLikePath =
           isExecutable ||
           reference.startsWith('file://') ||
@@ -554,15 +686,16 @@ export function extractFileDependencies(
       for (const test of tests) {
         if (typeof test === 'string') {
           if (test.startsWith('file://')) {
-            processFileUrl(test, true);
+            processFileUrl(stripSpreadsheetSheetSelector(test), true);
           }
           continue;
         }
         if (typeof test !== 'object' || test === null) continue;
 
         if (typeof test.path === 'string') {
+          const testPath = stripSpreadsheetSheetSelector(test.path);
           processFileUrl(
-            test.path.startsWith('file://') ? test.path : `file://${test.path}`,
+            testPath.startsWith('file://') ? testPath : `file://${testPath}`,
             true,
           );
           extractNestedFileUrls(test.config);
