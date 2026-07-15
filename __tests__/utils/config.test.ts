@@ -1419,6 +1419,65 @@ defaultTest: file:///test/working/evals/defaults/default.yaml
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should retain checkout dependencies when an unused external-config root cannot be resolved', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/external/promptfooconfig.yaml')) {
+        return 'defaultTest: file:///test/working/evals/defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: /test/working/evals/data/*.yaml';
+      }
+      if (String(filePath).endsWith('evals/data/context.yaml')) {
+        return 'context: file:///test/working/evals/fixtures/context.txt';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/evals/data/context.yaml']);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath) === '/test/external') {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      return String(filePath);
+    });
+    const deps = extractFileDependencies('/test/external/promptfooconfig.yaml');
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/context.yaml',
+      'evals/data',
+      'evals/fixtures/context.txt',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should retain glob matches beneath independently symlinked dependency roots', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: [file:///test/working/evals/providers/*.py]',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/evals/providers/provider.py',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const value = String(filePath);
+      if (value === '/test/external') return '/mnt/configs';
+      if (value.startsWith('/test/working')) {
+        return value.replace('/test/working', '/mnt/checkout');
+      }
+      return value;
+    });
+
+    const deps = extractFileDependencies('/test/external/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['evals/providers/provider.py', 'evals/providers']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should reject external-config glob matches that traverse a symlink outside both roots', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('/external/promptfooconfig.yaml')) {
@@ -3261,6 +3320,35 @@ shared: &shared
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([]);
+  });
+
+  it('should escape control characters from file read errors in warnings', () => {
+    const reason =
+      'ENOENT: no such file or directory, open "/test/config/evil\r\n::error::forged"';
+    mockFs.readFileSync.mockImplementation(() => {
+      throw Object.assign(new Error(reason), { code: 'ENOENT' });
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      `Failed to extract dependencies from config: ${JSON.stringify(reason)}`,
+    );
+  });
+
+  it('should escape control characters from unsafe dependency paths in warnings', () => {
+    const filePath = '../../secrets/evil\r\n::error::forged.py';
+    mockFs.readFileSync.mockReturnValue(
+      `providers: [${JSON.stringify(`file://${filePath}`)}]`,
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      `Ignoring unsafe config dependency ${JSON.stringify(filePath)}: ${JSON.stringify('config file dependency must stay within the repository workspace')}`,
+    );
   });
 
   it('should ignore dependencies that escape the config directory', () => {
