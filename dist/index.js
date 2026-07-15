@@ -40413,7 +40413,8 @@ async function run() {
       if (rangeError === "too-many") {
         throw new Error("Prompt glob pattern has too many brace alternatives");
       }
-      const expandedPatterns = braceExpand(normalizeGlobPattern(globPattern), {
+      const normalizedGlobPattern = normalizeGlobPattern(globPattern);
+      const expandedPatterns = braceExpand(normalizedGlobPattern, {
         braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1
       });
       if (expandedPatterns.length > MAX_PROMPT_BRACE_EXPANSIONS) {
@@ -40431,7 +40432,7 @@ async function run() {
           "Prompt glob patterns must stay within the repository working directory"
         );
       }
-      const matches = Ui(globPattern, {
+      const matches = Ui(normalizedGlobPattern, {
         cwd: workingDirectory,
         nodir: true,
         braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS
@@ -40467,7 +40468,14 @@ async function run() {
         if (seenPromptPaths.has(promptPathKey)) return false;
         seenPromptPaths.add(promptPathKey);
         return true;
-      });
+      }).map(
+        (file) => toRepositoryPath(
+          path7.relative(
+            workingDirectory,
+            path7.resolve(workingDirectory, file)
+          )
+        )
+      );
       allPromptFiles.push(...allMatches);
       if (changedFilesList.length > 0) {
         const changedMatches = allMatches.filter((file) => {
@@ -40505,11 +40513,25 @@ async function run() {
               if (le(dep, {
                 windowsPathsNoEscape: true,
                 magicalBraces: true,
-                braceExpandMax: 1024
-              }) && changedFilesList.some(
-                (changedFile) => path7.posix.matchesGlob(changedFile, dep)
-              )) {
-                return true;
+                braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1
+              })) {
+                const matcher = new Minimatch(dep, {
+                  platform: "linux",
+                  windowsPathsNoEscape: true,
+                  magicalBraces: true,
+                  braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1
+                });
+                if (matcher.set.length > MAX_PROMPT_BRACE_EXPANSIONS) {
+                  warning(
+                    "Config dependency glob has too many brace alternatives; conservatively running evaluation."
+                  );
+                  return true;
+                }
+                if (changedFilesList.some(
+                  (changedFile) => matcher.match(changedFile)
+                )) {
+                  return true;
+                }
               }
             } catch {
               warning(
@@ -40547,12 +40569,13 @@ async function run() {
         "Prompt file paths containing CR or LF characters are not supported."
       );
     }
+    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${promptFiles.join(", ")}`
+        `Processing all matching prompt files: ${JSON.stringify(evaluatedPromptFiles)}`
       );
     }
     startGroup("Setting up cache");
@@ -40582,7 +40605,6 @@ async function run() {
         ...selectedPromptFiles
       ]);
     }
-    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
     if (noShare) {
       promptfooArgs.push("--no-share");
     } else {
