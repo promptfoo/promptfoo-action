@@ -558,6 +558,27 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should preserve a POSIX backslash-escaped action brace range during preflight and enumeration', async () => {
+      const prompt = 'prompts\\{1..2000}/*.txt';
+      withInputs({ prompts: prompt });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/{1..2000}/safe.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/{1..2000}/safe.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(prompt, {
+        cwd: process.cwd(),
+        nodir: true,
+        braceExpandMax: 1024,
+      });
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should describe config-prompt fallback accurately when no action prompt matches', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'promptfooconfig.yaml' },

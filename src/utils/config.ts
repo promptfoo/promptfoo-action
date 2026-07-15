@@ -278,15 +278,13 @@ function stripSpreadsheetSheetSelector(value: string): string {
 }
 
 function isUnsupportedForeignPath(value: string): boolean {
-  const drivePath = /^\/[A-Za-z]:[\\/]/.test(value) ? value.slice(1) : value;
-  const driveLetter = drivePath.charAt(0);
+  const driveLetter = value.charAt(0);
   const hasDrivePrefix =
-    drivePath.charAt(1) === ':' &&
+    value.charAt(1) === ':' &&
     ((driveLetter >= 'A' && driveLetter <= 'Z') ||
       (driveLetter >= 'a' && driveLetter <= 'z'));
   const isDriveAbsolute =
-    hasDrivePrefix &&
-    (drivePath.charAt(2) === '/' || drivePath.charAt(2) === '\\');
+    hasDrivePrefix && (value.charAt(2) === '/' || value.charAt(2) === '\\');
   const isUncPath =
     value.startsWith('\\\\') ||
     (value.startsWith('//') && value.indexOf('/', 2) > 2);
@@ -395,7 +393,7 @@ export function extractFileDependencies(
     const processFileUrl = (fileUrl: string): string[] | undefined => {
       const filePath = normalizeGlobSeparators(
         fileUrl.replace('file://', ''),
-        path.sep === '\\',
+        true,
       );
       if (filePath.includes('\0')) {
         core.warning(
@@ -968,7 +966,7 @@ export function extractFileDependencies(
           isExecutable ? (executableParts[0] ?? '') : reference
         ).replace(/^file:\/\//, '');
         const promptPath = stripFunctionSelector(
-          normalizeGlobSeparators(rawPromptPath, path.sep === '\\'),
+          normalizeGlobSeparators(rawPromptPath, true),
           PROVIDER_SELECTOR_EXTENSIONS,
         );
         const promptPatterns = processCompatibleFileUrl(

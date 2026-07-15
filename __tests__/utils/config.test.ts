@@ -1687,6 +1687,24 @@ prompts:
     );
   });
 
+  it('should reject a Windows file-URL drive path in an HTTP provider on a POSIX runner', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: http
+    config:
+      auth:
+        type: file
+        path: file:///C:/repo/auth/token.json
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency: foreign absolute paths are not supported',
+    );
+  });
+
   it('should emit one sanitized warning for many foreign absolute dependencies', () => {
     const vars = Array.from(
       { length: 200 },
@@ -1765,6 +1783,49 @@ ${vars}
     );
   });
 
+  it('should bound a backslash-activated runtime brace range before config glob enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "prompts: 'file://prompts\\{1..2000}/*.txt'\n",
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
+  it('should reject a backslash-activated runtime brace traversal arm before config glob enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "providers:\n  - 'file://providers\\{safe,..\\..\\..\\outside}/*.py'\n",
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/safe/']);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/working/evals/providers/safe/*.py',
+      expect.any(Object),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
+    );
+  });
+
   it('should bound comma-alternative expansion before config glob enumeration', () => {
     const alternatives = Array.from({ length: 1025 }, (_, index) => index).join(
       ',',
@@ -1805,23 +1866,23 @@ ${vars}
     );
   });
 
-  it('should preserve an odd-backslash escaped config brace literal through glob enumeration', () => {
-    const prompt = 'file://prompts/\\\\\\{literal\\}/*.txt';
+  it('should normalize a backslash-delimited config brace path with runtime glob semantics', () => {
+    const prompt = 'file://prompts\\{literal}/*.txt';
     mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
     mockGlob.hasMagic.mockImplementation((value: string) =>
       value.includes('*'),
     );
     mockGlob.sync.mockReturnValue([
-      '/test/working/evals/prompts/\\{literal}/safe.txt',
+      '/test/working/evals/prompts/{literal}/safe.txt',
     ]);
 
     const deps = extractFileDependencies(
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toContain('evals/prompts/\\{literal}/safe.txt');
+    expect(deps).toContain('evals/prompts/{literal}/safe.txt');
     expect(mockGlob.sync).toHaveBeenCalledWith(
-      '/test/working/evals/prompts/\\{literal}/*.txt',
+      '/test/working/evals/prompts/{literal}/*.txt',
       expect.objectContaining({
         nobrace: true,
         windowsPathsNoEscape: false,

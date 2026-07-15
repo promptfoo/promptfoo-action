@@ -523,7 +523,6 @@ export async function run(): Promise<void> {
           preflightGlob(globPattern, {
             maxLength: MAX_DEPENDENCY_GLOB_LENGTH,
             maxBraceExpansions: MAX_PROMPT_BRACE_EXPANSIONS,
-            windowsPathsNoEscape: path.sep === '\\',
           }) !== 'safe' ||
           braceExpand(globPattern, {
             braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
