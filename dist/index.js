@@ -1073,14 +1073,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path8 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path9 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path8 && path8[0] !== "/") {
-          path8 = `/${path8}`;
+        if (path9 && path9[0] !== "/") {
+          path9 = `/${path9}`;
         }
-        return new URL(`${origin}${path8}`);
+        return new URL(`${origin}${path9}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -1531,39 +1531,39 @@ var require_diagnostics = __commonJS({
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
         const {
-          request: { method, path: path8, origin }
+          request: { method, path: path9, origin }
         } = evt;
-        debuglog("sending request to %s %s/%s", method, origin, path8);
+        debuglog("sending request to %s %s/%s", method, origin, path9);
       });
       diagnosticsChannel.channel("undici:request:headers").subscribe((evt) => {
         const {
-          request: { method, path: path8, origin },
+          request: { method, path: path9, origin },
           response: { statusCode }
         } = evt;
         debuglog(
           "received response to %s %s/%s - HTTP %d",
           method,
           origin,
-          path8,
+          path9,
           statusCode
         );
       });
       diagnosticsChannel.channel("undici:request:trailers").subscribe((evt) => {
         const {
-          request: { method, path: path8, origin }
+          request: { method, path: path9, origin }
         } = evt;
-        debuglog("trailers received from %s %s/%s", method, origin, path8);
+        debuglog("trailers received from %s %s/%s", method, origin, path9);
       });
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
-          request: { method, path: path8, origin },
+          request: { method, path: path9, origin },
           error: error2
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
-          path8,
+          path9,
           error2.message
         );
       });
@@ -1612,9 +1612,9 @@ var require_diagnostics = __commonJS({
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
           const {
-            request: { method, path: path8, origin }
+            request: { method, path: path9, origin }
           } = evt;
-          debuglog("sending request to %s %s/%s", method, origin, path8);
+          debuglog("sending request to %s %s/%s", method, origin, path9);
         });
       }
       diagnosticsChannel.channel("undici:websocket:open").subscribe((evt) => {
@@ -1677,7 +1677,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path8,
+        path: path9,
         method,
         body,
         headers,
@@ -1692,11 +1692,11 @@ var require_request = __commonJS({
         expectContinue,
         servername
       }, handler2) {
-        if (typeof path8 !== "string") {
+        if (typeof path9 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path8[0] !== "/" && !(path8.startsWith("http://") || path8.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path9[0] !== "/" && !(path9.startsWith("http://") || path9.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path8)) {
+        } else if (invalidPathRegex.test(path9)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -1762,7 +1762,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? buildURL(path8, query) : path8;
+        this.path = query ? buildURL(path9, query) : path9;
         this.origin = origin;
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
         this.blocking = blocking == null ? false : blocking;
@@ -6384,7 +6384,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request2) {
-      const { method, path: path8, host, upgrade, blocking, reset } = request2;
+      const { method, path: path9, host, upgrade, blocking, reset } = request2;
       let { body, headers, contentLength } = request2;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -6451,7 +6451,7 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path8} HTTP/1.1\r
+      let header = `${method} ${path9} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -6977,7 +6977,7 @@ var require_client_h2 = __commonJS({
     }
     function writeH2(client, request2) {
       const session = client[kHTTP2Session];
-      const { method, path: path8, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
+      const { method, path: path9, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
       let { body } = request2;
       if (upgrade) {
         util.errorRequest(client, request2, new Error("Upgrade not supported for H2"));
@@ -7044,7 +7044,7 @@ var require_client_h2 = __commonJS({
         });
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path8;
+      headers[HTTP2_HEADER_PATH] = path9;
       headers[HTTP2_HEADER_SCHEME] = "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -7397,9 +7397,9 @@ var require_redirect_handler = __commonJS({
           return this.handler.onHeaders(statusCode, headers, resume, statusText);
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path8 = search ? `${pathname}${search}` : pathname;
+        const path9 = search ? `${pathname}${search}` : pathname;
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path8;
+        this.opts.path = path9;
         this.opts.origin = origin;
         this.opts.maxRedirections = 0;
         this.opts.query = null;
@@ -8634,10 +8634,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path8 = "/",
+          path: path9 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path8;
+        opts.path = origin + path9;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL2(origin);
           headers.host = host;
@@ -10558,20 +10558,20 @@ var require_mock_utils = __commonJS({
       }
       return true;
     }
-    function safeUrl(path8) {
-      if (typeof path8 !== "string") {
-        return path8;
+    function safeUrl(path9) {
+      if (typeof path9 !== "string") {
+        return path9;
       }
-      const pathSegments = path8.split("?");
+      const pathSegments = path9.split("?");
       if (pathSegments.length !== 2) {
-        return path8;
+        return path9;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path8, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path8);
+    function matchKey(mockDispatch2, { path: path9, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path9);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -10593,7 +10593,7 @@ var require_mock_utils = __commonJS({
     function getMockDispatch(mockDispatches, key) {
       const basePath = key.query ? buildURL(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path8 }) => matchValue(safeUrl(path8), resolvedPath));
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path9 }) => matchValue(safeUrl(path9), resolvedPath));
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
       }
@@ -10631,9 +10631,9 @@ var require_mock_utils = __commonJS({
       }
     }
     function buildKey(opts) {
-      const { path: path8, method, body, headers, query } = opts;
+      const { path: path9, method, body, headers, query } = opts;
       return {
-        path: path8,
+        path: path9,
         method,
         body,
         headers,
@@ -11096,10 +11096,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path8, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path9, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path8,
+            Path: path9,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -15980,9 +15980,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path8) {
-      for (let i2 = 0; i2 < path8.length; ++i2) {
-        const code = path8.charCodeAt(i2);
+    function validateCookiePath(path9) {
+      for (let i2 = 0; i2 < path9.length; ++i2) {
+        const code = path9.charCodeAt(i2);
         if (code < 32 || // exclude CTLs (0-31)
         code === 127 || // DEL
         code === 59) {
@@ -18675,11 +18675,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path8 = opts.path;
+          let path9 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path8 = `/${path8}`;
+            path9 = `/${path9}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path8);
+          url = new URL(util.parseOrigin(url).origin + path9);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -19528,7 +19528,7 @@ var require_dist = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.format = format;
-    exports2.parse = parse4;
+    exports2.parse = parse5;
     var TEXT_REGEXP = /^[\u0009\u0020-\u007e\u0080-\u00ff]*$/;
     var TOKEN_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
     var QUOTE_REGEXP = /[\\"]/g;
@@ -19555,7 +19555,7 @@ var require_dist = __commonJS({
       }
       return result;
     }
-    function parse4(header, options) {
+    function parse5(header, options) {
       const len = header.length;
       let index = skipOWS(header, 0, len);
       const valueStart = index;
@@ -19657,7 +19657,7 @@ var require_dist = __commonJS({
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs8 = require("fs");
-    var path8 = require("path");
+    var path9 = require("path");
     var os7 = require("os");
     var crypto2 = require("crypto");
     var TIPS = [
@@ -19686,7 +19686,7 @@ var require_main = __commonJS({
       return supportsAnsi() ? `\x1B[2m${text}\x1B[0m` : text;
     }
     var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
-    function parse4(src) {
+    function parse5(src) {
       const obj = {};
       let lines = src.toString();
       lines = lines.replace(/\r\n?/mg, "\n");
@@ -19796,7 +19796,7 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path8.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path9.resolve(process.cwd(), ".env.vault");
       }
       if (fs8.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
@@ -19804,7 +19804,7 @@ var require_main = __commonJS({
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path8.join(os7.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path9.join(os7.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug3 = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -19821,7 +19821,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path8.resolve(process.cwd(), ".env");
+      const dotenvPath = path9.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -19849,13 +19849,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path9 of optionPaths) {
+      for (const path10 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs8.readFileSync(path9, { encoding }));
+          const parsed = DotenvModule.parse(fs8.readFileSync(path10, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug3) {
-            _debug(`failed to load ${path9} ${e.message}`);
+            _debug(`failed to load ${path10} ${e.message}`);
           }
           lastError = e;
         }
@@ -19868,8 +19868,8 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative4 = path8.relative(process.cwd(), filePath);
-            shortPaths.push(relative4);
+            const relative5 = path9.relative(process.cwd(), filePath);
+            shortPaths.push(relative5);
           } catch (e) {
             if (debug3) {
               _debug(`failed to load ${filePath} ${e.message}`);
@@ -19958,7 +19958,7 @@ var require_main = __commonJS({
       _parseVault,
       config: config2,
       decrypt,
-      parse: parse4,
+      parse: parse5,
       populate
     };
     module2.exports.configDotenv = DotenvModule.configDotenv;
@@ -19985,7 +19985,7 @@ var require_ms = __commonJS({
       options = options || {};
       var type = typeof val;
       if (type === "string" && val.length > 0) {
-        return parse4(val);
+        return parse5(val);
       } else if (type === "number" && isFinite(val)) {
         return options.long ? fmtLong(val) : fmtShort(val);
       }
@@ -19993,7 +19993,7 @@ var require_ms = __commonJS({
         "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
       );
     };
-    function parse4(str) {
+    function parse5(str) {
       str = String(str);
       if (str.length > 100) {
         return;
@@ -20746,10 +20746,10 @@ var require_src2 = __commonJS({
     var fs_1 = require("fs");
     var debug_1 = __importDefault(require_src());
     var log = debug_1.default("@kwsites/file-exists");
-    function check(path8, isFile, isDirectory3) {
-      log(`checking %s`, path8);
+    function check(path9, isFile, isDirectory3) {
+      log(`checking %s`, path9);
       try {
-        const stat2 = fs_1.statSync(path8);
+        const stat2 = fs_1.statSync(path9);
         if (stat2.isFile() && isFile) {
           log(`[OK] path represents a file`);
           return true;
@@ -20769,8 +20769,8 @@ var require_src2 = __commonJS({
         throw e;
       }
     }
-    function exists3(path8, type = exports2.READABLE) {
-      return check(path8, (type & exports2.FILE) > 0, (type & exports2.FOLDER) > 0);
+    function exists3(path9, type = exports2.READABLE) {
+      return check(path9, (type & exports2.FILE) > 0, (type & exports2.FOLDER) > 0);
     }
     exports2.exists = exists3;
     exports2.FILE = 1;
@@ -22083,8 +22083,8 @@ var Context = class {
       if ((0, import_fs2.existsSync)(process.env.GITHUB_EVENT_PATH)) {
         this.payload = JSON.parse((0, import_fs2.readFileSync)(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
       } else {
-        const path8 = process.env.GITHUB_EVENT_PATH;
-        process.stdout.write(`GITHUB_EVENT_PATH ${path8} does not exist${import_os3.EOL}`);
+        const path9 = process.env.GITHUB_EVENT_PATH;
+        process.stdout.write(`GITHUB_EVENT_PATH ${path9} does not exist${import_os3.EOL}`);
       }
     }
     this.eventName = process.env.GITHUB_EVENT_NAME;
@@ -30842,7 +30842,7 @@ minimatch.escape = escape;
 minimatch.unescape = unescape;
 
 // src/main.ts
-var path7 = __toESM(require("path"));
+var path8 = __toESM(require("path"));
 
 // node_modules/simple-git/dist/esm/index.js
 var import_file_exists = __toESM(require_dist2(), 1);
@@ -31433,8 +31433,8 @@ function toLinesWithContent(input = "", trimmed2 = true, separator = "\n") {
 function forEachLineWithContent(input, callback) {
   return toLinesWithContent(input, true).map((line) => callback(line));
 }
-function folderExists(path8) {
-  return (0, import_file_exists.exists)(path8, import_file_exists.FOLDER);
+function folderExists(path9) {
+  return (0, import_file_exists.exists)(path9, import_file_exists.FOLDER);
 }
 function append(target, item) {
   if (Array.isArray(target)) {
@@ -31738,7 +31738,7 @@ function parseStringResponse(result, parsers12, texts, trim = true) {
         }
         return lines[i2 + offset];
       };
-      parsers12.some(({ parse: parse4 }) => parse4(line, result));
+      parsers12.some(({ parse: parse5 }) => parse5(line, result));
     }
   });
   return result;
@@ -31836,8 +31836,8 @@ function checkIsRepoRootTask() {
     commands,
     format: "utf-8",
     onError,
-    parser(path8) {
-      return /^\.(git)?$/.test(path8.trim());
+    parser(path9) {
+      return /^\.(git)?$/.test(path9.trim());
     }
   };
 }
@@ -32271,11 +32271,11 @@ function parseGrep(grep) {
   const paths = /* @__PURE__ */ new Set();
   const results = {};
   forEachLineWithContent(grep, (input) => {
-    const [path8, line, preview] = input.split(NULL);
-    paths.add(path8);
-    (results[path8] = results[path8] || []).push({
+    const [path9, line, preview] = input.split(NULL);
+    paths.add(path9);
+    (results[path9] = results[path9] || []).push({
       line: asNumber(line),
-      path: path8,
+      path: path9,
       preview
     });
   });
@@ -33039,14 +33039,14 @@ var init_hash_object = __esm({
     init_task();
   }
 });
-function parseInit(bare, path8, text) {
+function parseInit(bare, path9, text) {
   const response = String(text).trim();
   let result;
   if (result = initResponseRegex.exec(response)) {
-    return new InitSummary(bare, path8, false, result[1]);
+    return new InitSummary(bare, path9, false, result[1]);
   }
   if (result = reInitResponseRegex.exec(response)) {
-    return new InitSummary(bare, path8, true, result[1]);
+    return new InitSummary(bare, path9, true, result[1]);
   }
   let gitDir = "";
   const tokens = response.split(" ");
@@ -33057,7 +33057,7 @@ function parseInit(bare, path8, text) {
       break;
     }
   }
-  return new InitSummary(bare, path8, /^re/i.test(response), gitDir);
+  return new InitSummary(bare, path9, /^re/i.test(response), gitDir);
 }
 var InitSummary;
 var initResponseRegex;
@@ -33066,9 +33066,9 @@ var init_InitSummary = __esm({
   "src/lib/responses/InitSummary.ts"() {
     "use strict";
     InitSummary = class {
-      constructor(bare, path8, existing, gitDir) {
+      constructor(bare, path9, existing, gitDir) {
         this.bare = bare;
-        this.path = path8;
+        this.path = path9;
         this.existing = existing;
         this.gitDir = gitDir;
       }
@@ -33080,7 +33080,7 @@ var init_InitSummary = __esm({
 function hasBareCommand(command) {
   return command.includes(bareCommand);
 }
-function initTask(bare = false, path8, customArgs) {
+function initTask(bare = false, path9, customArgs) {
   const commands = ["init", ...customArgs];
   if (bare && !hasBareCommand(commands)) {
     commands.splice(1, 0, bareCommand);
@@ -33089,7 +33089,7 @@ function initTask(bare = false, path8, customArgs) {
     commands,
     format: "utf-8",
     parser(text) {
-      return parseInit(commands.includes("--bare"), path8, text);
+      return parseInit(commands.includes("--bare"), path9, text);
     }
   };
 }
@@ -33904,12 +33904,12 @@ var init_FileStatusSummary = __esm({
     "use strict";
     fromPathRegex = /^(.+)\0(.+)$/;
     FileStatusSummary = class {
-      constructor(path8, index, working_dir) {
-        this.path = path8;
+      constructor(path9, index, working_dir) {
+        this.path = path9;
         this.index = index;
         this.working_dir = working_dir;
         if (index === "R" || working_dir === "R") {
-          const detail = fromPathRegex.exec(path8) || [null, path8, path8];
+          const detail = fromPathRegex.exec(path9) || [null, path9, path9];
           this.from = detail[2] || "";
           this.path = detail[1] || "";
         }
@@ -33940,14 +33940,14 @@ function splitLine(result, lineStr) {
     default:
       return;
   }
-  function data(index, workingDir, path8) {
+  function data(index, workingDir, path9) {
     const raw = `${index}${workingDir}`;
     const handler2 = parsers6.get(raw);
     if (handler2) {
-      handler2(result, path8);
+      handler2(result, path9);
     }
     if (raw !== "##" && raw !== "!!") {
-      result.files.push(new FileStatusSummary(path8, index, workingDir));
+      result.files.push(new FileStatusSummary(path9, index, workingDir));
     }
   }
 }
@@ -34298,9 +34298,9 @@ var init_simple_git_api = __esm({
           next
         );
       }
-      hashObject(path8, write) {
+      hashObject(path9, write) {
         return this._runTask(
-          hashObjectTask(path8, write === true),
+          hashObjectTask(path9, write === true),
           trailingFunctionArgument(arguments)
         );
       }
@@ -34654,8 +34654,8 @@ var init_branch = __esm({
   }
 });
 function toPath(input) {
-  const path8 = input.trim().replace(/^["']|["']$/g, "");
-  return path8 && (0, import_node_path2.normalize)(path8);
+  const path9 = input.trim().replace(/^["']|["']$/g, "");
+  return path9 && (0, import_node_path2.normalize)(path9);
 }
 var parseCheckIgnore;
 var init_CheckIgnore = __esm({
@@ -34940,8 +34940,8 @@ __export2(sub_module_exports, {
   subModuleTask: () => subModuleTask,
   updateSubModuleTask: () => updateSubModuleTask
 });
-function addSubModuleTask(repo, path8) {
-  return subModuleTask(["add", repo, path8]);
+function addSubModuleTask(repo, path9) {
+  return subModuleTask(["add", repo, path9]);
 }
 function initSubModuleTask(customArgs) {
   return subModuleTask(["init", ...customArgs]);
@@ -35255,8 +35255,8 @@ var require_git = __commonJS2({
       }
       return this._runTask(straightThroughStringTask2(command, this._trimmed), next);
     };
-    Git2.prototype.submoduleAdd = function(repo, path8, then) {
-      return this._runTask(addSubModuleTask2(repo, path8), trailingFunctionArgument2(arguments));
+    Git2.prototype.submoduleAdd = function(repo, path9, then) {
+      return this._runTask(addSubModuleTask2(repo, path9), trailingFunctionArgument2(arguments));
     };
     Git2.prototype.submoduleUpdate = function(args, then) {
       return this._runTask(
@@ -38306,7 +38306,7 @@ var DEFAULT_DUMP_OPTIONS = {
 };
 
 // src/utils/config.ts
-var path6 = __toESM(require("path"));
+var path7 = __toESM(require("path"));
 var import_url = require("url");
 
 // src/utils/fs.ts
@@ -38320,7 +38320,67 @@ function isDirectory2(filePath) {
 }
 
 // src/utils/glob.ts
+var path6 = __toESM(require("path"));
 var MAX_GLOB_DELIMITER_DEPTH = 128;
+var MAX_EXTGLOB_TOKENS = 1024;
+var MAX_EXTGLOB_DEPTH = 64;
+var MAX_GLOB_TRAVERSAL_ENTRIES = 4096;
+function createBoundedGlobFs(openDirectory, traversal, physicalRoots, realpath) {
+  return {
+    readdirSync: (filePath) => {
+      if (traversal.exhausted) return [];
+      let physicalPath;
+      try {
+        physicalPath = realpath(filePath);
+        if (!physicalRoots.some((root) => {
+          const relativePath = path6.relative(root, physicalPath);
+          return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
+        })) {
+          traversal.exhausted = true;
+          return [];
+        }
+      } catch {
+        traversal.exhausted = true;
+        return [];
+      }
+      const directory = openDirectory(physicalPath);
+      const entries = [];
+      try {
+        while (true) {
+          const entry = directory.readSync();
+          if (!entry) return entries;
+          if (++traversal.entries > MAX_GLOB_TRAVERSAL_ENTRIES) {
+            traversal.exhausted = true;
+            return [];
+          }
+          entries.push(entry);
+        }
+      } finally {
+        directory.closeSync();
+      }
+    }
+  };
+}
+function createContainedGlobIgnore(physicalRoots, realpath, traversal) {
+  return {
+    childrenIgnored: (entry) => {
+      if (traversal && ++traversal.entries > MAX_GLOB_TRAVERSAL_ENTRIES) {
+        traversal.exhausted = true;
+        return true;
+      }
+      if (!entry.isSymbolicLink()) return false;
+      try {
+        const physicalPath = realpath(entry.fullpath());
+        return !physicalRoots.some((root) => {
+          const relativePath = path6.relative(root, physicalPath);
+          return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
+        });
+      } catch {
+        return true;
+      }
+    }
+  };
+}
 function normalizeGlobSeparators(value, windowsPathsNoEscape = false) {
   const normalizedParts = [];
   for (let index = 0; index < value.length; index++) {
@@ -38346,6 +38406,22 @@ function normalizeGlobSeparators(value, windowsPathsNoEscape = false) {
   }
   return normalized;
 }
+function hasUnsafeGlobTraversal(value, windowsPathsNoEscape = false) {
+  let sawMagic = false;
+  const traversalPattern = windowsPathsNoEscape ? normalizeGlobSeparators(value, true) : value;
+  for (const segment of traversalPattern.split("/")) {
+    const segmentHasMagic = /[*?[\]{}()!+@]/.test(segment);
+    if ((sawMagic || segmentHasMagic) && new Minimatch(segment, {
+      dot: true,
+      nobrace: true,
+      nonegate: true
+    }).match("..")) {
+      return true;
+    }
+    sawMagic ||= segmentHasMagic;
+  }
+  return false;
+}
 function preflightGlob(value, {
   maxLength,
   maxBraceExpansions,
@@ -38355,6 +38431,8 @@ function preflightGlob(value, {
     return "invalid";
   }
   const expectedClosers = [];
+  let extglobTokens = 0;
+  let extglobDepth = 0;
   for (let index = 0; index < value.length; index++) {
     const character = value.charAt(index);
     if (!windowsPathsNoEscape && character === "\\") {
@@ -38389,13 +38467,18 @@ function preflightGlob(value, {
       continue;
     }
     if (character === "(" && index > 0 && "*+?@!".includes(value.charAt(index - 1))) {
-      if (expectedClosers.length >= MAX_GLOB_DELIMITER_DEPTH) return "invalid";
+      if (expectedClosers.length >= MAX_GLOB_DELIMITER_DEPTH || extglobTokens >= MAX_EXTGLOB_TOKENS || extglobDepth >= MAX_EXTGLOB_DEPTH) {
+        return "invalid";
+      }
+      extglobTokens++;
+      extglobDepth++;
       expectedClosers.push({ closer: ")", opener: index });
       continue;
     }
     if (!"}])".includes(character) || expectedClosers.length === 0) continue;
     const opener = expectedClosers.pop();
     if (!opener || opener.closer !== character) return "invalid";
+    if (character === ")") extglobDepth--;
     if (character !== "}") continue;
     const body = value.slice(opener.opener + 1, index);
     if (!/^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(body)) continue;
@@ -38431,12 +38514,12 @@ function readRegularFile(filePath, isPhysicalPathAllowed) {
   );
   try {
     const fileStat = fs6.fstatSync(descriptor);
-    if (fileStat.dev !== inspectedStat.dev || fileStat.ino !== inspectedStat.ino) {
-      return { status: "inspection" };
-    }
     if (!fileStat.isFile()) return { status: "non-file" };
     if (fileStat.size > MAX_STRUCTURED_PROMPT_FILE_SIZE) {
       return { status: "oversized" };
+    }
+    if (fileStat.dev !== inspectedStat.dev || fileStat.ino !== inspectedStat.ino || fileStat.mode !== inspectedStat.mode || fileStat.size !== inspectedStat.size || fileStat.mtimeMs !== inspectedStat.mtimeMs || fileStat.ctimeMs !== inspectedStat.ctimeMs) {
+      return { status: "inspection" };
     }
     const chunks = [];
     let totalBytes = 0;
@@ -38451,6 +38534,15 @@ function readRegularFile(filePath, isPhysicalPathAllowed) {
     }
     if (totalBytes > MAX_STRUCTURED_PROMPT_FILE_SIZE) {
       return { status: "oversized" };
+    }
+    const finalStat = fs6.fstatSync(descriptor);
+    const finalPhysicalPath = fs6.realpathSync(filePath);
+    if (!isPhysicalPathAllowed(finalPhysicalPath)) {
+      return { status: "inspection" };
+    }
+    const finalPathStat = fs6.statSync(finalPhysicalPath);
+    if (finalStat.dev !== fileStat.dev || finalStat.ino !== fileStat.ino || finalStat.mode !== fileStat.mode || finalStat.size !== fileStat.size || finalStat.mtimeMs !== fileStat.mtimeMs || finalStat.ctimeMs !== fileStat.ctimeMs || finalPathStat.dev !== finalStat.dev || finalPathStat.ino !== finalStat.ino || finalPathStat.mode !== finalStat.mode || finalPathStat.size !== finalStat.size || finalPathStat.mtimeMs !== finalStat.mtimeMs || finalPathStat.ctimeMs !== finalStat.ctimeMs) {
+      return { status: "inspection" };
     }
     return {
       status: "ok",
@@ -38538,7 +38630,7 @@ var EXPANDED_GLOB_MAGIC_OPTIONS = {
 var hasGlobMagic = (value, options) => value.includes("[{]") || le(value, options);
 var GLOB_SYNC_OPTIONS = {
   nodir: true,
-  windowsPathsNoEscape: path6.sep === "\\",
+  windowsPathsNoEscape: path7.sep === "\\",
   nobrace: true,
   braceExpandMax: MAX_BRACE_EXPANSIONS
 };
@@ -38562,8 +38654,8 @@ var CONFIG_YAML_SCHEMA = CORE_SCHEMA.withTags(
   legacySetTag
 );
 function isPathInside(baseDir, targetPath) {
-  const relativePath = path6.relative(baseDir, targetPath);
-  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
+  const relativePath = path7.relative(baseDir, targetPath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relativePath);
 }
 function isTraversableRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) && !ArrayBuffer.isView(value) && !(value instanceof Date) && !(value instanceof Map) && !(value instanceof Set);
@@ -38648,17 +38740,18 @@ function isUnsupportedForeignPath(value) {
   const hasDrivePrefix = value.charAt(1) === ":" && (driveLetter >= "A" && driveLetter <= "Z" || driveLetter >= "a" && driveLetter <= "z");
   const isDriveAbsolute = hasDrivePrefix && (value.charAt(2) === "/" || value.charAt(2) === "\\");
   const isUncPath = value.startsWith("\\\\") || value.startsWith("//") && value.indexOf("/", 2) > 2;
-  return path6.sep === "/" && (isDriveAbsolute || isUncPath);
+  return path7.sep === "/" && (isDriveAbsolute || isUncPath);
 }
-function extractFileDependencies(configPath, executionCwd = process.cwd()) {
+function extractFileDependencies(configPath, executionCwd = process.cwd(), globTraversal = { entries: 0, exhausted: false }) {
   const dependencies = /* @__PURE__ */ new Set();
-  const configDir = path6.dirname(configPath);
+  let watchDynamicSideInputs = false;
+  const configDir = path7.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const dependencyRoots = dependencyRoot === cwd ? [dependencyRoot] : [dependencyRoot, cwd];
   const watchCheckoutForExternalTemplate = () => {
     if (dependencyRoot !== cwd) {
-      dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+      dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
     }
   };
   const isInsideDependencyRoots = (filePath) => dependencyRoots.some((root) => isPathInside(root, filePath));
@@ -38685,6 +38778,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     );
   };
   try {
+    if (/\.(?:cjs|cts|js|mjs|mts|ts)$/i.test(configPath)) {
+      return ["./"];
+    }
     let configFile;
     try {
       configFile = readRegularFile(configPath, isInsidePhysicalDependencyRoots);
@@ -38722,10 +38818,16 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (!filePath) {
           throw new Error(`${source} is empty`);
         }
+        if (filePath.includes("\r") || filePath.includes("\n")) {
+          warning(
+            "Ignoring unsafe config dependency: path contains an invalid control character"
+          );
+          return void 0;
+        }
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path6.isAbsolute(filePath) ? path6.resolve(filePath) : path6.resolve(path6.join(configDir, filePath));
+        const absolutePath = path7.isAbsolute(filePath) ? path7.resolve(filePath) : path7.resolve(path7.join(configDir, filePath));
         if (!isInsideDependencyRoots(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -38741,11 +38843,21 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         return void 0;
       }
     };
+    const resolvePhysicalDependencyAncestor = (absolutePath) => {
+      let lexical = absolutePath;
+      while (true) {
+        try {
+          return { lexical, physical: fs6.realpathSync(lexical) };
+        } catch {
+          const parent = path7.dirname(lexical);
+          if (parent === lexical) return void 0;
+          lexical = parent;
+        }
+      }
+    };
     const processFileUrl = (fileUrl) => {
-      const filePath = normalizeGlobSeparators(
-        fileUrl.replace("file://", ""),
-        true
-      );
+      const rawFilePath = fileUrl.replace("file://", "");
+      const filePath = normalizeGlobSeparators(rawFilePath, true);
       if (filePath.includes("\0")) {
         warning(
           "Ignoring unsafe config dependency: config file dependency contains an invalid null byte"
@@ -38771,12 +38883,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             staticSegments.push(segment);
           }
           const watchedDirectory = resolveConfigDependency(
-            staticSegments.join(path6.sep) || ".",
+            staticSegments.join(path7.sep) || ".",
             "config file dependency"
           );
           if (watchedDirectory) {
             dependencies.add(
-              `${watchedDirectory.replace(/[\\/]+$/, "")}${path6.sep}`
+              `${watchedDirectory.replace(/[\\/]+$/, "")}${path7.sep}`
             );
             watchCheckoutForExternalTemplate();
           }
@@ -38787,13 +38899,14 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             maxBraceExpansions: MAX_BRACE_EXPANSIONS
           });
           if (globPreflight === "invalid") {
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
             warning(
               "Ignoring invalid config dependency glob; preserving other dependencies"
             );
             return;
           }
           if (globPreflight === "too-many-braces") {
-            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
             warning(
               "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
             );
@@ -38801,11 +38914,18 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           }
         }
         if (!isTemplatedPath && hasGlobMagic(filePath, GLOB_MAGIC_OPTIONS)) {
+          if (hasUnsafeGlobTraversal(rawFilePath)) {
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+            warning(
+              "Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace"
+            );
+            return;
+          }
           const expandedPaths = braceExpand(filePath, {
             braceExpandMax: MAX_BRACE_EXPANSIONS + 1
           });
           if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
             warning(
               "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
             );
@@ -38814,27 +38934,56 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           const safePatterns = [];
           let unsafeAlternative = false;
           for (const expandedPath of expandedPaths) {
-            const absolutePattern = path6.resolve(configDir, expandedPath);
-            if (isInsideDependencyRoots(absolutePattern)) {
-              safePatterns.push(absolutePattern);
-            } else {
-              unsafeAlternative = true;
+            const absolutePattern = path7.resolve(configDir, expandedPath);
+            const absoluteRoot = path7.parse(absolutePattern).root;
+            let staticPrefix = absoluteRoot;
+            for (const segment of path7.relative(absoluteRoot, absolutePattern).split(path7.sep)) {
+              if (hasGlobMagic(segment, EXPANDED_GLOB_MAGIC_OPTIONS)) break;
+              staticPrefix = path7.join(staticPrefix, segment);
             }
+            const resolvedPrefix = resolvePhysicalDependencyAncestor(staticPrefix);
+            if (hasUnsafeGlobTraversal(expandedPath) || !isInsideDependencyRoots(absolutePattern) || !resolvedPrefix || !isInsidePhysicalDependencyRoots(resolvedPrefix.physical)) {
+              unsafeAlternative = true;
+              continue;
+            }
+            if (dependencyRoot === cwd && resolvedPrefix.lexical !== resolvedPrefix.physical) {
+              dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+            }
+            safePatterns.push(absolutePattern);
           }
           if (unsafeAlternative) {
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
             warning(
               "Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace"
             );
-          }
-          if (safePatterns.length === 0) {
             return;
           }
           const matches = Ui(
             safePatterns.length === 1 ? safePatterns[0] : safePatterns,
-            GLOB_SYNC_OPTIONS
+            {
+              ...GLOB_SYNC_OPTIONS,
+              ignore: createContainedGlobIgnore(
+                physicalDependencyRoots,
+                fs6.realpathSync,
+                globTraversal
+              ),
+              fs: createBoundedGlobFs(
+                fs6.opendirSync,
+                globTraversal,
+                physicalDependencyRoots,
+                fs6.realpathSync
+              )
+            }
           );
+          if (globTraversal.exhausted) {
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+            warning(
+              "Skipping config dependency glob that exceeded the traversal budget; conservatively watching the dependency root"
+            );
+            return;
+          }
           for (const match2 of matches) {
-            const absoluteMatch = path6.resolve(match2);
+            const absoluteMatch = path7.resolve(match2);
             if (!isInsideDependencyRoots(absoluteMatch)) {
               warning(
                 "Ignoring unsafe config dependency glob match: resolved path must stay within the repository workspace"
@@ -38861,17 +39010,17 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
               dependencies.add(absolutePattern);
               continue;
             }
-            const absoluteRoot = path6.parse(absolutePattern).root;
-            const pathParts = path6.relative(absoluteRoot, absolutePattern).split(path6.sep);
+            const absoluteRoot = path7.parse(absolutePattern).root;
+            const pathParts = path7.relative(absoluteRoot, absolutePattern).split(path7.sep);
             let basePath = absoluteRoot;
             for (const part of pathParts) {
               if (hasGlobMagic(part, EXPANDED_GLOB_MAGIC_OPTIONS)) {
                 break;
               }
-              basePath = path6.join(basePath, part);
+              basePath = path7.join(basePath, part);
             }
             dependencies.add(
-              path6.relative(cwd, basePath) === "" ? absolutePattern : matches.length === 0 ? `${basePath.replace(/[\\/]+$/, "")}${path6.sep}` : basePath
+              path7.relative(cwd, basePath) === "" ? absolutePattern : matches.length === 0 ? `${basePath.replace(/[\\/]+$/, "")}${path7.sep}` : basePath
             );
           }
           return safePatterns;
@@ -38883,8 +39032,19 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (!absolutePath) {
           return;
         }
+        const resolvedPath = resolvePhysicalDependencyAncestor(absolutePath);
+        if (!resolvedPath || !isInsidePhysicalDependencyRoots(resolvedPath.physical)) {
+          dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+          warning(
+            "Ignoring unsafe config dependency: resolved path must stay within the repository workspace"
+          );
+          return;
+        }
+        if (dependencyRoot === cwd && resolvedPath.lexical !== resolvedPath.physical) {
+          dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+        }
         if (isDirectory2(absolutePath)) {
-          const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path6.sep}` : absolutePath;
+          const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path7.sep}` : absolutePath;
           dependencies.add(directoryPath);
         } else {
           dependencies.add(absolutePath);
@@ -38917,6 +39077,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       const prefix = ["python:", "golang:", "ruby:", "exec:"].find(
         (candidate) => value.startsWith(candidate)
       );
+      if (!prefix && !value.startsWith("file://") && /^[^:\r\n\0]+\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)(?::.+)?$/i.test(value)) {
+        processCompatibleFileUrl(`file://${value}`);
+        return;
+      }
       if (prefix) {
         const providerPath = value.slice(prefix.length);
         if (prefix === "exec:") {
@@ -38941,12 +39105,19 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         );
       }
     };
+    const watchDynamicProviderSideInputs = (value) => {
+      if (/\{[{%#]/.test(value) && /(?:file:\/\/|python:|golang:|ruby:|exec:)/i.test(value) || /^(?:python|golang|ruby|exec):\s*\S/i.test(value) || /^(?:file:\/\/[^\r\n\0]+|[^:\r\n\0]+)\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)(?::.+)?$/i.test(
+        value
+      )) {
+        watchDynamicSideInputs = true;
+      }
+    };
     const watchExternalProviderConfig = (value) => {
       if (value.length > MAX_DEPENDENCY_REFERENCE_LENGTH || value.includes("\0") || value.includes("\r") || value.includes("\n")) {
         return;
       }
       if (/[.{,(|](?:ya?ml|jsonl?)(?=$|[},:#?|)])/i.test(value)) {
-        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
       }
     };
     const visitedProviderValues = /* @__PURE__ */ new WeakSet();
@@ -38959,7 +39130,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         const isDirectHttpReference = /(?:^|\.)config\.(?:validateStatus|transformRequest|transformResponse|responseParser|sessionParser|session\.responseParser|auth\.path|tls\.(?:caPath|certPath|keyPath|pfxPath|jksPath)|signatureAuth\.(?:privateKeyPath|keystorePath|pfxPath|certPath|keyPath)|multipart\.parts\.source\.path)$/.test(
           fieldPath.join(".")
         );
-        if (path6.sep === "/" && value.includes("\\")) {
+        if (path7.sep === "/" && value.includes("\\")) {
           const literalFilePath = stripFunctionSelector(
             value,
             selectorExtensions,
@@ -38974,7 +39145,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             windowsPathsNoEscape: false
           });
           if (isDirectHttpReference || isLiteralPath) {
-            const literalAbsolutePath = path6.resolve(
+            const literalAbsolutePath = path7.resolve(
               configDir,
               literalFilePath
             );
@@ -38987,7 +39158,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             }
           }
         }
-        if (path6.sep === "/" && value.includes("\\") && isDirectHttpReference) {
+        if (path7.sep === "/" && value.includes("\\") && isDirectHttpReference) {
           return;
         }
         processCompatibleFileUrl(
@@ -39008,6 +39179,19 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         visitedProviderValues.add(value);
         for (const [nestedFieldName, nestedValue] of Object.entries(value)) {
+          if (nestedFieldName === "id" && typeof nestedValue === "string" && fieldPath.includes("config")) {
+            processFileBackedProviderReference(nestedValue);
+            watchExternalProviderConfig(nestedValue);
+            watchDynamicProviderSideInputs(nestedValue);
+          }
+          if (fieldPath.includes("config") && /^(?:file:\/\/|python:|golang:|ruby:|exec:)/i.test(nestedFieldName)) {
+            if (nestedFieldName.startsWith("file://")) {
+              processCompatibleFileUrl(nestedFieldName);
+            }
+            processFileBackedProviderReference(nestedFieldName);
+            watchExternalProviderConfig(nestedFieldName);
+            watchDynamicProviderSideInputs(nestedFieldName);
+          }
           visitProviderReferences(nestedValue, [...fieldPath, nestedFieldName]);
         }
       }
@@ -39024,7 +39208,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           rawFilePath = value.slice("file://".length);
         }
       }
-      const normalizedFilePath = directRead && path6.sep === "/" ? rawFilePath : normalizeGlobSeparators(rawFilePath, true);
+      const normalizedFilePath = directRead && path7.sep === "/" ? rawFilePath : normalizeGlobSeparators(rawFilePath, true);
       const filePath = directRead ? normalizedFilePath : stripFunctionSelector2(normalizedFilePath);
       const staticSegments = [];
       for (const segment of filePath.split("/")) {
@@ -39035,7 +39219,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       }
       const hasTemplate = staticSegments.length < filePath.split("/").length;
       const staticPath = hasTemplate ? staticSegments.length > 0 ? staticSegments.join("/") : "." : filePath;
-      const absolutePath = path6.isAbsolute(staticPath) ? path6.resolve(staticPath) : path6.resolve(path6.join(configDir, staticPath));
+      const absolutePath = path7.isAbsolute(staticPath) ? path7.resolve(staticPath) : path7.resolve(path7.join(configDir, staticPath));
       if (filePath.includes("\0") || !isInsideDependencyRoots(absolutePath)) {
         warning(
           "Ignoring unsafe HTTP provider file dependency: path must stay within the repository workspace"
@@ -39047,7 +39231,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         return;
       }
       if (hasTemplate) {
-        dependencies.add(`${absolutePath.replace(/[\\/]+$/, "")}${path6.sep}`);
+        dependencies.add(`${absolutePath.replace(/[\\/]+$/, "")}${path7.sep}`);
         watchCheckoutForExternalTemplate();
         return;
       }
@@ -39057,37 +39241,99 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       }
       processCompatibleFileUrl(`file://${rawFilePath}`, stripFunctionSelector2);
     };
+    const visitedConfigRefs = /* @__PURE__ */ new WeakSet();
+    const processConfigRef = (reference) => {
+      const fragmentIndex = reference.indexOf("#");
+      const fileReference = fragmentIndex < 0 ? reference : reference.slice(0, fragmentIndex);
+      if (fileReference && (!/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(fileReference) || fileReference.startsWith("file://"))) {
+        processCompatibleFileUrl(
+          fileReference.startsWith("file://") ? fileReference : `file://${fileReference}`
+        );
+      }
+      dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+    };
+    const visitConfigRefs = (value, isProviderCollection = false) => {
+      if (!Array.isArray(value) && !isTraversableRecord(value)) return;
+      if (visitedConfigRefs.has(value)) return;
+      visitedConfigRefs.add(value);
+      if (Array.isArray(value)) {
+        for (const nestedValue of value) {
+          visitConfigRefs(nestedValue, isProviderCollection);
+        }
+        return;
+      }
+      if (isProviderCollection && typeof value.$ref === "string") {
+        processConfigRef(value.$ref);
+        return;
+      }
+      if (isProviderCollection && typeof value.id !== "string") {
+        const selectedProviderOptions = Object.values(value)[0];
+        visitConfigRefs(selectedProviderOptions);
+        return;
+      }
+      for (const [field, nestedValue] of Object.entries(value)) {
+        if (field === "$ref" && typeof nestedValue === "string") {
+          processConfigRef(nestedValue);
+        }
+        visitConfigRefs(
+          nestedValue,
+          ["providers", "targets", "provider", "target", "grader"].includes(
+            field
+          )
+        );
+      }
+    };
+    visitConfigRefs(config2);
+    const extractProviderAudioFile = (providerId, providerOptions) => {
+      if (!providerId || !/^elevenlabs(?::|$)/i.test(providerId) || !isTraversableRecord(providerOptions) || !isTraversableRecord(providerOptions.config) || typeof providerOptions.config.audioFile !== "string") {
+        return;
+      }
+      const audioFile = providerOptions.config.audioFile;
+      processCompatibleFileUrl(
+        audioFile.startsWith("file://") ? audioFile : `file://${audioFile}`
+      );
+    };
     for (const providers of [config2.providers, config2.targets]) {
       const providerEntries = typeof providers === "string" ? [providers] : Array.isArray(providers) ? providers : isTraversableRecord(providers) ? [providers] : [];
       for (const provider of providerEntries) {
-        visitProviderReferences(provider);
         if (typeof provider === "string") {
+          if (provider.startsWith("file://")) {
+            visitProviderReferences(provider);
+          }
           processFileBackedProviderReference(provider);
           watchExternalProviderConfig(provider);
+          watchDynamicProviderSideInputs(provider);
         }
         if (!isTraversableRecord(provider)) {
           continue;
         }
         const mappedProvider = Object.entries(provider);
-        if (mappedProvider.length === 1 && mappedProvider[0][0].startsWith("file://")) {
-          processCompatibleFileUrl(mappedProvider[0][0]);
-          watchExternalProviderConfig(mappedProvider[0][0]);
-        }
-        const providerId = typeof provider.id === "string" ? provider.id : mappedProvider.length === 1 ? mappedProvider[0][0] : void 0;
-        const providerOptions = typeof provider.id === "string" ? provider : mappedProvider.length === 1 && isTraversableRecord(mappedProvider[0][1]) ? mappedProvider[0][1] : void 0;
+        const providerId = typeof provider.id === "string" ? provider.id : mappedProvider[0]?.[0];
+        const providerOptions = typeof provider.id === "string" ? provider : mappedProvider[0] && isTraversableRecord(mappedProvider[0][1]) ? mappedProvider[0][1] : void 0;
+        visitProviderReferences(
+          typeof provider.id === "string" ? provider : providerOptions
+        );
+        extractProviderAudioFile(providerId, providerOptions);
         if (providerId) {
+          if (providerId.startsWith("file://")) {
+            processCompatibleFileUrl(providerId);
+          }
           processFileBackedProviderReference(providerId);
           watchExternalProviderConfig(providerId);
+          watchDynamicProviderSideInputs(providerId);
         }
         if (!providerId || !/^https?(?::|$)/.test(providerId) && !/\{[{%#]/.test(providerId) || !providerOptions || !isTraversableRecord(providerOptions.config)) {
           continue;
         }
         const { auth: auth2, tls, signatureAuth, validateStatus, multipart } = providerOptions.config;
-        if (typeof validateStatus === "string" && validateStatus.startsWith("file://") && !(path6.sep === "/" && validateStatus.includes("\\"))) {
+        if (typeof validateStatus === "string" && validateStatus.startsWith("file://") && !(path7.sep === "/" && validateStatus.includes("\\"))) {
           addHttpProviderPath(validateStatus, stripJavascriptFunctionSelector);
         }
         if (isTraversableRecord(auth2) && (auth2.type === "file" || typeof auth2.type === "string" && /\{[{%#]/.test(auth2.type))) {
-          if (path6.sep === "/" && typeof auth2.path === "string" && auth2.path.includes("\\")) {
+          if (typeof auth2.path === "string") {
+            watchDynamicProviderSideInputs(auth2.path);
+          }
+          if (path7.sep === "/" && typeof auth2.path === "string" && auth2.path.includes("\\")) {
             addHttpProviderPath(
               stripFunctionSelector(
                 auth2.path,
@@ -39173,7 +39419,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (!filePath || filePath.includes("\0") || isUnsupportedForeignPath(filePath)) {
           return void 0;
         }
-        const absolutePath = path6.isAbsolute(filePath) ? path6.resolve(filePath) : path6.resolve(path6.join(baseDir, filePath));
+        const absolutePath = path7.isAbsolute(filePath) ? path7.resolve(filePath) : path7.resolve(path7.join(baseDir, filePath));
         return isInsideDependencyRoots(absolutePath) ? absolutePath : void 0;
       };
       const processPromptReference = (reference, declaredFile = false, promptExecutionCwd = executionCwd) => {
@@ -39181,8 +39427,11 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         const isFileUrl = reference.startsWith("file://");
         const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
         const isEnvironmentTemplate = /^\s*\{\{-?\s*env(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(reference);
+        if (!declaredFile && !isExecutable && !isFileUrl && !isTemplated && /\s/.test(reference) && reference.includes("file://")) {
+          return;
+        }
         if (isTemplated && !isFileUrl && reference.includes("file://")) {
-          dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+          dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
           return;
         }
         if (!declaredFile && !isExecutable && !isFileUrl && (reference.length > MAX_DEPENDENCY_REFERENCE_LENGTH || ["\n", "portkey://", "langfuse://", "helicone://"].some(
@@ -39198,7 +39447,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           const referencePreflight = preflightGlob(reference, {
             maxLength: MAX_DEPENDENCY_REFERENCE_LENGTH,
             maxBraceExpansions: MAX_BRACE_EXPANSIONS,
-            windowsPathsNoEscape: path6.sep === "\\"
+            windowsPathsNoEscape: path7.sep === "\\"
           });
           referenceHasMagic = referencePreflight === "too-many-braces" || referencePreflight === "safe" && hasGlobMagic(reference, GLOB_MAGIC_OPTIONS);
         }
@@ -39238,6 +39487,11 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (promptPath.includes("\0")) {
           return;
         }
+        if (promptPath && (isExecutable || /\.(?:bash|bat|cjs|cmd|cts|exe|js|mjs|mts|pl|ps1|py|rb|sh|ts)$/i.test(
+          promptPath
+        ))) {
+          watchDynamicSideInputs = true;
+        }
         for (const rawExecutableArgument of executableParts.slice(1)) {
           const equalsIndex = rawExecutableArgument.indexOf("=");
           const executableArgument = rawExecutableArgument.startsWith("-") && equalsIndex >= 0 ? rawExecutableArgument.slice(equalsIndex + 1) : rawExecutableArgument;
@@ -39250,12 +39504,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
               staticSegments.push(segment);
             }
             const watchedDirectory = resolvePromptProbe(
-              staticSegments.join(path6.sep) || ".",
+              staticSegments.join(path7.sep) || ".",
               promptExecutionCwd
             );
             if (watchedDirectory) {
               dependencies.add(
-                `${watchedDirectory.replace(/[\\/]+$/, "")}${path6.sep}`
+                `${watchedDirectory.replace(/[\\/]+$/, "")}${path7.sep}`
               );
               watchCheckoutForExternalTemplate();
             }
@@ -39293,13 +39547,13 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             }
             staticSegments.push(segment);
           }
-          const watchedDirectory = staticSegments.join(path6.sep) === "" ? dependencyRoot : resolveConfigDependency(
-            staticSegments.join(path6.sep),
+          const watchedDirectory = staticSegments.join(path7.sep) === "" ? dependencyRoot : resolveConfigDependency(
+            staticSegments.join(path7.sep),
             "prompt file dependency"
           );
           if (watchedDirectory) {
             dependencies.add(
-              `${watchedDirectory.replace(/[\\/]+$/, "")}${path6.sep}`
+              `${watchedDirectory.replace(/[\\/]+$/, "")}${path7.sep}`
             );
             watchCheckoutForExternalTemplate();
           }
@@ -39318,8 +39572,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           return;
         }
         const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(promptPath);
+        const isUnstructuredPrompt = /\.(?:txt|md|j2|csv)$/i.test(promptPath);
         const hasFixedExtension = /\.[A-Za-z0-9_-]+$/.test(promptPath);
-        if (!isStructuredPrompt && (!isPromptGlob || hasFixedExtension)) {
+        if (!isStructuredPrompt && !isUnstructuredPrompt && (!isPromptGlob || hasFixedExtension)) {
           return;
         }
         const absolutePath = resolveConfigDependency(
@@ -39336,14 +39591,34 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           }
           promptFiles = Ui(
             promptPatterns.length === 1 ? promptPatterns[0] : promptPatterns,
-            GLOB_SYNC_OPTIONS
+            {
+              ...GLOB_SYNC_OPTIONS,
+              ignore: createContainedGlobIgnore(
+                physicalDependencyRoots,
+                fs6.realpathSync,
+                globTraversal
+              ),
+              fs: createBoundedGlobFs(
+                fs6.opendirSync,
+                globTraversal,
+                physicalDependencyRoots,
+                fs6.realpathSync
+              )
+            }
           );
+          if (globTraversal.exhausted) {
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+            warning(
+              "Skipping prompt file dependency glob that exceeded the traversal budget; conservatively watching the dependency root"
+            );
+            return;
+          }
         } else {
           promptFiles = [absolutePath];
         }
         for (const promptFile of promptFiles) {
-          const absolutePromptFile = path6.resolve(promptFile);
-          if (!isInsideDependencyRoots(absolutePromptFile) || !/\.(?:json|ya?ml)$/i.test(absolutePromptFile)) {
+          const absolutePromptFile = path7.resolve(promptFile);
+          if (!isInsideDependencyRoots(absolutePromptFile) || !/\.(?:json|ya?ml|txt|md|j2|csv)$/i.test(absolutePromptFile)) {
             continue;
           }
           try {
@@ -39372,15 +39647,23 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
               physicalPromptFile,
               isInsidePhysicalDependencyRoots
             );
+            if (/\.(?:txt|md|j2|csv)$/i.test(absolutePromptFile)) {
+              if (promptFileContent.status !== "ok" || /\{%-?\s*(?:include|extends|import|from)\b/.test(
+                promptFileContent.content
+              )) {
+                dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+              }
+              continue;
+            }
             if (promptFileContent.status === "non-file") {
-              dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+              dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
               warning(
                 "Skipping non-file structured prompt dependency; nested references will not be inspected"
               );
               continue;
             }
             if (promptFileContent.status === "oversized") {
-              dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+              dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
               warning(
                 "Skipping oversized structured prompt dependency; nested references will not be inspected"
               );
@@ -39394,8 +39677,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             });
             const visitedNestedValues = /* @__PURE__ */ new WeakSet();
             const visitNestedReferences = (value) => {
-              if (typeof value === "string" && value.startsWith("file://")) {
-                processPromptReference(value);
+              if (typeof value === "string") {
+                if (value.startsWith("file://")) {
+                  processPromptReference(value);
+                } else if (/\{[{%#]/.test(value)) {
+                  watchDynamicSideInputs = true;
+                }
               } else if (Array.isArray(value)) {
                 if (visitedNestedValues.has(value)) {
                   return;
@@ -39416,7 +39703,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             };
             visitNestedReferences(nestedConfig);
           } catch {
-            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
             warning(
               isPromptGlob ? "Failed to inspect prompt file dependency glob match: unable to read or parse file" : `Failed to inspect prompt file dependency "${promptPath}": unable to read or parse file`
             );
@@ -39434,7 +39721,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             processPromptReference(
               promptReference,
               Boolean(prompt.file && !prompt.raw),
-              promptBasePath ? path6.resolve(executionCwd, promptBasePath) : executionCwd
+              promptBasePath ? path7.resolve(executionCwd, promptBasePath) : executionCwd
             );
           }
         }
@@ -39442,9 +39729,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     }
     const extractVarFiles = (vars) => {
       const declaredVarPaths = typeof vars === "string" || Array.isArray(vars);
-      const values = typeof vars === "string" ? [vars] : Array.isArray(vars) ? vars : isTraversableRecord(vars) ? Object.values(vars) : [];
-      for (const value of values) {
-        if (typeof value === "string" && (value.startsWith("file://") || declaredVarPaths)) {
+      const values = typeof vars === "string" ? [[void 0, vars]] : Array.isArray(vars) ? vars.map((value) => [void 0, value]) : isTraversableRecord(vars) ? Object.entries(vars) : [];
+      for (const [field, value] of values) {
+        if (typeof value === "string" && (value.startsWith("file://") || declaredVarPaths || field === "audioFile")) {
           processFileUrl(
             value.startsWith("file://") ? value : `file://${value}`
           );
@@ -39466,26 +39753,38 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         processFileBackedProviderReference(provider);
         watchExternalProviderConfig(provider);
+        watchDynamicProviderSideInputs(provider);
         return;
       }
       if (!isTraversableRecord(provider)) return;
-      visitProviderReferences(provider);
       const entries = Object.entries(provider);
-      const providerId = typeof provider.id === "string" ? provider.id : entries.length === 1 ? entries[0][0] : void 0;
+      const providerId = typeof provider.id === "string" ? provider.id : entries[0]?.[0];
+      const providerOptions = typeof provider.id === "string" ? provider : entries[0]?.[1];
+      if (providerId === "$ref") return;
+      visitProviderReferences(providerOptions);
+      extractProviderAudioFile(providerId, providerOptions);
       if (!providerId) return;
       if (providerId.startsWith("file://")) {
         processCompatibleFileUrl(providerId);
       }
       processFileBackedProviderReference(providerId);
       watchExternalProviderConfig(providerId);
-      if (/^https?(?::|$)/.test(providerId) || /\{[{%#]/.test(providerId)) {
-        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+      watchDynamicProviderSideInputs(providerId);
+      if (/^(?:https?|exec)(?::|$)/.test(providerId) || /\{[{%#]/.test(providerId)) {
+        if (/^exec:\s*\S/.test(providerId)) {
+          watchDynamicSideInputs = true;
+        } else {
+          dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+        }
       }
     };
     const extractRuntimeFileReferences = (value, stripReferenceSelector = stripTransformFunctionSelector, visitedRuntimeValues = /* @__PURE__ */ new WeakSet()) => {
       if (typeof value === "string") {
         if (value.startsWith("file://")) {
           addHttpProviderPath(value, stripReferenceSelector);
+          watchDynamicProviderSideInputs(value);
+        } else if (/\{[{%#]/.test(value) && value.includes("file://")) {
+          watchDynamicSideInputs = true;
         }
         return;
       }
@@ -39528,6 +39827,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             assert.value,
             stripAssertionFunctionSelector
           );
+          watchDynamicProviderSideInputs(assert.value);
         } else if (assert !== null && typeof assert === "object" && typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
           const absolutePath = resolveConfigDependency(
             assert.value.file,
@@ -39557,7 +39857,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       processCompatibleFileUrl(
         config2.defaultTest.startsWith("file://") ? config2.defaultTest : `file://${config2.defaultTest}`
       );
-      dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+      dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
     } else if (isTraversableRecord(config2.defaultTest)) {
       extractVarFiles(config2.defaultTest.vars);
       extractTestRuntimeFiles(config2.defaultTest);
@@ -39578,8 +39878,11 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       const testPatterns = processCompatibleFileUrl(
         testsPath.startsWith("file://") ? testsPath : `file://${testsPath}`
       );
+      if (/\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)(?::.+)?$/i.test(testsPath)) {
+        watchDynamicSideInputs = true;
+      }
       if (/[.{,(|](?:ya?ml|jsonl?|xlsx?|csv)(?=$|[},:#?|)])/i.test(testsPath) || testPatterns?.some((pattern) => isDirectory2(pattern))) {
-        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
       }
     };
     const extractTestValues = (tests) => {
@@ -39613,13 +39916,30 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     };
     extractTestValues(config2.tests);
     extractTestValues(config2.scenarios);
+    const configuredEnvPaths = config2.commandLineOptions?.envPath;
+    for (const configuredEnvPath of Array.isArray(configuredEnvPaths) ? configuredEnvPaths : [configuredEnvPaths]) {
+      if (typeof configuredEnvPath !== "string") continue;
+      if (configuredEnvPath.includes(",")) watchDynamicSideInputs = true;
+      for (const envPath of configuredEnvPath.split(",")) {
+        const normalizedEnvPath = envPath.trim();
+        if (!normalizedEnvPath) continue;
+        processCompatibleFileUrl(
+          normalizedEnvPath.startsWith("file://") ? normalizedEnvPath : `file://${normalizedEnvPath}`
+        );
+      }
+    }
+    extractGradingProvider(config2.commandLineOptions?.grader);
     const extensions = typeof config2.extensions === "string" ? [config2.extensions] : Array.isArray(config2.extensions) ? config2.extensions : [];
     for (const extension of extensions) {
       if (typeof extension !== "string" || !extension) continue;
       addHttpProviderPath(
-        extension.startsWith("file://") ? extension : `file://${extension}`,
-        stripTransformFunctionSelector
+        stripTransformFunctionSelector(
+          extension.startsWith("file://") ? extension : `file://${extension}`
+        ),
+        stripTransformFunctionSelector,
+        true
       );
+      watchDynamicProviderSideInputs(extension);
     }
     if (isTraversableRecord(config2.nunjucksFilters)) {
       for (const filterPath of Object.values(config2.nunjucksFilters)) {
@@ -39627,12 +39947,16 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           processFileUrl(
             filterPath.startsWith("file://") ? filterPath : `file://${filterPath}`
           );
+          watchDynamicProviderSideInputs(filterPath);
         }
       }
     }
+    if (watchDynamicSideInputs) {
+      dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
+    }
     return Array.from(dependencies).map((dep) => {
-      const relativePath = path6.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path6.sep).join("/");
+      const relativePath = path7.relative(cwd, dep);
+      const repositoryPath = relativePath.split(path7.sep).join("/");
       if (repositoryPath === "") {
         return "./";
       }
@@ -39969,11 +40293,28 @@ var DEPENDENCY_GLOB_MAGIC_OPTIONS = {
   braceExpandMax: 1025
 };
 function toRepositoryPath(filePath) {
-  return filePath.split(path7.sep).join("/");
+  return filePath.split(path8.sep).join("/");
 }
 function isPathInside2(baseDir, targetPath) {
-  const relativePath = path7.relative(baseDir, targetPath);
-  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relativePath);
+  const relativePath = path8.relative(baseDir, targetPath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path8.sep}`) && !path8.isAbsolute(relativePath);
+}
+function resolvePhysicalGlobPrefix(absolutePattern) {
+  const root = path8.parse(absolutePattern).root;
+  let prefix = root;
+  for (const segment of path8.relative(root, absolutePattern).split(path8.sep)) {
+    if (/[*?[\]{}()!+@]/.test(segment)) break;
+    prefix = path8.join(prefix, segment);
+  }
+  while (true) {
+    try {
+      return fs7.realpathSync(prefix);
+    } catch {
+      const parent = path8.dirname(prefix);
+      if (parent === prefix) return void 0;
+      prefix = parent;
+    }
+  }
 }
 function validateGitRevision(ref) {
   const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
@@ -40090,8 +40431,8 @@ async function run() {
     const version = getInput("promptfoo-version", { required: false }) || "latest";
     validatePromptfooVersion(version);
     const workspaceRoot = process.cwd();
-    const workingDirectory = path7.resolve(
-      path7.join(
+    const workingDirectory = path8.resolve(
+      path8.join(
         workspaceRoot,
         getInput("working-directory", { required: false }) || "."
       )
@@ -40111,10 +40452,96 @@ async function run() {
         "Working directory must stay within the repository workspace"
       );
     }
-    const configAbsolutePath = path7.resolve(workingDirectory, configPath);
-    const configRepositoryPath = toRepositoryPath(
-      path7.relative(workspaceRoot, configAbsolutePath)
+    const globTraversal = { entries: 0, exhausted: false };
+    let configPaths = [configPath];
+    if (configPath.length > MAX_DEPENDENCY_GLOB_LENGTH) {
+      throw new Error("Config glob is malformed or exceeds supported limits");
+    }
+    const configPattern = normalizeGlobSeparators(configPath, true);
+    if (preflightGlob(configPattern, {
+      maxLength: MAX_DEPENDENCY_GLOB_LENGTH,
+      maxBraceExpansions: MAX_PROMPT_BRACE_EXPANSIONS,
+      windowsPathsNoEscape: true
+    }) !== "safe") {
+      throw new Error("Config glob is malformed or exceeds supported limits");
+    }
+    if (/[*?[\]{}()]/.test(configPattern)) {
+      const expandedConfigPatterns = braceExpand(configPattern, {
+        braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1
+      });
+      if (expandedConfigPatterns.length > MAX_PROMPT_BRACE_EXPANSIONS) {
+        throw new Error("Config glob is malformed or exceeds supported limits");
+      }
+      if (hasUnsafeGlobTraversal(configPath) || expandedConfigPatterns.some((expandedPattern) => {
+        const absolutePattern = path8.resolve(
+          workingDirectory,
+          expandedPattern
+        );
+        const physicalPrefix = resolvePhysicalGlobPrefix(absolutePattern);
+        return hasUnsafeGlobTraversal(expandedPattern, true) || !isPathInside2(workspaceRoot, absolutePattern) || !physicalPrefix || !isPathInside2(physicalWorkspaceRoot, physicalPrefix);
+      })) {
+        throw new Error(
+          "Config glob static prefixes must stay within the repository workspace"
+        );
+      }
+      try {
+        configPaths = Ui(configPattern, {
+          cwd: workingDirectory,
+          nodir: true,
+          braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
+          windowsPathsNoEscape: true,
+          ignore: createContainedGlobIgnore(
+            [physicalWorkspaceRoot],
+            fs7.realpathSync,
+            globTraversal
+          ),
+          fs: createBoundedGlobFs(
+            fs7.opendirSync,
+            globTraversal,
+            [physicalWorkspaceRoot],
+            fs7.realpathSync
+          )
+        });
+        if (globTraversal.exhausted) {
+          throw new Error("Config glob traversal budget was exceeded");
+        }
+      } catch {
+        throw new Error("Could not safely enumerate config glob matches");
+      }
+      if (configPaths.length === 0 || configPaths.length > MAX_PROMPT_BRACE_EXPANSIONS) {
+        throw new Error(
+          "Config glob must resolve to between 1 and 1024 config files"
+        );
+      }
+      for (const candidate of configPaths) {
+        const absoluteCandidate = path8.resolve(workingDirectory, candidate);
+        let physicalCandidate;
+        try {
+          physicalCandidate = fs7.realpathSync(absoluteCandidate);
+        } catch {
+          throw new Error("Could not safely resolve a config glob match");
+        }
+        if (!isPathInside2(workspaceRoot, absoluteCandidate) || !isPathInside2(physicalWorkspaceRoot, physicalCandidate)) {
+          throw new Error(
+            "Config glob matches must stay within the repository workspace"
+          );
+        }
+      }
+    }
+    const configAbsolutePaths = configPaths.map(
+      (candidate) => path8.resolve(workingDirectory, candidate)
     );
+    const configRepositoryPaths = new Set(
+      configAbsolutePaths.map(
+        (candidate) => toRepositoryPath(path8.relative(workspaceRoot, candidate))
+      )
+    );
+    const configGlobMatcher = /[*?[\]{}()]/.test(configPattern) ? new Minimatch(configPattern, {
+      ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+      braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
+      platform: "linux",
+      windowsPathsNoEscape: true
+    }) : void 0;
     const noShare = getBooleanInput("no-share", {
       required: false
     });
@@ -40187,7 +40614,7 @@ async function run() {
     if (envFiles) {
       const envFileList = envFiles.split(",").map((f) => f.trim()).filter(Boolean);
       for (const envFile of envFileList) {
-        const envFilePath = path7.join(workingDirectory, envFile);
+        const envFilePath = path8.join(workingDirectory, envFile);
         if (fs7.existsSync(envFilePath)) {
           info(`Loading environment variables from ${envFilePath}`);
           const result = dotenv.config({
@@ -40351,7 +40778,7 @@ async function run() {
     const seenAllPromptFiles = /* @__PURE__ */ new Set();
     const appendUnique = (target, seen, files) => {
       for (const file of files) {
-        const resolvedFile = path7.resolve(workingDirectory, file);
+        const resolvedFile = path8.resolve(workingDirectory, file);
         const fileKey = process.platform === "darwin" || process.platform === "win32" ? resolvedFile.toLowerCase() : resolvedFile;
         if (seen.has(fileKey)) continue;
         seen.add(fileKey);
@@ -40369,12 +40796,34 @@ async function run() {
           maxLength: MAX_DEPENDENCY_GLOB_LENGTH,
           maxBraceExpansions: MAX_PROMPT_BRACE_EXPANSIONS,
           windowsPathsNoEscape
-        }) !== "safe" || braceExpand(globPattern, {
-          braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1
-        }).length > MAX_PROMPT_BRACE_EXPANSIONS) {
+        }) !== "safe") {
           promptGlobFailed = true;
           warning(
             "Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits"
+          );
+          continue;
+        }
+        const expandedPromptPatterns = braceExpand(globPattern, {
+          braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1
+        });
+        if (expandedPromptPatterns.length > MAX_PROMPT_BRACE_EXPANSIONS) {
+          promptGlobFailed = true;
+          warning(
+            "Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits"
+          );
+          continue;
+        }
+        if (expandedPromptPatterns.some((expandedPattern) => {
+          const absolutePattern = path8.resolve(
+            workingDirectory,
+            expandedPattern
+          );
+          const physicalPrefix = resolvePhysicalGlobPrefix(absolutePattern);
+          return hasUnsafeGlobTraversal(expandedPattern, windowsPathsNoEscape) || !isPathInside2(workspaceRoot, absolutePattern) || !physicalPrefix || !isPathInside2(physicalWorkspaceRoot, physicalPrefix);
+        })) {
+          promptGlobFailed = true;
+          warning(
+            "Ignoring unsafe prompt glob: static prefix must stay within the repository workspace"
           );
           continue;
         }
@@ -40382,8 +40831,22 @@ async function run() {
           cwd: workingDirectory,
           nodir: true,
           braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
-          ...windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}
+          ...windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {},
+          ignore: createContainedGlobIgnore(
+            [physicalWorkspaceRoot],
+            fs7.realpathSync,
+            globTraversal
+          ),
+          fs: createBoundedGlobFs(
+            fs7.opendirSync,
+            globTraversal,
+            [physicalWorkspaceRoot],
+            fs7.realpathSync
+          )
         });
+        if (globTraversal.exhausted) {
+          throw new Error("Prompt glob traversal budget was exceeded");
+        }
       } catch {
         promptGlobFailed = true;
         warning(
@@ -40393,7 +40856,7 @@ async function run() {
       }
       const allMatches = matches.filter((file) => {
         if (useConfigPrompts) return true;
-        const absoluteFile = path7.resolve(workingDirectory, file);
+        const absoluteFile = path8.resolve(workingDirectory, file);
         if (!isPathInside2(workspaceRoot, absoluteFile)) {
           warning(
             "Ignoring unsafe prompt glob match: path must stay within the repository workspace"
@@ -40415,14 +40878,14 @@ async function run() {
           return false;
         }
         const repositoryFile = toRepositoryPath(
-          path7.relative(workspaceRoot, absoluteFile)
+          path8.relative(workspaceRoot, absoluteFile)
         );
-        return repositoryFile !== configRepositoryPath;
+        return !configRepositoryPaths.has(repositoryFile);
       }).map(
         (file) => toRepositoryPath(
-          path7.relative(
+          path8.relative(
             workingDirectory,
-            path7.resolve(workingDirectory, file)
+            path8.resolve(workingDirectory, file)
           )
         )
       );
@@ -40430,7 +40893,7 @@ async function run() {
       if (changedFilesList.length > 0) {
         const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
-            path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
+            path8.relative(workspaceRoot, path8.resolve(workingDirectory, file))
           );
           return changedFilesList.includes(repositoryFile);
         });
@@ -40439,12 +40902,19 @@ async function run() {
         appendUnique(promptFiles, seenPromptFiles, allMatches);
       }
     }
-    const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
+    const configChanged = changedFilesList.length > 0 && changedFilesList.some((changedFile) => {
+      if (configRepositoryPaths.has(changedFile)) return true;
+      if (!configGlobMatcher) return false;
+      const absoluteChangedFile = path8.resolve(workspaceRoot, changedFile);
+      const configCandidate = path8.isAbsolute(configPattern) ? absoluteChangedFile : toRepositoryPath(
+        path8.relative(workingDirectory, absoluteChangedFile)
+      );
+      return configGlobMatcher.match(configCandidate);
+    });
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(
-        configAbsolutePath,
-        workingDirectory
+      const dependencies = configAbsolutePaths.flatMap(
+        (candidate) => extractFileDependencies(candidate, workingDirectory, globTraversal)
       ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         debug(`Found ${dependencies.length} file dependencies in config`);
@@ -40519,11 +40989,11 @@ async function run() {
       );
     }
     startGroup("Setting up cache");
-    const resolvedCachePath = cachePath ? path7.resolve(workingDirectory, cachePath) : void 0;
+    const resolvedCachePath = cachePath ? path8.resolve(workingDirectory, cachePath) : void 0;
     setupCacheEnvironment(resolvedCachePath);
     if (process.env.CI === "true") {
       const cleanedCount = await cleanupOldCache(
-        process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path7.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
+        process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path8.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
         7 * 24 * 60 * 60
         // 7 days
       );
@@ -40531,14 +41001,14 @@ async function run() {
         info(`Cleaned ${cleanedCount} old cache entries`);
       }
     }
-    const cacheDir = process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path7.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
+    const cacheDir = process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path8.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
     await logCacheMetrics(cacheDir);
     endGroup();
-    const outputFile = path7.join(
+    const outputFile = path8.join(
       workingDirectory,
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
-    let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
+    let promptfooArgs = ["eval", "-c", ...configPaths, "-o", outputFile];
     if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         "--prompts",
