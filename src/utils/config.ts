@@ -25,6 +25,9 @@ const FILE_BEARING_PROVIDER_KEYS = new Set([
   'transformRequest',
   'transformResponse',
 ]);
+const HTTP_FILE_BEARING_PROVIDER_KEYS = new Set(['validateStatus']);
+const ASSERTION_FILE_SELECTOR_PATTERN =
+  /(\.(?:js|cjs|mjs|ts|cts|mts|py|rb)):[\s\S]*$/;
 const HTTP_CREDENTIAL_PATH_KEYS = new Set([
   'caPath',
   'certPath',
@@ -139,6 +142,20 @@ export function extractFileDependencies(configPath: string): string[] {
           const code = (error as NodeJS.ErrnoException).code;
           if (code !== 'ENOENT' && code !== 'ENOTDIR') {
             return undefined;
+          }
+
+          try {
+            if (
+              code === 'ENOTDIR' ||
+              fs.lstatSync(existingPath).isSymbolicLink()
+            ) {
+              return undefined;
+            }
+          } catch (lstatError) {
+            const lstatCode = (lstatError as NodeJS.ErrnoException).code;
+            if (lstatCode !== 'ENOENT') {
+              return undefined;
+            }
           }
 
           const parentPath = path.dirname(existingPath);
@@ -504,19 +521,27 @@ export function extractFileDependencies(configPath: string): string[] {
         const selectorIndex = providerPath.lastIndexOf(':');
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
-        const executablePattern = nestedReference
-          ? /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i
-          : /\.(?:py|go|rb|js|cjs|mjs|ts|cts|mts)$/i;
-        const isJavascriptReference = /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(
-          candidatePath,
-        );
-        const isValidSelector = /\.go$/i.test(candidatePath)
-          ? /^(?:call_api|CallApi)$/.test(selector)
-          : isJavascriptReference
-            ? selector.length > 0 && !/[\\/:\0]/.test(selector)
-            : /^[\p{L}_$][\p{L}\p{N}_$]*(?:\.[\p{L}_$][\p{L}\p{N}_$]*)*[!?]?$/u.test(
-                selector,
-              );
+        const isHttpStatusValidator =
+          httpProviderContext &&
+          parentKey === 'validateStatus' &&
+          grandparentKey === 'config';
+        const executablePattern = isHttpStatusValidator
+          ? /\.(?:js|cjs|mjs|ts|cts|mts)$/
+          : nestedReference
+            ? /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i
+            : /\.(?:py|go|rb|js|cjs|mjs|ts|cts|mts)$/i;
+        const isJavascriptReference = isHttpStatusValidator
+          ? /\.(?:js|cjs|mjs|ts|cts|mts)$/.test(candidatePath)
+          : /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(candidatePath);
+        const isValidSelector = isHttpStatusValidator
+          ? selector.length > 0
+          : /\.go$/i.test(candidatePath)
+            ? /^(?:call_api|CallApi)$/.test(selector)
+            : isJavascriptReference
+              ? selector.length > 0 && !/[\\/:\0]/.test(selector)
+              : /^[\p{L}_$][\p{L}\p{N}_$]*(?:\.[\p{L}_$][\p{L}\p{N}_$]*)*[!?]?$/u.test(
+                  selector,
+                );
         const cleanPath =
           selectorIndex > 1 &&
           executablePattern.test(candidatePath) &&
@@ -692,6 +717,12 @@ export function extractFileDependencies(configPath: string): string[] {
             continue;
           }
           if (
+            HTTP_FILE_BEARING_PROVIDER_KEYS.has(key) &&
+            (!isHttpProvider || parentKey !== 'config')
+          ) {
+            continue;
+          }
+          if (
             isHttpProvider &&
             parentKey === 'parts' &&
             grandparentKey === 'multipart' &&
@@ -775,6 +806,9 @@ export function extractFileDependencies(configPath: string): string[] {
             true,
             key === 'id' || isProviderMap,
             FILE_BEARING_PROVIDER_KEYS.has(key) ||
+              (isHttpProvider &&
+                parentKey === 'config' &&
+                HTTP_FILE_BEARING_PROVIDER_KEYS.has(key)) ||
               ((parentKey === 'response_format' ||
                 parentKey === 'responseFormat') &&
                 (key === 'schema' || key === 'json_schema')) ||
@@ -857,7 +891,9 @@ export function extractFileDependencies(configPath: string): string[] {
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
-          processFileUrl(assert.value);
+          processFileUrl(
+            assert.value.replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1'),
+          );
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&
@@ -893,9 +929,12 @@ export function extractFileDependencies(configPath: string): string[] {
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
       const repositoryPath = relativePath.split(path.sep).join('/');
+      if (!repositoryPath) {
+        return './';
+      }
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
-        return repositoryPath ? `${repositoryPath}/` : './';
+        return `${repositoryPath}/`;
       }
       return repositoryPath;
     });

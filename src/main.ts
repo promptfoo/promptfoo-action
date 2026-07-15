@@ -186,9 +186,12 @@ export async function run(): Promise<void> {
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
-    const promptsInput = core.getInput('prompts', { required: false });
+    const promptsInput = core.getInput('prompts', {
+      required: false,
+      trimWhitespace: false,
+    });
     const promptFilesGlobs: string[] = promptsInput
-      ? promptsInput.split('\n').filter((line) => line.trim())
+      ? promptsInput.split(/\r?\n/).filter((line) => line.trim())
       : [];
     const configPath: string = core.getInput('config', {
       required: true,
@@ -208,6 +211,32 @@ export async function run(): Promise<void> {
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
     );
+    const configIsInWorkspace =
+      configRepositoryPath !== '..' &&
+      !configRepositoryPath.startsWith('../') &&
+      !path.isAbsolute(configRepositoryPath);
+    if (configIsInWorkspace) {
+      try {
+        const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+        const realConfigPath = fs.realpathSync(configAbsolutePath);
+        const realConfigRelative = path.relative(
+          realWorkspaceRoot,
+          realConfigPath,
+        );
+        if (
+          realConfigRelative === '..' ||
+          realConfigRelative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(realConfigRelative)
+        ) {
+          throw new Error('config escaped workspace');
+        }
+      } catch {
+        throw new PromptfooActionError(
+          'Config path resolves outside the repository workspace; refusing to evaluate unsafe config',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+    }
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
     });
@@ -238,6 +267,7 @@ export async function run(): Promise<void> {
     });
     const workflowFiles: string = core.getInput('workflow-files', {
       required: false,
+      trimWhitespace: false,
     });
     const workflowBase: string = core.getInput('workflow-base', {
       required: false,
@@ -400,10 +430,7 @@ export async function run(): Promise<void> {
       if (filesInput) {
         // Option 1: Use provided file list
         changedFiles = encodeChangedFiles(
-          filesInput
-            .split(/\r?\n/)
-            .map((file: string) => file.trim())
-            .filter(Boolean),
+          filesInput.split(/\r?\n/).filter((file: string) => file.trim()),
         );
         core.info(
           `Using manually specified files: ${formatChangedFilesForLog(changedFiles)}`,
@@ -478,6 +505,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
+    const allPromptFiles: string[] = [];
     const changedFilesList = changedFiles.split('\0').filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
@@ -485,32 +513,30 @@ export async function run(): Promise<void> {
         cwd: workingDirectory,
         nodir: true,
       });
+      const allMatches = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...allMatches);
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
-          return (
-            repositoryFile !== configRepositoryPath &&
-            changedFilesList.includes(repositoryFile)
-          );
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
         promptFiles.push(...allMatches);
       }
     }
 
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
         'Matched prompt file path contains a newline; refusing to evaluate unsafe path',
         ErrorCodes.INVALID_CONFIGURATION,
@@ -532,7 +558,7 @@ export async function run(): Promise<void> {
         // Check if any changed file matches the dependencies
         try {
           dependencyChanged = dependencies.some((dep) => {
-            if (dep === './') {
+            if (dep === '' || dep === './') {
               return true;
             }
 
@@ -635,13 +661,11 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (
-      !useConfigPrompts &&
-      !configChanged &&
-      !dependencyChanged &&
-      promptFiles.length > 0
-    ) {
-      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
+    const promptsToEvaluate =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const evaluatedPromptFiles = useConfigPrompts ? [] : promptsToEvaluate;
+    if (!useConfigPrompts && promptsToEvaluate.length > 0) {
+      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptsToEvaluate]);
     }
     // Check if sharing is enabled and validate authentication upfront
     if (noShare) {
@@ -871,8 +895,10 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
-      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+      const evaluatedFiles = useConfigPrompts
+        ? 'Prompts evaluated from config'
+        : `Evaluated prompt files: ${evaluatedPromptFiles.join(', ')}`;
+      let body = `⚠️ ${evaluatedFiles}
 
 | Success | Failure |
 |---------|---------|
@@ -907,9 +933,9 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (promptFiles.length > 0) {
+      if (evaluatedPromptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
-        summary.addList(promptFiles);
+        summary.addList(evaluatedPromptFiles);
       }
 
       if (repeatCheckResult) {

@@ -12,6 +12,7 @@ vi.mock('fs', async () => {
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
     realpathSync: vi.fn(),
+    lstatSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -27,6 +28,7 @@ describe('extractFileDependencies', () => {
     readFileSync: Mock;
     existsSync: Mock;
     realpathSync: Mock;
+    lstatSync: Mock;
     statSync: Mock;
   };
   const mockGlob = glob as unknown as {
@@ -42,6 +44,9 @@ describe('extractFileDependencies', () => {
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
     mockFs.realpathSync.mockImplementation((filePath: string) => filePath);
+    mockFs.lstatSync.mockImplementation(() => {
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    });
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
     delete process.env.PROVIDER_PATH;
     delete process.env.PROVIDER_FILE;
@@ -138,6 +143,20 @@ providers: file:///test/working/providers/custom.py:call_api
     expect(deps).toEqual(['providers/custom.py']);
   });
 
+  it('should map a direct workspace-root directory dependency to the root sentinel', () => {
+    mockFs.readFileSync.mockReturnValue('providers: file://.');
+    mockFs.statSync.mockImplementation(
+      (filePath: string) =>
+        ({
+          isDirectory: () => filePath === '/test/working',
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+  });
+
   it('should extract checkout dependencies from a config outside the workspace', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -232,6 +251,107 @@ providers:
     expect(deps).toContain('providers/direct.py');
     expect(deps).toContain('providers/glob_current.py');
     expect(deps).toContain('providers/');
+  });
+
+  it('should not read nested dependencies when an in-workspace config directory resolves outside the checkout', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'providers: file://providers.yaml';
+      }
+      if (filePath.endsWith('providers.yaml')) {
+        return 'config:\n  tools: file://tools/helper.js:loadTools';
+      }
+      throw new Error(`UNEXPECTED_READ_SECRET_MARKER: ${filePath}`);
+    });
+    mockFs.realpathSync.mockImplementation((filePath: string) =>
+      filePath.startsWith('/test/working/evals')
+        ? filePath.replace('/test/working/evals', '/private/config')
+        : filePath,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping unsafe config dependency content; its path may still be tracked for change detection',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) =>
+          String(call[0]).includes('UNEXPECTED_READ_SECRET_MARKER'),
+        ),
+    ).toBe(false);
+  });
+
+  it('should not read a dangling provider-config symlink as a missing file', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'providers: file://providers/dangling.yaml';
+      }
+      throw new Error('DANGLING_READ_SECRET_MARKER');
+    });
+    mockFs.realpathSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('dangling.yaml')) {
+        throw Object.assign(new Error('missing target'), { code: 'ENOENT' });
+      }
+      return filePath;
+    });
+    mockFs.lstatSync.mockImplementation(
+      (filePath: string) =>
+        ({
+          isSymbolicLink: () => filePath.endsWith('dangling.yaml'),
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/dangling.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) =>
+          String(call[0]).includes('DANGLING_READ_SECRET_MARKER'),
+        ),
+    ).toBe(false);
+  });
+
+  it('should not read a missing provider path when lstat cannot validate it', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'providers: file://providers/private.yaml';
+      }
+      throw new Error('LSTAT_READ_SECRET_MARKER');
+    });
+    mockFs.realpathSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('private.yaml')) {
+        throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      }
+      return filePath;
+    });
+    mockFs.lstatSync.mockImplementation(() => {
+      throw Object.assign(new Error('LSTAT_SECRET_MARKER'), {
+        code: 'EACCES',
+      });
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/private.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
   });
 
   it('should preserve a Windows drive colon in a file provider path', () => {
@@ -513,6 +633,91 @@ providers:
     ]);
   });
 
+  it('should extract HTTP validateStatus file dependencies with an optional function selector', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/default-validator
+    config:
+      validateStatus: file://validators/default-status.js
+  - id: https://example.test/named-validator
+    config:
+      validateStatus: file://validators/named-status.js:validate
+  - id: https://example.test/slash-validator
+    config:
+      validateStatus: 'file://validators/slash-status.js:checks/pass'
+  - id: https://example.test/backslash-validator
+    config:
+      validateStatus: 'file://validators/backslash-status.ts:checks\\pass'
+  - id: https://example.test/templated-validator
+    env:
+      STATUS_PATH: file://validators/templated-status.js:validate
+    config:
+      validateStatus: "{{ env.STATUS_PATH }}"
+  - id: https://example.test/literal-validator
+    config:
+      validateStatus: file://validators/status.JS:validate
+  - id: https://example.test/python-literal-validator
+    config:
+      validateStatus: file://validators/status.py:validate
+  - id: https://example.test/empty-literal-validator
+    config:
+      validateStatus: 'file://validators/status-empty.js:'
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/validators/default-status.js',
+      'evals/validators/named-status.js',
+      'evals/validators/slash-status.js',
+      'evals/validators/backslash-status.ts',
+      'evals/validators/templated-status.js',
+      'evals/validators/status.JS:validate',
+      'evals/validators/status.py:validate',
+      'evals/validators/status-empty.js:',
+    ]);
+  });
+
+  it('should extract HTTP provider-map and target-map validator, auth, and TLS dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - https://example.test/provider-map:
+      env:
+        STATUS_PATH: file://validators/provider-map.js:validate
+      config:
+        auth:
+          type: file
+          path: ./auth/provider-map.ts
+        tls:
+          caPath: ./credentials/provider-map.pem
+        validateStatus: "{{ env.STATUS_PATH }}"
+targets:
+  - https://example.test/target-map:
+      config:
+        auth:
+          type: file
+          path: ./auth/target-map.ts
+        tls:
+          certPath: ./credentials/target-map.pem
+        validateStatus: file://validators/target-map.mjs:checks/pass
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/auth/provider-map.ts',
+      'evals/credentials/provider-map.pem',
+      'evals/validators/provider-map.js',
+      'evals/auth/target-map.ts',
+      'evals/credentials/target-map.pem',
+      'evals/validators/target-map.mjs',
+    ]);
+  });
+
   it('should ignore HTTP-shaped plain file fields on non-HTTP providers', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -525,6 +730,7 @@ providers:
         caPath: ./credentials/not-http.pem
       signatureAuth:
         privateKeyPath: ./credentials/not-http.key
+      validateStatus: file://validators/not-http.js:validate
       multipart:
         parts:
           - kind: file
@@ -544,9 +750,16 @@ providers:
               source:
                 type: path
                 path: ./fixtures/not-http-map.pdf
+        validateStatus: file://validators/not-http-map.js
   - id: https://example.test/body
     config:
       method: POST
+      queryParams:
+        validateStatus: file://validators/query-false.js
+      session:
+        validateStatus: file://validators/session-false.js
+      tools:
+        - validateStatus: file://validators/tool-false.js
       body:
         nested_provider:
           id: openai:gpt-4
@@ -563,6 +776,7 @@ providers:
                   source:
                     type: path
                     path: ./fixtures/body-false.pdf
+            validateStatus: file://validators/body-false.js
         payload:
           config:
             auth:
@@ -2551,6 +2765,21 @@ providers:
     ).toBe(false);
   });
 
+  it('should retain a directory sentinel when the last extension-style glob match is deleted', () => {
+    mockFs.readFileSync.mockReturnValue('providers: file://providers.v1/*.py');
+    mockGlob.hasMagic.mockImplementation((filePath: string) =>
+      filePath.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+    mockFs.statSync.mockImplementation(() => {
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers.v1/']);
+  });
+
   it('should extract all file types from complex config', () => {
     const configContent = `
 providers:
@@ -2590,6 +2819,49 @@ tests:
     expect(deps).toContain('../config/data/expected1.txt');
     expect(deps).toContain('../config/validators/contains.txt');
     expect(deps).toContain('../config/validators/custom.js');
+  });
+
+  it('should preserve literal variable and Go assertion selectors while stripping Ruby assertion selectors', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  vars:
+    defaultRuby: file://vars/default.rb:build
+tests:
+  - vars:
+      ruby: file://vars/build.rb:build
+      go: file://vars/build.go:Build
+      literal: file://vars/build.RB:build
+    assert:
+      - type: javascript
+        value: file://validators/check.go:Check
+      - type: javascript
+        value: file://validators/check.rb:validate
+      - type: javascript
+        value: 'file://validators/check.cjs:checks/pass'
+      - type: javascript
+        value: 'file://validators/other.mjs:checks\\pass'
+      - type: javascript
+        value: 'file://validators/check-empty.cjs:'
+      - type: javascript
+        value: "file://validators/check-newline.cjs:checks\\npass"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/vars/default.rb:build',
+      'evals/vars/build.rb:build',
+      'evals/vars/build.go:Build',
+      'evals/vars/build.RB:build',
+      'evals/validators/check.go:Check',
+      'evals/validators/check.rb',
+      'evals/validators/check.cjs',
+      'evals/validators/other.mjs',
+      'evals/validators/check-empty.cjs',
+      'evals/validators/check-newline.cjs',
+    ]);
   });
 
   it('should return relative paths from current working directory', () => {
