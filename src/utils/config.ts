@@ -15,6 +15,7 @@ import {
 } from 'js-yaml';
 import { braceExpand } from 'minimatch';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { isDirectory } from './fs';
 import { normalizeGlobSeparators, preflightGlob } from './glob';
 
@@ -688,12 +689,27 @@ export function extractFileDependencies(
     const addHttpProviderPath = (
       value: unknown,
       stripFunctionSelector = stripProviderFunctionSelector,
+      directRead = false,
+      decodeFileUrl = false,
     ): void => {
       if (typeof value !== 'string' || !value) {
         return;
       }
-      const rawFilePath = value.replace(/^file:\/\//, '').replace(/\\/g, '/');
-      const filePath = stripFunctionSelector(rawFilePath);
+      let rawFilePath = value.replace(/^file:\/\//, '');
+      if (decodeFileUrl && value.startsWith('file://')) {
+        try {
+          rawFilePath = fileURLToPath(value);
+        } catch {
+          rawFilePath = value.slice('file://'.length);
+        }
+      }
+      const normalizedFilePath =
+        directRead && path.sep === '/'
+          ? rawFilePath
+          : normalizeGlobSeparators(rawFilePath, true);
+      const filePath = directRead
+        ? normalizedFilePath
+        : stripFunctionSelector(normalizedFilePath);
       const staticSegments: string[] = [];
       for (const segment of filePath.split('/')) {
         if (/\{[{%#]/.test(segment)) {
@@ -723,6 +739,10 @@ export function extractFileDependencies(
       if (hasTemplate) {
         dependencies.add(`${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`);
         watchCheckoutForExternalTemplate();
+        return;
+      }
+      if (directRead) {
+        dependencies.add(absolutePath);
         return;
       }
       processCompatibleFileUrl(`file://${rawFilePath}`, stripFunctionSelector);
@@ -804,7 +824,7 @@ export function extractFileDependencies(
             'pfxPath',
             'jksPath',
           ]) {
-            addHttpProviderPath(tls[key]);
+            addHttpProviderPath(tls[key], stripProviderFunctionSelector, true);
           }
         }
         if (isTraversableRecord(signatureAuth)) {
@@ -815,7 +835,11 @@ export function extractFileDependencies(
             'certPath',
             'keyPath',
           ]) {
-            addHttpProviderPath(signatureAuth[key]);
+            addHttpProviderPath(
+              signatureAuth[key],
+              stripProviderFunctionSelector,
+              true,
+            );
           }
         }
         if (isTraversableRecord(multipart) && Array.isArray(multipart.parts)) {
@@ -829,7 +853,14 @@ export function extractFileDependencies(
               part.source.type === 'path' ||
               (typeof part.source.type === 'string' &&
                 /\{[{%#]/.test(part.source.type));
-            if (isPathSource) addHttpProviderPath(part.source.path);
+            if (isPathSource) {
+              addHttpProviderPath(
+                part.source.path,
+                stripProviderFunctionSelector,
+                true,
+                true,
+              );
+            }
           }
         }
       }

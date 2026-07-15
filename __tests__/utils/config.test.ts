@@ -664,6 +664,75 @@ targets:
     ]);
   });
 
+  it('should preserve literal backslashes in direct POSIX HTTP file paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      tls:
+        caPath: 'certs\\ca.py:backup'
+      signatureAuth:
+        privateKeyPath: 'signing\\private.js:backup'
+      multipart:
+        parts:
+          - kind: file
+            source:
+              type: path
+              path: 'fixtures\\document.ts:copy'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'certs\\ca.py:backup',
+      'signing\\private.js:backup',
+      'fixtures\\document.ts:copy',
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should decode a multipart file URL before tracking its direct read', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      multipart:
+        parts:
+          - kind: file
+            source:
+              type: path
+              path: file:///test/working/fixtures/report%20copy.pdf
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toContain('fixtures/report copy.pdf');
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['file://fixtures/document.pdf', 'fixtures/document.pdf'],
+    ['file://./fixtures/document.pdf', 'fixtures/document.pdf'],
+    ['file:///test/working/fixtures/report%ZZ.pdf', 'fixtures/report%ZZ.pdf'],
+  ])('should preserve a supported multipart file-URL shorthand', (input, expected) => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      multipart:
+        parts:
+          - kind: file
+            source:
+              type: path
+              path: ${input}
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([expected]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should normalize file-backed target function references', () => {
     mockFs.readFileSync.mockReturnValue(`
 targets:
