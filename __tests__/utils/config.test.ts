@@ -126,7 +126,7 @@ targets:
     ]);
   });
 
-  it('should extract templated HTTP, file-auth, multipart, and slash-selector dependencies without widening ordinary env text', () => {
+  it('should extract templated HTTP, file-auth, multipart, and slash-selector dependencies and fail closed for a dynamic provider id', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - id: '{{ env.PROVIDER_ID | default("https") }}'
@@ -171,8 +171,27 @@ providers:
       'fixtures/document.pdf',
       'auth/plain.js',
       'fixtures/image.png',
+      './',
     ]);
-    expect(deps).not.toContain('./');
+  });
+
+  it('should not widen the workspace for ordinary filtered env text', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      url: '{{ env.TARGET_URL }}'
+      headers:
+        Authorization: Bearer {{ env.TOKEN | default("unused") }}
+  - id: openai:gpt-4
+    config:
+      apiKey: '{{ env.OPENAI_API_KEY | default("unused") }}'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should extract raw TLS, signature, and multipart paths from an external HTTP provider file', () => {
@@ -183,7 +202,7 @@ providers:
       ],
       [
         '/test/working/providers/http.yaml',
-        `- id: https\n  config:\n    url: https://example.test\n    tls:\n      caPath: certs/ca.bundle\n      certPath: certs/client.cert\n      keyPath: certs/client.private\n      pfxPath: certs/client.archive\n    signatureAuth:\n      privateKeyPath: signing/private.material\n      keystorePath: signing/store.bin\n      pfxPath: signing/signature.archive\n      certPath: signing/certificate.raw\n      keyPath: signing/key.raw\n    multipart:\n      parts:\n        - kind: file\n          name: upload\n          source:\n            type: path\n            path: fixtures/payload.blob`,
+        `- id: https\n  config:\n    url: https://example.test\n    auth:\n      type: file\n      path: auth/get-token.py:get_auth\n    tls:\n      caPath: certs/ca.bundle\n      certPath: certs/client.cert\n      keyPath: certs/client.private\n      pfxPath: certs/client.archive\n    signatureAuth:\n      privateKeyPath: signing/private.material\n      keystorePath: signing/store.bin\n      pfxPath: signing/signature.archive\n      certPath: signing/certificate.raw\n      keyPath: signing/key.raw\n    multipart:\n      parts:\n        - kind: file\n          name: upload\n          source:\n            type: path\n            path: fixtures/payload.blob`,
       ],
     ]);
     mockFs.readFileSync.mockImplementation((value: string) => {
@@ -205,6 +224,7 @@ providers:
 
     expect(deps).toEqual([
       'providers/http.yaml',
+      'auth/get-token.py',
       'certs/ca.bundle',
       'certs/client.cert',
       'certs/client.private',
@@ -215,6 +235,106 @@ providers:
       'signing/certificate.raw',
       'signing/key.raw',
       'fixtures/payload.blob',
+    ]);
+  });
+
+  it('should decode in-root absolute file URLs before tracking multipart dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      multipart:
+        parts:
+          - kind: file
+            name: upload
+            source:
+              type: path
+              path: file:///test/working/fixtures/team%20document.pdf
+          - kind: file
+            name: localhost-upload
+            source:
+              type: path
+              path: file://LOCALHOST/test/working/fixtures/localhost%20document.pdf
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'fixtures/team document.pdf',
+      'fixtures/localhost document.pdf',
+    ]);
+  });
+
+  it.each([
+    ['escaped parent', 'file:///test/working/%2e%2e/outside/secret.txt'],
+    [
+      'uppercase localhost',
+      'file://LOCALHOST/test/working/%2e%2e/outside/secret.txt',
+    ],
+    [
+      'encoded localhost',
+      'file://%6Cocalhost/test/working/%2e%2e/outside/secret.txt',
+    ],
+    [
+      'backslash separator',
+      'file://localhost\\test\\working\\%2e%2e\\outside\\secret.txt',
+    ],
+    ['encoded separator', 'file:///test/working/fixtures%2Fsecret.txt'],
+  ])('should fail closed for an unsafe absolute file URL with an %s', (_kind, fileUrl) => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      multipart:
+        parts:
+          - kind: file
+            name: upload
+            source:
+              type: path
+              path: ${fileUrl}
+`);
+
+    expect(() =>
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toThrow(
+      'An existing config dependency resolves outside an allowed dependency root.',
+    );
+  });
+
+  it('should preserve uppercase external auth selectors and fail closed for dynamic auth paths', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'providers: file://providers/auth.yaml',
+      ],
+      [
+        '/test/working/providers/auth.yaml',
+        `- id: https\n  config:\n    auth:\n      type: file\n      path: file://auth/UPPER.MTS:get_auth\n- id: https\n  config:\n    auth:\n      type: file\n      path: file://auth/plain.bin\n- id: https\n  config:\n    auth:\n      type: file\n      path: '{{ env.AUTH_PATH }}'\n- id: https\n  config:\n    auth:\n      type: file\n      path: '{% if env.USE_AUTH %}auth/optional.js{% endif %}'`,
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((value: string) => {
+      const contents = files.get(value);
+      if (contents === undefined) {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      return contents;
+    });
+    mockFs.statSync.mockImplementation(
+      (value: string) =>
+        ({
+          isDirectory: () => false,
+          size: Buffer.byteLength(files.get(value) ?? ''),
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/auth.yaml',
+      'auth/UPPER.MTS',
+      'auth/UPPER.MTS:get_auth',
+      'auth/plain.bin',
+      './',
     ]);
   });
 
@@ -456,6 +576,7 @@ prompts:
   - exec:prompts/render.sh
   - file://prompts/render.MTS:render
   - What is 2+2?
+  - Return * when unknown
   - raw: prompts/object.txt
     id: object-prompt
   - id: object-inline
@@ -502,6 +623,77 @@ prompts:
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual(['prompts/map.txt']);
     expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should expand root-level prompt brace globs without treating inline wildcard prose as a path', async () => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - prompt-*.{txt,md}
+  - Return * when unknown
+`);
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+    mockGlob.sync.mockImplementation((value: string) =>
+      value.endsWith('.txt')
+        ? ['/test/working/prompt-one.txt']
+        : value.endsWith('.md')
+          ? ['/test/working/prompt-two.md']
+          : [],
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompt-one.txt', 'prompt-two.md', './']);
+  });
+
+  it('should fail closed for templated top-level prompt and provider paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - file://{{ env.PROMPT_DIR }}/main.txt
+providers:
+  - file://{{ env.PROVIDER_DIR }}/provider.py:call_api
+  - '{{ env.PROVIDER_URI }}'
+tests:
+  - provider: '{{ env.TEST_PROVIDER_URI }}'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
+  it('should fail closed for templated filter, test, var, and assertion dependency paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - prompts/main.txt
+nunjucksFilters:
+  custom: '{{ env.FILTER_PATH }}'
+defaultTest:
+  vars: '{{ env.DEFAULT_VARS_PATH }}'
+  assert:
+    - type: ruby
+      value: file://{{ env.ASSERT_PATH }}
+tests:
+  - '{{ env.TESTS_PATH }}'
+  - vars:
+      context: file://{{ env.CONTEXT_PATH }}
+      expected:
+        file: '{{ env.EXPECTED_PATH }}'
+    assert:
+      - type: contains
+        value:
+          file: '{% if env.USE_EXPECTED %}expected/result.txt{% endif %}'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/main.txt', './']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
   });
 
   it('should extract nested file references from structured prompt files', () => {
@@ -603,7 +795,7 @@ prompts:
         '/test/working/providers/external.yaml',
         `- id: https\n  config:\n    tls:\n      caPath: file://certs/ca.bundle\n      certPath: '{{ env.CERT_PATH }}'\n    signatureAuth:\n      privateKeyPath: signing/private.material\n    multipart:\n      parts:\n        - null\n        - {}\n        - source: null\n        - source: {}\n        - source:\n            path: '{{ env.MULTIPART_PATH }}'\n        - source:\n            path: fixtures/payload.blob\n  vars:\n    - file://vars/nested.yaml\n    - 42\n  refs:\n    - file://{{ env.EXTRA_PATH }}\n    - null\n    - 42\n    - &shared\n      value: file://assets/shared.txt\n    - *shared`,
       ],
-      ['/test/working/vars/nested.yaml', 'value: ready'],
+      ['/test/working/providers/vars/nested.yaml', 'value: ready'],
     ]);
     mockFs.readFileSync.mockImplementation((value: string) => {
       const contents = files.get(value);
@@ -624,11 +816,171 @@ prompts:
 
     expect(deps).toEqual([
       'providers/external.yaml',
-      'vars/nested.yaml',
+      'providers/vars/nested.yaml',
       'certs/ca.bundle',
       'signing/private.material',
       'fixtures/payload.blob',
       'assets/shared.txt',
+      './',
+    ]);
+  });
+
+  it('should rebase nested test vars and custom provider files to the test file directory', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'tests: file://tests/nested/case.yaml',
+      ],
+      [
+        '/test/working/tests/nested/case.yaml',
+        `vars:\n  - file://fixtures/context.yaml\n  - fixtures/extra.yaml\nprovider: file://providers/per-test.py:call_api\nassert:\n  - type: llm-rubric\n    value: looks correct\n    provider:\n      id: file://graders/assertion.py:call_api\n      config:\n        transformResponse: file://graders/provider-transform.js:transform\n    contextTransform: '{{ env.CONTEXT_TRANSFORM }}'\n    transform: file://graders/transform.js:transform\n  - type: ruby\n    value: file://validators/check.rb:Validators::Format.check\n  - type: contains\n    value:\n      file: validators/expected.txt`,
+      ],
+      ['/test/working/tests/nested/fixtures/context.yaml', 'context: ready'],
+      ['/test/working/tests/nested/fixtures/extra.yaml', 'extra: ready'],
+      ['/test/working/fixtures/context.yaml', 'context: root-decoy'],
+      ['/test/working/fixtures/extra.yaml', 'extra: root-decoy'],
+    ]);
+    mockFs.readFileSync.mockImplementation((value: string) => {
+      const contents = files.get(value);
+      if (contents === undefined) {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      return contents;
+    });
+    mockFs.statSync.mockImplementation(
+      (value: string) =>
+        ({
+          isDirectory: () => false,
+          size: Buffer.byteLength(files.get(value) ?? ''),
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'tests/nested/case.yaml',
+      'tests/nested/fixtures/context.yaml',
+      'tests/nested/fixtures/extra.yaml',
+      'graders/assertion.py',
+      'validators/check.rb',
+      'validators/expected.txt',
+      'tests/nested/providers/per-test.py',
+      './',
+    ]);
+  });
+
+  it('should extract inline per-test custom provider files', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - provider: file://providers/per-test.py:call_api
+  - provider:
+      id: python:providers/object.py:call_api
+  - provider:
+      'file://providers/map.py:call_api':
+        config: {}
+  - provider:
+      'file://providers/invalid.py:call_api': null
+  - vars:
+      first: &shared-provider
+        id: file://providers/shared.py:call_api
+    provider: *shared-provider
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/per-test.py',
+      'providers/object.py',
+      'providers/map.py',
+      'providers/shared.py',
+      './',
+    ]);
+  });
+
+  it('should track inline and default grading providers and fail closed for executable test transforms', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  provider: file://providers/default.py:call_api
+  options:
+    provider: file://graders/default.py:call_api
+    transformVars: file://graders/default-vars.js:transform
+    rubricPrompt: file://graders/default-rubric.txt
+  assertScoringFunction: file://graders/default-score.js:score
+  assert:
+    - type: llm-rubric
+      value: default rubric
+      provider: file://graders/default-assert.py:call_api
+      contextTransform: file://graders/default-context.js:transform
+tests:
+  - options:
+      provider:
+        id: file://graders/test.py:call_api
+      transform: file://graders/test-transform.js:transform
+      postprocess: file://graders/postprocess.js:transform
+      transformVars: '{{ env.TEST_TRANSFORM }}'
+      rubricPrompt: '{% if env.USE_RUBRIC %}file://graders/optional.txt{% endif %}'
+    assertScoringFunction: file://graders/test-score.js:score
+    assert:
+      - type: assert-set
+        assert:
+          - type: llm-rubric
+            value: test rubric
+            provider:
+              id: file://graders/test-assert.py:call_api
+              config:
+                transformResponse: file://graders/provider-transform.js:transform
+            transform: file://graders/assert-transform.js:transform
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'graders/default-assert.py',
+      'providers/default.py',
+      'graders/default.py',
+      'graders/test.py',
+      'graders/test-assert.py',
+      './',
+    ]);
+  });
+
+  it('should fail closed for templated test transforms and configured custom providers', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - provider:
+      id: file://providers/configured.py:call_api
+      config: {}
+    transform: inline transform
+  - options:
+      transformVars: '{{ env.TRANSFORM }}'
+  - options:
+      rubricPrompt: '{% if env.USE_RUBRIC %}grader/rubric.txt{% endif %}'
+  - assert:
+      - type: contains
+        value: ready
+        contextTransform: '{% if env.USE_CONTEXT %}context.txt{% endif %}'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/configured.py', './']);
+  });
+
+  it('should track external default tests and commandLineOptions vars inputs', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest: file://defaults/test.yaml
+commandLineOptions:
+  vars:
+    - tests/cases.csv
+    - file://tests/more.jsonl
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'defaults/test.yaml',
+      'tests/cases.csv',
+      'tests/more.jsonl',
       './',
     ]);
   });
@@ -681,6 +1033,35 @@ tests:
       'tests/UPPER.MTS',
       'tests/UPPER.MTS:generate',
       'tests/plain.yaml',
+    ]);
+  });
+
+  it('should extract file dependencies from test generator config values', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - path: file://tests/generator.py:generate
+    config:
+      fixture: file://data/cases.json
+      nested:
+        examples:
+          - file://data/examples.yaml
+          - inline value
+          - null
+          - 42
+      dynamic: '{{ env.GENERATOR_FIXTURE }}'
+      shared: &shared-generator
+        fixture: file://data/shared.yaml
+      alias: *shared-generator
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'tests/generator.py',
+      'data/cases.json',
+      'data/shared.yaml',
+      'data/examples.yaml',
+      './',
     ]);
   });
 
@@ -772,6 +1153,31 @@ tests:
     );
   });
 
+  it.each([
+    ['newline', 'file://assets/line\n::error::forged-structured.txt'],
+    ['oversized', `file://${'a'.repeat(65_537)}`],
+  ])('should fail closed for an unsafe transitive %s file reference', (_kind, ref) => {
+    const jsonl = `${JSON.stringify({ metadata: { note: ref } })}\n`;
+    mockFs.readFileSync.mockImplementation((value: string) =>
+      value === '/test/working/promptfooconfig.yaml'
+        ? 'tests: file://tests/unsafe.jsonl'
+        : jsonl,
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      size: Buffer.byteLength(jsonl),
+    } as fs.Stats);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['tests/unsafe.jsonl', './']);
+    expect(
+      (core.warning as unknown as Mock).mock.calls
+        .map((call) => String(call[0]))
+        .join('\n'),
+    ).not.toContain('::error::forged-structured');
+  });
+
   it('should conservatively watch the workspace for scenario dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 scenarios:
@@ -839,6 +1245,41 @@ tests:
       'vars/matched.yaml',
       'vars/',
     ]);
+  });
+
+  it('should expand brace-only variable paths and reject unsafe brace alternatives', async () => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      - vars/{one,two}.yaml
+      - '{../outside,vars}/case.yaml'
+`);
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+    mockGlob.sync.mockImplementation((value: string) => {
+      if (value.endsWith('/one.yaml')) return ['/test/working/vars/one.yaml'];
+      if (value.endsWith('/two.yaml')) return ['/test/working/vars/two.yaml'];
+      if (value.endsWith('/case.yaml')) {
+        return ['/test/working/vars/case.yaml'];
+      }
+      return [];
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'vars/one.yaml',
+      'vars/two.yaml',
+      'vars/',
+      'vars/case.yaml',
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalledWith(
+      expect.stringContaining('/outside/'),
+      expect.anything(),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Ignoring unsafe config dependency glob pattern'),
+    );
   });
 
   it('should preserve literal variable selectors and extract executable assertion selectors', () => {
@@ -1557,6 +1998,8 @@ prompts:
 providers:
   - file://
   - "file://\\0provider.py"
+nunjucksFilters:
+  empty: ''
 `;
     mockFs.readFileSync.mockReturnValue(configContent);
 
@@ -1644,7 +2087,10 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py']);
+    expect(deps).toEqual([
+      '../config/providers/custom.py',
+      '../config/providers/',
+    ]);
   });
 
   it('should not enumerate unsafe alternatives hidden by mismatched brace glob closers', () => {
@@ -1674,7 +2120,12 @@ extensions:
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['provider)/safe.py', 'hook)/safe.js']);
+    expect(deps).toEqual([
+      'provider)/safe.py',
+      'provider)/',
+      'hook)/safe.js',
+      'hook)/',
+    ]);
     expect(mockGlob.sync).toHaveBeenCalledTimes(2);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('Ignoring unsafe config dependency glob pattern'),
@@ -1707,7 +2158,10 @@ providers:
     expect(deps).toEqual([
       'foo/safe.py',
       'bar/safe.py',
+      'foo/',
+      'bar/',
       'class-safe.py',
+      './',
       'literal).py',
     ]);
     expect(core.warning).not.toHaveBeenCalled();
@@ -2063,7 +2517,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/provider.py']);
+    expect(deps).toEqual(['../config/provider.py', '../config/']);
   });
 
   it('should build nested base directories for globs', () => {

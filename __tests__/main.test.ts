@@ -305,7 +305,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Promptfoo evaluated these prompt files'),
       });
     });
 
@@ -1224,7 +1224,7 @@ describe('GitHub Action Main', () => {
       expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
         expect.objectContaining({
           body: expect.stringContaining(
-            'prompts/prompt1.txt, prompts/prompt2.txt',
+            'Promptfoo evaluated these prompt files: prompts/prompt1.txt, prompts/prompt2.txt',
           ),
         }),
       );
@@ -1686,7 +1686,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Promptfoo evaluated these prompt files'),
       });
 
       // Should still fail the action after posting the comment
