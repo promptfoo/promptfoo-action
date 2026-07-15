@@ -683,17 +683,17 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const evaluationPromptFiles =
+    const selectedPromptFiles =
       forceRun || configChanged || dependencyChanged
         ? allPromptFiles
         : promptFiles;
-    if (evaluationPromptFiles.some((file) => /[\r\n]/.test(file))) {
+    if (selectedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error(
         'Prompt file paths cannot contain carriage returns or line feeds.',
       );
     }
     const promptRoots = Array.from(new Set([workspaceRoot, workingDirectory]));
-    const absolutePromptFiles = evaluationPromptFiles.map((file) =>
+    const absolutePromptFiles = selectedPromptFiles.map((file) =>
       path.resolve(workingDirectory, file),
     );
     if (
@@ -722,6 +722,9 @@ export async function run(): Promise<void> {
         'Prompt file paths must stay within the repository workspace.',
       );
     }
+    const evaluationPromptFiles = absolutePromptFiles.map((file) =>
+      toRepositoryPath(path.relative(workingDirectory, file)),
+    );
 
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');

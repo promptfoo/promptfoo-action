@@ -522,6 +522,26 @@ describe('GitHub Action Main', () => {
       expect(body).not.toContain(absolutePrompt);
     });
 
+    test('should report and evaluate a contained absolute prompt match as a relative path', async () => {
+      const absolutePattern = path.join(process.cwd(), 'prompts/*.txt');
+      const absolutePrompt = path.join(process.cwd(), 'prompts/shared.txt');
+      withInputs({ prompts: absolutePattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/shared.txt');
+      expect(args).not.toContain(absolutePrompt);
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0][0]
+        .body as string;
+      expect(body).toContain('Evaluated prompt files: prompts/shared.txt');
+      expect(body).not.toContain(absolutePrompt);
+    });
+
     test('should bound brace expansion while resolving action prompt globs', async () => {
       withInputs({ prompts: 'prompts/{one,two,three}.txt' });
       mockOctokit.paginate.mockResolvedValue([
