@@ -306,6 +306,31 @@ providers:
     ).toEqual(['../config/validators/status.JS:accept_status']);
   });
 
+  it.each([
+    ['provider', 'providers'],
+    ['target', 'targets'],
+  ])('should extract HTTP %s-map validator and security dependencies', (_source, field) => {
+    mockFs.readFileSync.mockReturnValue(`
+${field}:
+  - https://example.test/infer:
+      config:
+        validateStatus: file://validators/status.js:accept_status
+        auth:
+          type: file
+          path: auth/get-token.js
+        tls:
+          caPath: credentials/ca.pem
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/auth/get-token.js',
+      '../config/credentials/ca.pem',
+      '../config/validators/status.js',
+    ]);
+  });
+
   it('should not treat non-HTTP provider config as bare security paths', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -1409,6 +1434,30 @@ tests:
       '../config/transforms/output.js',
       '../config/transforms/vars.ts',
     ]);
+  });
+
+  it.each([
+    [
+      'Ruby variable',
+      'vars:\n      context: file://vars/build.rb:build',
+      '../config/vars/build.rb',
+    ],
+    [
+      'Go variable',
+      'vars:\n      context: file://vars/build.go:Build',
+      '../config/vars/build.go',
+    ],
+    [
+      'Go assertion',
+      'assert:\n      - type: javascript\n        value: file://validators/check.go:Check',
+      '../config/validators/check.go',
+    ],
+  ])('should strip the function selector from a %s file URL', (_source, testBody, expectedDependency) => {
+    mockFs.readFileSync.mockReturnValue(`tests:\n  - ${testBody}`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([expectedDependency]);
   });
 
   it('should strip a Ruby assertion method qualifier', () => {

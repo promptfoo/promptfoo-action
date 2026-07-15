@@ -412,7 +412,6 @@ export function extractFileDependencies(
       fileUrl: string,
       preserveGlobRoot = false,
       baseDir = configDir,
-      isProvider = false,
     ): void => {
       let filePath = fileUrl.replace(/^file:\/\//, '');
       const expandedPath = expandAndTrackEnvTemplates(filePath);
@@ -421,9 +420,7 @@ export function extractFileDependencies(
       const functionIndex = filePath.lastIndexOf(':');
       if (
         functionIndex > 1 &&
-        (/\.(?:py|rb|[cm]?[jt]s)$/.test(filePath.slice(0, functionIndex)) ||
-          (isProvider &&
-            /\.(?:go|rb)$/i.test(filePath.slice(0, functionIndex))))
+        /\.(?:py|go|rb|[cm]?[jt]s)$/.test(filePath.slice(0, functionIndex))
       ) {
         filePath = filePath.slice(0, functionIndex);
       }
@@ -453,7 +450,7 @@ export function extractFileDependencies(
         return;
       }
       const providerPath = localProvider[1];
-      processFileUrl(`file://${providerPath}`, false, configDir, true);
+      processFileUrl(`file://${providerPath}`, false, configDir);
       const absolutePath = path.resolve(configDir, providerPath);
       if (
         /\.(?:ya?ml|json)$/i.test(providerPath) &&
@@ -770,12 +767,7 @@ export function extractFileDependencies(
             /^(?:file:\/\/|python:(?=[\s\S]+\.py(?::[^/\\]+)?$)|golang:(?=[\s\S]+\.go(?::[^/\\]+)?$)|ruby:(?=[\s\S]+\.rb(?::[^/\\]+)?$))([\s\S]+)$/i,
           );
           if (localProvider) {
-            processFileUrl(
-              `file://${localProvider[1]}`,
-              true,
-              testBaseDir,
-              true,
-            );
+            processFileUrl(`file://${localProvider[1]}`, true, testBaseDir);
             if (typeof item === 'object' && item !== null) {
               for (const [providerKey, providerValue] of Object.entries(item)) {
                 if (providerKey !== 'id') {

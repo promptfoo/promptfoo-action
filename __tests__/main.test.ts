@@ -643,6 +643,35 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
+    test('should preserve outer whitespace in the action prompts input', async () => {
+      const prompts = ' prompts/*.txt \r\n';
+      mockCore.getInput.mockImplementation((name, options) => {
+        const value = name === 'prompts' ? prompts : DEFAULT_INPUTS[name] || '';
+        return options?.trimWhitespace === false ? value : value.trim();
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' prompts/spaced.txt ' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === ' prompts/*.txt ' ? [' prompts/spaced.txt '] : [],
+      );
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('prompts', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        ' prompts/*.txt ',
+        expect.any(Object),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', ' prompts/spaced.txt ']),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should reject an in-checkout config symlink that resolves outside the workspace before evaluation', async () => {
       const workspaceRoot = process.cwd();
       withInputs({ config: 'evals/shared-link/promptfooconfig.yaml' });
@@ -963,6 +992,39 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should preserve outer whitespace in the workflow-files action input', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      const workflowFiles = ' prompts/spaced.txt \r\n';
+      mockCore.getInput.mockImplementation((name, options) => {
+        const value =
+          name === 'workflow-files'
+            ? workflowFiles
+            : DEFAULT_INPUTS[name] || '';
+        return options?.trimWhitespace === false ? value : value.trim();
+      });
+      mockGlob.sync.mockReturnValue([' prompts/spaced.txt ']);
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('workflow-files', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockCore.info).toHaveBeenCalledWith(
+        `Using manually specified files: ${JSON.stringify([
+          ' prompts/spaced.txt ',
+          'prompts/spaced.txt',
+        ])}`,
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', ' prompts/spaced.txt ']),
+      );
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
