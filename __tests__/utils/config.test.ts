@@ -290,6 +290,106 @@ tests:
     expect(deps).toContain('../config/validators/check.js');
   });
 
+  it('should resolve a file-backed per-test provider from the test directory', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? '- provider: file://providers/custom.py:call_api'
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      '../config/tests/providers/custom.py',
+    ]);
+  });
+
+  it.each([
+    'go',
+    'rb',
+  ])('should strip a %s function qualifier from a file-backed per-test provider', (extension) => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? `- provider: file://providers/custom.${extension}:call_api`
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      `../config/tests/providers/custom.${extension}`,
+    ]);
+  });
+
+  it('should retain config dependencies of a file-backed object provider', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? [
+              '- provider:',
+              '    id: file://providers/custom.py:call_api',
+              '    config:',
+              '      dataset: file://data/dataset.json',
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      '../config/tests/providers/custom.py',
+      '../config/data/dataset.json',
+    ]);
+  });
+
+  it.each([
+    ['python', 'py'],
+    ['golang', 'go'],
+    ['ruby', 'rb'],
+  ])('should resolve a %s per-test provider from the test directory', (scheme, extension) => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? `- provider: ${scheme}:providers/custom.${extension}:call_api`
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      `../config/tests/providers/custom.${extension}`,
+    ]);
+  });
+
+  it('should preserve nested refs for missing-id and non-local test providers', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? [
+              '- provider:',
+              '    config:',
+              '      dataset: file://data/dataset.json',
+              '- provider: https://example.test/provider',
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.yaml', '../config/data/dataset.json']);
+  });
+
   it('should extract dependencies nested in a file-backed JSON test', () => {
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) => {
@@ -675,6 +775,33 @@ tests:
     );
   });
 
+  it.each([
+    String.raw`/test/workspace/tests\..\..\outside\leak.yaml#/0`,
+    String.raw`file:///test/workspace/tests\..\..\outside\leak.yaml#/0`,
+  ])('should reject mixed-separator test $ref traversal before reading %s', (ref) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? `- $ref: '${ref}'`
+          : String(filePath).includes('outside')
+            ? '[OUTSIDE_SECRET_CANARY]'
+            : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/workspace/promptfooconfig.yaml'),
+    ).toEqual(['tests/cases.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('test $ref dependency must stay within'),
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('OUTSIDE_SECRET_CANARY'),
+    );
+  });
+
   it('should strip supported function qualifiers from nested file URLs', () => {
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) =>
@@ -814,6 +941,119 @@ tests:
   });
 
   it.each([
+    'contains-all',
+    'contains-any',
+    'icontains-all',
+    'icontains-any',
+    'not-contains-all',
+    'not-contains-any',
+    'not-icontains-all',
+    'not-icontains-any',
+  ])('should extract each file URL from a CSV %s assertion', (assertion) => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.csv')
+          ? `value,__expected\nignored,"${assertion}:file://expected/a.txt,file://expected/b.txt"\n`
+          : 'tests: file://cases.csv',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/cases.csv',
+      '../config/expected/a.txt',
+      '../config/expected/b.txt',
+    ]);
+  });
+
+  it('should preserve a quoted comma in a CSV assertion file URL', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.csv')
+          ? 'value,__expected\nignored,"contains-all:""file://expected/a,prod.txt"",file://expected/b.txt"\n'
+          : 'tests: file://cases.csv',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/cases.csv',
+      '../config/expected/a,prod.txt',
+      '../config/expected/b.txt',
+    ]);
+  });
+
+  it.each([
+    [
+      'surrounding whitespace',
+      'contains-all: "file://expected/a,prod.txt" , file://expected/b.txt',
+      'a,prod.txt',
+    ],
+    [
+      'a doubled quote',
+      'contains-all:"file://expected/a""prod,one.txt",file://expected/b.txt',
+      'a"prod,one.txt',
+    ],
+    [
+      'a backslash-escaped quote',
+      'contains-all:"file://expected/a\\"prod,one.txt",file://expected/b.txt',
+      'a"prod,one.txt',
+    ],
+  ])('should preserve %s in a CSV assertion file URL', (_name, assertion, expectedFile) => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.csv')
+          ? `value,__expected\nignored,"${assertion.replaceAll('"', '""')}"\n`
+          : 'tests: file://cases.csv',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/cases.csv',
+      `../config/expected/${expectedFile}`,
+      '../config/expected/b.txt',
+    ]);
+  });
+
+  it.each([
+    [
+      'an unterminated quote',
+      'contains-all:"file://expected/CSV_SECRET_CANARY.txt,file://expected/b.txt',
+    ],
+    [
+      'text after a closing quote',
+      'contains-all:"file://expected/CSV_SECRET_CANARY.txt"junk,file://expected/b.txt',
+    ],
+    [
+      'a quote after unquoted text',
+      'contains-all:file://expected/CSV_SECRET_CANARY.txt"junk,file://expected/b.txt',
+    ],
+  ])('should conservatively invalidate a CSV assertion with %s', (_name, assertion) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.csv')
+          ? `value,__expected\nignored,"${assertion.replaceAll('"', '""')}"\n`
+          : 'tests: file://cases.csv',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['cases.csv', '/']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to inspect CSV assertion'),
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('CSV_SECRET_CANARY'),
+    );
+  });
+
+  it.each([
     ['yaml', '- vars:\n    value: file://data/{{ env.SUITE }}.txt'],
     ['csv', 'value,expected\nfile://data/{{ env.SUITE }}.txt,ok\n'],
   ])('should expand env templates in nested file URLs from a %s-backed test', (extension, testContent) => {
@@ -882,6 +1122,20 @@ tests:
       (filePath: fs.PathOrFileDescriptor) =>
         String(filePath).endsWith('cases.csv')
           ? 'value,expected\ninline,ok\n'
+          : 'tests: file://tests/cases.csv',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.csv']);
+  });
+
+  it('should retain an empty file-backed CSV test', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.csv')
+          ? ''
           : 'tests: file://tests/cases.csv',
     );
     mockFs.existsSync.mockReturnValue(true);
@@ -1039,6 +1293,79 @@ tests:
     );
   });
 
+  it('should reject mixed-separator traversal before expanding a test glob', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
+    mockFs.readFileSync.mockReturnValue(
+      String.raw`tests: 'file://tests\..\..\outside\*.yaml'`,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/outside/leak.yaml']);
+
+    expect(
+      extractFileDependencies('/test/workspace/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('test file dependency must stay within'),
+    );
+  });
+
+  it.each([
+    'file://{../outside,tests}/*.yaml',
+    'file://{tests/../../outside,tests}/*.yaml',
+  ])('should reject brace-alternative traversal before expanding %s', (testPath) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
+    mockFs.readFileSync.mockReturnValue(`tests: '${testPath}'`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/outside/leak.yaml']);
+
+    expect(
+      extractFileDependencies('/test/workspace/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('test file dependency must stay within'),
+    );
+  });
+
+  it('should reject bracket-encoded traversal before expanding a test glob', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
+    mockFs.readFileSync.mockReturnValue(
+      `tests: 'file://tests/[.][.]/[.][.]/outside/*.yaml'`,
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => value.includes('[') || value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/outside/leak.yaml']);
+
+    expect(
+      extractFileDependencies('/test/workspace/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('test file dependency must stay within'),
+    );
+  });
+
+  it('should preserve contained brace-alternative test globs', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
+    mockFs.readFileSync.mockReturnValue(
+      `tests: 'file://{tests,legacy}/*.yaml'`,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/workspace/tests/cases.yaml']);
+
+    expect(
+      extractFileDependencies('/test/workspace/promptfooconfig.yaml'),
+    ).toEqual(['tests/cases.yaml', '/']);
+  });
+
   it('should expand env-templated test paths conservatively', () => {
     mockFs.readFileSync.mockReturnValue(
       'tests: "file://tests/{{ env.SUITE }}.yaml"',
@@ -1051,6 +1378,35 @@ tests:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/tests/active.yaml', '../config/tests/']);
+  });
+
+  it('should expand a full Nunjucks env expression that renders nested paths', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockReturnValue(
+      `providers: ["file://{{ 'providers/' + env.SUITE }}.cjs"]`,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/providers/prod.cjs']);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['providers/prod.cjs', '/']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/config/**/*.cjs',
+      expect.objectContaining({ nodir: true }),
+    );
+  });
+
+  it('should preserve non-env Nunjucks provider templates', () => {
+    mockFs.readFileSync.mockReturnValue(
+      `providers: ["file://{{ vars.suite }}.cjs"]`,
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/{{ vars.suite }}.cjs']);
   });
 
   it('should preserve the config directory for an empty root test glob', () => {
