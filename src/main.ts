@@ -34,6 +34,7 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
+const MAX_PROMPT_GLOB_VARIANTS = 1000;
 
 type ChangedFile = {
   filename: string;
@@ -280,6 +281,12 @@ export async function run(): Promise<void> {
         });
 
         for (const traversalPattern of traversalPatterns) {
+          if (traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS) {
+            // A conservative match avoids exponential traversal work while
+            // still ensuring a deleted prompt cannot be skipped.
+            return true;
+          }
+
           const parentTraversal = /\/\*\*((?:\/\.\.)+)(?=\/|$)/.exec(
             traversalPattern,
           );

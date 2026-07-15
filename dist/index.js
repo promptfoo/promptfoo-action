@@ -38561,6 +38561,7 @@ function formatRepeatCommentMarkdown(summary2) {
 // src/main.ts
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
+var MAX_PROMPT_GLOB_VARIANTS = 1e3;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
@@ -38736,6 +38737,9 @@ async function run() {
           braceExpandMax: 1e4
         });
         for (const traversalPattern of traversalPatterns) {
+          if (traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS) {
+            return true;
+          }
           const parentTraversal = /\/\*\*((?:\/\.\.)+)(?=\/|$)/.exec(
             traversalPattern
           );

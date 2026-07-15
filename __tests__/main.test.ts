@@ -495,6 +495,26 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should fail open when prompt traversal expansion is excessive', async () => {
+      withInputs({
+        prompts: `prompts${'/**/..'.repeat(10)}/**/*.txt`,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/unrelated.md', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
     test.each([
       'darwin',
       'win32',
