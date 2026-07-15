@@ -2790,6 +2790,41 @@ providers:
     );
   });
 
+  it('should preserve checkout glob matches when an unused external config root is inaccessible', () => {
+    const safeMatches = [
+      '/test/working/providers/one.py',
+      '/test/working/providers/two.py',
+    ];
+    mockFs.readFileSync.mockReturnValue(
+      'providers: [file:///test/working/providers/*.py]',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(safeMatches);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (String(filePath) === '/test/shared') {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      return String(filePath);
+    });
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['providers/one.py', 'providers/two.py', 'providers']);
+    expect(core.warning).not.toHaveBeenCalled();
+    expect(
+      mockFs.realpathSync.mock.calls.filter(
+        ([filePath]) => String(filePath) === '/test/shared',
+      ),
+    ).toHaveLength(1);
+    expect(
+      mockFs.realpathSync.mock.calls.filter(
+        ([filePath]) => String(filePath) === '/test/working',
+      ),
+    ).toHaveLength(1);
+  });
+
   it('should extract all file types from complex config', () => {
     const configContent = `
 providers:

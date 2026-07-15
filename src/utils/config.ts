@@ -254,15 +254,19 @@ export function extractFileDependencies(
           ...globOptions,
           braceExpandMax: MAX_BRACE_EXPANSIONS,
         });
+        const realDependencyRoots: string[] = [];
+        for (const root of new Set([dependencyRoot, cwd])) {
+          try {
+            realDependencyRoots.push(fs.realpathSync(root));
+          } catch {
+            // Another trusted root may still safely contain the match.
+          }
+        }
         const safeMatches: string[] = [];
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          let realDependencyRoot: string;
-          let realCwd: string;
           let realMatch: string;
           try {
-            realDependencyRoot = fs.realpathSync(dependencyRoot);
-            realCwd = fs.realpathSync(cwd);
             realMatch = fs.realpathSync(absoluteMatch);
           } catch {
             core.warning(
@@ -272,8 +276,7 @@ export function extractFileDependencies(
           }
           if (
             isSafeDependency(absoluteMatch) &&
-            (isPathInside(realDependencyRoot, realMatch) ||
-              isPathInside(realCwd, realMatch))
+            realDependencyRoots.some((root) => isPathInside(root, realMatch))
           ) {
             dependencies.add(absoluteMatch);
             safeMatches.push(absoluteMatch);
