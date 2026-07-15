@@ -438,6 +438,57 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      {
+        name: 'a config-triggered full evaluation',
+        changedFiles: ['promptfooconfig.yaml'],
+        expectedPrompts: [
+          'prompts/shared.txt',
+          'prompts/first.txt',
+          'prompts/second.txt',
+        ],
+      },
+      {
+        name: 'a changed-prompt evaluation',
+        changedFiles: ['prompts/shared.txt'],
+        expectedPrompts: ['prompts/shared.txt'],
+      },
+      {
+        name: 'an evaluation without changed-file information',
+        changedFiles: [],
+        expectedPrompts: [
+          'prompts/shared.txt',
+          'prompts/first.txt',
+          'prompts/second.txt',
+        ],
+      },
+    ])('should deduplicate overlapping action prompt globs for $name', async ({
+      changedFiles,
+      expectedPrompts,
+    }) => {
+      withInputs({ prompts: 'prompts/*.txt\nprompts/shared.*' });
+      mockOctokit.paginate.mockResolvedValue(
+        changedFiles.map((filename) => ({ filename })),
+      );
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === 'prompts/*.txt'
+          ? ['prompts/shared.txt', 'prompts/first.txt']
+          : pattern === 'prompts/shared.*'
+            ? ['prompts/shared.txt', 'prompts/second.txt']
+            : [],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.filter((arg) => arg.startsWith('prompts/'))).toEqual(
+        expectedPrompts,
+      );
+      expect(
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body,
+      ).toContain(`Evaluated prompt files: ${expectedPrompts.join(', ')}`);
+    });
+
     test('should handle empty prompts input', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
