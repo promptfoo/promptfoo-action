@@ -229,6 +229,73 @@ providers:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should track both providers and targets when both collections are present', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.py:call_api
+targets:
+  - file://targets/target.js:callApi
+`);
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+    expect(deps).toEqual([
+      'evals/providers/provider.py',
+      'evals/targets/target.js',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should track Ruby and Go vars-generator backing files without selector suffixes', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+vars:
+  - file://vars/cases.rb:generate
+  - file://vars/cases.go:Generate
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/vars/cases.rb',
+      'evals/vars/cases.go',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should track per-test provider, option, and scoring dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - provider: file://providers/test.py:call_api
+    assertScoringFunction: file://checks/score.js:score
+    options:
+      provider: file://graders/test.js:grade
+      rubricPrompt: file://rubrics/test.txt
+      transform: file://transforms/test.js:transform
+      transformVars: file://transforms/vars.js:transformVars
+`);
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+    expect(deps).toEqual([
+      'evals/checks/score.js',
+      'evals/providers/test.py',
+      'evals/graders/test.js',
+      'evals/rubrics/test.txt',
+      'evals/transforms/test.js',
+      'evals/transforms/vars.js',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should extract prompt files', () => {
     const configContent = `
 prompts:

@@ -596,9 +596,10 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
-    const configuredProviders = config.targets || config.providers;
-    if (configuredProviders) {
-      extractFileReferences(configuredProviders, true, 'provider');
+    for (const configuredProviders of [config.providers, config.targets]) {
+      if (configuredProviders) {
+        extractFileReferences(configuredProviders, true, 'provider');
+      }
     }
 
     // Extract prompt files
@@ -633,7 +634,7 @@ export function extractFileDependencies(configPath: string): string[] {
       if (!isValidGlobLength(rawFilePath)) return;
       if (watchDynamicFilePath(rawFilePath)) return;
       const filePath = rawFilePath
-        .replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, '$1')
+        .replace(/(\.(?:[cm]?[jt]s|py|rb|go)):[^/\\:]+$/i, '$1')
         .replace(/(\.xlsx?)#.*$/i, '$1');
       const fileUrl = `file://${filePath}`;
       const isVarGlob = getGlobMagic(filePath);
@@ -806,6 +807,9 @@ export function extractFileDependencies(configPath: string): string[] {
       for (const test of config.tests) {
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
+        extractFileReferences(test.assertScoringFunction);
+        extractFileReferences(test.provider, true, 'provider');
+        extractOptionsFiles(test.options);
       }
     }
 

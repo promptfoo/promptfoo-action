@@ -928,6 +928,32 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test.each([
+      {
+        label: 'dependency',
+        changed: 'data/context.json',
+        deps: ['data/context.json'],
+      },
+      { label: 'config', changed: 'promptfooconfig.yaml', deps: [] },
+    ])('should not narrow evaluation when a prompt and a $label change together', async ({
+      changed,
+      deps,
+    }) => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: changed },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(deps);
+      await run();
+      expect(mockExec.exec).toHaveBeenCalled();
+      const args = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
     test('should preserve whitespace in a GitHub pull-request dependency filename', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: ' data/context.json ' },
