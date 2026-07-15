@@ -38321,6 +38321,10 @@ function isDirectory2(filePath) {
 // src/utils/config.ts
 var MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 var MAX_BRACE_EXPANSIONS = 1024;
+var MAX_STRUCTURED_FILE_SIZE = 10 * 1024 * 1024;
+var MAX_STRUCTURED_FILES = 128;
+var MAX_STRUCTURED_NODES = 5e4;
+var MAX_STRUCTURED_ENTRIES = 1024;
 var HTTP_FILE_CONFIG_KEYS = [
   "validateStatus",
   "transformRequest",
@@ -38333,6 +38337,10 @@ var PROVIDER_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py|go|rb)$/;
 var ASSERT_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py|rb)$/;
 var TEST_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py)$/;
 var CASE_INSENSITIVE_JS_SELECTOR = /\.(?:[cm]?js|[cm]?ts)$/i;
+var ENV_TEMPLATE = /(?:\{\{|\{%)(?:[^}]|\}(?!\}|%))*\benv(?:\.|\[)/;
+var ENV_EXPRESSION = /\{\{(?:[^}]|\}(?!\}))*\}\}/g;
+var ENV_VARIABLE = /env\.(\w+)|env\[['"]([^'"]+)['"]\]/;
+var FILE_URL_IN_TEMPLATE = /file:\/\/[^\s'"{}]+/g;
 function isPathInside(baseDir, targetPath) {
   const relativePath = path6.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
@@ -38417,7 +38425,7 @@ function extractFileDependencies(configPath) {
     return roots;
   };
   const watchWorkspace = () => {
-    dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+    dependencies.add(cwd);
   };
   let configParsed = false;
   try {
@@ -38489,6 +38497,46 @@ function extractFileDependencies(configPath) {
           )}`
         );
         return void 0;
+      }
+    };
+    const getEmbeddedFileReferences = (value) => {
+      const withoutBlocks = value.replace(/\{%[\s\S]*?%\}/g, "").trim();
+      const matches = withoutBlocks.match(FILE_URL_IN_TEMPLATE) ?? [];
+      if (withoutBlocks.startsWith("file://") && matches.length <= 1) {
+        return /* @__PURE__ */ new Set([withoutBlocks]);
+      }
+      return new Set(matches);
+    };
+    const processRuntimeFileReference = (value, envOverrides) => {
+      if (typeof value !== "string") return;
+      const resolved = resolveEnvTemplate(value, envOverrides);
+      const references = getEmbeddedFileReferences(resolved);
+      if (!reserveStructuredEntries(references.size)) return;
+      for (const reference of references) {
+        processFileSelector(reference, TEST_FILE_SELECTOR);
+      }
+    };
+    const processRubricReferences = (value, envOverrides) => {
+      const pending = [value];
+      const visited = /* @__PURE__ */ new WeakSet();
+      const references = [];
+      while (pending.length > 0) {
+        const current = pending.pop();
+        if (typeof current === "string") {
+          if (current.includes("file://") || ENV_TEMPLATE.test(current)) {
+            references.push(current);
+          }
+        } else if (typeof current === "object" && current !== null && !visited.has(current)) {
+          visited.add(current);
+          const nestedValues = Object.values(current);
+          for (let index = nestedValues.length - 1; index >= 0; index--) {
+            pending.push(nestedValues[index]);
+          }
+        }
+      }
+      if (!reserveStructuredEntries(references.length)) return;
+      for (const reference of references) {
+        processRuntimeFileReference(reference, envOverrides);
       }
     };
     const processFileUrl = (fileUrl) => {
@@ -38633,7 +38681,7 @@ function extractFileDependencies(configPath) {
     };
     const processFileSelector = (fileUrl, extension, options = {}) => {
       const rawFilename = fileUrl.slice("file://".length);
-      const colon = options.firstColon ? rawFilename.indexOf(":") : rawFilename.lastIndexOf(":");
+      const colon = options.firstColon ? rawFilename.indexOf(":", /^[A-Za-z]:[\\/]/.test(rawFilename) ? 2 : 0) : rawFilename.lastIndexOf(":");
       const candidateFilename = rawFilename.slice(0, colon);
       const candidateExport = rawFilename.slice(colon + 1);
       if (colon === -1 || options.requireExport && !candidateExport) {
@@ -38652,59 +38700,331 @@ function extractFileDependencies(configPath) {
       }
       processFileUrl(fileUrl);
     };
+    const scannedStructuredFiles = /* @__PURE__ */ new Set();
+    let structuredNodes = 0;
+    let structuredEntries = 0;
+    const reserveStructuredEntries = (count, commit = true) => {
+      if (structuredEntries + count > MAX_STRUCTURED_ENTRIES) {
+        watchWorkspace();
+        warning(
+          "Skipping additional structured prompt entries; conservatively watching the repository workspace"
+        );
+        return false;
+      }
+      if (commit) structuredEntries += count;
+      return true;
+    };
+    const scanStructuredPrompt = (fileReference, onParsed, scanReferences = true) => {
+      let filePath = fileReference.startsWith("file://") ? fileReference.slice("file://".length) : fileReference;
+      const colon = filePath.lastIndexOf(":");
+      if (colon !== -1 && TEST_FILE_SELECTOR.test(filePath.slice(0, colon))) {
+        filePath = filePath.slice(0, colon);
+      }
+      if (!/\.(?:json|ya?ml)$/i.test(filePath)) {
+        return;
+      }
+      if (/[*?[\]{}]/.test(filePath)) {
+        watchWorkspace();
+        return;
+      }
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        "structured prompt dependency"
+      );
+      if (!absolutePath || scannedStructuredFiles.has(absolutePath)) return;
+      if (scannedStructuredFiles.size >= MAX_STRUCTURED_FILES) {
+        watchWorkspace();
+        warning(
+          "Skipping additional structured prompt dependencies; conservatively watching the repository workspace"
+        );
+        return;
+      }
+      scannedStructuredFiles.add(absolutePath);
+      let fileSize;
+      try {
+        fileSize = fs6.statSync(absolutePath).size;
+      } catch {
+        watchWorkspace();
+        warning(
+          "Failed to inspect a structured prompt dependency; conservatively watching the repository workspace"
+        );
+        return;
+      }
+      if (typeof fileSize === "number" && fileSize > MAX_STRUCTURED_FILE_SIZE) {
+        watchWorkspace();
+        warning(
+          "Skipping an oversized structured prompt dependency; conservatively watching the repository workspace"
+        );
+        return;
+      }
+      let parsed;
+      try {
+        const contents = fs6.readFileSync(absolutePath, "utf8");
+        parsed = filePath.toLowerCase().endsWith(".json") ? JSON.parse(contents) : load(contents, { schema: CORE_SCHEMA.withTags(mergeTag) });
+      } catch {
+        watchWorkspace();
+        warning(
+          "Failed to parse a structured prompt dependency; conservatively watching the repository workspace"
+        );
+        return;
+      }
+      const visited = /* @__PURE__ */ new WeakSet();
+      const references = /* @__PURE__ */ new Set();
+      const pending = [parsed];
+      while (pending.length > 0) {
+        const value = pending.pop();
+        if (typeof value === "object" && value !== null && visited.has(value)) {
+          continue;
+        }
+        if (++structuredNodes > MAX_STRUCTURED_NODES) {
+          watchWorkspace();
+          warning(
+            "Skipping additional structured prompt fields; conservatively watching the repository workspace"
+          );
+          return;
+        }
+        if (typeof value === "string" && value.startsWith("file://")) {
+          references.add(value);
+          continue;
+        }
+        if (typeof value !== "object" || value === null) {
+          continue;
+        }
+        visited.add(value);
+        const nestedValues = Object.values(value);
+        for (let index = nestedValues.length - 1; index >= 0; index--) {
+          pending.push(nestedValues[index]);
+        }
+      }
+      if (onParsed?.(parsed) === false) return;
+      if (!scanReferences) return;
+      if (!reserveStructuredEntries(references.size)) return;
+      for (const reference of references) {
+        processFileSelector(reference, ASSERT_FILE_SELECTOR, {
+          firstColon: true
+        });
+        scanStructuredPrompt(reference);
+      }
+    };
     const providers = [config2.providers, config2.targets].flatMap(
       (value) => Array.isArray(value) ? value : value ? [value] : []
     );
-    const processProviderId = (providerId) => {
-      if (providerId.startsWith("file://")) {
-        processFileSelector(providerId, PROVIDER_FILE_SELECTOR);
+    const processProviderId = (providerId, baseDir = configDir, envOverrides) => {
+      const resolvedProviderId = resolveEnvTemplate(providerId, envOverrides);
+      if (resolvedProviderId.startsWith("file://")) {
+        const providerFile = baseDir === configDir ? resolvedProviderId : `file://${path6.resolve(
+          baseDir,
+          resolvedProviderId.slice("file://".length)
+        )}`;
+        processFileSelector(providerFile, PROVIDER_FILE_SELECTOR);
+        scanStructuredPrompt(providerFile, (parsed) => {
+          const externalProviders = Array.isArray(parsed) ? parsed : [parsed];
+          if (!reserveStructuredEntries(externalProviders.length)) return false;
+          const nestedWork = externalProviders.reduce(
+            (count, provider) => {
+              if (typeof provider !== "object" || provider === null)
+                return count;
+              const options = provider;
+              const config3 = options.config;
+              if (typeof config3 !== "object" || config3 === null) return count;
+              const providerConfig = config3;
+              const tools = providerConfig.tools;
+              const multipart = providerConfig.multipart;
+              const parts = typeof multipart === "object" && multipart !== null && "parts" in multipart && Array.isArray(multipart.parts) ? multipart.parts.length : 0;
+              return count + (Array.isArray(tools) ? tools.length : 0) + parts;
+            },
+            0
+          );
+          if (!reserveStructuredEntries(nestedWork, false)) return false;
+          for (const provider of externalProviders) {
+            if (typeof provider === "string" || typeof provider === "object" && provider !== null) {
+              processProvider(
+                provider,
+                baseDir,
+                envOverrides,
+                true
+              );
+            }
+          }
+        });
         return true;
       }
-      const scriptProvider = /^(?:python|golang|ruby):(.+)$/.exec(providerId);
+      const scriptProvider = /^(?:python|golang|ruby):(.+)$/.exec(
+        resolvedProviderId
+      );
       if (!scriptProvider) return false;
       processFileSelector(
-        `file://${scriptProvider[1]}`,
+        baseDir === configDir ? `file://${scriptProvider[1]}` : `file://${path6.resolve(baseDir, scriptProvider[1])}`,
         PROVIDER_FILE_SELECTOR
       );
       return true;
     };
-    const processProvider = (provider) => {
-      if (typeof provider === "string") {
-        processProviderId(provider);
-      } else if (typeof provider === "object" && provider !== null) {
-        if (typeof provider.id === "string" && processProviderId(provider.id)) {
-          return;
+    const resolveEnvTemplate = (value, envOverrides) => {
+      let resolved = value;
+      for (let depth = 0; depth < 4; depth++) {
+        const next = resolved.replace(ENV_EXPRESSION, (expression) => {
+          const getEnv = (name) => envOverrides?.[name] ?? config2.env?.[name] ?? process.env[name];
+          const body = expression.slice(2, -2).trim();
+          const parts = body.split(/\s*(?:\+|~)\s*/);
+          const values = parts.map((part) => {
+            const variable = ENV_VARIABLE.exec(part);
+            if (variable && variable[0] === part) {
+              return getEnv(variable[1] ?? variable[2]);
+            }
+            const literal = /^(['"])(.*)\1$/.exec(part);
+            return literal?.[2];
+          });
+          if (values.every((part) => part !== void 0)) {
+            return values.join("");
+          }
+          const match2 = ENV_VARIABLE.exec(expression);
+          if (!match2) return expression;
+          return getEnv(match2[1] ?? match2[2]) ?? expression;
+        });
+        if (next === resolved) break;
+        resolved = next;
+      }
+      return resolved;
+    };
+    const processToolReferences = (tools, envOverrides) => {
+      const values = Array.isArray(tools) ? tools : [tools];
+      if (Array.isArray(tools) && !reserveStructuredEntries(values.length)) {
+        return;
+      }
+      for (const value of values) {
+        if (typeof value !== "string") continue;
+        const resolved = resolveEnvTemplate(value, envOverrides);
+        const references = getEmbeddedFileReferences(resolved);
+        if (!reserveStructuredEntries(references.size)) return;
+        for (const reference of references) {
+          processFileSelector(reference, TEST_FILE_SELECTOR);
         }
+      }
+    };
+    const processDirectPath = (value, envOverrides) => {
+      if (typeof value !== "string") return;
+      const resolved = resolveEnvTemplate(value, envOverrides);
+      if (resolved.includes("file://")) {
+        processRuntimeFileReference(resolved, envOverrides);
+        return;
+      }
+      const withoutBlocks = resolved.replace(/\{%[\s\S]*?%\}/g, "").trim();
+      processFileUrl(`file://${withoutBlocks}`);
+    };
+    const processProvider = (provider, baseDir = configDir, inheritedEnv, preferInheritedEnv = false) => {
+      if (typeof provider === "string") {
+        processProviderId(provider, baseDir, inheritedEnv);
+      } else if (typeof provider === "object" && provider !== null) {
         const httpProviders = typeof provider.id === "string" ? [[provider.id, provider]] : Object.entries(provider);
         for (const [providerId, options] of httpProviders) {
-          if (processProviderId(providerId)) continue;
-          if (!/^(?:https?:|https?$)/i.test(providerId) || typeof options !== "object" || options === null || !("config" in options) || typeof options.config !== "object" || options.config === null) {
+          const optionEnv = typeof options === "object" && options !== null && "env" in options && typeof options.env === "object" && options.env !== null ? options.env : void 0;
+          const providerEnv = preferInheritedEnv ? { ...optionEnv, ...inheritedEnv } : { ...inheritedEnv, ...optionEnv };
+          if (typeof options !== "object" || options === null || !("config" in options) || typeof options.config !== "object" || options.config === null) {
+            processProviderId(providerId, baseDir, providerEnv);
             continue;
           }
           const providerConfig = options.config;
+          for (const key of [
+            "functions",
+            "response_format",
+            "output_format",
+            "request",
+            "body"
+          ]) {
+            processRubricReferences(providerConfig[key], providerEnv);
+          }
+          const session = providerConfig.session;
+          if (typeof session === "object" && session !== null) {
+            processRuntimeFileReference(
+              "responseParser" in session ? session.responseParser : void 0,
+              providerEnv
+            );
+          }
+          processToolReferences(providerConfig.tools, providerEnv);
+          if (processProviderId(providerId, baseDir, providerEnv) || !/^(?:https?:|https?$)/i.test(providerId) && !ENV_TEMPLATE.test(providerId)) {
+            continue;
+          }
           for (const key of HTTP_FILE_CONFIG_KEYS) {
             const value = providerConfig[key];
-            if (typeof value === "string" && value.startsWith("file://")) {
-              processFileSelector(value, HTTP_FILE_SELECTOR, {
-                requireExport: true
-              });
+            const resolved = typeof value === "string" ? resolveEnvTemplate(value, providerEnv) : void 0;
+            if (resolved?.includes("file://")) {
+              const references = getEmbeddedFileReferences(resolved);
+              if (!reserveStructuredEntries(references.size)) continue;
+              for (const reference of references) {
+                processFileSelector(reference, HTTP_FILE_SELECTOR, {
+                  requireExport: true
+                });
+              }
+            }
+          }
+          const auth2 = providerConfig.auth;
+          if (typeof auth2 === "object" && auth2 !== null && "type" in auth2 && (auth2.type === "file" || typeof auth2.type === "string" && ENV_TEMPLATE.test(auth2.type))) {
+            const authPath = "path" in auth2 ? auth2.path : void 0;
+            const resolvedAuthPath = typeof authPath === "string" ? resolveEnvTemplate(authPath, providerEnv) : void 0;
+            if (typeof resolvedAuthPath === "string" && resolvedAuthPath.includes("file://")) {
+              processRuntimeFileReference(resolvedAuthPath, providerEnv);
+            } else {
+              processDirectPath(authPath, providerEnv);
+            }
+          }
+          const multipart = providerConfig.multipart;
+          if (typeof multipart === "object" && multipart !== null && "parts" in multipart && Array.isArray(multipart.parts)) {
+            if (!reserveStructuredEntries(multipart.parts.length)) continue;
+            for (const part of multipart.parts) {
+              if (typeof part !== "object" || part === null || !("kind" in part) || part.kind !== "file" && (typeof part.kind !== "string" || !ENV_TEMPLATE.test(part.kind)) || !("source" in part) || typeof part.source !== "object" || part.source === null || !("type" in part.source) || part.source.type !== "path" && (typeof part.source.type !== "string" || !ENV_TEMPLATE.test(part.source.type))) {
+                continue;
+              }
+              processDirectPath(
+                "path" in part.source ? part.source.path : void 0,
+                providerEnv
+              );
+            }
+          }
+          for (const [group, keys] of [
+            [
+              providerConfig.signatureAuth,
+              [
+                "privateKeyPath",
+                "keystorePath",
+                "pfxPath",
+                "certPath",
+                "keyPath"
+              ]
+            ],
+            [
+              providerConfig.tls,
+              ["caPath", "certPath", "keyPath", "pfxPath", "jksPath"]
+            ]
+          ]) {
+            if (typeof group !== "object" || group === null) continue;
+            const paths = group;
+            for (const key of keys) {
+              processDirectPath(paths[key], providerEnv);
             }
           }
         }
       }
     };
-    for (const provider of providers) {
-      processProvider(provider);
+    if (reserveStructuredEntries(providers.length * 16)) {
+      for (const provider of providers) {
+        processProvider(provider, configDir, config2.env);
+      }
     }
+    processRubricReferences(config2.extensions, config2.env);
+    processRubricReferences(config2.commandLineOptions?.extension, config2.env);
     if (config2.prompts) {
       const prompts = Array.isArray(config2.prompts) ? config2.prompts : typeof config2.prompts === "string" || "file" in config2.prompts ? [config2.prompts] : Object.keys(config2.prompts);
       for (const prompt of prompts) {
         const promptPath = typeof prompt === "string" && prompt.startsWith("exec:") ? prompt.slice("exec:".length) : prompt;
-        if (typeof promptPath === "string" && !/[\r\n]|(?:portkey|langfuse|helicone):\/\//.test(promptPath) && (promptPath.startsWith("file://") || /[\\/*]/.test(promptPath) || /\.[A-Za-z0-9]{1,8}(?::[^/]*)?$/.test(promptPath))) {
+        const resolvedPromptPath = typeof promptPath === "string" ? resolveEnvTemplate(promptPath, config2.env) : promptPath;
+        if (typeof resolvedPromptPath === "string" && !/[\r\n]|(?:portkey|langfuse|helicone):\/\//.test(
+          resolvedPromptPath
+        ) && (resolvedPromptPath.startsWith("file://") || /[\\/]/.test(resolvedPromptPath) || /^[^\s]*[*?][^\s]*$/.test(resolvedPromptPath) || /\.[A-Za-z0-9]{1,8}(?::[^/]*)?$/.test(resolvedPromptPath))) {
           processFileSelector(
-            promptPath.startsWith("file://") ? promptPath : `file://${promptPath}`,
+            resolvedPromptPath.startsWith("file://") ? resolvedPromptPath : `file://${resolvedPromptPath}`,
             PROVIDER_FILE_SELECTOR
           );
+          scanStructuredPrompt(resolvedPromptPath);
         } else if (typeof prompt === "object" && prompt.file) {
           const absolutePath = resolveConfigDependency(
             prompt.file,
@@ -38712,18 +39032,35 @@ function extractFileDependencies(configPath) {
           );
           if (absolutePath) {
             dependencies.add(absolutePath);
+            scanStructuredPrompt(prompt.file);
           }
         }
       }
     }
-    const extractVarFiles = (vars) => {
+    const extractVarFiles = (vars, baseDir = configDir) => {
       if (!vars) return;
+      if (typeof vars === "string" || Array.isArray(vars)) {
+        const values = Array.isArray(vars) ? vars : [vars];
+        if (!reserveStructuredEntries(values.length)) return;
+        for (const value of values) {
+          const resolvedValue = resolveEnvTemplate(value, config2.env);
+          const rawValue = resolvedValue.startsWith("file://") ? resolvedValue.slice("file://".length) : resolvedValue;
+          processFileUrl(`file://${path6.resolve(baseDir, rawValue)}`);
+          scanStructuredPrompt(path6.resolve(baseDir, rawValue));
+        }
+        return;
+      }
       for (const value of Object.values(vars)) {
-        if (typeof value === "string" && value.startsWith("file://")) {
-          processFileUrl(value);
+        const resolvedValue = typeof value === "string" ? resolveEnvTemplate(value, config2.env) : value;
+        if (typeof resolvedValue === "string" && resolvedValue.includes("file://")) {
+          const references = getEmbeddedFileReferences(resolvedValue);
+          if (!reserveStructuredEntries(references.size)) continue;
+          for (const reference of references) {
+            processFileUrl(reference);
+          }
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
           const absolutePath = resolveConfigDependency(
-            value.file,
+            resolveEnvTemplate(value.file, config2.env),
             "test variable file dependency"
           );
           if (absolutePath) {
@@ -38735,12 +39072,18 @@ function extractFileDependencies(configPath) {
     const visitedAssertSets = /* @__PURE__ */ new WeakSet();
     const extractAssertFiles = (asserts) => {
       if (!Array.isArray(asserts) || visitedAssertSets.has(asserts)) return;
+      if (!reserveStructuredEntries(asserts.length)) return;
       visitedAssertSets.add(asserts);
       for (const assert of asserts) {
-        if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
-          processFileSelector(assert.value, ASSERT_FILE_SELECTOR, {
-            firstColon: true
-          });
+        const assertionValue = typeof assert.value === "string" ? resolveEnvTemplate(assert.value, config2.env) : assert.value;
+        if (typeof assertionValue === "string" && assertionValue.includes("file://")) {
+          const references = getEmbeddedFileReferences(assertionValue);
+          if (!reserveStructuredEntries(references.size)) continue;
+          for (const reference of references) {
+            processFileSelector(reference, ASSERT_FILE_SELECTOR, {
+              firstColon: true
+            });
+          }
         } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
           const absolutePath = resolveConfigDependency(
             assert.value.file,
@@ -38750,30 +39093,71 @@ function extractFileDependencies(configPath) {
             dependencies.add(absolutePath);
           }
         }
+        if (typeof assert.value === "object" && assert.value !== null) {
+          processRubricReferences(assert.value, config2.env);
+        }
         if (assert.type === "assert-set" && Array.isArray(assert.assert)) {
           extractAssertFiles(assert.assert);
         }
+        if (assert.provider)
+          processProvider(assert.provider, configDir, config2.env);
+        processRuntimeFileReference(assert.contextTransform, config2.env);
+        processRuntimeFileReference(assert.transform, config2.env);
+        processRubricReferences(assert.rubricPrompt, config2.env);
       }
     };
-    const extractTestFiles = (tests) => {
+    const extractTestFiles = (tests, baseDir = configDir) => {
       if (typeof tests === "string") {
-        processFileSelector(
-          tests.startsWith("file://") ? tests : `file://${tests}`,
-          TEST_FILE_SELECTOR
+        const testPath = tests.replace(/(\.(?:xlsx|xls))#[^\\/]*$/i, "$1");
+        const rawTestPath = testPath.startsWith("file://") ? testPath.slice("file://".length) : testPath;
+        const absoluteTestPath = path6.resolve(baseDir, rawTestPath);
+        processFileSelector(`file://${absoluteTestPath}`, TEST_FILE_SELECTOR);
+        scanStructuredPrompt(
+          absoluteTestPath,
+          (parsed) => {
+            const nestedTests = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && "tests" in parsed ? parsed.tests : parsed;
+            if (typeof nestedTests !== "string" && !Array.isArray(nestedTests) && (typeof nestedTests !== "object" || nestedTests === null)) {
+              return;
+            }
+            const count = Array.isArray(nestedTests) ? nestedTests.length : 1;
+            if (!reserveStructuredEntries(count)) return false;
+            extractTestFiles(
+              nestedTests,
+              path6.dirname(absoluteTestPath)
+            );
+          },
+          false
         );
         return;
       }
       if (Array.isArray(tests)) {
-        for (const test of tests) extractTestFiles(test);
+        for (const test of tests) extractTestFiles(test, baseDir);
         return;
       }
       if (typeof tests.path === "string") {
-        extractTestFiles(tests.path);
+        processRubricReferences(tests.config, config2.env);
+        extractTestFiles(tests.path, baseDir);
         return;
       }
-      extractVarFiles(tests.vars);
+      extractVarFiles(tests.vars, baseDir);
+      processRuntimeFileReference(tests.assertScoringFunction, config2.env);
+      const options = tests.options;
+      if (typeof options === "object" && options !== null) {
+        const testOptions = options;
+        processRuntimeFileReference(testOptions.postprocess, config2.env);
+        processRuntimeFileReference(testOptions.transform, config2.env);
+        processRuntimeFileReference(testOptions.transformVars, config2.env);
+        processRubricReferences(testOptions.rubricPrompt, config2.env);
+        if (testOptions.provider) {
+          processProvider(
+            testOptions.provider,
+            configDir,
+            config2.env
+          );
+        }
+      }
       extractAssertFiles(tests.assert);
-      if (tests.provider) processProvider(tests.provider);
+      if (tests.provider) processProvider(tests.provider, baseDir, config2.env);
     };
     if (config2.defaultTest) extractTestFiles(config2.defaultTest);
     if (config2.tests) {
@@ -38783,6 +39167,7 @@ function extractFileDependencies(configPath) {
       for (const scenario of config2.scenarios) {
         if (typeof scenario === "string") {
           processFileUrl(scenario);
+          watchWorkspace();
           continue;
         }
         if (scenario.config) extractTestFiles(scenario.config);
