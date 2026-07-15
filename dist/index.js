@@ -38545,6 +38545,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
   const dependencies = /* @__PURE__ */ new Set();
   let hasDynamicPromptDependencies = false;
   let hasUnboundedGlobDependencies = false;
+  const warnedUnsafeDependencyKinds = /* @__PURE__ */ new Set();
+  const warnUnsafeDependency = (kind, message) => {
+    if (warnedUnsafeDependencyKinds.has(kind)) return;
+    warnedUnsafeDependencyKinds.add(kind);
+    warning(message);
+  };
   const configDir = path6.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
@@ -38679,7 +38685,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         const reason = message.includes(
           "must stay within the repository workspace"
         ) ? `${source} must stay within the repository workspace` : message.includes("contains an invalid null byte") ? `${source} contains an invalid null byte` : `${source} is empty or invalid`;
-        warning(
+        warnUnsafeDependency(
+          "config dependency",
           `Ignoring unsafe config dependency "${sanitizeDependencyDisplayPath(displayPath)}": ${reason}`
         );
         return void 0;
@@ -38785,7 +38792,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         for (const match2 of matches) {
           if (isForeignWindowsAbsolutePath(match2)) {
-            warning(
+            warnUnsafeDependency(
+              "config dependency glob match",
               `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`
             );
             continue;
@@ -38795,7 +38803,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           try {
             physicalMatch = fs6.realpathSync(absoluteMatch);
           } catch {
-            warning(
+            warnUnsafeDependency(
+              "config dependency glob match",
               `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`
             );
             continue;
@@ -38803,7 +38812,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           if (isDependencyPathInside(absoluteMatch) && isPhysicalDependencyPathInside(physicalMatch)) {
             dependencies.add(absoluteMatch);
           } else {
-            warning(
+            warnUnsafeDependency(
+              "config dependency glob match",
               `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`
             );
           }
@@ -38852,7 +38862,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         fs6.lstatSync(absolutePath);
       } catch (error2) {
         if (error2.code !== "ENOENT") {
-          warning(
+          warnUnsafeDependency(
+            "config dependency",
             `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`
           );
           return;
@@ -38864,13 +38875,15 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         try {
           physicalPath = fs6.realpathSync(absolutePath);
         } catch {
-          warning(
+          warnUnsafeDependency(
+            "config dependency",
             `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`
           );
           return;
         }
         if (!isPhysicalDependencyPathInside(physicalPath)) {
-          warning(
+          warnUnsafeDependency(
+            "config dependency",
             `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`
           );
           return;
@@ -39079,7 +39092,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       };
       for (const promptFile of promptFiles) {
         if (isForeignWindowsAbsolutePath(promptFile)) {
-          warning(
+          warnUnsafeDependency(
+            "prompt file dependency",
             `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`
           );
           continue;
@@ -39092,13 +39106,15 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         try {
           physicalPromptFile = fs6.realpathSync(absolutePromptFile);
         } catch {
-          warning(
+          warnUnsafeDependency(
+            "prompt file dependency",
             `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`
           );
           continue;
         }
         if (!isPhysicalDependencyPathInside(physicalPromptFile)) {
-          warning(
+          warnUnsafeDependency(
+            "prompt file dependency",
             `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`
           );
           continue;
@@ -39346,7 +39362,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     extractNestedConfigDependencies(config2.extensions);
     const extractPromptFile = (prompt) => {
       const processPromptReference = (reference) => {
-        if (/[\0\r\n]/.test(reference) || reference.length > 65536) return;
+        if (/[\0\r\n]/.test(reference) || reference.length > MAX_GLOB_PATTERN_LENGTH)
+          return;
         const isExecutable = reference.startsWith("exec:");
         const hasPathPrefix = /^(?:\.{0,2}[\\/]|[A-Za-z]:[\\/])/.test(
           reference
@@ -40291,6 +40308,7 @@ async function run() {
     }
     const promptFiles = [];
     const allPromptFiles = [];
+    const seenPromptPaths = /* @__PURE__ */ new Set();
     const changedFilesList = changedFiles.split("\0").filter((file) => file);
     const physicalWorkspaceRoot = fs7.realpathSync(workspaceRoot);
     const physicalWorkingDirectory = fs7.realpathSync(workingDirectory);
@@ -40325,7 +40343,11 @@ async function run() {
         const repositoryFile = toRepositoryPath(
           path7.relative(workspaceRoot, absoluteFile)
         );
-        return repositoryFile !== configRepositoryPath;
+        if (repositoryFile === configRepositoryPath) return false;
+        const promptPathKey = path7.normalize(absoluteFile);
+        if (seenPromptPaths.has(promptPathKey)) return false;
+        seenPromptPaths.add(promptPathKey);
+        return true;
       });
       allPromptFiles.push(...allMatches);
       if (changedFilesList.length > 0) {
