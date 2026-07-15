@@ -157,6 +157,118 @@ prompts:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should watch the checkout for an env-templated HTTP path from an external config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: http
+    config:
+      auth:
+        type: file
+        path: '{{ env.PROJECT_ROOT }}/auth/token.json'
+`);
+
+    const deps = extractFileDependencies(
+      '/test/external/promptfooconfig.yaml',
+      '/test/working',
+    );
+
+    expect(deps).toEqual(['../external/', './']);
+  });
+
+  it('should watch the checkout for an env-templated prompt path from an external config', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: "file://{{ env.PROJECT_ROOT }}/prompts/system.txt"\n',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/external/promptfooconfig.yaml',
+      '/test/working',
+    );
+
+    expect(deps).toEqual([
+      '../external/',
+      './',
+      '../external/{{ env.PROJECT_ROOT }}/prompts/system.txt',
+    ]);
+  });
+
+  it('should watch the checkout for an env-templated executable argument rooted at an external base path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - raw: exec:./scripts/generate.sh {{ env.PROJECT_ROOT }}/templates/input.txt
+    config:
+      basePath: ../external
+`);
+
+    const deps = extractFileDependencies(
+      '/test/external/promptfooconfig.yaml',
+      '/test/working',
+    );
+
+    expect(deps).toEqual([
+      '../external/scripts/generate.sh',
+      '../external/',
+      './',
+    ]);
+  });
+
+  it('should watch the checkout and external static root for generic env-templated file references', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'file://{{ env.PROJECT_ROOT }}/providers/custom.py'
+  - id: openai:gpt-4
+    config:
+      request: 'file://{{ env.PROJECT_ROOT }}/fixtures/request.json'
+tests:
+  - vars:
+      context: 'file://{{ env.PROJECT_ROOT }}/data/context.txt'
+    assert:
+      - type: equals
+        value: 'file://{{ env.PROJECT_ROOT }}/expected.txt'
+`);
+
+    const deps = extractFileDependencies(
+      '/test/external/promptfooconfig.yaml',
+      '/test/working',
+    );
+
+    expect(deps).toEqual([
+      '../external/',
+      './',
+      '../external/{{ env.PROJECT_ROOT }}/providers/custom.py',
+      '../external/{{ env.PROJECT_ROOT }}/fixtures/request.json',
+      '../external/{{ env.PROJECT_ROOT }}/data/context.txt',
+      '../external/{{ env.PROJECT_ROOT }}/expected.txt',
+    ]);
+  });
+
+  it.each([
+    {
+      label: 'generic provider request',
+      config: `providers:\n  - id: openai:gpt-4\n    config:\n      request: 'file:///{{ env.PROJECT_ROOT }}/fixtures/request.json'\n`,
+    },
+    {
+      label: 'prompt',
+      config: `prompts: 'file:///{{ env.PROJECT_ROOT }}/prompts/system.txt'\n`,
+    },
+    {
+      label: 'executable argument',
+      config: `prompts:\n  - raw: exec:./scripts/generate.sh /{{ env.PROJECT_ROOT }}/templates/input.txt\n    config:\n      basePath: ../external\n`,
+    },
+  ])('should watch the checkout for a leading-slash env template from an external config: $label', ({
+    config,
+  }) => {
+    mockFs.readFileSync.mockReturnValue(config);
+
+    const deps = extractFileDependencies(
+      '/test/external/promptfooconfig.yaml',
+      '/test/working',
+    );
+
+    expect(deps).toContain('../external/');
+    expect(deps).toContain('./');
+  });
+
   it('should preserve a glob match under a symlinked external config root', () => {
     mockFs.readFileSync.mockReturnValue(
       'providers:\n  - file://providers/*.py\n',
@@ -3144,8 +3256,9 @@ prompts:
 
     expect(deps).toEqual([
       '../config/configs/prompts.yaml',
-      '../config/prompts/{{ env.PF977_TARGET }}.txt',
       '../config/prompts/',
+      './',
+      '../config/prompts/{{ env.PF977_TARGET }}.txt',
     ]);
   });
 
@@ -3174,8 +3287,9 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([
-      '../config/{{ env.PF977_TARGET }}.txt',
       '../config/',
+      './',
+      '../config/{{ env.PF977_TARGET }}.txt',
     ]);
   });
 

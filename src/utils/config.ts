@@ -307,6 +307,11 @@ export function extractFileDependencies(
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const dependencyRoots =
     dependencyRoot === cwd ? [dependencyRoot] : [dependencyRoot, cwd];
+  const watchCheckoutForExternalTemplate = (): void => {
+    if (dependencyRoot !== cwd) {
+      dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
+    }
+  };
   const isInsideDependencyRoots = (filePath: string): boolean =>
     dependencyRoots.some((root) => isPathInside(root, filePath));
   let physicalDependencyRoots: string[] | undefined;
@@ -415,6 +420,23 @@ export function extractFileDependencies(
 
       try {
         const isTemplatedPath = /\{[{%#]/.test(filePath);
+        if (isTemplatedPath && dependencyRoot !== cwd) {
+          const staticSegments: string[] = [];
+          for (const segment of filePath.split(/[\\/]/)) {
+            if (/\{[{%#]/.test(segment)) break;
+            staticSegments.push(segment);
+          }
+          const watchedDirectory = resolveConfigDependency(
+            staticSegments.join(path.sep) || '.',
+            'config file dependency',
+          );
+          if (watchedDirectory) {
+            dependencies.add(
+              `${watchedDirectory.replace(/[\\/]+$/, '')}${path.sep}`,
+            );
+            watchCheckoutForExternalTemplate();
+          }
+        }
         if (!isTemplatedPath) {
           const globPreflight = preflightGlob(filePath, {
             maxLength: MAX_DEPENDENCY_REFERENCE_LENGTH,
@@ -702,6 +724,7 @@ export function extractFileDependencies(
       }
       if (hasTemplate) {
         dependencies.add(`${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`);
+        watchCheckoutForExternalTemplate();
         return;
       }
       processCompatibleFileUrl(`file://${rawFilePath}`, stripFunctionSelector);
@@ -970,13 +993,14 @@ export function extractFileDependencies(
               staticSegments.push(segment);
             }
             const watchedDirectory = resolvePromptProbe(
-              staticSegments.length > 0 ? staticSegments.join(path.sep) : '.',
+              staticSegments.join(path.sep) || '.',
               promptExecutionCwd,
             );
             if (watchedDirectory) {
               dependencies.add(
                 `${watchedDirectory.replace(/[\\/]+$/, '')}${path.sep}`,
               );
+              watchCheckoutForExternalTemplate();
             }
             continue;
           }
@@ -1022,7 +1046,7 @@ export function extractFileDependencies(
             staticSegments.push(segment);
           }
           const watchedDirectory =
-            staticSegments.length === 0
+            staticSegments.join(path.sep) === ''
               ? dependencyRoot
               : resolveConfigDependency(
                   staticSegments.join(path.sep),
@@ -1032,6 +1056,7 @@ export function extractFileDependencies(
             dependencies.add(
               `${watchedDirectory.replace(/[\\/]+$/, '')}${path.sep}`,
             );
+            watchCheckoutForExternalTemplate();
           }
           return;
         }
