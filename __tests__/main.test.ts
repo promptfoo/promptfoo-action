@@ -307,6 +307,41 @@ describe('GitHub Action Main', () => {
       });
     });
 
+    test('should reject a changed PR prompt whose filename contains a newline', async () => {
+      const filename = 'prompts/line\nbreak.txt';
+      mockOctokit.paginate.mockResolvedValue([
+        { filename, status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([filename]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should reject a PR prompt filename that could forge a workflow annotation', async () => {
+      const filename = 'prompts/policy\n::error::forged.txt';
+      mockOctokit.paginate.mockResolvedValue([{ filename, status: 'added' }]);
+      mockGlob.sync.mockReturnValue([filename]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(
+        mockCore.info.mock.calls.every(
+          ([message]) => !message.includes(filename),
+        ),
+      ).toBe(true);
+    });
+
     test('should skip evaluation when no relevant files change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'README.md' },
@@ -1716,6 +1751,35 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should reject a changed push prompt whose filename contains a tab and newline', async () => {
+      const filename = 'prompts/tab\tline\nbreak.txt';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(`M\0${filename}\0`);
+      mockGlob.sync.mockReturnValue([filename]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        expect.stringContaining('found 1 changed file(s).'),
+      );
+      expect(
+        mockCore.info.mock.calls.every(
+          ([message]) => !message.includes(filename),
+        ),
+      ).toBe(true);
+    });
+
     test.each([
       ['an empty status', '\0prompts/changed.txt\0'],
       ['an empty path', 'M\0\0'],
@@ -1859,7 +1923,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using manually specified files: prompts/file1.txt, prompts/file2.txt',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });

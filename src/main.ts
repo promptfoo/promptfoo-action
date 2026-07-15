@@ -47,6 +47,14 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function formatFileListForDisplay(files: string[]): string {
+  return files
+    .map((file) =>
+      file.replace(/\t/g, '\\t').replace(/\r/g, '\\r').replace(/\n/g, '\\n'),
+    )
+    .join(', ');
+}
+
 function normalizeWindowsPromptGlob(pattern: string): string {
   if (
     process.platform !== 'win32' ||
@@ -408,7 +416,7 @@ export async function run(): Promise<void> {
         )
       );
     };
-    const selectChangedFiles = (files: ChangedFile[]): string => {
+    const selectChangedFiles = (files: ChangedFile[]): string[] => {
       const monitoredPromptRemovedOrRenamedOut = files.some(
         (file) =>
           (file.status === 'removed' && matchesPromptGlob(file.filename)) ||
@@ -420,17 +428,17 @@ export async function run(): Promise<void> {
         core.warning(
           'Prompt glob matching exceeded its safety limits. Processing all remaining matching prompt files.',
         );
-        return '';
+        return [];
       }
 
       if (monitoredPromptRemovedOrRenamedOut) {
         core.warning(
           'A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files.',
         );
-        return '';
+        return [];
       }
 
-      return files.map((file) => file.filename).join('\n');
+      return files.map((file) => file.filename);
     };
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
@@ -566,7 +574,7 @@ export async function run(): Promise<void> {
     const octokit = github.getOctokit(githubToken);
 
     const event = github.context.eventName;
-    let changedFiles = '';
+    let changedFilesList: string[] = [];
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -592,7 +600,7 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = selectChangedFiles(pullRequestFiles);
+        changedFilesList = selectChangedFiles(pullRequestFiles);
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -622,8 +630,10 @@ export async function run(): Promise<void> {
                 ? 'removed'
                 : 'modified',
           }));
-        changedFiles = selectChangedFiles(manualFiles);
-        core.info(`Using manually specified files: ${filesInput}`);
+        changedFilesList = selectChangedFiles(manualFiles);
+        core.info(
+          `Using manually specified files: ${formatFileListForDisplay(manualFiles.map((file) => file.filename))}`,
+        );
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
@@ -636,16 +646,16 @@ export async function run(): Promise<void> {
             'HEAD',
             '--',
           ]);
-          changedFiles = selectChangedFiles(parseGitDiffFiles(diff));
+          changedFilesList = selectChangedFiles(parseGitDiffFiles(diff));
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found ${changedFilesList.length} changed file(s).`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
           core.warning(
             `Could not compare against ${compareBase}: ${error}. Will process all matching prompt files.`,
           );
-          changedFiles = '';
+          changedFilesList = [];
         }
       }
     } else if (event === 'push') {
@@ -671,22 +681,22 @@ export async function run(): Promise<void> {
             afterSha,
             '--',
           ]);
-          changedFiles = selectChangedFiles(parseGitDiffFiles(diff));
+          changedFilesList = selectChangedFiles(parseGitDiffFiles(diff));
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found ${changedFilesList.length} changed file(s).`,
           );
         } catch (error) {
           core.warning(
             `Could not compare commits: ${error}. Will process all matching prompt files.`,
           );
-          changedFiles = '';
+          changedFilesList = [];
         }
       } else {
         // First commit or unable to get before SHA
         core.info(
           'Unable to determine changed files from push event. Will process all matching prompt files.',
         );
-        changedFiles = '';
+        changedFilesList = [];
       }
     } else {
       core.warning(
@@ -696,7 +706,6 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split('\n').filter((f) => f);
 
     for (const globPattern of validPromptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -726,6 +735,13 @@ export async function run(): Promise<void> {
         });
         promptFiles.push(...allMatches);
       }
+    }
+
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new PromptfooActionError(
+        'Prompt filenames cannot contain carriage return or newline characters.',
+        ErrorCodes.INVALID_CONFIGURATION,
+      );
     }
 
     const configChanged =
@@ -786,7 +802,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${formatFileListForDisplay(promptFiles)}`,
       );
     }
 
@@ -1056,7 +1072,7 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
+      const modifiedFiles = formatFileListForDisplay(promptFiles);
       let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
