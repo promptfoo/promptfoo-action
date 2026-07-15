@@ -431,6 +431,25 @@ providers:
     expect(deps).toEqual(['evals/auth/default-token.ts']);
   });
 
+  it('should conservatively watch a computed HTTP file-auth path', () => {
+    process.env.PROVIDER_FILE = 'token.ts:getToken';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      method: GET
+      auth:
+        type: file
+        path: "{{ 'file://auth/' + env.PROVIDER_FILE }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
   it('should reject an HTTP file-auth path outside the workspace without leaking it', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -739,6 +758,22 @@ providers:
   - id: openai:gpt-4
     config:
       tools: "{{ 'file://tools/' + env.PROVIDER_TOOLS_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
+  it('should conservatively watch a computed file template in a provider-specific config field', () => {
+    process.env.PROVIDER_FILE = 'settings.json';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: custom:provider
+    config:
+      settings: "{{ 'file://config/' + env.PROVIDER_FILE }}"
 `);
 
     const deps = extractFileDependencies(

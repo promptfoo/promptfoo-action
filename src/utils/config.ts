@@ -37,8 +37,8 @@ const HTTP_CREDENTIAL_PATH_KEYS = new Set([
 
 export interface PromptfooConfig {
   env?: Record<string, unknown>;
-  providers?: string | ProviderEntry[];
-  targets?: string | ProviderEntry[];
+  providers?: ProviderEntry | ProviderEntry[];
+  targets?: ProviderEntry | ProviderEntry[];
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
@@ -390,10 +390,13 @@ export function extractFileDependencies(configPath: string): string[] {
         });
         const unresolvedLeadingEnvTemplate =
           /^\s*\{\{-?(?:[^}]|\}(?!\}))*\benv(?:\.|\[)/.test(renderedProvider);
+        const unresolvedComputedFileTemplate =
+          /^\s*\{\{-?(?:[^}]|\}(?!\}))*['"]file:\/\//.test(renderedProvider);
         if (!renderedProvider.startsWith('file://')) {
           if (
             (isProviderReference && /\{\{|\{%|\{#/.test(renderedProvider)) ||
-            (isFileBearingConfigValue && unresolvedLeadingEnvTemplate)
+            (isFileBearingConfigValue && unresolvedLeadingEnvTemplate) ||
+            unresolvedComputedFileTemplate
           ) {
             dependencies.add(
               `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
