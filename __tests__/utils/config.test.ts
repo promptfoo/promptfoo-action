@@ -1537,6 +1537,39 @@ tests:
     );
   });
 
+  it('should scan exponentially shared assert-set aliases once', () => {
+    const levels = Array.from(
+      { length: 18 },
+      (_, index) => `
+x-assertions-${index + 1}: &assertions${index + 1}
+  - type: assert-set
+    assert: *assertions${index}
+  - type: assert-set
+    assert: *assertions${index}
+`,
+    ).join('');
+    mockFs.readFileSync.mockReturnValue(`
+x-assertions-0: &assertions0
+  - type: javascript
+    value: file://validators/shared.cjs:check
+${levels}
+tests:
+  - assert: *assertions18
+`);
+
+    const started = performance.now();
+    const dependencies = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+    const elapsedMs = performance.now() - started;
+
+    expect(dependencies).toEqual([
+      'evals/validators/shared.cjs:check',
+      'evals/validators/shared.cjs',
+    ]);
+    expect(elapsedMs).toBeLessThan(1_000);
+  });
+
   it('should extract defaultTest files', () => {
     const configContent = `
 defaultTest:

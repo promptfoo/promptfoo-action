@@ -39,6 +39,16 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function isPathInside(baseDir: string, targetPath: string): boolean {
+  const relativePath = path.relative(baseDir, targetPath);
+  return (
+    relativePath === '' ||
+    (relativePath !== '..' &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath))
+  );
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -477,6 +487,8 @@ export async function run(): Promise<void> {
     const promptFiles: string[] = [];
     const allPromptFiles: string[] = [];
     const changedFilesList = changedFiles.split('\0').filter((file) => file);
+    const physicalWorkspaceRoot = fs.realpathSync(workspaceRoot);
+    const physicalWorkingDirectory = fs.realpathSync(workingDirectory);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -484,8 +496,36 @@ export async function run(): Promise<void> {
         nodir: true,
       });
       const allMatches = matches.filter((file) => {
+        const absoluteFile = path.resolve(workingDirectory, file);
+        if (
+          !isPathInside(workspaceRoot, absoluteFile) ||
+          !isPathInside(workingDirectory, absoluteFile)
+        ) {
+          core.warning(
+            'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+          );
+          return false;
+        }
+        let physicalFile: string;
+        try {
+          physicalFile = fs.realpathSync(absoluteFile);
+        } catch {
+          core.warning(
+            'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+          );
+          return false;
+        }
+        if (
+          !isPathInside(physicalWorkspaceRoot, physicalFile) ||
+          !isPathInside(physicalWorkingDirectory, physicalFile)
+        ) {
+          core.warning(
+            'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+          );
+          return false;
+        }
         const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          path.relative(workspaceRoot, absoluteFile),
         );
         return repositoryFile !== configRepositoryPath;
       });
@@ -504,12 +544,6 @@ export async function run(): Promise<void> {
         // No changed files info available, include all matches
         promptFiles.push(...allMatches);
       }
-    }
-
-    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
-      throw new Error(
-        'Prompt file paths containing CR or LF characters are not supported.',
-      );
     }
 
     const configChanged =
@@ -593,6 +627,14 @@ export async function run(): Promise<void> {
       return;
     }
 
+    const selectedPromptFiles =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (selectedPromptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error(
+        'Prompt file paths containing CR or LF characters are not supported.',
+      );
+    }
+
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');
     }
@@ -638,8 +680,6 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    const selectedPromptFiles =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
     if (!useConfigPrompts && selectedPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         '--prompts',

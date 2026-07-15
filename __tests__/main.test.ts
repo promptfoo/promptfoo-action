@@ -94,6 +94,7 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn(),
     unlinkSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -130,6 +131,7 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
@@ -252,6 +254,9 @@ function setupCommonMocks(): MockOctokit {
     }),
   );
   mockFs.existsSync.mockReturnValue(false);
+  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+    filePath.toString(),
+  );
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -1162,6 +1167,23 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should skip an unchanged newline-containing prompt for an unrelated change', async () => {
+      const hostilePrompt = 'prompts/unchanged.txt\n::error::forged-annotation';
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([hostilePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockCore.info.mock.calls.join('\n')).not.toContain(
+        'forged-annotation',
+      );
+    });
+
     test('should match tab and space-containing push filenames from NUL-delimited git output', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',
@@ -1380,6 +1402,79 @@ describe('GitHub Action Main', () => {
           'prompts/prompt1.txt',
           'prompts/prompt2.txt',
         ]),
+      );
+    });
+
+    test.each([
+      ['', '../secrets/*.txt', '../secrets/token.txt'],
+      ['evals', '../prompts/*.txt', '../prompts/outside-working.txt'],
+    ])('should not pass prompt matches outside the configured roots during a config-triggered evaluation', async (workingDirectory, promptGlob, escapedPrompt) => {
+      withInputs({
+        prompts: promptGlob,
+        'working-directory': workingDirectory,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: workingDirectory
+            ? `${workingDirectory}/promptfooconfig.yaml`
+            : 'promptfooconfig.yaml',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([escapedPrompt, 'prompts/safe.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/safe.txt');
+      expect(args).not.toContain(escapedPrompt);
+    });
+
+    test('should not pass an escaping prompt symlink during a dependency-triggered evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/custom.py' },
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/leaked.txt', 'prompts/safe.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith('/prompts/leaked.txt')
+          ? '/tmp/outside/token.txt'
+          : filePath.toString(),
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/safe.txt');
+      expect(args).not.toContain('prompts/leaked.txt');
+    });
+
+    test('should ignore an inaccessible prompt match during a dependency-triggered evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/custom.py' },
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/inaccessible.txt',
+        'prompts/safe.txt',
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().endsWith('/prompts/inaccessible.txt')) {
+          throw new Error('EACCES: sensitive filesystem detail');
+        }
+        return filePath.toString();
+      });
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/safe.txt');
+      expect(args).not.toContain('prompts/inaccessible.txt');
+      expect(mockCore.warning.mock.calls.join('\n')).not.toContain(
+        'sensitive filesystem detail',
       );
     });
 
