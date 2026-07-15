@@ -38646,6 +38646,10 @@ function extractFileDependencies(configPath) {
     };
     const inspectNestedConfigFile = (fileUrl, providerContext) => {
       const filePath = normalizeConfigFilePath(fileUrl.slice("file://".length));
+      if (!filePath || filePath.includes("\0")) {
+        resolveConfigDependency(filePath, "nested config file dependency");
+        return;
+      }
       if (le(filePath, globOptions)) {
         processFileUrl(fileUrl);
         return;
@@ -38688,6 +38692,10 @@ function extractFileDependencies(configPath) {
       const rawFilePath = normalizeConfigFilePath(
         rawFileUrl.slice("file://".length)
       );
+      if (!rawFilePath || rawFilePath.includes("\0")) {
+        resolveConfigDependency(rawFilePath, "test variable file dependency");
+        return;
+      }
       if (watchDynamicFilePath(rawFilePath)) return;
       const filePath = rawFilePath.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, "$1").replace(/(\.xlsx?)#.*$/i, "$1");
       const fileUrl = `file://${filePath}`;
@@ -38767,16 +38775,23 @@ function extractFileDependencies(configPath) {
       if (typeof config2.defaultTest === "string") {
         if (config2.defaultTest.startsWith("file://")) {
           const defaultTestFile = config2.defaultTest.slice("file://".length);
-          const hasDynamicDefaultTestPath = hasDynamicFilePath(defaultTestFile);
-          const isDefaultTestGlob = le(defaultTestFile, globOptions);
-          const defaultTestPath = hasDynamicDefaultTestPath || isDefaultTestGlob ? void 0 : resolveConfigDependency(
+          const hasInvalidDefaultTestPath = !defaultTestFile || defaultTestFile.includes("\0");
+          if (hasInvalidDefaultTestPath) {
+            resolveConfigDependency(
+              defaultTestFile,
+              "defaultTest file dependency"
+            );
+          }
+          const hasDynamicDefaultTestPath = !hasInvalidDefaultTestPath && hasDynamicFilePath(defaultTestFile);
+          const isDefaultTestGlob = !hasInvalidDefaultTestPath && le(defaultTestFile, globOptions);
+          const defaultTestPath = hasInvalidDefaultTestPath || hasDynamicDefaultTestPath || isDefaultTestGlob ? void 0 : resolveConfigDependency(
             defaultTestFile,
             "defaultTest file dependency"
           );
           if (hasDynamicDefaultTestPath) {
             dependencies.add(`${dependencyRoot}${path6.sep}`);
           }
-          if (!hasDynamicDefaultTestPath) {
+          if (!hasInvalidDefaultTestPath && !hasDynamicDefaultTestPath) {
             processFileUrl(config2.defaultTest);
           }
           if (defaultTestPath && !isDefaultTestGlob) {
