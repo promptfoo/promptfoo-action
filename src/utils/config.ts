@@ -58,6 +58,21 @@ export function extractFileDependencies(configPath: string): string[] {
       return [];
     }
 
+    const isSafeDependencyPath = (absolutePath: string): boolean => {
+      if (!isPathInside(dependencyRoot, absolutePath)) {
+        return false;
+      }
+
+      try {
+        const realRoot = fs.realpathSync(dependencyRoot);
+        const realPath = fs.realpathSync(absolutePath);
+        return isPathInside(realRoot, realPath);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        return code === 'ENOENT' || code === 'ENOTDIR';
+      }
+    };
+
     const resolveConfigDependency = (
       filePath: string,
       source: string,
@@ -70,8 +85,8 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
-        if (!isPathInside(dependencyRoot, absolutePath)) {
+        const absolutePath = path.resolve(configDir, filePath);
+        if (!isSafeDependencyPath(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
           );
@@ -89,15 +104,17 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): string | undefined => {
+    const processFileUrl = (fileUrl: string): string[] => {
       const filePath = fileUrl.replace('file://', '');
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
       );
       if (!absolutePath) {
-        return undefined;
+        return [];
       }
+
+      const resolvedPaths: string[] = [];
 
       // Check if the path contains glob patterns
       if (glob.hasMagic(filePath)) {
@@ -105,8 +122,9 @@ export function extractFileDependencies(configPath: string): string[] {
         const matches = glob.sync(absolutePath, { nodir: true });
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
+          if (isSafeDependencyPath(absoluteMatch)) {
             dependencies.add(absoluteMatch);
+            resolvedPaths.push(absoluteMatch);
           } else {
             core.warning(
               `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
@@ -116,16 +134,16 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathParts = filePath.split('/');
-        let basePath = '';
-        for (const part of pathParts) {
-          if (glob.hasMagic(part)) {
+        let basePath = absolutePath;
+        while (glob.hasMagic(basePath)) {
+          const parentPath = path.dirname(basePath);
+          if (parentPath === basePath) {
             break;
           }
-          basePath = basePath ? path.join(basePath, part) : part;
+          basePath = parentPath;
         }
-        if (basePath) {
-          dependencies.add(path.resolve(path.join(configDir, basePath)));
+        if (isSafeDependencyPath(basePath)) {
+          dependencies.add(`${basePath.replace(/[\\/]+$/, '')}${path.sep}`);
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
@@ -133,16 +151,19 @@ export function extractFileDependencies(configPath: string): string[] {
           ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
           : absolutePath;
         dependencies.add(directoryPath);
+        resolvedPaths.push(absolutePath);
       } else {
         // It's a regular file path
         dependencies.add(absolutePath);
+        resolvedPaths.push(absolutePath);
       }
 
-      return absolutePath;
+      return resolvedPaths;
     };
 
     // Extract provider files
     const visitedProviderConfigs = new Set<string>();
+    const visitedProviderValues = new WeakSet<object>();
     const processProviderValue = (value: unknown): void => {
       if (typeof value === 'string') {
         if (!value.startsWith('file://')) {
@@ -155,37 +176,48 @@ export function extractFileDependencies(configPath: string): string[] {
         const selector = providerPath.slice(selectorIndex + 1);
         const cleanPath =
           selectorIndex > 1 &&
-          /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i.test(candidatePath) &&
-          /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(selector)
+          /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(candidatePath) &&
+          /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
+            selector,
+          )
             ? candidatePath
             : providerPath;
 
-        const absolutePath = processFileUrl(`file://${cleanPath}`);
-        if (
-          !absolutePath ||
-          glob.hasMagic(cleanPath) ||
-          !/\.(?:ya?ml|json)$/i.test(cleanPath) ||
-          visitedProviderConfigs.has(absolutePath)
-        ) {
-          return;
-        }
+        const resolvedPaths = processFileUrl(`file://${cleanPath}`);
+        for (const absolutePath of resolvedPaths) {
+          if (
+            !/\.(?:ya?ml|json)$/i.test(absolutePath) ||
+            visitedProviderConfigs.has(absolutePath)
+          ) {
+            continue;
+          }
 
-        visitedProviderConfigs.add(absolutePath);
-        try {
-          const providerConfig = loadYaml(
-            fs.readFileSync(absolutePath, 'utf8'),
-            {
-              schema: CORE_SCHEMA.withTags(mergeTag),
-            },
-          );
-          processProviderValue(providerConfig);
-        } catch (error) {
-          core.warning(
-            `Failed to extract nested provider dependencies from "${cleanPath}": ${error instanceof Error ? error.message : String(error)}`,
-          );
+          visitedProviderConfigs.add(absolutePath);
+          try {
+            const providerConfig = loadYaml(
+              fs.readFileSync(absolutePath, 'utf8'),
+              {
+                schema: CORE_SCHEMA.withTags(mergeTag),
+              },
+            );
+            processProviderValue(providerConfig);
+          } catch {
+            core.warning(
+              `Failed to extract nested provider dependencies from "${cleanPath}"; tracking the provider config file only`,
+            );
+          }
         }
         return;
       }
+
+      if (typeof value !== 'object' || value === null) {
+        return;
+      }
+
+      if (visitedProviderValues.has(value)) {
+        return;
+      }
+      visitedProviderValues.add(value);
 
       if (Array.isArray(value)) {
         for (const entry of value) {
@@ -194,13 +226,11 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
-      if (typeof value === 'object' && value !== null) {
-        for (const [key, nestedValue] of Object.entries(value)) {
-          if (key.startsWith('file://')) {
-            processProviderValue(key);
-          }
-          processProviderValue(nestedValue);
+      for (const [key, nestedValue] of Object.entries(value)) {
+        if (key.startsWith('file://')) {
+          processProviderValue(key);
         }
+        processProviderValue(nestedValue);
       }
     };
 

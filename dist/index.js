@@ -36302,6 +36302,19 @@ function extractFileDependencies(configPath) {
       debug("Config file is empty or invalid");
       return [];
     }
+    const isSafeDependencyPath = (absolutePath) => {
+      if (!isPathInside(dependencyRoot, absolutePath)) {
+        return false;
+      }
+      try {
+        const realRoot = fs6.realpathSync(dependencyRoot);
+        const realPath = fs6.realpathSync(absolutePath);
+        return isPathInside(realRoot, realPath);
+      } catch (error2) {
+        const code = error2.code;
+        return code === "ENOENT" || code === "ENOTDIR";
+      }
+    };
     const resolveConfigDependency = (filePath, source) => {
       try {
         if (!filePath) {
@@ -36310,8 +36323,8 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
-        if (!isPathInside(dependencyRoot, absolutePath)) {
+        const absolutePath = path5.resolve(configDir, filePath);
+        if (!isSafeDependencyPath(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
           );
@@ -36333,40 +36346,45 @@ function extractFileDependencies(configPath) {
         "config file dependency"
       );
       if (!absolutePath) {
-        return void 0;
+        return [];
       }
+      const resolvedPaths = [];
       if (le(filePath)) {
         const matches = Ui(absolutePath, { nodir: true });
         for (const match of matches) {
           const absoluteMatch = path5.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
+          if (isSafeDependencyPath(absoluteMatch)) {
             dependencies.add(absoluteMatch);
+            resolvedPaths.push(absoluteMatch);
           } else {
             warning(
               `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`
             );
           }
         }
-        const pathParts = filePath.split("/");
-        let basePath = "";
-        for (const part of pathParts) {
-          if (le(part)) {
+        let basePath = absolutePath;
+        while (le(basePath)) {
+          const parentPath = path5.dirname(basePath);
+          if (parentPath === basePath) {
             break;
           }
-          basePath = basePath ? path5.join(basePath, part) : part;
+          basePath = parentPath;
         }
-        if (basePath) {
-          dependencies.add(path5.resolve(path5.join(configDir, basePath)));
+        if (isSafeDependencyPath(basePath)) {
+          dependencies.add(`${basePath.replace(/[\\/]+$/, "")}${path5.sep}`);
         }
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
         dependencies.add(directoryPath);
+        resolvedPaths.push(absolutePath);
       } else {
         dependencies.add(absolutePath);
+        resolvedPaths.push(absolutePath);
       }
-      return absolutePath;
+      return resolvedPaths;
     };
     const visitedProviderConfigs = /* @__PURE__ */ new Set();
+    const visitedProviderValues = /* @__PURE__ */ new WeakSet();
     const processProviderValue = (value) => {
       if (typeof value === "string") {
         if (!value.startsWith("file://")) {
@@ -36376,40 +36394,49 @@ function extractFileDependencies(configPath) {
         const selectorIndex = providerPath.lastIndexOf(":");
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
-        const cleanPath = selectorIndex > 1 && /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i.test(candidatePath) && /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(selector) ? candidatePath : providerPath;
-        const absolutePath = processFileUrl(`file://${cleanPath}`);
-        if (!absolutePath || le(cleanPath) || !/\.(?:ya?ml|json)$/i.test(cleanPath) || visitedProviderConfigs.has(absolutePath)) {
-          return;
-        }
-        visitedProviderConfigs.add(absolutePath);
-        try {
-          const providerConfig = load(
-            fs6.readFileSync(absolutePath, "utf8"),
-            {
-              schema: CORE_SCHEMA.withTags(mergeTag)
-            }
-          );
-          processProviderValue(providerConfig);
-        } catch (error2) {
-          warning(
-            `Failed to extract nested provider dependencies from "${cleanPath}": ${error2 instanceof Error ? error2.message : String(error2)}`
-          );
+        const cleanPath = selectorIndex > 1 && /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(candidatePath) && /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
+          selector
+        ) ? candidatePath : providerPath;
+        const resolvedPaths = processFileUrl(`file://${cleanPath}`);
+        for (const absolutePath of resolvedPaths) {
+          if (!/\.(?:ya?ml|json)$/i.test(absolutePath) || visitedProviderConfigs.has(absolutePath)) {
+            continue;
+          }
+          visitedProviderConfigs.add(absolutePath);
+          try {
+            const providerConfig = load(
+              fs6.readFileSync(absolutePath, "utf8"),
+              {
+                schema: CORE_SCHEMA.withTags(mergeTag)
+              }
+            );
+            processProviderValue(providerConfig);
+          } catch {
+            warning(
+              `Failed to extract nested provider dependencies from "${cleanPath}"; tracking the provider config file only`
+            );
+          }
         }
         return;
       }
+      if (typeof value !== "object" || value === null) {
+        return;
+      }
+      if (visitedProviderValues.has(value)) {
+        return;
+      }
+      visitedProviderValues.add(value);
       if (Array.isArray(value)) {
         for (const entry of value) {
           processProviderValue(entry);
         }
         return;
       }
-      if (typeof value === "object" && value !== null) {
-        for (const [key, nestedValue] of Object.entries(value)) {
-          if (key.startsWith("file://")) {
-            processProviderValue(key);
-          }
-          processProviderValue(nestedValue);
+      for (const [key, nestedValue] of Object.entries(value)) {
+        if (key.startsWith("file://")) {
+          processProviderValue(key);
         }
+        processProviderValue(nestedValue);
       }
     };
     processProviderValue(config2.providers);
