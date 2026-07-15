@@ -164,11 +164,11 @@ export function extractFileDependencies(configPath: string): string[] {
               : path.resolve(configDir, filePath),
           );
         }
-        if (!dependencyRootUnavailable || !dependencyRootWarningEmitted) {
+        if (!dependencyRootWarningEmitted) {
           core.warning(
             'Skipping unsafe config dependency content; its path may still be tracked for change detection',
           );
-          dependencyRootWarningEmitted = dependencyRootUnavailable;
+          dependencyRootWarningEmitted = true;
         }
         return undefined;
       }

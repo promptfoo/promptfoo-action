@@ -1208,6 +1208,31 @@ config:
     ).toBe(false);
   });
 
+  it('should emit one sanitized warning for repeated unsafe dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://../../outside/FIRST_SECRET_MARKER.py
+  - file://../../outside/SECOND_SECRET_MARKER.py
+prompts:
+  - file://../../outside/PROMPT_SECRET_MARKER.txt
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping unsafe config dependency content; its path may still be tracked for change detection',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
+  });
+
   it('should not treat provider env values as file dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
