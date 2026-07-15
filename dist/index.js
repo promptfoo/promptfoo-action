@@ -38026,20 +38026,20 @@ function isPathInside2(baseDir, targetPath) {
   const relativePath = path6.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
 }
-function validatePromptPath(workspaceRoot, workingDirectory, filePath) {
+function validatePromptPath(workspaceRoot, workingDirectory, filePath, realRoots) {
   const resolvedPath = path6.resolve(workingDirectory, filePath);
   try {
     if (!isPathInside2(workspaceRoot, resolvedPath) || !isPathInside2(workingDirectory, resolvedPath)) {
       throw new Error("Prompt path escapes the workspace");
     }
-    const realWorkspaceRoot = path6.resolve(
+    realRoots.workspaceRoot ??= path6.resolve(
       fs7.realpathSync(workspaceRoot).toString()
     );
-    const realWorkingDirectory = path6.resolve(
+    realRoots.workingDirectory ??= path6.resolve(
       fs7.realpathSync(workingDirectory).toString()
     );
     const realPath = path6.resolve(fs7.realpathSync(resolvedPath).toString());
-    if (!isPathInside2(realWorkspaceRoot, realPath) || !isPathInside2(realWorkingDirectory, realPath)) {
+    if (!isPathInside2(realRoots.workspaceRoot, realPath) || !isPathInside2(realRoots.workingDirectory, realPath)) {
       throw new Error("Prompt path escapes the workspace");
     }
     return resolvedPath;
@@ -38538,8 +38538,14 @@ async function run() {
         "Rename the prompt file so its path does not contain CR or LF characters."
       );
     }
+    const realPromptRoots = {};
     for (const file of evaluatedPromptFiles) {
-      validatePromptPath(workspaceRoot, workingDirectory, file);
+      validatePromptPath(
+        workspaceRoot,
+        workingDirectory,
+        file,
+        realPromptRoots
+      );
     }
     loadEnvironmentFiles();
     if (forceRun) {
