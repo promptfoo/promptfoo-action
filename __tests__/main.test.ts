@@ -33,7 +33,7 @@ type MockOctokit = {
 };
 
 // Use vi.hoisted() to define mocks before vi.mock() hoisting
-const { mockGitInterface } = vi.hoisted(() => ({
+const { mockGitInterface, mockBraceExpand } = vi.hoisted(() => ({
   mockGitInterface: {
     fetch: vi.fn(async (options: string[]) => {
       // Simulate git error for invalid ref names (with spaces)
@@ -50,12 +50,23 @@ const { mockGitInterface } = vi.hoisted(() => ({
       Promise.resolve('M\0prompts/prompt1.txt\0M\0promptfooconfig.yaml\0'),
     ),
   },
+  mockBraceExpand: vi.fn(),
 }));
 
 // Mock simple-git before importing main.ts
 vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => mockGitInterface),
 }));
+vi.mock('minimatch', async () => {
+  const actual = await vi.importActual<typeof import('minimatch')>('minimatch');
+  return {
+    ...actual,
+    braceExpand: (...args: Parameters<typeof actual.braceExpand>) =>
+      mockBraceExpand.getMockImplementation()
+        ? mockBraceExpand(...args)
+        : actual.braceExpand(...args),
+  };
+});
 
 // Mock auth utilities
 vi.mock('../src/utils/auth');
@@ -163,6 +174,7 @@ function setupCommonMocks(): MockOctokit {
   // Reset git interface mocks
   mockGitInterface.fetch.mockClear();
   mockGitInterface.revparse.mockClear();
+  mockBraceExpand.mockReset();
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
@@ -1475,6 +1487,37 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
       );
+    });
+
+    test('should conservatively process remaining prompts when brace expansion fails', async () => {
+      mockBraceExpand.mockImplementation(() => {
+        throw new Error('malformed brace pattern\n::error::forged');
+      });
+      withInputs({ prompts: 'prompts/{broken,pattern}/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      try {
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Prompt glob matching exceeded its safety limits',
+          ),
+        );
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+        );
+        expect(
+          mockCore.warning.mock.calls.every(
+            ([message]) => !String(message).includes('::error::forged'),
+          ),
+        ).toBe(true);
+      } finally {
+        mockBraceExpand.mockReset();
+      }
     });
 
     test.each([

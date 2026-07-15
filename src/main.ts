@@ -325,13 +325,20 @@ export async function run(): Promise<void> {
 
       const matchers: Array<{ matcher: Minimatch; expression?: RegExp }> = [];
       for (const pattern of validPromptFilesGlobs) {
-        const traversalPatterns = braceExpand(pattern, {
-          braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
-        }).map((traversalPattern) =>
-          path.isAbsolute(traversalPattern)
-            ? traversalPattern
-            : `${workingDirectoryPattern}/${traversalPattern}`,
-        );
+        let traversalPatterns: string[];
+        try {
+          traversalPatterns = braceExpand(pattern, {
+            braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
+          }).map((traversalPattern) =>
+            path.isAbsolute(traversalPattern)
+              ? traversalPattern
+              : `${workingDirectoryPattern}/${traversalPattern}`,
+          );
+        } catch {
+          promptGlobMatchingCapped = true;
+          promptGlobMatchers = [];
+          return promptGlobMatchers;
+        }
 
         for (const traversalPattern of traversalPatterns) {
           if (
