@@ -364,7 +364,15 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
+        changedFiles = Array.from(
+          new Set(
+            pullRequestFiles.flatMap((file) =>
+              file.previous_filename
+                ? [file.filename, file.previous_filename]
+                : [file.filename],
+            ),
+          ),
+        ).join('\n');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -381,7 +389,11 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
+        changedFiles = filesInput
+          .split(/\r?\n/)
+          .map((file: string) => file.trim())
+          .filter(Boolean)
+          .join('\n');
         core.info(`Using manually specified files: ${changedFiles}`);
       } else {
         // Option 2: Compare against base (default to previous commit)
@@ -389,6 +401,7 @@ export async function run(): Promise<void> {
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
             compareBase,
             'HEAD',
             '--',
@@ -421,6 +434,7 @@ export async function run(): Promise<void> {
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
             beforeSha,
             afterSha,
             '--',
@@ -449,7 +463,10 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split('\n').filter((f) => f);
+    const changedFilesList = changedFiles
+      .split('\n')
+      .map((file) => (file.endsWith('\r') ? file.slice(0, -1) : file))
+      .filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {

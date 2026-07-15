@@ -622,6 +622,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -647,6 +648,64 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.warning).toHaveBeenCalledWith(
         expect.stringContaining('Could not compare commits'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when a referenced dependency is renamed away in a push', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'a'.repeat(40),
+          after: 'b'.repeat(40),
+        },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockImplementation(async (args: string[]) =>
+        args.includes('--no-renames')
+          ? 'fixtures/referenced-upload.pdf\nfixtures/renamed-upload.pdf'
+          : 'fixtures/renamed-upload.pdf',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced-upload.pdf',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve spaces in renamed push dependency filenames', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'a'.repeat(40),
+          after: 'b'.repeat(40),
+        },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValue(
+        'fixtures/ referenced-upload.pdf \r\nfixtures/ renamed-upload.pdf \r',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/ referenced-upload.pdf ',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
     });
@@ -693,6 +752,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -744,6 +804,33 @@ describe('GitHub Action Main', () => {
         'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should match workflow files input with CRLF and surrounding whitespace', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: '  fixtures/referenced-upload.pdf  \r\n \r\n',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced-upload.pdf',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should handle workflow_dispatch with custom base comparison', async () => {
@@ -885,6 +972,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
           'feature-branch',
           'HEAD',
           '--',
@@ -907,12 +995,83 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should run when a referenced dependency is renamed away from a workflow base', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: { base: 'feature-branch' },
+        },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockImplementation(async (args: string[]) =>
+        args.includes('--no-renames')
+          ? 'fixtures/referenced-upload.pdf\nfixtures/renamed-upload.pdf'
+          : 'fixtures/renamed-upload.pdf',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced-upload.pdf',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should run when a direct config dependency changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when a referenced dependency is renamed away in a pull request', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'fixtures/renamed-upload.pdf',
+          previous_filename: 'fixtures/referenced-upload.pdf',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced-upload.pdf',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve spaces in renamed pull-request dependency filenames', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'fixtures/ renamed-upload.pdf ',
+          previous_filename: 'fixtures/ referenced-upload.pdf ',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/ referenced-upload.pdf ',
+      ]);
 
       await run();
 
@@ -1643,6 +1802,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',

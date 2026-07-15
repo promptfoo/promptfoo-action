@@ -39255,20 +39255,27 @@ async function run() {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join("\n");
+        changedFiles = Array.from(
+          new Set(
+            pullRequestFiles.flatMap(
+              (file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]
+            )
+          )
+        ).join("\n");
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        changedFiles = filesInput;
+        changedFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter(Boolean).join("\n");
         info(`Using manually specified files: ${changedFiles}`);
       } else {
         validateGitRevision(compareBase);
         try {
           changedFiles = await gitInterface.diff([
             "--name-only",
+            "--no-renames",
             compareBase,
             "HEAD",
             "--"
@@ -39293,6 +39300,7 @@ async function run() {
         try {
           changedFiles = await gitInterface.diff([
             "--name-only",
+            "--no-renames",
             beforeSha,
             afterSha,
             "--"
@@ -39318,7 +39326,7 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const changedFilesList = changedFiles.split("\n").filter((f) => f);
+    const changedFilesList = changedFiles.split("\n").map((file) => file.endsWith("\r") ? file.slice(0, -1) : file).filter(Boolean);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
