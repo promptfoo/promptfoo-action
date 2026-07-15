@@ -39814,6 +39814,36 @@ function isDirectory2(filePath) {
   }
 }
 
+// src/utils/glob.ts
+function isSafeGlobPattern(pattern, maxPatternLength, maxBraceExpansions, windowsPathsNoEscape = false) {
+  if (pattern.length > maxPatternLength || pattern.includes("\0")) {
+    return false;
+  }
+  for (const range2 of pattern.matchAll(
+    /\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g
+  )) {
+    let escapes = 0;
+    if (!windowsPathsNoEscape) {
+      for (let index = range2.index - 1; index >= 0 && pattern[index] === "\\"; index--) {
+        escapes++;
+      }
+    }
+    if (escapes % 2 === 1) {
+      continue;
+    }
+    const start = Number(range2[1]);
+    const end = Number(range2[2]);
+    const step = Math.abs(Number(range2[3] ?? 1));
+    const span = Math.abs(end - start);
+    const expansionCount = Math.floor(span / step) + 1;
+    const endpointWidth = Math.max(range2[1].length, range2[2].length);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || !Number.isSafeInteger(step) || step === 0 || !Number.isSafeInteger(span) || expansionCount > maxBraceExpansions || expansionCount * endpointWidth > maxPatternLength) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // src/utils/config.ts
 var MAX_BRACE_EXPANSIONS = 1024;
 var MAX_PROVIDER_REFERENCE_LENGTH = 65536;
@@ -40037,6 +40067,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         return void 0;
       }
     };
+    let warnedForeignWindowsPath = false;
     const processFilePath = (filePath, source = "config file dependency", preserveGlobRoot = false, windowsPathsNoEscape = false) => {
       if (filePath.includes("\0")) {
         warnSafe(
@@ -40044,11 +40075,38 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         );
         return [];
       }
-      const normalizedPath = windowsPathsNoEscape ? filePath.replace(/\\/g, path6.sep) : filePath;
+      const driveNormalizedPath = filePath.replace(/^\/(?=[a-z]:[\\/])/i, "");
+      const preservePosixGlobEscapes = path6.sep === "/" && /\\[()[\]{}]/.test(driveNormalizedPath);
+      const normalizedPath = windowsPathsNoEscape ? preservePosixGlobEscapes ? driveNormalizedPath.replace(
+        /(\\+)([()[\]{}])|\\+/g,
+        (_match, slashes, escaped) => escaped ? `${slashes}${escaped}` : path6.sep
+      ) : driveNormalizedPath.replace(/\\/g, path6.sep) : driveNormalizedPath;
+      const useWindowsPathsNoEscape = windowsPathsNoEscape && !preservePosixGlobEscapes;
+      if (isForeignWindowsPath(normalizedPath)) {
+        if (!warnedForeignWindowsPath) {
+          warnedForeignWindowsPath = true;
+          warnSafe(
+            `Ignoring unsafe config dependency "${normalizedPath}": ${source} must stay within the repository workspace`
+          );
+        }
+        return [];
+      }
+      if (!isSafeGlobPattern(
+        normalizedPath,
+        MAX_PROVIDER_REFERENCE_LENGTH,
+        MAX_BRACE_EXPANSIONS,
+        useWindowsPathsNoEscape
+      )) {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        warnSafe(
+          normalizedPath.length > MAX_PROVIDER_REFERENCE_LENGTH ? "Failed to parse config dependency glob: pattern is invalid or exceeds the maximum expansion size; conservatively watching the dependency root" : "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
+        );
+        return [];
+      }
       const globOptions = {
         magicalBraces: true,
         braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-        ...windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}
+        ...useWindowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}
       };
       let isGlob;
       let expandedPaths;
@@ -40667,7 +40725,8 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
               cwd: testFile,
               absolute: true,
               nodir: true,
-              nocase: true
+              nocase: true,
+              braceExpandMax: MAX_BRACE_EXPANSIONS
             }
           );
           for (const nestedTestFile of nestedTestFiles) {
@@ -41117,6 +41176,7 @@ function formatRepeatCommentMarkdown(summary2) {
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 var MAX_GLOB_PATTERN_LENGTH = 65536;
+var MAX_GLOB_BRACE_EXPANSIONS = 1025;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
@@ -41512,21 +41572,45 @@ async function run() {
         `This action is designed to run on pull request, push, or workflow_dispatch events, but a "${event}" event was received. Will process all matching prompt files.`
       );
     }
-    const promptFiles = [];
-    const allPromptFiles = [];
+    const promptFileMatches = /* @__PURE__ */ new Map();
+    const allPromptFileMatches = /* @__PURE__ */ new Map();
     const changedFilesList = changedFiles;
+    const addPromptFile = (matches, file) => {
+      const absoluteFile = path7.resolve(workingDirectory, file);
+      if (!matches.has(absoluteFile)) {
+        matches.set(absoluteFile, file);
+      }
+    };
     for (const globPattern of promptFilesGlobs) {
-      const matches = Ui(globPattern, {
-        cwd: workingDirectory,
-        nodir: true
-      });
+      if (/[\r\n]/.test(globPattern) || !isSafeGlobPattern(
+        globPattern,
+        MAX_GLOB_PATTERN_LENGTH,
+        MAX_GLOB_BRACE_EXPANSIONS,
+        path7.sep === "\\"
+      )) {
+        throw new Error(
+          "Action prompt glob pattern is invalid or exceeds the maximum expansion size."
+        );
+      }
+      let matches;
+      try {
+        matches = Ui(globPattern, {
+          cwd: workingDirectory,
+          nodir: true,
+          braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS
+        });
+      } catch {
+        throw new Error("Failed to resolve action prompt glob pattern safely.");
+      }
       const allMatches = matches.filter((file) => {
         const repositoryFile = toRepositoryPath(
           path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
         );
         return repositoryFile !== configRepositoryPath;
       });
-      allPromptFiles.push(...allMatches);
+      for (const file of allMatches) {
+        addPromptFile(allPromptFileMatches, file);
+      }
       if (changedFilesList.length > 0) {
         const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
@@ -41534,11 +41618,17 @@ async function run() {
           );
           return changedFilesList.includes(repositoryFile);
         });
-        promptFiles.push(...changedMatches);
+        for (const file of changedMatches) {
+          addPromptFile(promptFileMatches, file);
+        }
       } else {
-        promptFiles.push(...allMatches);
+        for (const file of allMatches) {
+          addPromptFile(promptFileMatches, file);
+        }
       }
     }
+    const promptFiles = Array.from(promptFileMatches.values());
+    const allPromptFiles = Array.from(allPromptFileMatches.values());
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
@@ -41563,15 +41653,32 @@ async function run() {
               "Skipping config dependency glob matching because the pattern exceeds the maximum length"
             );
             globMatchFailed = true;
+          } else if (!isSafeGlobPattern(
+            dep,
+            MAX_GLOB_PATTERN_LENGTH,
+            MAX_GLOB_BRACE_EXPANSIONS,
+            true
+          )) {
+            warning(
+              "Skipping config dependency glob matching because the pattern exceeds the maximum expansion size"
+            );
+            globMatchFailed = true;
           } else {
             try {
-              if (changedFilesList.some(
-                (changedFile) => minimatch(changedFile, dep, {
-                  dot: true,
-                  windowsPathsNoEscape: true,
-                  magicalBraces: true,
-                  braceExpandMax: 1025
-                })
+              const matcher = new Minimatch(dep, {
+                dot: true,
+                windowsPathsNoEscape: true,
+                magicalBraces: true,
+                braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
+                platform: "linux"
+              });
+              if (matcher.set.length >= MAX_GLOB_BRACE_EXPANSIONS) {
+                warning(
+                  "Skipping config dependency glob matching because the pattern exceeds the maximum expansion size"
+                );
+                globMatchFailed = true;
+              } else if (changedFilesList.some(
+                (changedFile) => matcher.match(changedFile)
               )) {
                 return true;
               }
@@ -41596,14 +41703,14 @@ async function run() {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
-    const evaluationPromptFiles = forceRun || configChanged || dependencyChanged ? allPromptFiles : promptFiles;
-    if (evaluationPromptFiles.some((file) => /[\r\n]/.test(file))) {
+    const selectedPromptFiles = forceRun || configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (selectedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error(
         "Prompt file paths cannot contain carriage returns or line feeds."
       );
     }
     const promptRoots = Array.from(/* @__PURE__ */ new Set([workspaceRoot, workingDirectory]));
-    const absolutePromptFiles = evaluationPromptFiles.map(
+    const absolutePromptFiles = selectedPromptFiles.map(
       (file) => path7.resolve(workingDirectory, file)
     );
     if (absolutePromptFiles.some(
@@ -41628,12 +41735,15 @@ async function run() {
         "Prompt file paths must stay within the repository workspace."
       );
     }
+    const evaluationPromptFiles = absolutePromptFiles.map(
+      (file) => toRepositoryPath(path7.relative(workingDirectory, file))
+    );
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${promptFiles.join(", ")}`
+        `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`
       );
     }
     startGroup("Setting up cache");
