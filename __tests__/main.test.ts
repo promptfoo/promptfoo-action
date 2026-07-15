@@ -946,6 +946,52 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test.each([
+      ['providers/invalid[.py', ['providers/invalid[.py']],
+      ['providers/safe.py', ['providers/invalid[.py', 'providers/safe.py']],
+    ])('should preserve dependency matching when a glob check throws (%s)', async (changedFile, dependencies) => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) => {
+        if (value === 'providers/invalid[.py') {
+          throw new TypeError('invalid glob pattern');
+        }
+        return false;
+      });
+      mockConfig.extractFileDependencies.mockReturnValue(dependencies);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should preserve a sibling dependency when glob matching throws', async () => {
+      const oversizedGlob = `providers/${'a'.repeat(65_537)}*.py`;
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/safe.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('*'),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue([
+        oversizedGlob,
+        'providers/safe.py',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
+        expect.any(Object),
+      );
+    });
+
     test('should not expose config dependency paths in debug logs', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers/customer-secret.py' },

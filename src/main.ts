@@ -149,6 +149,28 @@ function formatChangedFilesForLog(files: string[]): string {
   return files.map((file) => JSON.stringify(file).slice(1, -1)).join('\n');
 }
 
+function matchesDependencyGlob(
+  dependency: string,
+  changedFiles: string[],
+): boolean {
+  try {
+    return (
+      glob.hasMagic(dependency, {
+        magicalBraces: true,
+        braceExpandMax: 1_025,
+      }) &&
+      changedFiles.some((changedFile) =>
+        path.matchesGlob(
+          changedFile.replace(/\\/g, '/'),
+          dependency.replace(/\\/g, '/'),
+        ),
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function run(): Promise<void> {
   try {
     const openaiApiKey: string = core.getInput('openai-api-key', {
@@ -526,18 +548,7 @@ export async function run(): Promise<void> {
             return true;
           }
 
-          if (
-            glob.hasMagic(dep, {
-              magicalBraces: true,
-              braceExpandMax: 1_025,
-            }) &&
-            changedFilesList.some((changedFile) =>
-              path.matchesGlob(
-                changedFile.replace(/\\/g, '/'),
-                dep.replace(/\\/g, '/'),
-              ),
-            )
-          ) {
+          if (matchesDependencyGlob(dep, changedFilesList)) {
             return true;
           }
 
