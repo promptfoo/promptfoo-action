@@ -28,7 +28,7 @@ inputs:
     description: 'List of prompt files to watch (glob patterns supported, one per line)'
     required: false
   config:
-    description: 'Path to a Promptfoo config file'
+    description: 'Path or glob pattern for Promptfoo config files'
     required: true
   cache-path:
     description: 'Path to the Promptfoo disk cache directory'

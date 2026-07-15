@@ -37,7 +37,7 @@ The action can be configured using the following inputs:
 
 | Parameter | Description | Required |
 | --- | --- | --- |
-| `config` | Promptfoo configuration path, relative to `working-directory` unless absolute. | Yes |
+| `config` | Promptfoo configuration path or glob pattern, relative to `working-directory` unless absolute. | Yes |
 | `github-token` | GitHub token used to list PR files and post PR comments. | Yes |
 | `prompts` | Newline-separated prompt glob patterns, resolved from `working-directory`. Matching changed files are passed to Promptfoo with `--prompts`. If omitted, Promptfoo uses the prompts in `config`. | No |
 | `working-directory` | Base directory for the Promptfoo process and relative config, prompt, environment, and cache paths. Defaults to `.`. | No |

@@ -1,3 +1,4 @@
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import * as path from 'node:path';
 import * as core from '@actions/core';
 import * as exec from '@actions/exec';
@@ -338,6 +339,83 @@ describe('GitHub Action Main', () => {
     test.each([
       '\n',
       '\r',
+    ])('should ignore an unused action-input prompt filename containing a line break when config prompts are enabled', async (lineBreak) => {
+      const forgedAnnotation = 'UNUSED_PROMPT_CANARY_019F62C3';
+      const unsafePrompt = `prompts/policy${lineBreak}::error::${forgedAnnotation}.txt`;
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([{ filename: unsafePrompt }]);
+      mockGlob.sync.mockReturnValue([unsafePrompt]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(args).not.toContain(unsafePrompt);
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        forgedAnnotation,
+      );
+      expect(
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body,
+      ).not.toContain(forgedAnnotation);
+    });
+
+    test('should not canonicalize unused action-input prompt matches when config prompts are enabled', async () => {
+      const unusedPrompt = 'prompts/unreadable.txt';
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([{ filename: unusedPrompt }]);
+      mockGlob.sync.mockReturnValue([unusedPrompt]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (String(filePath).endsWith('/prompts/unreadable.txt')) {
+          throw Object.assign(new Error('denied'), { code: 'EACCES' });
+        }
+        return String(filePath);
+      });
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(args).not.toContain(unusedPrompt);
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should not log unused CRLF action-input prompt matches when config prompts are enabled and no files changed', async () => {
+      const forgedAnnotation = 'UNUSED_NO_CHANGES_CANARY_019F62C3';
+      const unusedPrompt = `prompts/policy\n::error::${forgedAnnotation}.txt`;
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockResolvedValue('');
+      mockGlob.sync.mockReturnValue([unusedPrompt]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: []',
+      );
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        forgedAnnotation,
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      '\n',
+      '\r',
     ])('should skip an unrelated change when an unchanged action-input prompt contains a line break', async (lineBreak) => {
       const unsafePrompt = `prompts/unchanged${lineBreak}::error::UNCHANGED_PROMPT_CANARY_019F62C3.txt`;
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
@@ -587,6 +665,12 @@ describe('GitHub Action Main', () => {
 
     test.each([
       ['a 1025-item numeric range', 'prompts/{1..1025}.txt'],
+      [
+        'a 1025-item comma brace list',
+        `prompts/{${Array.from({ length: 1025 }, (_, index) => index).join(',')}}.txt`,
+      ],
+      ['a combinatorial brace pattern', `prompts/${'{a,b}'.repeat(11)}.txt`],
+      ['a multiplied numeric brace pattern', 'prompts/{1..33}/{1..33}.txt'],
       ['a huge numeric range', 'prompts/{1..1000000000}.txt'],
       [
         'a numeric range inside a character class',
@@ -651,6 +735,39 @@ describe('GitHub Action Main', () => {
         expect.objectContaining({ braceExpandMax: 1024 }),
       );
       expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should normalize Windows action-prompt separators before brace preflight', async () => {
+      const runtimePath = createRequire(import.meta.url)(
+        'node:path',
+      ) as typeof path;
+      const originalSeparator = runtimePath.sep;
+      const pattern = `prompts${String.fromCharCode(92)}{1..33}${String.fromCharCode(92)}{1..33}.txt`;
+      withInputs({ prompts: pattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      Object.defineProperty(runtimePath, 'sep', {
+        value: String.fromCharCode(92),
+        configurable: true,
+      });
+      syncBuiltinESMExports();
+
+      try {
+        await run();
+      } finally {
+        Object.defineProperty(runtimePath, 'sep', {
+          value: originalSeparator,
+          configurable: true,
+        });
+        syncBuiltinESMExports();
+      }
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Action prompt glob pattern is invalid or exceeds the maximum expansion size.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should handle empty prompts input', async () => {
@@ -761,6 +878,61 @@ describe('GitHub Action Main', () => {
           cwd: path.join(process.cwd(), 'evals'),
         }),
       );
+    });
+
+    test('should reject a working directory that lexically escapes the checkout', async () => {
+      withInputs({ 'working-directory': '../../outside', prompts: '' });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Working directory must stay within the repository workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a symlinked working directory that resolves outside the checkout in config-prompt mode', async () => {
+      const workspaceRoot = process.cwd();
+      withInputs({ 'working-directory': 'evals/shared-link', prompts: '' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        String(filePath) === path.join(workspaceRoot, 'evals/shared-link')
+          ? '/private/tmp/outside/evals'
+          : String(filePath),
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Working directory resolves outside the repository workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail safely when a working directory cannot be resolved', async () => {
+      const workspaceRoot = process.cwd();
+      withInputs({ 'working-directory': 'evals/locked', prompts: '' });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (String(filePath) === path.join(workspaceRoot, 'evals/locked')) {
+          throw new Error('denied\n::error::WORKDIR_CANARY_019F62C3');
+        }
+        return String(filePath);
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Working directory cannot be safely resolved.',
+      );
+      expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+        'WORKDIR_CANARY_019F62C3',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should handle API keys correctly', async () => {
@@ -1000,6 +1172,162 @@ describe('GitHub Action Main', () => {
       );
       expect(mockExec.exec).toHaveBeenCalled();
       expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should expand and inspect each safely contained config glob match', async () => {
+      const workspaceRoot = process.cwd();
+      const firstConfig = path.join(
+        workspaceRoot,
+        'evals/one/promptfooconfig.yaml',
+      );
+      const secondConfig = path.join(
+        workspaceRoot,
+        'evals/two/promptfooconfig.yaml',
+      );
+      withInputs({ config: 'evals/*/promptfooconfig.yaml', prompts: '' });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        if (value.includes('*')) {
+          throw new Error('the unexpanded glob cannot be resolved');
+        }
+        return value;
+      });
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        String(pattern).includes('evals/*/promptfooconfig.yaml')
+          ? [firstConfig, secondConfig]
+          : [],
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/two/promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        path.join(workspaceRoot, 'evals/*/promptfooconfig.yaml'),
+        expect.objectContaining({
+          nodir: true,
+          windowsPathsNoEscape: true,
+          braceExpandMax: 1024,
+        }),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        firstConfig,
+        expect.any(String),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        secondConfig,
+        expect.any(String),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should expand a config glob with a single-character brace class', async () => {
+      const workspaceRoot = process.cwd();
+      const matchedConfig = path.join(
+        workspaceRoot,
+        'evals/{/promptfooconfig.yaml',
+      );
+      withInputs({ config: 'evals/[{]/promptfooconfig.yaml', prompts: '' });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (String(filePath).includes('[{]')) {
+          throw new Error('the unexpanded class cannot be resolved');
+        }
+        return String(filePath);
+      });
+      mockGlob.sync.mockReturnValue([matchedConfig]);
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/{/promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        matchedConfig,
+        expect.any(String),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should reject an escaping symlink matched by an in-checkout config glob', async () => {
+      const workspaceRoot = process.cwd();
+      const escapedConfig = path.join(
+        workspaceRoot,
+        'evals/shared/promptfooconfig.yaml',
+      );
+      withInputs({ config: 'evals/*/promptfooconfig.yaml', prompts: '' });
+      mockGlob.sync.mockReturnValue([escapedConfig]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        String(filePath) === escapedConfig
+          ? '/private/tmp/outside/promptfooconfig.yaml'
+          : String(filePath),
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Config file resolves outside the repository workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['a huge numeric range', 'evals/{1..1000000000}/promptfooconfig.yaml'],
+      [
+        'a 1025-item comma brace list',
+        `evals/{${Array.from({ length: 1025 }, (_, index) => index).join(',')}}/promptfooconfig.yaml`,
+      ],
+      [
+        'a combinatorial brace pattern',
+        `evals/${'{a,b}'.repeat(11)}/promptfooconfig.yaml`,
+      ],
+      ['a NUL byte', 'evals/invalid\0config/promptfooconfig.yaml'],
+    ])('should reject %s before resolving a config glob', async (_name, config) => {
+      withInputs({ config, prompts: '' });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Config glob pattern is invalid or exceeds the maximum expansion size.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail safely when a config glob cannot be resolved', async () => {
+      const forgedAnnotation = 'CONFIG_GLOB_CANARY_019F62C3';
+      withInputs({ config: 'evals/*/promptfooconfig.yaml', prompts: '' });
+      mockGlob.sync.mockImplementation(() => {
+        throw new Error(`malformed glob\n::error::${forgedAnnotation}`);
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Failed to resolve config glob pattern safely.',
+      );
+      expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+        forgedAnnotation,
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail when a config glob does not match any files', async () => {
+      withInputs({ config: 'evals/*/promptfooconfig.yaml', prompts: '' });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Config glob pattern did not match any files.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should fail when an environment file does not exist', async () => {
@@ -1750,6 +2078,75 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      ['the current filename', { filename: 'tests/current\0cases.yaml' }],
+      [
+        'the previous filename',
+        {
+          filename: 'archive/cases.yaml',
+          previous_filename: 'tests/previous\0cases.yaml',
+          status: 'renamed',
+        },
+      ],
+    ])('should reject a pull-request changed path with a NUL in %s', async (_source, changedFile) => {
+      mockOctokit.paginate.mockResolvedValue([changedFile]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file paths cannot contain null bytes.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a pull-request changed path with a NUL even at the API file limit', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        ...Array.from({ length: 2999 }, (_, index) => ({
+          filename: `docs/file-${index}.md`,
+        })),
+        { filename: 'tests/current\0cases.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file paths cannot contain null bytes.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['the workflow payload', false],
+      ['the workflow-files action input', true],
+    ])('should reject a manually supplied changed path with a NUL from %s', async (_source, useActionInput) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: { files: useActionInput ? '' : 'tests/manual\0cases.yaml' },
+        },
+        configurable: true,
+      });
+      if (useActionInput) {
+        withInputs({ 'workflow-files': 'tests/manual\0cases.yaml' });
+      }
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file paths cannot contain null bytes.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test.each([

@@ -4,7 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { Minimatch } from 'minimatch';
+import { braceExpand, Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -75,6 +75,12 @@ function parseGitDiffPaths(diff: string): string[] {
     }
   }
   return paths;
+}
+
+function validateChangedFilePaths(files: string[]): void {
+  if (files.some((file) => file.includes('\0'))) {
+    throw new Error('Changed file paths cannot contain null bytes.');
+  }
 }
 
 /**
@@ -246,13 +252,72 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    if (!isPathInside(workspaceRoot, workingDirectory)) {
+      throw new Error(
+        'Working directory must stay within the repository workspace.',
+      );
+    }
+    let realWorkspaceRoot: string;
+    let realWorkingDirectory: string;
+    try {
+      realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+      realWorkingDirectory = fs.realpathSync(workingDirectory);
+    } catch {
+      throw new Error('Working directory cannot be safely resolved.');
+    }
+    if (!isPathInside(realWorkspaceRoot, realWorkingDirectory)) {
+      throw new Error(
+        'Working directory resolves outside the repository workspace.',
+      );
+    }
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
-    if (isPathInside(workspaceRoot, configAbsolutePath)) {
-      let realWorkspaceRoot: string;
+    const normalizedConfigPattern = configAbsolutePath.replace(/\\/g, path.sep);
+    if (
+      !isSafeGlobPattern(
+        normalizedConfigPattern,
+        MAX_GLOB_PATTERN_LENGTH,
+        MAX_GLOB_BRACE_EXPANSIONS,
+        true,
+      ) ||
+      braceExpand(normalizedConfigPattern, {
+        braceExpandMax: GLOB_BRACE_EXPANSION_SENTINEL,
+      }).length > MAX_GLOB_BRACE_EXPANSIONS
+    ) {
+      throw new Error(
+        'Config glob pattern is invalid or exceeds the maximum expansion size.',
+      );
+    }
+    const configHasMagic =
+      /[*?[\]{}()!+@]/.test(normalizedConfigPattern) &&
+      (new Minimatch(normalizedConfigPattern, {
+        windowsPathsNoEscape: true,
+        magicalBraces: true,
+        braceExpandMax: GLOB_BRACE_EXPANSION_SENTINEL,
+        platform: 'linux',
+      }).hasMagic() ||
+        /\[[^/\]]+\]/.test(normalizedConfigPattern));
+    let configAbsolutePaths: string[];
+    try {
+      configAbsolutePaths = configHasMagic
+        ? glob.sync(configAbsolutePath, {
+            nodir: true,
+            windowsPathsNoEscape: true,
+            braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
+          })
+        : [configAbsolutePath];
+    } catch {
+      throw new Error('Failed to resolve config glob pattern safely.');
+    }
+    if (configAbsolutePaths.length === 0) {
+      throw new Error('Config glob pattern did not match any files.');
+    }
+    for (const matchedConfigPath of configAbsolutePaths) {
+      if (!isPathInside(workspaceRoot, matchedConfigPath)) {
+        continue;
+      }
       let realConfigPath: string;
       try {
-        realWorkspaceRoot = fs.realpathSync(workspaceRoot);
-        realConfigPath = fs.realpathSync(configAbsolutePath);
+        realConfigPath = fs.realpathSync(matchedConfigPath);
       } catch {
         throw new Error('Config file cannot be safely resolved.');
       }
@@ -262,8 +327,10 @@ export async function run(): Promise<void> {
         );
       }
     }
-    const configRepositoryPath = toRepositoryPath(
-      path.relative(workspaceRoot, configAbsolutePath),
+    const configRepositoryPaths = new Set(
+      configAbsolutePaths.map((matchedConfigPath) =>
+        toRepositoryPath(path.relative(workspaceRoot, matchedConfigPath)),
+      ),
     );
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
@@ -417,14 +484,16 @@ export async function run(): Promise<void> {
           per_page: 100,
         },
       );
+      const pullRequestChangedFiles = pullRequestFiles
+        .flatMap((file) => [file.filename, file.previous_filename])
+        .filter((file): file is string => typeof file === 'string');
+      validateChangedFilePaths(pullRequestChangedFiles);
       if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
         core.warning(
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles
-          .flatMap((file) => [file.filename, file.previous_filename])
-          .filter((file): file is string => typeof file === 'string');
+        changedFiles = pullRequestChangedFiles;
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -455,6 +524,7 @@ export async function run(): Promise<void> {
             }),
           ),
         );
+        validateChangedFilePaths(changedFiles);
         core.info(
           `Using manually specified files: ${JSON.stringify(changedFiles)}`,
         );
@@ -543,14 +613,18 @@ export async function run(): Promise<void> {
     };
 
     for (const globPattern of promptFilesGlobs) {
+      const normalizedGlobPattern = globPattern.split(path.sep).join('/');
       if (
         /[\r\n]/.test(globPattern) ||
         !isSafeGlobPattern(
-          globPattern,
+          normalizedGlobPattern,
           MAX_GLOB_PATTERN_LENGTH,
           MAX_GLOB_BRACE_EXPANSIONS,
           path.sep === '\\',
-        )
+        ) ||
+        braceExpand(normalizedGlobPattern, {
+          braceExpandMax: GLOB_BRACE_EXPANSION_SENTINEL,
+        }).length > MAX_GLOB_BRACE_EXPANSIONS
       ) {
         throw new Error(
           'Action prompt glob pattern is invalid or exceeds the maximum expansion size.',
@@ -558,7 +632,7 @@ export async function run(): Promise<void> {
       }
       let matches: string[];
       try {
-        matches = glob.sync(globPattern, {
+        matches = glob.sync(normalizedGlobPattern, {
           cwd: workingDirectory,
           nodir: true,
           braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
@@ -570,7 +644,7 @@ export async function run(): Promise<void> {
         const repositoryFile = toRepositoryPath(
           path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
         );
-        return repositoryFile !== configRepositoryPath;
+        return !configRepositoryPaths.has(repositoryFile);
       });
       for (const file of allMatches) {
         addPromptFile(allPromptFileMatches, file);
@@ -600,15 +674,18 @@ export async function run(): Promise<void> {
 
     const configChanged =
       changedFilesList.length > 0 &&
-      changedFilesList.includes(configRepositoryPath);
+      changedFilesList.some((changedFile) =>
+        configRepositoryPaths.has(changedFile),
+      );
 
     // Extract dependencies from config file
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(
-        configAbsolutePath,
-        workingDirectory,
-      ).map(toRepositoryPath);
+      const dependencies = configAbsolutePaths
+        .flatMap((matchedConfigPath) =>
+          extractFileDependencies(matchedConfigPath, workingDirectory),
+        )
+        .map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(
           `Found ${dependencies.length} file dependencies in config: ${JSON.stringify(dependencies)}`,
@@ -703,8 +780,9 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const selectedPromptFiles =
-      forceRun || configChanged || dependencyChanged
+    const selectedPromptFiles = useConfigPrompts
+      ? []
+      : forceRun || configChanged || dependencyChanged
         ? allPromptFiles
         : promptFiles;
     if (selectedPromptFiles.some((file) => /[\r\n]/.test(file))) {

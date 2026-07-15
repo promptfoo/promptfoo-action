@@ -195,10 +195,89 @@ export function extractFileDependencies(
       dependencies.add(`${root.replace(/[\\/]+$/, '')}${path.sep}`);
     }
   };
+  const getRelativeDependencies = (): string[] =>
+    Array.from(dependencies).map((dep) => {
+      const relativePath = path.relative(cwd, dep);
+      const repositoryPath = relativePath.split(path.sep).join('/');
+      if (!repositoryPath) {
+        return '/';
+      }
+      if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
+        return `${repositoryPath}/`;
+      }
+      return repositoryPath;
+    });
   let configParsed = false;
 
   try {
-    const configContent = fs.readFileSync(configPath, 'utf8');
+    let configDescriptor: number | undefined;
+    let configContent: string;
+    try {
+      const realConfigPath = fs.realpathSync(configPath);
+      if (
+        isPathInside(cwd, configDir) &&
+        !isPathInside(fs.realpathSync(cwd), realConfigPath)
+      ) {
+        addConservativeWatchRoots();
+        warnSafe(
+          'Config file resolves outside the repository workspace; conservatively watching the dependency root',
+        );
+        return getRelativeDependencies();
+      }
+      configDescriptor = fs.openSync(
+        realConfigPath,
+        fs.constants.O_RDONLY |
+          fs.constants.O_NONBLOCK |
+          fs.constants.O_NOFOLLOW,
+      );
+      const configStats = fs.fstatSync(configDescriptor);
+      if (!configStats.isFile()) {
+        addConservativeWatchRoots();
+        warnSafe(
+          'Config file is not a regular file; conservatively watching the dependency root',
+        );
+        return getRelativeDependencies();
+      }
+      if (configStats.size > MAX_INSPECTED_FILE_SIZE) {
+        addConservativeWatchRoots();
+        warnSafe(
+          'Config file exceeds the maximum inspection size; conservatively watching the dependency root',
+        );
+        return getRelativeDependencies();
+      }
+      configContent = fs.readFileSync(configDescriptor, 'utf8');
+      const postReadConfigPath = fs.realpathSync(configPath);
+      const postReadConfigStats = fs.statSync(postReadConfigPath);
+      if (
+        postReadConfigPath !== realConfigPath ||
+        postReadConfigStats.dev !== configStats.dev ||
+        postReadConfigStats.ino !== configStats.ino ||
+        !postReadConfigStats.isFile()
+      ) {
+        addConservativeWatchRoots();
+        warnSafe(
+          'Config file changed while being inspected; conservatively watching the dependency root',
+        );
+        return getRelativeDependencies();
+      }
+    } catch {
+      addConservativeWatchRoots();
+      warnSafe(
+        'Config file could not be inspected safely; conservatively watching the dependency root',
+      );
+      return getRelativeDependencies();
+    } finally {
+      if (configDescriptor !== undefined) {
+        fs.closeSync(configDescriptor);
+      }
+    }
+    if (Buffer.byteLength(configContent, 'utf8') > MAX_INSPECTED_FILE_SIZE) {
+      addConservativeWatchRoots();
+      warnSafe(
+        'Config file exceeded the maximum inspection size while being read; conservatively watching the dependency root',
+      );
+      return getRelativeDependencies();
+    }
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
       return [];
@@ -368,7 +447,9 @@ export function extractFileDependencies(
       let isGlob: boolean;
       let expandedPaths: string[];
       try {
-        isGlob = glob.hasMagic(normalizedPath, globOptions);
+        isGlob =
+          glob.hasMagic(normalizedPath, globOptions) ||
+          /\[[^/\]]+\]/.test(normalizedPath);
         expandedPaths = isGlob
           ? braceExpand(normalizedPath, {
               braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
@@ -458,7 +539,11 @@ export function extractFileDependencies(
           .split(/[\\/]/);
         let globRoot = initialGlobRoot;
         for (const part of pathParts) {
-          if (glob.hasMagic(part, globOptions) || /[{}]/.test(part)) {
+          if (
+            glob.hasMagic(part, globOptions) ||
+            /[{}]/.test(part) ||
+            /\[[^/\]]+\]/.test(part)
+          ) {
             break;
           }
           globRoot = path.join(globRoot, part);
@@ -496,7 +581,7 @@ export function extractFileDependencies(
       | 'literal'
       | 'assertion'
       | 'provider'
-      | 'javascript';
+      | 'javascript-literal';
     const processFileUrl = (
       fileUrl: string,
       preserveGlobRoot = false,
@@ -512,8 +597,8 @@ export function extractFileDependencies(
           ? null
           : selectorMode === 'provider'
             ? filePath.match(/^([\s\S]+\.(?:py|go|rb|[cm]?[jt]s)):(.+)$/)
-            : selectorMode === 'javascript'
-              ? filePath.match(/^([\s\S]+\.(?:[cm]?[jt]s)):(.+)$/)
+            : selectorMode === 'javascript-literal'
+              ? filePath.match(/^([\s\S]+\.(?:[cm]?[jt]s)):(.+)$/i)
               : filePath.match(/^([\s\S]+\.(?:py|rb|[cm]?[jt]s)):(.+)$/);
       const uppercaseJsSelector =
         !selectorMatch && selectorMode !== 'literal'
@@ -535,7 +620,7 @@ export function extractFileDependencies(
             relativePath,
             'config file dependency',
             preserveGlobRoot || hasEnvTemplate,
-            true,
+            selectorMode !== 'javascript-literal',
           ),
         );
       }
@@ -554,13 +639,19 @@ export function extractFileDependencies(
       if (!providerPath) {
         return;
       }
-      processFileUrl(`file://${providerPath}`, false, configDir, 'provider');
-      const absolutePath = path.resolve(configDir, providerPath);
-      if (
-        /\.(?:ya?ml|json)$/i.test(providerPath) &&
-        isSafeDependency(absolutePath)
-      ) {
-        providerConfigFiles.add(absolutePath);
+      const providerFiles = processFileUrl(
+        `file://${providerPath}`,
+        false,
+        configDir,
+        'provider',
+      );
+      for (const providerFile of providerFiles) {
+        if (
+          /\.(?:ya?ml|json)$/i.test(providerFile) &&
+          isSafeDependency(providerFile)
+        ) {
+          providerConfigFiles.add(providerFile);
+        }
       }
     };
 
@@ -644,6 +735,7 @@ export function extractFileDependencies(
           ) ||
           !(
             expandedPromptPath.startsWith('file://') ||
+            expandedPromptPath.startsWith('exec:') ||
             /\.(?:cjs|cts|j2|js|jsonl?|md|mjs|mts|py|ts|txt|ya?ml)(?::[^/\\]+)?$/i.test(
               expandedPromptPath,
             ) ||
@@ -754,6 +846,7 @@ export function extractFileDependencies(
 
     const inspectedNestedValues = new WeakSet<object>();
     const inspectedRefValues = new WeakSet<object>();
+    const handledLiteralAssetPaths = new WeakSet<object>();
     const extractNestedFileUrls = (
       value: unknown,
       refBaseDir = refResolutionRoot,
@@ -808,6 +901,9 @@ export function extractFileDependencies(
       extractVarFiles(nestedTest.vars, testBaseDir);
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
+        if (key === 'path' && handledLiteralAssetPaths.has(value)) {
+          continue;
+        }
         if (key === 'provider' && includeFileUrls) {
           const providerId =
             typeof item === 'string'
@@ -823,13 +919,25 @@ export function extractFileDependencies(
           const isHttpProvider =
             typeof providerId === 'string' &&
             /^https?(?::|$)/i.test(providerId);
-          const providerConfig =
+          const providerOptions =
             typeof item === 'object' &&
             item !== null &&
-            'config' in item &&
-            typeof item.config === 'object' &&
-            item.config !== null
-              ? item.config
+            typeof providerId === 'string' &&
+            providerId in item &&
+            typeof (item as Record<string, unknown>)[providerId] === 'object' &&
+            (item as Record<string, unknown>)[providerId] !== null
+              ? ((item as Record<string, unknown>)[providerId] as Record<
+                  string,
+                  unknown
+                >)
+              : item;
+          const providerConfig =
+            typeof providerOptions === 'object' &&
+            providerOptions !== null &&
+            'config' in providerOptions &&
+            typeof providerOptions.config === 'object' &&
+            providerOptions.config !== null
+              ? providerOptions.config
               : undefined;
           const fileAuth =
             providerConfig &&
@@ -851,10 +959,21 @@ export function extractFileDependencies(
             'path' in fileAuth &&
             typeof fileAuth.path === 'string'
           ) {
-            processFileUrl(
-              `file://${fileAuth.path.replace(/^file:\/\//, '')}`,
+            const authPath = expandAndTrackEnvTemplates(
+              fileAuth.path.replace(/^file:\/\//, ''),
+            );
+            const authFunctionIndex = authPath.lastIndexOf(':');
+            const authFilePath =
+              authFunctionIndex > 1 &&
+              /\.(?:py|[cm]?[jt]s)$/.test(authPath.slice(0, authFunctionIndex))
+                ? authPath.slice(0, authFunctionIndex)
+                : authPath;
+            processFilePath(
+              authFilePath,
+              'provider auth file dependency',
               true,
             );
+            handledLiteralAssetPaths.add(fileAuth);
           }
           if (isHttpProvider && providerConfig) {
             const multipart =
@@ -1025,8 +1144,12 @@ export function extractFileDependencies(
           localRefFile,
           key === 'vars'
             ? 'literal'
-            : key === 'validateStatus'
-              ? 'javascript'
+            : key === 'validateStatus' ||
+                key === 'transformRequest' ||
+                key === 'transformResponse' ||
+                key === 'responseParser' ||
+                key === 'sessionParser'
+              ? 'javascript-literal'
               : selectorMode,
         );
       }
@@ -1071,25 +1194,63 @@ export function extractFileDependencies(
           return;
         }
 
-        let fileSize: number;
+        let testDescriptor: number | undefined;
+        let testContent: string;
         try {
-          fileSize = fs.statSync(realTestFile).size;
+          testDescriptor = fs.openSync(
+            realTestFile,
+            fs.constants.O_RDONLY |
+              fs.constants.O_NONBLOCK |
+              fs.constants.O_NOFOLLOW,
+          );
+          const fileStats = fs.fstatSync(testDescriptor);
+          if (!fileStats.isFile()) {
+            addConservativeWatchRoots();
+            warnSafe(
+              `Skipping structured dependency "${testFile}": file is not a regular file; conservatively watching the dependency root`,
+            );
+            return;
+          }
+          if (fileStats.size > MAX_INSPECTED_FILE_SIZE) {
+            addConservativeWatchRoots();
+            warnSafe(
+              `Skipping structured dependency "${testFile}": file exceeds the maximum inspection size; conservatively watching the dependency root`,
+            );
+            return;
+          }
+          testContent = fs.readFileSync(testDescriptor, 'utf8');
+          const postReadTestPath = fs.realpathSync(testFile);
+          const postReadTestStats = fs.statSync(postReadTestPath);
+          if (
+            postReadTestPath !== realTestFile ||
+            postReadTestStats.dev !== fileStats.dev ||
+            postReadTestStats.ino !== fileStats.ino ||
+            !postReadTestStats.isFile()
+          ) {
+            addConservativeWatchRoots();
+            warnSafe(
+              `Skipping structured dependency "${testFile}": file changed while being inspected; conservatively watching the dependency root`,
+            );
+            return;
+          }
         } catch {
           addConservativeWatchRoots();
           warnSafe(
             `Skipping structured dependency "${testFile}": file could not be inspected safely; conservatively watching the dependency root`,
           );
           return;
+        } finally {
+          if (testDescriptor !== undefined) {
+            fs.closeSync(testDescriptor);
+          }
         }
-        if (fileSize > MAX_INSPECTED_FILE_SIZE) {
+        if (Buffer.byteLength(testContent, 'utf8') > MAX_INSPECTED_FILE_SIZE) {
           addConservativeWatchRoots();
           warnSafe(
-            `Skipping structured dependency "${testFile}": file exceeds the maximum inspection size; conservatively watching the dependency root`,
+            `Skipping structured dependency "${testFile}": file exceeded the maximum inspection size while being read; conservatively watching the dependency root`,
           );
           return;
         }
-
-        const testContent = fs.readFileSync(realTestFile, 'utf8');
         if (/\.csv$/i.test(realTestFile)) {
           const rows = parseCsv(testContent, {
             bom: true,
@@ -1403,19 +1564,7 @@ export function extractFileDependencies(
       }
     }
 
-    // Convert absolute paths back to relative paths from working directory
-    return Array.from(dependencies).map((dep) => {
-      const relativePath = path.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path.sep).join('/');
-      if (!repositoryPath) {
-        return '/';
-      }
-      // Preserve trailing slash for directories
-      if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
-        return `${repositoryPath}/`;
-      }
-      return repositoryPath;
-    });
+    return getRelativeDependencies();
   } catch (error) {
     warnSafe(
       `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
