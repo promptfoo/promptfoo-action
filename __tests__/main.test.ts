@@ -2564,6 +2564,61 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
+    test('should allow literal unmatched parentheses in an action prompt filename', async () => {
+      withInputs({ prompts: 'prompts/foo (draft.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/foo (draft.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/foo (draft.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/foo (draft.txt',
+        expect.objectContaining({ nodir: true, braceExpandMax: 1024 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should distinguish literal parentheses from extended-glob delimiters', () => {
+      expect(hasBalancedGlobDelimiters('(draft.txt')).toBe(true);
+      expect(hasBalancedGlobDelimiters('prompts/foo (draft.txt')).toBe(true);
+      expect(hasBalancedGlobDelimiters('prompts/foo) draft.txt')).toBe(true);
+      expect(hasBalancedGlobDelimiters('prompts/{foo),bar}.txt')).toBe(true);
+      expect(hasBalancedGlobDelimiters('prompts/\\+(draft.txt')).toBe(true);
+      expect(hasBalancedGlobDelimiters('prompts/\\@(draft.txt')).toBe(true);
+      expect(hasBalancedGlobDelimiters('prompts/+(one|two).txt')).toBe(true);
+      expect(hasBalancedGlobDelimiters('prompts/+(one|two.txt')).toBe(false);
+      expect(hasBalancedGlobDelimiters('prompts/\\\\+(one|two.txt')).toBe(
+        false,
+      );
+      expect(hasBalancedGlobDelimiters('prompts/+(one{two),three}.txt')).toBe(
+        false,
+      );
+    });
+
+    test('should preserve literal parentheses in brace arms and escaped extglob operators', async () => {
+      const patterns = [
+        'prompts/{foo),bar}.txt',
+        'prompts/\\+(draft.txt',
+        'prompts/\\@(draft.txt',
+      ];
+      withInputs({ prompts: patterns.join('\n') });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(patterns.length);
+      for (const pattern of patterns) {
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          pattern,
+          expect.objectContaining({ braceExpandMax: 1024 }),
+        );
+      }
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should preserve POSIX character classes in action prompt globs', async () => {
       const patterns = [
         'prompts/[[:alpha:]]*.txt',

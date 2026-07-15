@@ -148,6 +148,16 @@ providers: file://providers/custom.py:call_api
     expect(deps).toEqual(['../config/providers/custom.py']);
   });
 
+  it('should extract an exec provider with a file URL', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: exec:file://providers/run.py:call_api',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/run.py']);
+  });
+
   it('should strip a top-level TypeScript provider selector', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -2320,8 +2330,8 @@ providers:
   it('should reject mismatched glob delimiters before enumerating unsafe brace alternatives', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
-  - 'file://{foo),../outside}/*.py'
-  - 'file://{bar),/private/outside}/*.py'
+  - 'file://+({foo),../outside}/*.py'
+  - 'file://+({bar),/private/outside}/*.py'
 `);
     mockGlob.hasMagic.mockImplementation((value: string) =>
       value.includes('*'),
@@ -3785,6 +3795,41 @@ tests:
     ).toEqual(['evals/tests/generate.py']);
   });
 
+  it('should retain tests and scenarios directory dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests: file://tests/
+scenarios: file://scenarios/
+`);
+    mockFs.statSync.mockImplementation(
+      (filePath: string) =>
+        ({
+          isDirectory: () => /\/(?:tests|scenarios)$/.test(filePath),
+          isFile: () => !/\/(?:tests|scenarios)$/.test(filePath),
+          size: 0,
+        }) as fs.Stats,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/tests', 'evals/scenarios/']);
+  });
+
+  it('should ignore remote test URLs when extracting local dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - https://docs.google.com/spreadsheets/d/example/edit
+  - huggingface://datasets/example/tests
+  - az://container/tests.csv
+scenarios:
+  - tests: https://example.test/scenario.csv
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it('should extract spreadsheet test paths without sheet selectors', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
@@ -3923,6 +3968,21 @@ scenarios:
     ]);
   });
 
+  it('should extract file references from assertion value arrays', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert:
+      - type: contains-any
+        value:
+          - file://validators/one.cjs:validate
+          - file://fixtures/two.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/validators/one.cjs', 'evals/fixtures/two.txt']);
+  });
+
   it('should extract assertion files referenced from external JSONL and CSV tests', () => {
     mockFs.existsSync.mockImplementation((filePath: string) =>
       /cases\.(?:jsonl|csv)$/.test(filePath),
@@ -3949,6 +4009,21 @@ tests:
       'evals/tests/cases.csv',
       'evals/validators/from-csv.cjs',
     ]);
+  });
+
+  it('should extract escaped file URLs from external JSONL tests', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('tests/cases.jsonl'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'tests: file://tests/cases.jsonl'
+        : '{"assert":[{"type":"javascript","value":"file:\\u002f\\u002fvalidators/escaped.cjs:validate"}]}\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/tests/cases.jsonl', 'evals/validators/escaped.cjs']);
   });
 
   it('should extract vars-file paths relative to an external test file', () => {
@@ -5035,6 +5110,55 @@ tests:
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['evals/tests/cases.csv', 'evals/validators/check case.cjs']);
+  });
+
+  it('should preserve commas in quoted CSV assertion file paths', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('tests/cases.csv'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'tests: file://tests/cases.csv'
+        : 'input,__expected\nhello,"file://validators/check,case.cjs:validate"\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/tests/cases.csv', 'evals/validators/check,case.cjs']);
+  });
+
+  it('should preserve commas in CSV assertion paths with escaped field quotes', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('tests/cases.csv'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'tests: file://tests/cases.csv'
+        : 'input,__expected\nhello,"[""file://validators/check,case.cjs:validate""]"\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/tests/cases.csv', 'evals/validators/check,case.cjs']);
+  });
+
+  it('should preserve decoded quotes and apostrophes in CSV assertion file paths', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('tests/cases.csv'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'tests: file://tests/cases.csv'
+        : `input,__expected\nquote,"file://validators/check""case.cjs:validate"\napostrophe,"file://validators/it's-valid.cjs:validate"\n`,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/tests/cases.csv',
+      'evals/validators/check"case.cjs',
+      "evals/validators/it's-valid.cjs",
+    ]);
   });
 
   it('should ignore non-file scalar extension hooks', () => {

@@ -140,6 +140,43 @@ function isPromptFilePath(prompt: string): boolean {
   );
 }
 
+function extractCsvFileUrls(content: string): string[] {
+  const fileUrls: string[] = [];
+  let fieldStart = 0;
+  let inQuotes = false;
+  const collectField = (fieldEnd: number): void => {
+    const rawField = content.slice(fieldStart, fieldEnd);
+    const field =
+      rawField.startsWith('"') && rawField.endsWith('"')
+        ? rawField.slice(1, -1).replace(/""/g, '"')
+        : rawField;
+    const trimmedField = field.trim();
+    if (trimmedField.startsWith('file://')) {
+      fileUrls.push(trimmedField);
+      return;
+    }
+    for (const match of field.matchAll(/file:\/\/[^"'\r\n\]}]+/g)) {
+      fileUrls.push(match[0].trimEnd());
+    }
+  };
+
+  for (let index = 0; index < content.length; index++) {
+    const character = content[index];
+    if (character === '"') {
+      if (inQuotes && content[index + 1] === '"') {
+        index++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (!inQuotes && /[,\r\n]/.test(character)) {
+      collectField(index);
+      fieldStart = index + 1;
+    }
+  }
+  collectField(content.length);
+  return fileUrls;
+}
+
 function readStructuredDependency(
   filePath: string,
   realDependencyRoots: string[],
@@ -1259,25 +1296,30 @@ export function extractFileDependencies(configPath: string): string[] {
         assertionTraversalCount += 1;
         activeAssertions.add(assert);
         try {
-          if (
-            typeof assert.value === 'string' &&
-            assert.value.startsWith('file://')
-          ) {
-            processFileUrl(
-              assert.value.replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1'),
-            );
-          } else if (
-            typeof assert.value === 'object' &&
-            assert.value !== null &&
-            'file' in assert.value &&
-            typeof assert.value.file === 'string'
-          ) {
-            const absolutePath = resolveConfigDependency(
-              assert.value.file,
-              'assertion file dependency',
-            );
-            if (absolutePath) {
-              addDependencyPath(absolutePath);
+          const assertionValues = Array.isArray(assert.value)
+            ? assert.value
+            : [assert.value];
+          for (const assertionValue of assertionValues) {
+            if (
+              typeof assertionValue === 'string' &&
+              assertionValue.startsWith('file://')
+            ) {
+              processFileUrl(
+                assertionValue.replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1'),
+              );
+            } else if (
+              typeof assertionValue === 'object' &&
+              assertionValue !== null &&
+              'file' in assertionValue &&
+              typeof assertionValue.file === 'string'
+            ) {
+              const absolutePath = resolveConfigDependency(
+                assertionValue.file,
+                'assertion file dependency',
+              );
+              if (absolutePath) {
+                addDependencyPath(absolutePath);
+              }
             }
           }
           for (const transformValue of [
@@ -1401,6 +1443,9 @@ export function extractFileDependencies(configPath: string): string[] {
           );
           return;
         }
+        if (/^(?!file:\/\/)[A-Za-z][A-Za-z\d+.-]+:\/\//i.test(tests)) {
+          return;
+        }
         const rawTestPath = tests.startsWith('file://')
           ? tests.slice('file://'.length)
           : tests;
@@ -1438,11 +1483,9 @@ export function extractFileDependencies(configPath: string): string[] {
               getSafeRealDependencyRoots(),
             );
             if (/\.csv$/i.test(testFile)) {
-              for (const match of testContent.matchAll(
-                /file:\/\/[^,"'\r\n\]}]+/g,
-              )) {
+              for (const fileUrl of extractCsvFileUrls(testContent)) {
                 processFileUrl(
-                  match[0].replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1'),
+                  fileUrl.replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1'),
                 );
               }
             } else if (/\.jsonl$/i.test(testFile)) {

@@ -65,6 +65,7 @@ export function hasBalancedGlobDelimiters(pattern: string): boolean {
   let inCharacterClass = false;
   let inPosixCharacterClass = false;
   let escaped = false;
+  let openExtglobClosers = 0;
 
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
@@ -104,13 +105,29 @@ export function hasBalancedGlobDelimiters(pattern: string): boolean {
     if (character === '[') {
       inCharacterClass = true;
     } else if (character in closers) {
-      expectedClosers.push(closers[character]);
+      let isExtglob = /[?*+@!]/.test(pattern[index - 1] ?? '');
+      if (character === '(' && isExtglob && process.platform !== 'win32') {
+        let escapeIndex = index - 2;
+        while (pattern[escapeIndex] === '\\') {
+          escapeIndex--;
+        }
+        isExtglob = (index - 2 - escapeIndex) % 2 === 0;
+      }
+      if (character !== '(' || isExtglob) {
+        expectedClosers.push(closers[character]);
+        if (character === '(') {
+          openExtglobClosers++;
+        }
+      }
     } else if (character === '}' || character === ')' || character === ']') {
       if (expectedClosers[expectedClosers.length - 1] === character) {
         expectedClosers.pop();
+        if (character === ')') {
+          openExtglobClosers--;
+        }
       } else if (escapedOpeningClosers[character] > 0) {
         escapedOpeningClosers[character]--;
-      } else {
+      } else if (character !== ')' || openExtglobClosers > 0) {
         return false;
       }
     }
