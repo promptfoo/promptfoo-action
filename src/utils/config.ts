@@ -7,6 +7,7 @@ import * as path from 'path';
 import { isDirectory } from './fs';
 import {
   hasBalancedGlobDelimiters,
+  hasGlobCharacterClass,
   hasUnsafeNumericGlobRange,
   MAX_BRACE_EXPANSIONS,
   MAX_GLOB_PATTERN_LENGTH,
@@ -56,9 +57,17 @@ const FILE_BEARING_PROVIDER_KEYS = new Set([
   'transformResponse',
 ]);
 const HTTP_FILE_BEARING_PROVIDER_KEYS = new Set(['validateStatus']);
+const HTTP_TRANSFORM_PROVIDER_KEYS = new Set([
+  'responseParser',
+  'sessionParser',
+  'transformRequest',
+  'transformResponse',
+  'validateStatus',
+]);
 const FILE_BACKED_PROVIDER_PREFIX_PATTERN = /^(?:exec|python|golang|ruby):/;
 const ASSERTION_FILE_SELECTOR_PATTERN =
   /(\.(?:js|cjs|mjs|ts|cts|mts|py|rb)):[\s\S]*$/;
+const HTTP_FILE_SELECTOR_PATTERN = /(\.(?:js|cjs|mjs|ts|cts|mts)):[\s\S]+$/i;
 const TEST_FILE_SELECTOR_PATTERN = /(\.(?:js|cjs|mjs|ts|cts|mts|py)):[\s\S]*$/;
 const TEST_SHEET_SELECTOR_PATTERN = /(\.(?:xlsx|xls))#[\s\S]*$/i;
 const PROMPT_FILE_SELECTOR_PATTERN =
@@ -131,15 +140,34 @@ function isPromptFilePath(prompt: string): boolean {
   );
 }
 
-function readStructuredDependency(filePath: string): string {
+function readStructuredDependency(
+  filePath: string,
+  realDependencyRoots: string[],
+): string {
+  const resolvedPath = fs.realpathSync(filePath);
+  if (!realDependencyRoots.some((root) => isPathInside(root, resolvedPath))) {
+    throw new Error('nested dependency must stay within the dependency root');
+  }
   const descriptor = fs.openSync(
-    filePath,
+    resolvedPath,
     fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW,
   );
   try {
     const stats = fs.fstatSync(descriptor);
     if (!stats.isFile() || stats.size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
       throw new Error('nested dependency must be a bounded regular file');
+    }
+    const openedPath = fs.realpathSync(resolvedPath);
+    if (!realDependencyRoots.some((root) => isPathInside(root, openedPath))) {
+      throw new Error('nested dependency must stay within the dependency root');
+    }
+    const pathStats = fs.statSync(openedPath);
+    if (
+      !pathStats.isFile() ||
+      pathStats.dev !== stats.dev ||
+      pathStats.ino !== stats.ino
+    ) {
+      throw new Error('nested dependency changed while being opened');
     }
 
     const chunks: Buffer[] = [];
@@ -184,9 +212,30 @@ export function extractFileDependencies(configPath: string): string[] {
       dependencies.add(`${root.replace(/[\\/]+$/, '')}${path.sep}`);
     }
   };
+  let dependencyRootUnavailable = false;
+  let dependencyRootWarningEmitted = false;
+  const realDependencyRoots = new Map<string, string | undefined>();
+  const getSafeRealDependencyRoots = (): string[] => {
+    for (const root of dependencyRoots) {
+      if (!realDependencyRoots.has(root)) {
+        try {
+          realDependencyRoots.set(root, fs.realpathSync(root));
+        } catch {
+          dependencyRootUnavailable = true;
+          realDependencyRoots.set(root, undefined);
+        }
+      }
+    }
+    return Array.from(realDependencyRoots.values()).filter(
+      (root): root is string => root !== undefined,
+    );
+  };
 
   try {
-    const configContent = readStructuredDependency(configPath);
+    const configContent = readStructuredDependency(
+      configPath,
+      getSafeRealDependencyRoots(),
+    );
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
       return [];
@@ -201,9 +250,6 @@ export function extractFileDependencies(configPath: string): string[] {
       return [];
     }
 
-    let dependencyRootUnavailable = false;
-    let dependencyRootWarningEmitted = false;
-    const realDependencyRoots = new Map<string, string | undefined>();
     const resolveSafeDependencyPath = (
       absolutePath: string,
     ): string | undefined => {
@@ -212,19 +258,7 @@ export function extractFileDependencies(configPath: string): string[] {
         return undefined;
       }
 
-      for (const root of dependencyRoots) {
-        if (!realDependencyRoots.has(root)) {
-          try {
-            realDependencyRoots.set(root, fs.realpathSync(root));
-          } catch {
-            dependencyRootUnavailable = true;
-            realDependencyRoots.set(root, undefined);
-          }
-        }
-      }
-      const safeRealRoots = Array.from(realDependencyRoots.values()).filter(
-        (root): root is string => root !== undefined,
-      );
+      const safeRealRoots = getSafeRealDependencyRoots();
 
       let existingPath = absolutePath;
       const missingSegments: string[] = [];
@@ -376,7 +410,10 @@ export function extractFileDependencies(configPath: string): string[] {
         );
         return [];
       }
-      const isGlob = glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS);
+      const hasGlobMagic = (pattern: string): boolean =>
+        glob.hasMagic(pattern, GLOB_MAGIC_OPTIONS) ||
+        hasGlobCharacterClass(pattern);
+      const isGlob = hasGlobMagic(filePath);
       if (isGlob && !hasBalancedGlobDelimiters(filePath)) {
         throw new Error('invalid config dependency glob delimiters');
       }
@@ -437,10 +474,10 @@ export function extractFileDependencies(configPath: string): string[] {
         // Also add the base directory for watching
         // Extract the non-glob part of the path
         for (const safePattern of safePatterns) {
-          let basePath = glob.hasMagic(safePattern, GLOB_MAGIC_OPTIONS)
+          let basePath = hasGlobMagic(safePattern)
             ? safePattern
             : path.dirname(safePattern);
-          while (glob.hasMagic(basePath, GLOB_MAGIC_OPTIONS)) {
+          while (hasGlobMagic(basePath)) {
             const parentPath = path.dirname(basePath);
             if (parentPath === basePath) {
               break;
@@ -515,7 +552,10 @@ export function extractFileDependencies(configPath: string): string[] {
         return true;
       }
       try {
-        return glob.hasMagic(runtimePattern, GLOB_MAGIC_OPTIONS);
+        return (
+          glob.hasMagic(runtimePattern, GLOB_MAGIC_OPTIONS) ||
+          hasGlobCharacterClass(runtimePattern)
+        );
       } catch {
         return true;
       }
@@ -523,7 +563,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     const trackLiteralHttpDependency = (
       filePath: string,
-      stripFunctionSelector: boolean = false,
+      selectorPattern?: RegExp,
     ): void => {
       const rawFilePath = filePath.startsWith('file://')
         ? filePath.slice('file://'.length)
@@ -532,8 +572,8 @@ export function extractFileDependencies(configPath: string): string[] {
         watchDependencyRoots();
         return;
       }
-      const cleanFilePath = stripFunctionSelector
-        ? rawFilePath.replace(ASSERTION_FILE_SELECTOR_PATTERN, '$1')
+      const cleanFilePath = selectorPattern
+        ? rawFilePath.replace(selectorPattern, '$1')
         : rawFilePath;
       const absolutePath = resolveConfigDependency(
         cleanFilePath,
@@ -756,31 +796,23 @@ export function extractFileDependencies(configPath: string): string[] {
         const selectorIndex = providerPath.lastIndexOf(':');
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
-        const isHttpStatusValidator =
-          httpProviderContext &&
-          parentKey === 'validateStatus' &&
-          grandparentKey === 'config';
-        const executablePattern = isHttpStatusValidator
-          ? /\.(?:js|cjs|mjs|ts|cts|mts)$/
-          : isLanguageProvider
-            ? /\.(?:py|go|rb)$/
-            : nestedReference
-              ? /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i
-              : /\.(?:py|go|rb|js|cjs|mjs|ts|cts|mts)$/i;
-        const isJavascriptReference = isHttpStatusValidator
-          ? /\.(?:js|cjs|mjs|ts|cts|mts)$/.test(candidatePath)
-          : /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(candidatePath);
-        const isValidSelector = isHttpStatusValidator
-          ? selector.length > 0
-          : isLanguageProvider
-            ? true
-            : /\.go$/i.test(candidatePath)
-              ? /^(?:call_api|CallApi)$/.test(selector)
-              : isJavascriptReference
-                ? selector.length > 0
-                : /^[\p{L}_$][\p{L}\p{N}_$]*(?:\.[\p{L}_$][\p{L}\p{N}_$]*)*[!?]?$/u.test(
-                    selector,
-                  );
+        const executablePattern = isLanguageProvider
+          ? /\.(?:py|go|rb)$/
+          : nestedReference
+            ? /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i
+            : /\.(?:py|go|rb|js|cjs|mjs|ts|cts|mts)$/i;
+        const isJavascriptReference = /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(
+          candidatePath,
+        );
+        const isValidSelector = isLanguageProvider
+          ? true
+          : /\.go$/i.test(candidatePath)
+            ? /^(?:call_api|CallApi)$/.test(selector)
+            : isJavascriptReference
+              ? selector.length > 0
+              : /^[\p{L}_$][\p{L}\p{N}_$]*(?:\.[\p{L}_$][\p{L}\p{N}_$]*)*[!?]?$/u.test(
+                  selector,
+                );
         const cleanPath =
           selectorIndex > 1 &&
           executablePattern.test(candidatePath) &&
@@ -833,7 +865,10 @@ export function extractFileDependencies(configPath: string): string[] {
           activeProviderConfigs.add(absolutePath);
           try {
             const providerConfig = loadYaml(
-              readStructuredDependency(absolutePath),
+              readStructuredDependency(
+                absolutePath,
+                getSafeRealDependencyRoots(),
+              ),
               {
                 schema: CORE_SCHEMA.withTags(mergeTag),
               },
@@ -949,7 +984,10 @@ export function extractFileDependencies(configPath: string): string[] {
               })
             : undefined;
         if (fileAuthPath !== undefined) {
-          trackLiteralHttpDependency(fileAuthPath, true);
+          trackLiteralHttpDependency(
+            fileAuthPath,
+            ASSERTION_FILE_SELECTOR_PATTERN,
+          );
         }
         for (const [key, nestedValue] of Object.entries(value)) {
           if (key === 'env' || (key === 'path' && fileAuthPath !== undefined)) {
@@ -959,6 +997,27 @@ export function extractFileDependencies(configPath: string): string[] {
             HTTP_FILE_BEARING_PROVIDER_KEYS.has(key) &&
             (!isHttpProvider || parentKey !== 'config')
           ) {
+            continue;
+          }
+          if (
+            isHttpProvider &&
+            typeof nestedValue === 'string' &&
+            ((parentKey === 'config' &&
+              HTTP_TRANSFORM_PROVIDER_KEYS.has(key)) ||
+              (parentKey === 'session' &&
+                grandparentKey === 'config' &&
+                key === 'responseParser'))
+          ) {
+            const transformPath = renderEnvTemplates(nestedValue, {
+              ...process.env,
+              ...providerEnv,
+            });
+            if (transformPath.startsWith('file://')) {
+              trackLiteralHttpDependency(
+                transformPath,
+                HTTP_FILE_SELECTOR_PATTERN,
+              );
+            }
             continue;
           }
           if (
@@ -1312,9 +1371,12 @@ export function extractFileDependencies(configPath: string): string[] {
       }
       try {
         extractGeneratorConfigReferences(
-          loadYaml(readStructuredDependency(promptFile), {
-            schema: CORE_SCHEMA.withTags(mergeTag),
-          }),
+          loadYaml(
+            readStructuredDependency(promptFile, getSafeRealDependencyRoots()),
+            {
+              schema: CORE_SCHEMA.withTags(mergeTag),
+            },
+          ),
           true,
         );
       } catch {
@@ -1371,7 +1433,10 @@ export function extractFileDependencies(configPath: string): string[] {
           testTraversalCount += 1;
           visitedTestFiles.add(testFileContextKey);
           try {
-            const testContent = readStructuredDependency(testFile);
+            const testContent = readStructuredDependency(
+              testFile,
+              getSafeRealDependencyRoots(),
+            );
             if (/\.csv$/i.test(testFile)) {
               for (const match of testContent.matchAll(
                 /file:\/\/[^,"'\r\n\]}]+/g,
@@ -1469,18 +1534,44 @@ export function extractFileDependencies(configPath: string): string[] {
             : typeof providerObject?.id === 'string'
               ? providerObject.id
               : undefined;
-        const providerPathMatch = providerId?.match(
-          /^(file:\/\/|exec:|python:|golang:|ruby:)([\s\S]*)$/,
-        );
-        const normalizedProviderId = providerPathMatch
-          ? `${providerPathMatch[1]}${
-              path.isAbsolute(providerPathMatch[2])
-                ? providerPathMatch[2]
-                : path.resolve(testBaseDir, providerPathMatch[2])
-            }`
-          : providerId;
+        const rebaseProviderReference = (
+          reference: string,
+          activeEnv: ProviderEnv,
+        ): string => {
+          const renderedReference = renderEnvTemplates(reference, {
+            ...process.env,
+            ...activeEnv,
+          });
+          const providerPathMatch = renderedReference.match(
+            /^(file:\/\/|exec:|python:|golang:|ruby:)([\s\S]*)$/,
+          );
+          if (!providerPathMatch) {
+            return renderedReference;
+          }
+          return `${providerPathMatch[1]}${
+            path.isAbsolute(providerPathMatch[2])
+              ? providerPathMatch[2]
+              : path.resolve(testBaseDir, providerPathMatch[2])
+          }`;
+        };
+        const normalizedProviderId =
+          providerId === undefined
+            ? undefined
+            : rebaseProviderReference(providerId, configEnv);
         const normalizedProvider = providerObject
-          ? { ...providerObject, id: normalizedProviderId }
+          ? providerId === undefined
+            ? Object.fromEntries(
+                Object.entries(providerObject).map(([key, value]) => {
+                  const providerEnv =
+                    typeof value === 'object' &&
+                    value !== null &&
+                    'env' in value
+                      ? withEnvOverrides(configEnv, value.env)
+                      : configEnv;
+                  return [rebaseProviderReference(key, providerEnv), value];
+                }),
+              )
+            : { ...providerObject, id: normalizedProviderId }
           : normalizedProviderId;
         processProviderValue(
           normalizedProvider,
@@ -1518,6 +1609,8 @@ export function extractFileDependencies(configPath: string): string[] {
             );
           }
         }
+        extractGeneratorConfigReferences(options.response_format);
+        extractGeneratorConfigReferences(options.responseFormat);
       }
     };
 
@@ -1562,7 +1655,10 @@ export function extractFileDependencies(configPath: string): string[] {
             visitedScenarioFiles.add(scenarioFile);
             try {
               const loadedScenarios = loadYaml(
-                readStructuredDependency(scenarioFile),
+                readStructuredDependency(
+                  scenarioFile,
+                  getSafeRealDependencyRoots(),
+                ),
                 {
                   schema: CORE_SCHEMA.withTags(mergeTag),
                 },

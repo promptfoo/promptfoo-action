@@ -1737,6 +1737,27 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should match an optimized single-character class in a config dependency glob', async () => {
+      const minimatchMatch = vi.spyOn(Minimatch.prototype, 'match');
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/providers/{.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockReturnValue(false);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/providers/[{].yaml',
+      ]);
+
+      await run();
+
+      expect(minimatchMatch).toHaveBeenCalledWith('evals/providers/{.yaml');
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should compile a bounded dependency brace matcher once for a large pull request', async () => {
       const changedFiles = Array.from({ length: 2999 }, (_, index) => ({
         filename: `docs/file-${index}.md`,
@@ -2528,6 +2549,21 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
+    test('should preserve an opening brace inside an action prompt character class', async () => {
+      withInputs({ prompts: 'prompts/[{].txt' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'prompts/{.txt' }]);
+      mockGlob.sync.mockReturnValue(['prompts/{.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/[{].txt',
+        expect.objectContaining({ nodir: true, braceExpandMax: 1024 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should preserve POSIX character classes in action prompt globs', async () => {
       const patterns = [
         'prompts/[[:alpha:]]*.txt',
@@ -2619,6 +2655,60 @@ describe('GitHub Action Main', () => {
           .some((call) =>
             String(call[0]).includes('CONFIG_ESCAPE_SECRET_MARKER'),
           ),
+      ).toBe(false);
+    });
+
+    test('should reject a working-directory symlink that escapes the checkout in config-prompt mode', async () => {
+      withInputs({
+        'working-directory': 'evals',
+        config: '/private/config/promptfooconfig.yaml',
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const resolvedPath = filePath.toString();
+        return resolvedPath === path.join(process.cwd(), 'evals')
+          ? '/private/outside/WORKDIR_ESCAPE_SECRET_MARKER'
+          : resolvedPath;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Working directory resolves outside the repository workspace; refusing to evaluate unsafe working directory',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) => String(call[0]).includes('SECRET_MARKER')),
+      ).toBe(false);
+    });
+
+    test('should reject a working-directory input that lexically escapes the checkout', async () => {
+      withInputs({
+        'working-directory': '../WORKDIR_TRAVERSAL_SECRET_MARKER',
+        config: '/private/config/promptfooconfig.yaml',
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Working directory resolves outside the repository workspace; refusing to evaluate unsafe working directory',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) => String(call[0]).includes('SECRET_MARKER')),
       ).toBe(false);
     });
 
@@ -2841,6 +2931,37 @@ describe('GitHub Action Main', () => {
       mockConfig.extractFileDependencies.mockReturnValue([
         'fixtures/referenced-upload.pdf',
       ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.not.arrayContaining(['--prompts']),
+        expect.any(Object),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) => String(call[0]).includes('SECRET_MARKER')),
+      ).toBe(false);
+    });
+
+    test('should not validate or log unused action prompt matches when config prompts are evaluated', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/unused\r\n::error::UNUSED_ANNOTATION_SECRET_MARKER.txt',
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const resolvedPath = filePath.toString();
+        if (resolvedPath.includes('UNUSED_ANNOTATION_SECRET_MARKER')) {
+          throw new Error('UNUSED_REALPATH_SECRET_MARKER');
+        }
+        return resolvedPath;
+      });
 
       await run();
 

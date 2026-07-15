@@ -24,6 +24,7 @@ import {
 import { isDirectory } from './utils/fs';
 import {
   hasBalancedGlobDelimiters,
+  hasGlobCharacterClass,
   hasUnsafeNumericGlobRange,
   MAX_BRACE_EXPANSIONS,
   MAX_GLOB_PATTERN_LENGTH,
@@ -215,6 +216,32 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    try {
+      const lexicalWorkingDirectory = path.relative(
+        workspaceRoot,
+        workingDirectory,
+      );
+      const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+      const realWorkingDirectory = path.relative(
+        realWorkspaceRoot,
+        fs.realpathSync(workingDirectory),
+      );
+      if (
+        [lexicalWorkingDirectory, realWorkingDirectory].some(
+          (relativePath) =>
+            relativePath === '..' ||
+            relativePath.startsWith(`..${path.sep}`) ||
+            path.isAbsolute(relativePath),
+        )
+      ) {
+        throw new Error('working directory escaped workspace');
+      }
+    } catch {
+      throw new PromptfooActionError(
+        'Working directory resolves outside the repository workspace; refusing to evaluate unsafe working directory',
+        ErrorCodes.INVALID_CONFIGURATION,
+      );
+    }
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
@@ -619,7 +646,8 @@ export async function run(): Promise<void> {
                 magicalBraces: true,
                 braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
                 windowsPathsNoEscape: true,
-              })
+              }) ||
+              hasGlobCharacterClass(runtimeDep)
             ) {
               const matcher = new Minimatch(runtimeDep, {
                 platform: 'linux',
@@ -677,8 +705,11 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const selectedPromptFiles =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const selectedPromptFiles = useConfigPrompts
+      ? []
+      : configChanged || dependencyChanged
+        ? allPromptFiles
+        : promptFiles;
     const seenPromptFiles = new Set<string>();
     const promptsToEvaluate: string[] = [];
     for (const promptFile of selectedPromptFiles) {
@@ -687,7 +718,7 @@ export async function run(): Promise<void> {
       seenPromptFiles.add(absolutePrompt);
       promptsToEvaluate.push(path.relative(workingDirectory, absolutePrompt));
     }
-    const evaluatedPromptFiles = useConfigPrompts ? [] : promptsToEvaluate;
+    const evaluatedPromptFiles = promptsToEvaluate;
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
         'Matched prompt file path contains a newline; refusing to evaluate unsafe path',

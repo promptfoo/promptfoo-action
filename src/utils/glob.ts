@@ -10,6 +10,13 @@ export function normalizeRuntimeGlobPattern(pattern: string): string {
   return pattern.replace(/\\/g, '/');
 }
 
+export function hasGlobCharacterClass(pattern: string): boolean {
+  const openingBracket = pattern.indexOf('[');
+  return (
+    openingBracket !== -1 && pattern.indexOf(']', openingBracket + 1) !== -1
+  );
+}
+
 export function hasUnsafeNumericGlobRange(pattern: string): boolean {
   for (const match of pattern.matchAll(NUMERIC_BRACE_RANGE_PATTERN)) {
     if (process.platform !== 'win32') {
