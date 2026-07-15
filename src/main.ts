@@ -540,10 +540,16 @@ export async function run(): Promise<void> {
     };
 
     for (const globPattern of promptFilesGlobs) {
-      const matches = glob.sync(globPattern, {
-        cwd: workingDirectory,
-        nodir: true,
-      });
+      let matches: string[];
+      try {
+        matches = glob.sync(globPattern, {
+          cwd: workingDirectory,
+          nodir: true,
+          braceExpandMax: 1025,
+        });
+      } catch {
+        throw new Error('Failed to resolve action prompt glob pattern safely.');
+      }
       const allMatches = matches.filter((file) => {
         const repositoryFile = toRepositoryPath(
           path.relative(workspaceRoot, path.resolve(workingDirectory, file)),

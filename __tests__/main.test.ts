@@ -522,6 +522,49 @@ describe('GitHub Action Main', () => {
       expect(body).not.toContain(absolutePrompt);
     });
 
+    test('should bound brace expansion while resolving action prompt globs', async () => {
+      withInputs({ prompts: 'prompts/{one,two,three}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/one.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/{one,two,three}.txt',
+        expect.objectContaining({
+          cwd: process.cwd(),
+          nodir: true,
+          braceExpandMax: 1025,
+        }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should fail safely when an action prompt glob cannot be resolved', async () => {
+      const forgedAnnotation = 'PROMPT_GLOB_CANARY_019F62C3';
+      const unsafePattern = `prompts/{one,two}::error::${forgedAnnotation}`;
+      withInputs({ prompts: unsafePattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation(() => {
+        throw new Error(`malformed glob ${unsafePattern}`);
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Failed to resolve action prompt glob pattern safely.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+        forgedAnnotation,
+      );
+    });
+
     test('should handle empty prompts input', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
