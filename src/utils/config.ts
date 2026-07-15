@@ -257,12 +257,29 @@ export function extractFileDependencies(
         const safeMatches: string[] = [];
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          if (isSafeDependency(absoluteMatch)) {
+          let realDependencyRoot: string;
+          let realCwd: string;
+          let realMatch: string;
+          try {
+            realDependencyRoot = fs.realpathSync(dependencyRoot);
+            realCwd = fs.realpathSync(cwd);
+            realMatch = fs.realpathSync(absoluteMatch);
+          } catch {
+            core.warning(
+              'Ignoring unsafe config dependency glob match: resolved path cannot be verified',
+            );
+            continue;
+          }
+          if (
+            isSafeDependency(absoluteMatch) &&
+            (isPathInside(realDependencyRoot, realMatch) ||
+              isPathInside(realCwd, realMatch))
+          ) {
             dependencies.add(absoluteMatch);
             safeMatches.push(absoluteMatch);
           } else {
             core.warning(
-              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`,
+              'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
             );
           }
         }

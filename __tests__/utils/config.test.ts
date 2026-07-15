@@ -2737,6 +2737,59 @@ providers:
     );
   });
 
+  it('should filter a checkout glob match whose symlink escapes an external config and preserve safe siblings', () => {
+    const escapedMatch =
+      '/test/working/providers/leak\n::error::GLOB_ESCAPE_CANARY_019F62C3.py';
+    const safeMatch = '/test/working/providers/custom.py';
+    mockFs.readFileSync.mockReturnValue(
+      'providers: [file:///test/working/providers/*.py]',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([escapedMatch, safeMatch]);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath) === escapedMatch
+        ? '/test/secrets/leaked.py'
+        : String(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['providers/custom.py', 'providers']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
+    );
+    expect((core.warning as Mock).mock.calls.flat().join('\n')).not.toContain(
+      'GLOB_ESCAPE_CANARY_019F62C3',
+    );
+  });
+
+  it('should filter an unverifiable checkout glob match and preserve safe siblings', () => {
+    const deniedMatch = '/test/working/providers/denied.py';
+    const safeMatch = '/test/working/providers/custom.py';
+    mockFs.readFileSync.mockReturnValue(
+      'providers: [file:///test/working/providers/*.py]',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([deniedMatch, safeMatch]);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (String(filePath) === deniedMatch) {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      return String(filePath);
+    });
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['providers/custom.py', 'providers']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob match: resolved path cannot be verified',
+    );
+  });
+
   it('should extract all file types from complex config', () => {
     const configContent = `
 providers:
