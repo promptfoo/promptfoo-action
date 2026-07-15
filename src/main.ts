@@ -539,6 +539,13 @@ export async function run(): Promise<void> {
         cwd: workingDirectory,
         nodir: true,
       });
+      if (matches.some((file) => /[\r\n]/.test(file))) {
+        throw new PromptfooActionError(
+          'Invalid prompt file path: line breaks are not allowed.',
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Rename the prompt file so its path does not contain CR or LF characters.',
+        );
+      }
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
