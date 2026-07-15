@@ -29,7 +29,10 @@ export interface PromptfooConfig {
   };
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   targets?: Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: string | Array<string | { file?: string; [key: string]: unknown }>;
+  prompts?:
+    | string
+    | Record<string, string>
+    | Array<string | { file?: string; [key: string]: unknown }>;
   tests?:
     | string
     | {
@@ -81,10 +84,21 @@ function isUnsupportedWindowsPath(filePath: string): boolean {
 
 function hasUnsafeGroupedGlob(value: string): boolean {
   const closingDelimiters: string[] = [];
+  let inCharacterClass = false;
   for (let index = 0; index < value.length; index++) {
     const character = value[index];
     if (path.sep === '/' && character === '\\') {
       index++;
+      continue;
+    }
+    if (character === '[') {
+      inCharacterClass = true;
+      continue;
+    }
+    if (inCharacterClass) {
+      if (character === ']') {
+        inCharacterClass = false;
+      }
       continue;
     }
     if (character === '{') {
@@ -480,7 +494,7 @@ export function extractFileDependencies(
     const httpFileAuthParents = new WeakSet<object>();
     const providerIdParents = new WeakSet<object>();
     const nestedFileUrls: string[] = [];
-    const normalizedTestGeneratorUrls = new Set<string>();
+    const normalizedSelectorUrls = new Set<string>();
     const nestedFilePaths: string[] = [];
     const pending: Array<{
       value: unknown;
@@ -1052,20 +1066,86 @@ export function extractFileDependencies(
       );
     };
 
+    const isPromptReference = (reference: string): boolean => {
+      if (
+        !reference ||
+        reference.length > maxGlobPatternLength ||
+        reference.includes('\0')
+      ) {
+        throw new Error('Invalid Promptfoo prompt dependency');
+      }
+      if (
+        ['\n', 'portkey://', 'langfuse://', 'helicone://'].some((value) =>
+          reference.includes(value),
+        )
+      ) {
+        return false;
+      }
+      if (
+        reference.startsWith('file://') ||
+        reference.startsWith('exec:') ||
+        reference.includes('*') ||
+        reference.includes('/') ||
+        reference.includes('\\')
+      ) {
+        return true;
+      }
+      const tokens = reference.split(':');
+      const lastToken = tokens[tokens.length - 1];
+      const pathToken = tokens[tokens.length - 2] ?? '';
+      return (
+        /\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)$/.test(
+          lastToken,
+        ) ||
+        /\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)$/.test(
+          pathToken,
+        ) ||
+        reference.charAt(reference.length - 3) === '.' ||
+        reference.charAt(reference.length - 4) === '.'
+      );
+    };
+
+    const processPromptReference = (reference: string): void => {
+      if (!isPromptReference(reference)) {
+        return;
+      }
+      let fileUrl = reference;
+      if (reference.startsWith('file://')) {
+        normalizedSelectorUrls.add(reference);
+      }
+      if (reference.startsWith('exec:')) {
+        const executable = reference.slice('exec:'.length);
+        if (/\s/.test(executable)) {
+          throw new Error('Command-style Promptfoo exec prompts are unsafe');
+        }
+        fileUrl = `file://${executable}`;
+      } else if (!reference.startsWith('file://')) {
+        fileUrl = `file://${reference}`;
+      }
+      for (const normalizedFileUrl of normalizeFileUrlSelectors(
+        fileUrl,
+        /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/,
+      )) {
+        processFileUrl(normalizedFileUrl);
+      }
+    };
+
     // Extract prompt files
     if (typeof config.prompts === 'string') {
-      processConfigReference(config.prompts);
+      processPromptReference(config.prompts);
     } else if (config.prompts) {
-      for (const prompt of config.prompts) {
+      const prompts = Array.isArray(config.prompts)
+        ? config.prompts
+        : Object.values(config.prompts);
+      for (const prompt of prompts) {
         if (typeof prompt === 'string') {
-          processConfigReference(prompt);
-        } else if (typeof prompt === 'object' && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            'prompt file dependency',
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
+          processPromptReference(prompt);
+        } else if (typeof prompt === 'object' && prompt !== null) {
+          for (const field of ['file', 'raw', 'id']) {
+            const reference = prompt[field];
+            if (typeof reference === 'string') {
+              processPromptReference(reference);
+            }
           }
         }
       }
@@ -1173,7 +1253,7 @@ export function extractFileDependencies(
           const rawPath = testRecord.path.startsWith('file://')
             ? testRecord.path
             : `file://${testRecord.path}`;
-          normalizedTestGeneratorUrls.add(rawPath);
+          normalizedSelectorUrls.add(rawPath);
           for (const fileUrl of normalizeFileUrlSelectors(
             rawPath,
             /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/,
@@ -1231,7 +1311,7 @@ export function extractFileDependencies(
     }
 
     for (const fileUrl of nestedFileUrls) {
-      if (!normalizedTestGeneratorUrls.has(fileUrl)) {
+      if (!normalizedSelectorUrls.has(fileUrl)) {
         processFileUrl(fileUrl);
       }
     }

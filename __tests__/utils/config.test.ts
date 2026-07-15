@@ -103,10 +103,9 @@ prompts:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toHaveLength(3);
+    expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/prompts/prompt1.txt');
     expect(deps).toContain('../config/prompts/prompt2.txt');
-    expect(deps).toContain('../config/This is an inline prompt');
   });
 
   it('should extract test variable files', () => {
@@ -1560,6 +1559,126 @@ providers:
     ]);
   });
 
+  it('keeps punctuation-only inline prompts out of dependency globbing', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': "prompts:\n  - 'What is 2+2?'\n",
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('?'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'What is 2+2?\nExplain briefly.',
+    'portkey://prompt-id',
+    'langfuse://prompt-id',
+    'helicone://prompt-id',
+  ])('keeps a runtime-inline prompt out of dependency extraction: %s', (prompt) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': JSON.stringify({
+        prompts: [prompt],
+      }),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for an empty prompt reference and safely ignores a non-object entry', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': JSON.stringify({ prompts: [''] }),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid Promptfoo prompt dependency'),
+    );
+
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': JSON.stringify({ prompts: [7] }),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+  });
+
+  it('tracks executable and object prompt references while preserving inline map entries', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'prompts:',
+        '  - exec:prompts/build.py:generate',
+        '  - exec:prompts/build.sh',
+        '  - raw: file://prompts/object.rb:render',
+        '    id: prompts/object.js:render',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'prompts/build.py',
+      'prompts/build.sh',
+      'prompts/object.rb',
+      'prompts/object.js',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': JSON.stringify({
+        prompts: {
+          inline: 'What is 2+2?',
+          file: 'prompts/mapped.txt',
+        },
+      }),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'prompts/mapped.txt',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('tracks a scalar file-backed tests reference', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': 'tests: file://tests/cases.yaml\n',
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'tests/cases.yaml',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('fails closed for a command-style executable prompt', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml':
+        "prompts:\n  - 'exec:node prompts/build.js'\n",
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Command-style Promptfoo exec prompts are unsafe',
+      ),
+    );
+  });
+
   it('safely ignores a prompt object without a file reference', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': 'prompts:\n  - {}\n',
@@ -2295,6 +2414,28 @@ tests:
     ).toEqual([
       'providers/other/safe.py',
       'providers/',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it.each([
+    'file://{foo,bar}/[!)]*.py',
+    'file://{foo,bar}/[!}]*.py',
+    'file://{foo,bar}/literal).py',
+  ])('preserves a valid grouped glob with literal closers %s', (dependency) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': `metadata: ${dependency}\n`,
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      /[*?{}()[\]]/.test(value),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/foo/safe.py']);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'foo/safe.py',
+      './',
       ...implicitConfigDependencies('promptfooconfig.yaml'),
     ]);
   });

@@ -36281,10 +36281,21 @@ function isUnsupportedWindowsPath(filePath) {
 }
 function hasUnsafeGroupedGlob(value) {
   const closingDelimiters = [];
+  let inCharacterClass = false;
   for (let index = 0; index < value.length; index++) {
     const character = value[index];
     if (path5.sep === "/" && character === "\\") {
       index++;
+      continue;
+    }
+    if (character === "[") {
+      inCharacterClass = true;
+      continue;
+    }
+    if (inCharacterClass) {
+      if (character === "]") {
+        inCharacterClass = false;
+      }
       continue;
     }
     if (character === "{") {
@@ -36557,7 +36568,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
     const httpFileAuthParents = /* @__PURE__ */ new WeakSet();
     const providerIdParents = /* @__PURE__ */ new WeakSet();
     const nestedFileUrls = [];
-    const normalizedTestGeneratorUrls = /* @__PURE__ */ new Set();
+    const normalizedSelectorUrls = /* @__PURE__ */ new Set();
     const nestedFilePaths = [];
     const pending = [{ value: config2, file: lexicalConfigPath, context: "general" }];
     let inspectedNodeCount = 0;
@@ -36988,19 +36999,64 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         reference.startsWith("file://") ? reference : `file://${reference}`
       );
     };
+    const isPromptReference = (reference) => {
+      if (!reference || reference.length > maxGlobPatternLength || reference.includes("\0")) {
+        throw new Error("Invalid Promptfoo prompt dependency");
+      }
+      if (["\n", "portkey://", "langfuse://", "helicone://"].some(
+        (value) => reference.includes(value)
+      )) {
+        return false;
+      }
+      if (reference.startsWith("file://") || reference.startsWith("exec:") || reference.includes("*") || reference.includes("/") || reference.includes("\\")) {
+        return true;
+      }
+      const tokens = reference.split(":");
+      const lastToken = tokens[tokens.length - 1];
+      const pathToken = tokens[tokens.length - 2] ?? "";
+      return /\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)$/.test(
+        lastToken
+      ) || /\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)$/.test(
+        pathToken
+      ) || reference.charAt(reference.length - 3) === "." || reference.charAt(reference.length - 4) === ".";
+    };
+    const processPromptReference = (reference) => {
+      if (!isPromptReference(reference)) {
+        return;
+      }
+      let fileUrl = reference;
+      if (reference.startsWith("file://")) {
+        normalizedSelectorUrls.add(reference);
+      }
+      if (reference.startsWith("exec:")) {
+        const executable = reference.slice("exec:".length);
+        if (/\s/.test(executable)) {
+          throw new Error("Command-style Promptfoo exec prompts are unsafe");
+        }
+        fileUrl = `file://${executable}`;
+      } else if (!reference.startsWith("file://")) {
+        fileUrl = `file://${reference}`;
+      }
+      for (const normalizedFileUrl of normalizeFileUrlSelectors(
+        fileUrl,
+        /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+      )) {
+        processFileUrl(normalizedFileUrl);
+      }
+    };
     if (typeof config2.prompts === "string") {
-      processConfigReference(config2.prompts);
+      processPromptReference(config2.prompts);
     } else if (config2.prompts) {
-      for (const prompt of config2.prompts) {
+      const prompts = Array.isArray(config2.prompts) ? config2.prompts : Object.values(config2.prompts);
+      for (const prompt of prompts) {
         if (typeof prompt === "string") {
-          processConfigReference(prompt);
-        } else if (typeof prompt === "object" && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            "prompt file dependency"
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
+          processPromptReference(prompt);
+        } else if (typeof prompt === "object" && prompt !== null) {
+          for (const field of ["file", "raw", "id"]) {
+            const reference = prompt[field];
+            if (typeof reference === "string") {
+              processPromptReference(reference);
+            }
           }
         }
       }
@@ -37078,7 +37134,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         const testRecord = test;
         if (typeof testRecord.path === "string") {
           const rawPath = testRecord.path.startsWith("file://") ? testRecord.path : `file://${testRecord.path}`;
-          normalizedTestGeneratorUrls.add(rawPath);
+          normalizedSelectorUrls.add(rawPath);
           for (const fileUrl of normalizeFileUrlSelectors(
             rawPath,
             /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
@@ -37128,7 +37184,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       }
     }
     for (const fileUrl of nestedFileUrls) {
-      if (!normalizedTestGeneratorUrls.has(fileUrl)) {
+      if (!normalizedSelectorUrls.has(fileUrl)) {
         processFileUrl(fileUrl);
       }
     }
