@@ -37903,6 +37903,11 @@ var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
+function formatChangedFilesForLog(changedFiles) {
+  return JSON.stringify(
+    changedFiles.split(changedFiles.includes("\0") ? "\0" : "\n").filter(Boolean)
+  );
+}
 function validateGitRevision(ref) {
   const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
   const safeHeadRevision = /^HEAD(?:~[1-9][0-9]*|\^[1-9]?)?$/.test(ref);
@@ -38219,27 +38224,30 @@ async function run() {
       } else {
         changedFiles = pullRequestFiles.flatMap(
           (file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]
-        ).join("\n");
+        ).join("\0").concat("\0");
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        changedFiles = filesInput;
-        info(`Using manually specified files: ${changedFiles}`);
+        changedFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter(Boolean).join("\n");
+        info(
+          `Using manually specified files: ${formatChangedFilesForLog(changedFiles)}`
+        );
       } else {
         validateGitRevision(compareBase);
         try {
           changedFiles = await gitInterface.diff([
             "--name-only",
             "--no-renames",
+            "-z",
             compareBase,
             "HEAD",
             "--"
           ]);
           info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`
+            `Comparing against ${compareBase}, found changed files: ${formatChangedFilesForLog(changedFiles)}`
           );
         } catch (error2) {
           warning(
@@ -38259,12 +38267,13 @@ async function run() {
           changedFiles = await gitInterface.diff([
             "--name-only",
             "--no-renames",
+            "-z",
             beforeSha,
             afterSha,
             "--"
           ]);
           info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${formatChangedFilesForLog(changedFiles)}`
           );
         } catch (error2) {
           warning(
@@ -38284,7 +38293,7 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const changedFilesList = changedFiles.split(/\r?\n/).map((file) => file.trim()).filter(Boolean);
+    const changedFilesList = changedFiles.split(changedFiles.includes("\0") ? "\0" : "\n").filter(Boolean);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
@@ -38318,7 +38327,7 @@ async function run() {
       ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         debug(
-          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
+          `Found ${dependencies.length} file dependencies in config: ${JSON.stringify(dependencies)}`
         );
         dependencyChanged = dependencies.some((dep) => {
           if (dep === "./" || dep === ".") {
@@ -38344,13 +38353,20 @@ async function run() {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new PromptfooActionError(
+        "Prompt filenames must not contain CR or LF characters",
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Rename the matched prompt files to remove line-break characters."
+      );
+    }
     loadEnvironmentFiles();
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${promptFiles.join(", ")}`
+        `Processing all matching prompt files: ${JSON.stringify(promptFiles)}`
       );
     }
     loadConfigEnvironmentFiles(configAbsolutePath, workingDirectory);

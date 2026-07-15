@@ -38,6 +38,14 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function formatChangedFilesForLog(changedFiles: string): string {
+  return JSON.stringify(
+    changedFiles
+      .split(changedFiles.includes('\0') ? '\0' : '\n')
+      .filter(Boolean),
+  );
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -453,7 +461,8 @@ export async function run(): Promise<void> {
               ? [file.filename, file.previous_filename]
               : [file.filename],
           )
-          .join('\n');
+          .join('\0')
+          .concat('\0');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -470,8 +479,14 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
-        core.info(`Using manually specified files: ${changedFiles}`);
+        changedFiles = filesInput
+          .split(/\r?\n/)
+          .map((file: string) => file.trim())
+          .filter(Boolean)
+          .join('\n');
+        core.info(
+          `Using manually specified files: ${formatChangedFilesForLog(changedFiles)}`,
+        );
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
@@ -479,12 +494,13 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -512,12 +528,13 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
           );
         } catch (error) {
           core.warning(
@@ -541,8 +558,7 @@ export async function run(): Promise<void> {
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
     const changedFilesList = changedFiles
-      .split(/\r?\n/)
-      .map((file) => file.trim())
+      .split(changedFiles.includes('\0') ? '\0' : '\n')
       .filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
@@ -589,7 +605,7 @@ export async function run(): Promise<void> {
       ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(
-          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
+          `Found ${dependencies.length} file dependencies in config: ${JSON.stringify(dependencies)}`,
         );
 
         // Check if any changed file matches the dependencies
@@ -633,6 +649,14 @@ export async function run(): Promise<void> {
       return;
     }
 
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new PromptfooActionError(
+        'Prompt filenames must not contain CR or LF characters',
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Rename the matched prompt files to remove line-break characters.',
+      );
+    }
+
     // Only parse repository environment files once an evaluation is required.
     loadEnvironmentFiles();
 
@@ -642,7 +666,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${JSON.stringify(promptFiles)}`,
       );
     }
 

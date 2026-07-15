@@ -2175,6 +2175,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -2247,6 +2248,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -2295,7 +2297,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using manually specified files: ["prompts/file1.txt","prompts/file2.txt"]',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
@@ -2390,7 +2392,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: action-input-file.txt',
+        'Using manually specified files: ["action-input-file.txt"]',
       );
       // Since we're providing files directly, diff shouldn't be called
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
@@ -2440,6 +2442,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -2535,13 +2538,15 @@ describe('GitHub Action Main', () => {
     test('should detect a config dependency renamed away in a pull request', async () => {
       mockOctokit.paginate.mockResolvedValue([
         {
-          filename: 'configs/renamed.yaml',
-          previous_filename: 'configs/base.yaml',
+          filename: ' configs/renamed.yaml ',
+          previous_filename: ' configs/base.yaml ',
           status: 'renamed',
         },
       ]);
       mockGlob.sync.mockReturnValue([]);
-      mockConfig.extractFileDependencies.mockReturnValue(['configs/base.yaml']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' configs/base.yaml ',
+      ]);
 
       await run();
 
@@ -2551,6 +2556,42 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should preserve whitespace and newlines in a single pull-request filename', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' configs/base\nname.yaml ' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' configs/base\nname.yaml ',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        expect.stringContaining(JSON.stringify([' configs/base\nname.yaml '])),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject a matched prompt filename that could forge a workflow command', async () => {
+      const forgedPrompt = 'prompts/policy\n::error::forged.txt';
+      mockOctokit.paginate.mockResolvedValue([{ filename: forgedPrompt }]);
+      mockGlob.sync.mockReturnValue([forgedPrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Prompt filenames must not contain CR or LF'),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalledWith(
+        expect.stringContaining('forged.txt'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test.each([
       {
         eventName: 'push',
@@ -2558,6 +2599,7 @@ describe('GitHub Action Main', () => {
         diffArgs: [
           '--name-only',
           '--no-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -2566,7 +2608,7 @@ describe('GitHub Action Main', () => {
       {
         eventName: 'workflow_dispatch',
         payload: { inputs: { base: 'main' } },
-        diffArgs: ['--name-only', '--no-renames', 'main', 'HEAD', '--'],
+        diffArgs: ['--name-only', '--no-renames', '-z', 'main', 'HEAD', '--'],
       },
     ])('should preflight a dependency renamed away during $eventName', async ({
       eventName,
@@ -2582,10 +2624,12 @@ describe('GitHub Action Main', () => {
         configurable: true,
       });
       mockGitInterface.diff.mockResolvedValueOnce(
-        'configs/base.yaml\nconfigs/renamed.yaml',
+        ' configs/base\tname.yaml \0 configs/renamed\tname.yaml \0',
       );
       mockGlob.sync.mockReturnValue([]);
-      mockConfig.extractFileDependencies.mockReturnValue(['configs/base.yaml']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' configs/base\tname.yaml ',
+      ]);
       mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
         const value = String(filePath);
         return (
@@ -2615,6 +2659,14 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith(diffArgs);
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        expect.stringContaining(
+          JSON.stringify([
+            ' configs/base\tname.yaml ',
+            ' configs/renamed\tname.yaml ',
+          ]),
+        ),
       );
       expect(mockCore.setFailed).toHaveBeenCalledWith(
         expect.stringContaining('PROMPTFOO_REMOTE_API_BASE_URL'),
@@ -3279,6 +3331,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',
