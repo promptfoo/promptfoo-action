@@ -502,6 +502,69 @@ tests:
     ).toEqual(['tests/cases.yaml']);
   });
 
+  it('should preserve an external ref base across local JSON pointers', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        const target = String(filePath);
+        if (target.endsWith('tests/root.yaml')) {
+          return '- $ref: data/common.yaml#/case';
+        }
+        if (target.endsWith('data/common.yaml')) {
+          return [
+            'case:',
+            '  $ref: "#/definitions/case"',
+            'definitions:',
+            '  case:',
+            '    $ref: nested/case.yaml#/case',
+          ].join('\n');
+        }
+        if (target.endsWith('data/nested/case.yaml')) {
+          return 'case:\n  vars:\n    value: tracked';
+        }
+        return 'tests: file://tests/root.yaml';
+      },
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['tests/root.yaml', 'data/common.yaml', 'data/nested/case.yaml']);
+  });
+
+  it('should inspect a shared test file for each ref-resolution base', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        const target = String(filePath);
+        if (target.endsWith('suites/root.yaml')) {
+          return '- $ref: suites/shared.yaml';
+        }
+        if (target.endsWith('suites/shared.yaml')) {
+          return '- $ref: nested/case.yaml#/case';
+        }
+        if (target.endsWith('nested/case.yaml')) {
+          return 'case:\n  vars:\n    value: tracked';
+        }
+        return [
+          'tests:',
+          '  - file://suites/shared.yaml',
+          '  - file://suites/root.yaml',
+        ].join('\n');
+      },
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      'suites/shared.yaml',
+      'nested/case.yaml',
+      'suites/root.yaml',
+      'suites/nested/case.yaml',
+    ]);
+  });
+
   it('should retain a ref dependency when its JSON pointer crosses a scalar', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
     mockFs.readFileSync.mockImplementation(
@@ -806,6 +869,35 @@ tests:
     ).toContain('../config/data/');
   });
 
+  it('should inspect supported test files inside a file-backed test directory', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases/smoke.yaml')
+          ? '- vars:\n    context: file://data/context.txt'
+          : 'tests: file://cases',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.statSync.mockImplementation(
+      (filePath: fs.PathLike) =>
+        ({
+          isDirectory: () => String(filePath).endsWith('/cases'),
+        }) as fs.Stats,
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/cases/smoke.yaml']);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/cases', '../config/data/context.txt']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '**/*.{yaml,yml,json,jsonl,csv,xls,xlsx}',
+      expect.objectContaining({
+        cwd: '/test/config/cases',
+        absolute: true,
+        nodir: true,
+      }),
+    );
+  });
+
   it('should expand Windows-style direct and nested-vars test globs', () => {
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) =>
@@ -902,6 +994,16 @@ tests: file://cases.xlsx#Safety
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/cases.xlsx']);
+  });
+
+  it('should conservatively evaluate all changes for an existing Excel-backed test', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockReturnValue('tests: file://cases.xlsx#Safety');
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['cases.xlsx', '/']);
   });
 
   it('should preserve a hash in an Excel test parent directory', () => {

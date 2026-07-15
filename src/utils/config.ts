@@ -360,7 +360,7 @@ export function extractFileDependencies(
             if (fragment?.startsWith('#/')) {
               inspectTestFile(
                 localRefFile,
-                refResolutionRoot,
+                refBaseDir,
                 testBaseDir,
                 fragment,
                 true,
@@ -419,10 +419,10 @@ export function extractFileDependencies(
       fragment?: string,
       allowBareTestPaths = false,
     ): void => {
-      const inspectionKey = `${testFile}\0${testBaseDir}\0${fragment ?? ''}`;
+      const inspectionKey = `${testFile}\0${refBaseDir}\0${testBaseDir}\0${fragment ?? ''}`;
       if (
         inspectedTestFiles.has(inspectionKey) ||
-        !/\.(?:ya?ml|jsonl?|csv)$/i.test(testFile) ||
+        !/\.(?:ya?ml|jsonl?|csv|xlsx?)$/i.test(testFile) ||
         !fs.existsSync(testFile)
       ) {
         return;
@@ -435,6 +435,16 @@ export function extractFileDependencies(
         if (!isPathInside(realDependencyRoot, realTestFile)) {
           core.warning(
             `Ignoring unsafe config dependency "${testFile}": test file dependency must stay within the repository workspace`,
+          );
+          return;
+        }
+
+        if (/\.xlsx?$/i.test(realTestFile)) {
+          // Excel parsing is optional and asynchronous in Promptfoo. A
+          // workspace marker safely prevents skipping changes referenced by
+          // workbook cells without loading an untrusted workbook here.
+          dependencies.add(
+            `${realDependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
           );
           return;
         }
@@ -569,6 +579,21 @@ export function extractFileDependencies(
         true,
         true,
       )) {
+        if (isDirectory(testFile)) {
+          const nestedTestFiles = glob.sync(
+            '**/*.{yaml,yml,json,jsonl,csv,xls,xlsx}',
+            {
+              cwd: testFile,
+              absolute: true,
+              nodir: true,
+              nocase: true,
+            },
+          );
+          for (const nestedTestFile of nestedTestFiles) {
+            inspectTestFile(path.resolve(testFile, nestedTestFile));
+          }
+          continue;
+        }
         inspectTestFile(testFile);
       }
     };
