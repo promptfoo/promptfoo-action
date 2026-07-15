@@ -36534,40 +36534,6 @@ function extractFileDependencies(configPath) {
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   try {
-    let inspectNestedConfigFile2 = function(fileUrl) {
-      const filePath = normalizeConfigFilePath(fileUrl.slice("file://".length));
-      if (watchDynamicFilePath(filePath)) return;
-      const absolutePath = resolveConfigDependency(
-        filePath,
-        "nested config file dependency"
-      );
-      if (!absolutePath) return;
-      processFileUrl(fileUrl, absolutePath);
-      if (le(filePath, globOptions)) return;
-      try {
-        const realDependencyRoot = fs6.realpathSync(dependencyRoot);
-        const realFilePath = fs6.realpathSync(absolutePath);
-        if (!isPathInside(realDependencyRoot, realFilePath)) {
-          warning(
-            "Ignoring unsafe nested config file: resolved path must stay within the repository workspace"
-          );
-          return;
-        }
-        if (inspectedNestedFiles.has(realFilePath)) return;
-        inspectedNestedFiles.add(realFilePath);
-        extractFileReferences(
-          load(fs6.readFileSync(realFilePath, "utf8"), {
-            schema: CONFIG_SCHEMA
-          }),
-          true
-        );
-      } catch {
-        warning(
-          "Failed to inspect nested config file; nested file dependencies may be incomplete"
-        );
-      }
-    };
-    var inspectNestedConfigFile = inspectNestedConfigFile2;
     const configContent = fs6.readFileSync(configPath, "utf8");
     if (!configContent.trim()) {
       debug("Config file is empty or invalid");
@@ -36653,9 +36619,13 @@ function extractFileDependencies(configPath) {
         if (basePath) {
           const absoluteBasePath = path5.resolve(configDir, basePath);
           if (isPathInside(dependencyRoot, absoluteBasePath)) {
-            dependencies.add(
-              matches.length === 0 ? `${absoluteBasePath}${path5.sep}` : absoluteBasePath
-            );
+            if (path5.relative(cwd, absoluteBasePath) === "") {
+              dependencies.add(absolutePath);
+            } else {
+              dependencies.add(
+                matches.length === 0 ? `${absoluteBasePath}${path5.sep}` : absoluteBasePath
+              );
+            }
           } else {
             warning(
               "Ignoring unsafe config dependency glob base: config file dependency glob base must stay within the repository workspace"
@@ -36663,13 +36633,15 @@ function extractFileDependencies(configPath) {
             dependencies.add(`${configDir}${path5.sep}`);
           }
         } else {
-          dependencies.add(`${configDir}${path5.sep}`);
+          dependencies.add(
+            path5.relative(cwd, configDir) === "" ? absolutePath : `${configDir}${path5.sep}`
+          );
         }
         return safeMatches;
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
         dependencies.add(directoryPath);
-        return [directoryPath];
+        return [];
       } else {
         dependencies.add(absolutePath);
         return [absolutePath];
@@ -36709,7 +36681,7 @@ function extractFileDependencies(configPath) {
           "$1"
         );
         if (inspectNestedFiles && /\.(?:json|ya?ml)$/i.test(fileUrl)) {
-          inspectNestedConfigFile2(fileUrl);
+          inspectNestedConfigFile(fileUrl);
         } else {
           processFileUrl(fileUrl);
         }
@@ -36720,7 +36692,7 @@ function extractFileDependencies(configPath) {
         for (const item of value) {
           extractFileReferences(item, inspectNestedFiles);
         }
-      } else if (typeof value === "object" && value !== null) {
+      } else if (typeof value === "object" && value !== null && !ArrayBuffer.isView(value)) {
         const visitedValues = inspectNestedFiles ? visitedNestedFileValues : visitedFileValues;
         if (visitedValues.has(value)) return;
         visitedValues.add(value);
@@ -36739,7 +36711,7 @@ function extractFileDependencies(configPath) {
             "$1"
           );
           if (inspectNestedFiles && /\.(?:json|ya?ml)$/i.test(fileUrl)) {
-            inspectNestedConfigFile2(fileUrl);
+            inspectNestedConfigFile(fileUrl);
           } else {
             processFileUrl(fileUrl);
           }
@@ -36751,7 +36723,7 @@ function extractFileDependencies(configPath) {
               "$1"
             );
             if (/\.(?:json|ya?ml)$/i.test(fileUrl)) {
-              inspectNestedConfigFile2(fileUrl);
+              inspectNestedConfigFile(fileUrl);
             } else {
               processFileUrl(fileUrl);
             }
@@ -36760,6 +36732,39 @@ function extractFileDependencies(configPath) {
             extractFileReferences(item, inspectNestedFiles);
           }
         }
+      }
+    };
+    const inspectNestedConfigFile = (fileUrl) => {
+      const filePath = normalizeConfigFilePath(fileUrl.slice("file://".length));
+      if (watchDynamicFilePath(filePath)) return;
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        "nested config file dependency"
+      );
+      if (!absolutePath) return;
+      processFileUrl(fileUrl, absolutePath);
+      if (le(filePath, globOptions)) return;
+      try {
+        const realDependencyRoot = fs6.realpathSync(dependencyRoot);
+        const realFilePath = fs6.realpathSync(absolutePath);
+        if (!isPathInside(realDependencyRoot, realFilePath)) {
+          warning(
+            "Ignoring unsafe nested config file: resolved path must stay within the repository workspace"
+          );
+          return;
+        }
+        if (inspectedNestedFiles.has(realFilePath)) return;
+        inspectedNestedFiles.add(realFilePath);
+        extractFileReferences(
+          load(fs6.readFileSync(realFilePath, "utf8"), {
+            schema: CONFIG_SCHEMA
+          }),
+          true
+        );
+      } catch {
+        warning(
+          "Failed to inspect nested config file; nested file dependencies may be incomplete"
+        );
       }
     };
     const inspectedVarFiles = /* @__PURE__ */ new Set();
@@ -36817,7 +36822,7 @@ function extractFileDependencies(configPath) {
         }
         return;
       }
-      if (!vars || typeof vars !== "object") return;
+      if (!vars || typeof vars !== "object" || ArrayBuffer.isView(vars)) return;
       for (const value of Object.values(vars)) {
         extractFileReferences(value);
       }
@@ -37595,6 +37600,14 @@ async function run() {
             return true;
           }
           if (dep === "./") {
+            return true;
+          }
+          if (le(dep, {
+            magicalBraces: true,
+            braceExpandMax: 1025
+          }) && changedFilesList.some(
+            (changedFile) => path6.matchesGlob(changedFile, dep)
+          )) {
             return true;
           }
           if (dep.endsWith("/") || isDirectory2(dep)) {
