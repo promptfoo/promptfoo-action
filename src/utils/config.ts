@@ -939,28 +939,49 @@ export function extractFileDependencies(
         }
       }
 
-      const visited = new WeakSet<object>();
+      const visited = new WeakMap<object, number>();
       const walk = (root: unknown, sourcePath: string): void => {
         const pending: Array<{
           value: unknown;
           env: Record<string, string | undefined>;
           providerContext: boolean;
+          providerRoot: boolean;
           testVarsFileContext: boolean;
         }> = [
           {
             value: root,
             env: initialEnv,
             providerContext: scanProviderPaths,
+            providerRoot: false,
             testVarsFileContext: false,
           },
         ];
         while (pending.length > 0) {
           const current = pending[pending.length - 1];
           pending.length -= 1;
-          const { value, env, providerContext, testVarsFileContext } = current;
-          if (typeof value === 'string' && value.startsWith('file://')) {
+          const {
+            value,
+            env,
+            providerContext,
+            providerRoot,
+            testVarsFileContext,
+          } = current;
+          if (providerRoot) {
+            extractProviderDependencies(
+              value,
+              resolveNestedProviderPaths ? path.dirname(sourcePath) : configDir,
+              env,
+            );
+          }
+          if (
+            typeof value === 'string' &&
+            (value.startsWith('file://') || testVarsFileContext)
+          ) {
+            const fileReference = value.startsWith('file://')
+              ? value
+              : `file://${value}`;
             const renderedReference = stripNunjucksComments(
-              renderEnvironmentTemplates(value, env),
+              renderEnvironmentTemplates(fileReference, env),
             );
             if (hasNunjucksTemplate(renderedReference)) {
               hasDynamicPromptDependencies = true;
@@ -978,10 +999,10 @@ export function extractFileDependencies(
                     renderedReference.replace(/^file:\/\//, ''),
                   )}`
                 : renderedReference;
-            processFileUrl(providerReference, true, value);
+            processFileUrl(providerReference, true, fileReference);
             extractNestedPromptFileUrls(
               providerReference,
-              value,
+              fileReference,
               providerContext,
               false,
               false,
@@ -990,8 +1011,11 @@ export function extractFileDependencies(
             );
           } else if (typeof value === 'object' && value !== null) {
             if (ArrayBuffer.isView(value)) continue;
-            if (visited.has(value)) continue;
-            visited.add(value);
+            const visitBit =
+              1 << ((providerContext ? 1 : 0) | (testVarsFileContext ? 2 : 0));
+            const visitedContexts = visited.get(value) ?? 0;
+            if ((visitedContexts & visitBit) !== 0) continue;
+            visited.set(value, visitedContexts | visitBit);
 
             const record = value as Record<string, unknown>;
             if (failClosedOnRefs && Object.keys(record).includes('$ref')) {
@@ -1030,6 +1054,7 @@ export function extractFileDependencies(
                 value: entry,
                 env: nestedEnv,
                 providerContext: providerContext || key === 'provider',
+                providerRoot: key === 'provider',
                 testVarsFileContext:
                   testVarsFileContext ||
                   (key === 'vars' &&
@@ -1153,7 +1178,11 @@ export function extractFileDependencies(
       }
     };
 
-    const extractProviderDependencies = (provider: unknown): void => {
+    const extractProviderDependencies = (
+      provider: unknown,
+      providerBaseDir = configDir,
+      initialEnv = templateEnv,
+    ): void => {
       const processProviderReference = (
         reference: string,
         env: Record<string, string | undefined>,
@@ -1182,7 +1211,7 @@ export function extractFileDependencies(
             const absolutePath = resolveConfigDependency(
               path.isAbsolute(part) || isForeignWindowsAbsolutePath(part)
                 ? part
-                : path.resolve(configDir, part),
+                : path.resolve(providerBaseDir, part),
               'executable provider dependency',
               '[redacted]',
             );
@@ -1192,17 +1221,34 @@ export function extractFileDependencies(
         }
         for (const prefix of ['python:', 'golang:', 'ruby:']) {
           if (!renderedReference.startsWith(prefix)) continue;
+          const providerPath = renderedReference.slice(prefix.length);
           processFileUrl(
-            `file://${renderedReference.slice(prefix.length)}`,
+            `file://${
+              path.isAbsolute(providerPath) ||
+              isForeignWindowsAbsolutePath(providerPath)
+                ? providerPath
+                : path.resolve(providerBaseDir, providerPath)
+            }`,
             true,
             `file://${reference.slice(prefix.length)}`,
           );
           return;
         }
         if (!renderedReference.startsWith('file://')) return;
-        processFileUrl(renderedReference, true, reference);
+        const providerPath = renderedReference.slice('file://'.length);
+        if (!providerPath || providerPath.includes('\0')) {
+          processFileUrl(renderedReference, true, reference);
+          return;
+        }
+        const resolvedReference =
+          providerBaseDir === configDir ||
+          path.isAbsolute(providerPath) ||
+          isForeignWindowsAbsolutePath(providerPath)
+            ? renderedReference
+            : `file://${path.resolve(providerBaseDir, providerPath)}`;
+        processFileUrl(resolvedReference, true, reference);
         extractNestedPromptFileUrls(
-          renderedReference,
+          resolvedReference,
           reference,
           true,
           false,
@@ -1212,7 +1258,7 @@ export function extractFileDependencies(
       };
 
       if (typeof provider === 'string') {
-        processProviderReference(provider, templateEnv);
+        processProviderReference(provider, initialEnv);
         return;
       }
       if (typeof provider !== 'object' || provider === null) return;
@@ -1234,6 +1280,8 @@ export function extractFileDependencies(
           foundGradingProvider = true;
           extractProviderDependencies(
             (providerEntry as Record<string, unknown>)[type],
+            providerBaseDir,
+            initialEnv,
           );
         }
         if (foundGradingProvider) return;
@@ -1269,12 +1317,12 @@ export function extractFileDependencies(
             : {},
         ).flatMap(([name, value]) =>
           typeof value === 'string'
-            ? [[name, renderEnvironmentTemplates(value, templateEnv)]]
+            ? [[name, renderEnvironmentTemplates(value, initialEnv)]]
             : [],
         ),
       );
       const mergedProviderEnv = {
-        ...templateEnv,
+        ...initialEnv,
         ...providerEnv,
       };
       if (providerReference) {
@@ -1434,8 +1482,12 @@ export function extractFileDependencies(
           if (!rawPromptPath) return;
           const renderedPromptPath = isExecutable
             ? rawPromptPath
-            : renderPathEnvironmentVariables(rawPromptPath, templateEnv);
+            : renderEnvironmentTemplates(
+                renderPathEnvironmentVariables(rawPromptPath, templateEnv),
+                templateEnv,
+              );
           if (
+            hasNunjucksTemplate(renderedPromptPath) ||
             /\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/.test(
               renderedPromptPath,
             )
@@ -1545,6 +1597,7 @@ export function extractFileDependencies(
 
     // Extract test variable files
     const extractVarFiles = (vars?: TestVars): void => {
+      const isVarsFileList = typeof vars === 'string' || Array.isArray(vars);
       const values =
         typeof vars === 'string'
           ? [vars]
@@ -1554,6 +1607,27 @@ export function extractFileDependencies(
               ? Object.values(vars)
               : [];
       for (const value of values) {
+        if (typeof value === 'string' && isVarsFileList) {
+          const renderedReference = renderEnvironmentTemplates(
+            value.startsWith('file://') ? value : `file://${value}`,
+            templateEnv,
+          );
+          if (hasNunjucksTemplate(renderedReference)) {
+            hasDynamicPromptDependencies = true;
+            continue;
+          }
+          processFileUrl(renderedReference, true, value);
+          extractNestedPromptFileUrls(
+            renderedReference,
+            value,
+            false,
+            false,
+            false,
+            templateEnv,
+            true,
+          );
+          continue;
+        }
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
           const selector = getFileFunctionSelector(value);

@@ -97,6 +97,7 @@ providers:
 providers:
   - 'file://C:\outside\provider.py'
   - 'file://\\server\share\provider.py'
+  - 'python:C:\outside\script.py:run'
   - 'file://providers/nested.yaml'
   - 'exec:python C:\outside\run.py \\server\share\input.json'
 prompts:
@@ -187,6 +188,29 @@ prompts:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/prompts/prompt1.txt');
     expect(deps).toContain('../config/prompts/prompt2.txt');
+  });
+
+  it('should render top-level env-templated prompt paths before extracting dependencies', () => {
+    vi.stubEnv('PROMPT_DIR', 'prompts');
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - file://{{ env.PROMPT_DIR }}/main.txt
+  - raw: file://{{ env.PROMPT_DIR }}/raw.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/main.txt', 'evals/prompts/raw.txt']);
+  });
+
+  it('should fail closed for an unresolved top-level prompt env template', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts:\n  - file://{{ env.MISSING_PROMPT_DIR }}/main.txt\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
   });
 
   it.each([
@@ -2457,7 +2481,7 @@ tests:
         return '- tests: file://tests/scenario-cases.yaml\n';
       }
       if (candidate.endsWith('/tests/scenario-cases.yaml')) {
-        return '- assert:\n    - type: javascript\n      value: file://validators/scenario.js:check\n';
+        return '- vars: data/scenario-context.yaml\n  provider: python:providers/scenario.py:grade\n  assert:\n    - type: javascript\n      value: file://validators/scenario.js:check\n';
       }
       throw new Error(`unexpected read: ${candidate}`);
     });
@@ -2467,8 +2491,120 @@ tests:
     ).toEqual([
       'evals/scenarios/security.yaml',
       'evals/tests/scenario-cases.yaml',
+      'evals/data/scenario-context.yaml',
+      'evals/providers/scenario.py',
       'evals/validators/scenario.js',
     ]);
+  });
+
+  it('should extract scripted providers from external test and scenario files with runtime bases', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'tests: file://tests/cases.yaml\nscenarios: file://scenarios/security.yaml\n';
+      }
+      if (candidate.endsWith('/tests/cases.yaml')) {
+        return `
+- provider: python:providers/grader.py:grade
+- provider: exec:./scripts/grader.sh
+- provider:
+    ruby:providers/mapped.rb:grade:
+      config: {}
+`;
+      }
+      if (candidate.endsWith('/scenarios/security.yaml')) {
+        return `
+- config: [{}]
+  tests:
+    - provider: golang:providers/scenario.go:Grade
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/scenarios/security.yaml',
+      'evals/providers/scenario.go',
+      'evals/tests/cases.yaml',
+      'evals/tests/providers/grader.py',
+      'evals/tests/scripts/grader.sh',
+      'evals/tests/providers/mapped.rb',
+    ]);
+  });
+
+  it('should revisit an aliased external object when it is later used as a provider', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'tests: file://tests/cases.yaml\n';
+      }
+      if (candidate.endsWith('/tests/cases.yaml')) {
+        return `
+- metadata:
+    shared: &shared
+      id: http
+      config:
+        auth:
+          type: file
+          path: credentials/token.custom
+  provider: *shared
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/tests/cases.yaml', 'evals/credentials/token.custom']);
+  });
+
+  it('should extract bare vars-file strings and arrays with inline and external test bases', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return `
+tests:
+  - vars: data/inline.yaml
+  - vars:
+      - data/first.yaml
+      - data/second.yaml
+  - file://tests/cases.yaml
+`;
+      }
+      if (candidate.endsWith('/tests/cases.yaml')) {
+        return `
+- vars: data/external.yaml
+- vars:
+    - data/external-first.yaml
+    - data/external-second.yaml
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/data/inline.yaml',
+      'evals/data/first.yaml',
+      'evals/data/second.yaml',
+      'evals/tests/cases.yaml',
+      'evals/tests/data/external.yaml',
+      'evals/tests/data/external-first.yaml',
+      'evals/tests/data/external-second.yaml',
+    ]);
+  });
+
+  it('should fail closed for unresolved bare vars-file env templates', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests:\n  - vars: "{{ env.MISSING_VARS_FILE }}"\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
   });
 
   it('should conservatively watch an external test file containing a parsed $ref', () => {
