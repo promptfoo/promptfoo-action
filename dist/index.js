@@ -39640,7 +39640,6 @@ async function run() {
             }
           } catch {
             warning("Skipping invalid config dependency glob pattern");
-            return false;
           }
           if (dep.endsWith("/") || isDirectory2(dep)) {
             const depDir = dep.endsWith("/") ? dep : `${dep}/`;
