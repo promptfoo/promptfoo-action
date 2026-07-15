@@ -4,7 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { braceExpand } from 'minimatch';
+import { braceExpand, Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -608,12 +608,19 @@ export async function run(): Promise<void> {
               glob.hasMagic(dep, {
                 magicalBraces: true,
                 braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-              }) &&
-              changedFilesList.some((changedFile) =>
-                path.posix.matchesGlob(changedFile, dep),
-              )
+              })
             ) {
-              return true;
+              const matcher = new Minimatch(dep, {
+                platform: 'linux',
+                braceExpandMax: MAX_BRACE_EXPANSIONS,
+              });
+              if (
+                changedFilesList.some((changedFile) =>
+                  matcher.match(changedFile),
+                )
+              ) {
+                return true;
+              }
             }
 
             // Direct file match

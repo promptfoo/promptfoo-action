@@ -4,6 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
+import { Minimatch } from 'minimatch';
 import {
   afterEach,
   beforeEach,
@@ -1575,6 +1576,7 @@ describe('GitHub Action Main', () => {
 
     test('should match repository-style dependency globs with POSIX semantics', async () => {
       const posixMatchesGlob = vi.spyOn(path.posix, 'matchesGlob');
+      const minimatchMatch = vi.spyOn(Minimatch.prototype, 'match');
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'evals/providers/deleted.py' },
       ]);
@@ -1587,11 +1589,37 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(posixMatchesGlob).toHaveBeenCalledWith(
-        'evals/providers/deleted.py',
-        'evals/providers/*.py',
-      );
+      expect(posixMatchesGlob).not.toHaveBeenCalled();
+      expect(minimatchMatch).toHaveBeenCalledWith('evals/providers/deleted.py');
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should compile a bounded dependency brace matcher once for a large pull request', async () => {
+      const changedFiles = Array.from({ length: 2999 }, (_, index) => ({
+        filename: `docs/file-${index}.md`,
+      }));
+      const dependency = `evals/${'{one,two}'.repeat(10)}.yaml`;
+      const posixMatchesGlob = vi
+        .spyOn(path.posix, 'matchesGlob')
+        .mockReturnValue(false);
+      const minimatchMatch = vi.spyOn(Minimatch.prototype, 'match');
+      mockOctokit.paginate.mockResolvedValue(changedFiles);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+      mockGlob.hasMagic.mockImplementation(
+        (value: string, options?: { magicalBraces?: boolean }) =>
+          options?.magicalBraces === true && value.includes('{'),
+      );
+
+      await run();
+
+      expect(mockGlob.hasMagic).toHaveBeenCalledTimes(1);
+      expect(posixMatchesGlob).not.toHaveBeenCalled();
+      expect(minimatchMatch).toHaveBeenCalledTimes(changedFiles.length);
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should skip an unrelated change for a workspace-root dependency glob', async () => {

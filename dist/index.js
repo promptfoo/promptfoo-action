@@ -39937,10 +39937,16 @@ async function run() {
             if (le(dep, {
               magicalBraces: true,
               braceExpandMax: MAX_BRACE_EXPANSIONS + 1
-            }) && changedFilesList.some(
-              (changedFile) => path7.posix.matchesGlob(changedFile, dep)
-            )) {
-              return true;
+            })) {
+              const matcher = new Minimatch(dep, {
+                platform: "linux",
+                braceExpandMax: MAX_BRACE_EXPANSIONS
+              });
+              if (changedFilesList.some(
+                (changedFile) => matcher.match(changedFile)
+              )) {
+                return true;
+              }
             }
             if (changedFilesList.includes(dep)) {
               return true;
