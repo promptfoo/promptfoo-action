@@ -40552,7 +40552,8 @@ async function run() {
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const modifiedFiles = evaluatedPromptFiles.join(", ");
-      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
+      const description = useConfigPrompts || evaluatedPromptFiles.length === 0 ? "\u26A0\uFE0F Evaluation used prompts defined in the Promptfoo config." : configChanged || dependencyChanged || changedFilesList.length === 0 ? `\u26A0\uFE0F Evaluated prompt files: ${modifiedFiles}` : `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}`;
+      let body = `${description}
 
 | Success | Failure |
 |---------|---------|
