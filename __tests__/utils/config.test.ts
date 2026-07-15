@@ -803,6 +803,24 @@ nunjucksFilters:
     );
   });
 
+  it('should bound warnings for repeated foreign Windows dependencies', () => {
+    const providers = Array.from(
+      { length: 120 },
+      (_, index) => `  - 'file://C:/outside/provider-${index}.py'`,
+    );
+    mockFs.readFileSync.mockReturnValue(
+      ['providers:', ...providers].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(core.warning).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
   it.each([
     ['scalar', 'prompts: file://prompts/prompt.txt'],
     ['legacy map', 'prompts:\n  file://prompts/prompt.txt: labeled-prompt'],

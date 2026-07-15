@@ -312,6 +312,7 @@ export function extractFileDependencies(
     };
 
     // Helper function to process local paths with glob support
+    let warnedForeignWindowsPath = false;
     const processFilePath = (
       filePath: string,
       source = 'config file dependency',
@@ -327,6 +328,15 @@ export function extractFileDependencies(
       const normalizedPath = windowsPathsNoEscape
         ? filePath.replace(/\\/g, path.sep)
         : filePath;
+      if (isForeignWindowsPath(normalizedPath)) {
+        if (!warnedForeignWindowsPath) {
+          warnedForeignWindowsPath = true;
+          warnSafe(
+            `Ignoring unsafe config dependency "${normalizedPath}": ${source} must stay within the repository workspace`,
+          );
+        }
+        return [];
+      }
       const globOptions = {
         magicalBraces: true,
         braceExpandMax: MAX_BRACE_EXPANSIONS + 1,

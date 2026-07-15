@@ -526,9 +526,18 @@ export async function run(): Promise<void> {
     }
 
     // Resolve glob patterns to file paths
-    const promptFileMatches = new Set<string>();
-    const allPromptFileMatches = new Set<string>();
+    const promptFileMatches = new Map<string, string>();
+    const allPromptFileMatches = new Map<string, string>();
     const changedFilesList = changedFiles;
+    const addPromptFile = (
+      matches: Map<string, string>,
+      file: string,
+    ): void => {
+      const absoluteFile = path.resolve(workingDirectory, file);
+      if (!matches.has(absoluteFile)) {
+        matches.set(absoluteFile, file);
+      }
+    };
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -542,7 +551,7 @@ export async function run(): Promise<void> {
         return repositoryFile !== configRepositoryPath;
       });
       for (const file of allMatches) {
-        allPromptFileMatches.add(file);
+        addPromptFile(allPromptFileMatches, file);
       }
 
       if (changedFilesList.length > 0) {
@@ -554,18 +563,18 @@ export async function run(): Promise<void> {
           return changedFilesList.includes(repositoryFile);
         });
         for (const file of changedMatches) {
-          promptFileMatches.add(file);
+          addPromptFile(promptFileMatches, file);
         }
       } else {
         // No changed files info available, include all matches
         for (const file of allMatches) {
-          promptFileMatches.add(file);
+          addPromptFile(promptFileMatches, file);
         }
       }
     }
 
-    const promptFiles = Array.from(promptFileMatches);
-    const allPromptFiles = Array.from(allPromptFileMatches);
+    const promptFiles = Array.from(promptFileMatches.values());
+    const allPromptFiles = Array.from(allPromptFileMatches.values());
 
     const configChanged =
       changedFilesList.length > 0 &&

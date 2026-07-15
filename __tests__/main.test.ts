@@ -489,6 +489,39 @@ describe('GitHub Action Main', () => {
       ).toContain(`Evaluated prompt files: ${expectedPrompts.join(', ')}`);
     });
 
+    test.each([
+      ['a config-triggered full evaluation', ['promptfooconfig.yaml']],
+      ['a changed-prompt evaluation', ['prompts/shared.txt']],
+      ['an evaluation without changed-file information', []],
+    ])('should deduplicate relative and absolute action prompt matches for %s', async (_name, changedFiles) => {
+      const absolutePattern = path.join(process.cwd(), 'prompts/shared.*');
+      const absolutePrompt = path.join(process.cwd(), 'prompts/shared.txt');
+      withInputs({ prompts: `prompts/*.txt\n${absolutePattern}` });
+      mockOctokit.paginate.mockResolvedValue(
+        changedFiles.map((filename) => ({ filename })),
+      );
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === 'prompts/*.txt'
+          ? ['prompts/shared.txt']
+          : pattern === absolutePattern
+            ? [absolutePrompt]
+            : [],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(
+        args.filter(
+          (arg) => arg === 'prompts/shared.txt' || arg === absolutePrompt,
+        ),
+      ).toEqual(['prompts/shared.txt']);
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0][0]
+        .body as string;
+      expect(body).toContain('Evaluated prompt files: prompts/shared.txt');
+      expect(body).not.toContain(absolutePrompt);
+    });
+
     test('should handle empty prompts input', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
