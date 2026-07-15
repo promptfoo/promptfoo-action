@@ -40360,7 +40360,7 @@ async function run() {
                 magicalBraces: true,
                 braceExpandMax: 1024
               }) && changedFilesList.some(
-                (changedFile) => path7.matchesGlob(changedFile, dep)
+                (changedFile) => path7.posix.matchesGlob(changedFile, dep)
               )) {
                 return true;
               }
