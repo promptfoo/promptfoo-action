@@ -482,11 +482,9 @@ export function extractFileDependencies(
         }
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          let physicalMatch = absoluteMatch;
+          let physicalMatch: string;
           try {
-            if (fs.existsSync(absoluteMatch)) {
-              physicalMatch = fs.realpathSync(absoluteMatch);
-            }
+            physicalMatch = fs.realpathSync(absoluteMatch);
           } catch {
             core.warning(
               `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`,
@@ -809,16 +807,22 @@ export function extractFileDependencies(
         ) {
           continue;
         }
+        let physicalPromptFile: string;
         try {
-          const physicalPromptFile = fs.existsSync(absolutePromptFile)
-            ? fs.realpathSync(absolutePromptFile)
-            : absolutePromptFile;
-          if (!isDependencyPathInside(physicalPromptFile)) {
-            core.warning(
-              `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within the repository workspace`,
-            );
-            continue;
-          }
+          physicalPromptFile = fs.realpathSync(absolutePromptFile);
+        } catch {
+          core.warning(
+            `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`,
+          );
+          continue;
+        }
+        if (!isPhysicalDependencyPathInside(physicalPromptFile)) {
+          core.warning(
+            `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`,
+          );
+          continue;
+        }
+        try {
           if (visitedStructuredFiles.has(physicalPromptFile)) continue;
           visitedStructuredFiles.add(physicalPromptFile);
           const promptContent = fs.readFileSync(physicalPromptFile, 'utf8');
@@ -1446,6 +1450,8 @@ export function extractFileDependencies(
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to extract dependencies from config: ${message}`);
+    throw new Error(
+      `Failed to extract dependencies from config: ${sanitizeDependencyDisplayPath(message)}`,
+    );
   }
 }

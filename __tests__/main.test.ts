@@ -1038,6 +1038,25 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should reject a newline-containing full-evaluation prompt before command or comment sinks', async () => {
+      const hostilePrompt = 'prompts/unchanged.txt\n::error::forged-annotation';
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt', hostilePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths containing CR or LF characters are not supported.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.join('\n')).not.toContain(
+        'forged-annotation',
+      );
+    });
+
     test('should match tab and space-containing push filenames from NUL-delimited git output', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',
@@ -1112,6 +1131,68 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test.each([
+      'extensions/',
+      'providers/',
+      'tests/',
+      'prompts/',
+    ])('should run when the last file under a deleted %s glob base changes', async (dependencyDir) => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: `${dependencyDir}deleted-file.txt` },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependencyDir]);
+      mockFsUtils.isDirectory.mockReturnValue(false);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve a changed directory dependency when an oversized glob cannot be inspected', async () => {
+      const dependencyDir = `data/${'a'.repeat(70_000)}/`;
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: `${dependencyDir}context.json` },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependencyDir]);
+      mockGlob.hasMagic.mockImplementation((value: string) => {
+        if (value.length > 65_536) throw new Error('pattern is too long');
+        return value.includes('*');
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve a changed directory dependency when glob inspection throws', async () => {
+      const dependencyDir = 'data/';
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: `${dependencyDir}context.json` },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependencyDir]);
+      mockGlob.hasMagic.mockImplementation((value: string) => {
+        if (value === dependencyDir) {
+          throw new Error('EACCES: SENSITIVE-DEPENDENCY-PATTERN');
+        }
+        return value.includes('*');
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.warning.mock.calls.join('\n')).not.toContain(
+        'SENSITIVE-DEPENDENCY-PATTERN',
+      );
+    });
+
     test('should run when dependency extraction conservatively watches the repository root', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers/dynamic-provider.py' },
@@ -1132,13 +1213,22 @@ describe('GitHub Action Main', () => {
         { filename: 'prompts/prompt1.txt' },
         { filename: 'providers/dynamic-provider.py' },
       ]);
-      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
       mockConfig.extractFileDependencies.mockReturnValue(['./']);
 
       await run();
 
       const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args).not.toContain('--prompts');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
+      );
     });
 
     test('should not narrow prompts when an ordinary dependency and a prompt both change', async () => {
@@ -1146,7 +1236,10 @@ describe('GitHub Action Main', () => {
         { filename: 'prompts/prompt1.txt' },
         { filename: 'providers/custom.py' },
       ]);
-      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
       mockConfig.extractFileDependencies.mockReturnValue([
         'providers/custom.py',
       ]);
@@ -1154,7 +1247,13 @@ describe('GitHub Action Main', () => {
       await run();
 
       const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args).not.toContain('--prompts');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
+      );
     });
 
     test('should not narrow prompts when the config and a prompt both change', async () => {
@@ -1162,12 +1261,21 @@ describe('GitHub Action Main', () => {
         { filename: 'prompts/prompt1.txt' },
         { filename: 'promptfooconfig.yaml' },
       ]);
-      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
 
       await run();
 
       const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args).not.toContain('--prompts');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
+      );
     });
 
     test('should run when a repository-root directory sentinel is returned', async () => {

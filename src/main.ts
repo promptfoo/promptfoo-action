@@ -33,6 +33,7 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
+const MAX_DEPENDENCY_GLOB_PATTERN_LENGTH = 65_536;
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
@@ -474,6 +475,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
+    const allPromptFiles: string[] = [];
     const changedFilesList = changedFiles.split('\0').filter((file) => file);
 
     for (const globPattern of promptFilesGlobs) {
@@ -481,32 +483,30 @@ export async function run(): Promise<void> {
         cwd: workingDirectory,
         nodir: true,
       });
+      const allMatches = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...allMatches);
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
-          return (
-            repositoryFile !== configRepositoryPath &&
-            changedFilesList.includes(repositoryFile)
-          );
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
         promptFiles.push(...allMatches);
       }
     }
 
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error(
         'Prompt file paths containing CR or LF characters are not supported.',
       );
@@ -532,17 +532,29 @@ export async function run(): Promise<void> {
             return true;
           }
 
-          if (
-            glob.hasMagic(dep, {
-              windowsPathsNoEscape: true,
-              magicalBraces: true,
-              braceExpandMax: 1024,
-            }) &&
-            changedFilesList.some((changedFile) =>
-              path.matchesGlob(changedFile, dep),
-            )
-          ) {
-            return true;
+          if (dep.length <= MAX_DEPENDENCY_GLOB_PATTERN_LENGTH) {
+            try {
+              if (
+                glob.hasMagic(dep, {
+                  windowsPathsNoEscape: true,
+                  magicalBraces: true,
+                  braceExpandMax: 1024,
+                }) &&
+                changedFilesList.some((changedFile) =>
+                  path.matchesGlob(changedFile, dep),
+                )
+              ) {
+                return true;
+              }
+            } catch {
+              core.warning(
+                'Could not inspect a config dependency glob; falling back to direct and directory checks.',
+              );
+            }
+          } else {
+            core.warning(
+              'Config dependency glob is too long; falling back to direct and directory checks.',
+            );
           }
 
           // Direct file match
@@ -626,13 +638,13 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (
-      !useConfigPrompts &&
-      !configChanged &&
-      !dependencyChanged &&
-      promptFiles.length > 0
-    ) {
-      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
+    const selectedPromptFiles =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (!useConfigPrompts && selectedPromptFiles.length > 0) {
+      promptfooArgs = promptfooArgs.concat([
+        '--prompts',
+        ...selectedPromptFiles,
+      ]);
     }
     // Check if sharing is enabled and validate authentication upfront
     if (noShare) {

@@ -689,7 +689,7 @@ prompts:
 
     expect(() =>
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toThrow(/cannot resolve a set item/);
+    ).toThrow('Failed to extract dependencies from config: [redacted]');
   });
 
   it('should extract safe globbed YAML prompts while tolerating cycles and unsafe matches', () => {
@@ -788,14 +788,81 @@ prompts:
       return 'secret: SENSITIVE-REVIEW-TOKEN\n';
     });
     mockFs.existsSync.mockReturnValue(true);
-    mockFs.realpathSync.mockReturnValue('/tmp/outside/secret.yaml');
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('/linked.yaml')
+        ? '/tmp/outside/secret.yaml'
+        : filePath,
+    );
 
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual(['prompts/linked.yaml']);
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
     expect(core.warning).toHaveBeenCalledWith(
-      'Ignoring unsafe prompt file dependency "prompts/linked.yaml": resolved path must stay within the repository workspace',
+      'Ignoring unsafe prompt file dependency "prompts/linked.yaml": resolved path must stay within an allowed dependency root',
+    );
+  });
+
+  it.each([
+    ['escape', '/tmp/outside/SENSITIVE-LINK-TARGET.yaml'],
+    ['EACCES', new Error('EACCES: SENSITIVE-LINK-DETAIL')],
+  ])('should not read a structured prompt symlink when existence checks fail (%s)', (_name, realpathResult) => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'providers: file://providers/linked.yaml\n';
+      }
+      return 'secret: SENSITIVE-STRUCTURED-CONTENT\n';
+    });
+    mockFs.existsSync.mockReturnValue(false);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('/linked.yaml')) {
+        if (realpathResult instanceof Error) throw realpathResult;
+        return realpathResult;
+      }
+      return candidate;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['providers/linked.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    const warnings = vi.mocked(core.warning).mock.calls.join('\n');
+    expect(warnings).toContain('resolved path must stay within');
+    expect(warnings).not.toContain('SENSITIVE-');
+  });
+
+  it('should read a checkout-contained structured prompt through a canonical workspace root', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'providers: file:///test/working/providers/structured.yaml\n';
+      }
+      if (candidate === '/physical/checkout/providers/structured.yaml') {
+        return 'id: structured-provider\n';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate === '/tmp/external') {
+        throw new Error('EACCES: SENSITIVE-EXTERNAL-ROOT');
+      }
+      if (candidate.startsWith('/test/working')) {
+        return candidate.replace('/test/working', '/physical/checkout');
+      }
+      return candidate;
+    });
+
+    expect(
+      extractFileDependencies('/tmp/external/promptfooconfig.yaml'),
+    ).toEqual(['providers/structured.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledWith(
+      '/physical/checkout/providers/structured.yaml',
+      'utf8',
+    );
+    expect(vi.mocked(core.warning).mock.calls.join('\n')).not.toContain(
+      'SENSITIVE-',
     );
   });
 
@@ -808,13 +875,17 @@ prompts:
       return 'secret: SENSITIVE-REVIEW-TOKEN\n';
     });
     mockFs.existsSync.mockReturnValue(true);
-    mockFs.realpathSync.mockReturnValue('/tmp/outside/secret.yaml');
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('/linked.yaml')
+        ? '/tmp/outside/secret.yaml'
+        : filePath,
+    );
 
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual(['prompts/SENSITIVE-PROMPT-DIR/linked.yaml']);
     expect(core.warning).toHaveBeenCalledWith(
-      'Ignoring unsafe prompt file dependency "prompts/$PROMPT_SECRET_DIR/linked.yaml": resolved path must stay within the repository workspace',
+      'Ignoring unsafe prompt file dependency "prompts/$PROMPT_SECRET_DIR/linked.yaml": resolved path must stay within an allowed dependency root',
     );
     expect(vi.mocked(core.warning).mock.calls.join('\n')).not.toContain(
       'SENSITIVE-PROMPT-DIR',
@@ -2218,6 +2289,36 @@ providers:
     expect(warnings).not.toContain('SENSITIVE-REALPATH-DETAIL');
   });
 
+  it.each([
+    ['escape', '/tmp/outside/SENSITIVE-DANGLING-PROVIDER.py'],
+    ['EACCES', new Error('EACCES: SENSITIVE-DANGLING-DETAIL')],
+  ])('should ignore an unsafe globbed symlink when existence checks fail (%s)', (_name, realpathResult) => {
+    mockFs.readFileSync.mockReturnValue('providers: file://providers/*.py\n');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/evals/providers/linked.py',
+      '/test/working/evals/providers/safe.py',
+    ]);
+    mockFs.existsSync.mockReturnValue(false);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('/linked.py')) {
+        if (realpathResult instanceof Error) throw realpathResult;
+        return realpathResult;
+      }
+      return candidate;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/safe.py', 'evals/providers']);
+    const warnings = vi.mocked(core.warning).mock.calls.join('\n');
+    expect(warnings).toContain('resolved path must stay within');
+    expect(warnings).not.toContain('SENSITIVE-');
+  });
+
   it('should preserve sibling dependencies when provider and test glob patterns are too long', () => {
     const longPattern = `file://${'a'.repeat(70_000)}*.yaml`;
     mockFs.readFileSync.mockReturnValue(
@@ -2704,6 +2805,18 @@ prompts:
     ).toThrow('Failed to extract dependencies from config: File not found');
   });
 
+  it('should redact CRLF-bearing config errors before they reach action sinks', () => {
+    mockFs.readFileSync.mockImplementation(() => {
+      throw new Error(
+        'EACCES: SENSITIVE-CONFIG-PATH\n::error::FORGED-ANNOTATION',
+      );
+    });
+
+    expect(() =>
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toThrow('Failed to extract dependencies from config: [redacted]');
+  });
+
   it('should fail closed for non-Error file read failures', () => {
     mockFs.readFileSync.mockImplementation(() => {
       throw 'permission denied';
@@ -3154,6 +3267,24 @@ providers:
 
     // Relative path from /test/working/dir to /test/config/provider.py
     expect(deps).toContain('../config/provider.py');
+  });
+
+  it.each([
+    ['extension', 'extensions: file://extensions/*.js\n', 'evals/extensions/'],
+    ['provider', 'providers: file://providers/*.py\n', 'evals/providers/'],
+    ['test', 'tests: file://tests/*.yaml\n', 'evals/tests/'],
+    ['prompt', 'prompts: file://prompts/*.txt\n', 'evals/prompts/'],
+  ])('should preserve a directory sentinel after the last %s glob match is deleted', (_name, configContent, expectedDirectory) => {
+    mockFs.readFileSync.mockReturnValue(configContent);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+    mockFs.existsSync.mockReturnValue(false);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toContain(expectedDirectory);
   });
 
   it('should handle glob patterns in file:// URLs', () => {
