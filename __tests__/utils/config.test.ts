@@ -117,6 +117,26 @@ prompts:
     expect(mockGlob.sync).toHaveBeenCalledTimes(1);
   });
 
+  it('should preserve a relative prompt glob inside a directory with spaces', () => {
+    mockFs.readFileSync.mockReturnValue("prompts: './prompt files/*.txt'\n");
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/prompt files/main.txt']);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompt files/main.txt', 'prompt files']);
+  });
+
+  it('should preserve a relative prompt file inside a directory with spaces', () => {
+    mockFs.readFileSync.mockReturnValue("prompts: './prompt files/main.txt'\n");
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompt files/main.txt']);
+  });
+
   it.each([
     'release notes-*.{json,yaml}',
     'release notes-*.@(json|yaml)',
@@ -510,6 +530,10 @@ prompts:
     'prompts: \'Use {{- env["TONE"] -}} tone for this response\'\n',
     "prompts: '{{ env.TONE }} tone for {{question}}'\n",
     'prompts: \'{{- env["TONE"] -}}: {{user}}\'\n',
+    "prompts: 'Summarize /tmp/SENSITIVE-REVIEW-TOKEN.txt for the user'\n",
+    "prompts: 'Summarize /tmp/SENSITIVE-REVIEW-TOKEN.txt'\n",
+    "prompts: 'Inspect ../private/SENSITIVE-REVIEW-TOKEN.txt before replying'\n",
+    "prompts: 'Choose A/B before continuing'\n",
     'prompts: What is the capital of {{country}}?\n',
     'prompts: Return [safe] output for {{user}}.\n',
     'prompts: Which option (A or B)? Explain briefly.\n',
@@ -526,6 +550,7 @@ prompts:
 
     expect(deps).toEqual([]);
     expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should preserve provider dependencies for a very long inline prompt', () => {
@@ -728,6 +753,46 @@ prompts:
     );
 
     expect(deps).toEqual(['evals/scripts/generate.sh', 'templates/input.txt']);
+  });
+
+  it('should watch the static directory of a templated executable argument', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: exec:./scripts/generate.sh ./templates/{{ env.NAME }}.txt\n',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/scripts/generate.sh', 'templates/']);
+  });
+
+  it('should watch the workspace for a root-templated executable argument', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: exec:./scripts/generate.sh {{ env.NAME }}.txt\n',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/scripts/generate.sh', './']);
+  });
+
+  it('should not watch an out-of-workspace templated executable argument', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - raw: exec:./scripts/generate.sh ./templates/{{ env.NAME }}.txt
+    config:
+      basePath: /private/tmp/SENSITIVE-REVIEW-TOKEN
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/scripts/generate.sh']);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should retain a deleted executable prompt-object argument from config.basePath', () => {
@@ -957,6 +1022,96 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/prompts/from-id.txt']);
+  });
+
+  it('should fall back to a prompt file when the prompt id is only a label', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - id: customer-label
+    file: prompts/customer.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/customer.txt']);
+  });
+
+  it('should fall back to a prompt file when the prompt id label contains a slash', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - id: customer/v2
+    file: prompts/customer.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/customer.txt']);
+  });
+
+  it('should reject a null-byte dependency glob before scanning and preserve valid dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/valid.py
+  - "file://prompts/*\\0.txt"
+prompts: file://prompts/main.txt
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.includes('\0')) {
+        throw new Error('glob received a null byte');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/valid.py', 'prompts/main.txt']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency: config file dependency contains an invalid null byte',
+    );
+  });
+
+  it('should reject a null-byte prompt glob before nested inspection and preserve valid dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/valid.py
+prompts:
+  - file://prompts/main.txt
+  - "file://prompts/*\\0.yaml"
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.includes('\0')) {
+        throw new Error('glob received a null byte');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/valid.py', 'prompts/main.txt']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency: config file dependency contains an invalid null byte',
+    );
+  });
+
+  it('should reject a null byte in an object-backed dependency and preserve valid dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts: file://prompts/main.txt
+tests:
+  - vars:
+      context:
+        file: "data/invalid\\0.json"
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/main.txt']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'test variable file dependency contains an invalid null byte',
+      ),
+    );
   });
 
   it('should extract nested file references in a scalar prompt file', () => {

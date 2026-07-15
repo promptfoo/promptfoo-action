@@ -146,6 +146,12 @@ export function extractFileDependencies(
     // Helper function to process file:// paths with glob support
     const processFileUrl = (fileUrl: string): string[] | undefined => {
       const filePath = fileUrl.replace('file://', '').replace(/\\/g, '/');
+      if (filePath.includes('\0')) {
+        core.warning(
+          'Ignoring unsafe config dependency: config file dependency contains an invalid null byte',
+        );
+        return;
+      }
 
       // Check if the path contains glob patterns
       if (
@@ -301,7 +307,7 @@ export function extractFileDependencies(
       ): void => {
         const isExecutable = reference.startsWith('exec:');
         const isFileUrl = reference.startsWith('file://');
-        const isTemplated = /\{[{%#]/.test(reference);
+        const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
         const isEnvironmentTemplate =
           /^\s*\{\{-?\s*env(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(reference);
         if (
@@ -315,6 +321,16 @@ export function extractFileDependencies(
         ) {
           return;
         }
+        if (
+          !declaredFile &&
+          !isExecutable &&
+          !isFileUrl &&
+          /\s/.test(reference) &&
+          /(?:^|\s)(?:\/|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reference) &&
+          !/^\s*(?:\/|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reference)
+        ) {
+          return;
+        }
         const looksLikePath =
           declaredFile ||
           isExecutable ||
@@ -323,7 +339,7 @@ export function extractFileDependencies(
           (reference.includes('*') &&
             (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) ||
               /^[^*]*\*+$/.test(reference))) ||
-          /[\\/]/.test(reference) ||
+          (/[\\/]/.test(reference) && !/\s/.test(reference)) ||
           /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
             reference,
           );
@@ -359,6 +375,9 @@ export function extractFileDependencies(
           ? (
               reference
                 .replace(/^exec:/, '')
+                .replace(/\{\{[^}]*\}\}/g, (template) =>
+                  template.replace(/\s+/g, ''),
+                )
                 .match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? []
             ).map((part) => part.replace(/^['"]|['"]$/g, ''))
           : [];
@@ -369,6 +388,9 @@ export function extractFileDependencies(
           .replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, '$1')
           .replace(/\\/g, '/');
         const promptPatterns = processFileUrl(`file://${promptPath}`);
+        if (promptPath.includes('\0')) {
+          return;
+        }
 
         for (const rawExecutableArgument of executableParts.slice(1)) {
           const equalsIndex = rawExecutableArgument.indexOf('=');
@@ -376,6 +398,25 @@ export function extractFileDependencies(
             rawExecutableArgument.startsWith('-') && equalsIndex >= 0
               ? rawExecutableArgument.slice(equalsIndex + 1)
               : rawExecutableArgument;
+          if (/\{[{%#]/.test(executableArgument)) {
+            const staticSegments: string[] = [];
+            for (const segment of executableArgument.split(/[\\/]/)) {
+              if (/\{[{%#]/.test(segment)) {
+                break;
+              }
+              staticSegments.push(segment);
+            }
+            const watchedDirectory = resolvePromptProbe(
+              staticSegments.length > 0 ? staticSegments.join(path.sep) : '.',
+              promptExecutionCwd,
+            );
+            if (watchedDirectory) {
+              dependencies.add(
+                `${watchedDirectory.replace(/[\\/]+$/, '')}${path.sep}`,
+              );
+            }
+            continue;
+          }
           const argumentPath = resolvePromptProbe(
             executableArgument,
             promptExecutionCwd,
@@ -518,7 +559,16 @@ export function extractFileDependencies(
         if (typeof prompt === 'string') {
           processPromptReference(prompt);
         } else if (typeof prompt === 'object' && prompt !== null) {
-          const promptReference = prompt.raw || prompt.id || prompt.file;
+          const fileBackedPromptId =
+            typeof prompt.id === 'string' &&
+            (/^(?:file:\/\/|exec:)/.test(prompt.id) ||
+              /\*/.test(prompt.id) ||
+              /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
+                prompt.id,
+              ));
+          const promptReference =
+            prompt.raw ||
+            (fileBackedPromptId ? prompt.id : prompt.file || prompt.id);
           if (typeof promptReference === 'string') {
             const promptConfig = prompt.config;
             const promptBasePath =
@@ -530,7 +580,7 @@ export function extractFileDependencies(
                 : undefined;
             processPromptReference(
               promptReference,
-              Boolean(prompt.file && !prompt.raw && !prompt.id),
+              Boolean(prompt.file && !prompt.raw && !fileBackedPromptId),
               promptBasePath
                 ? path.resolve(executionCwd, promptBasePath)
                 : executionCwd,
