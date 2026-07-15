@@ -38351,6 +38351,10 @@ var JAVASCRIPT_SELECTOR_EXTENSIONS = /* @__PURE__ */ new Set([
   "mts",
   "ts"
 ]);
+var TRANSFORM_SELECTOR_EXTENSIONS = /* @__PURE__ */ new Set([
+  ...JAVASCRIPT_SELECTOR_EXTENSIONS,
+  "py"
+]);
 var JAVASCRIPT_FILE_REFERENCE_FIELDS = /* @__PURE__ */ new Set([
   "validateStatus",
   "transformRequest",
@@ -38716,6 +38720,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     const stripProviderFunctionSelector = (value) => stripFunctionSelector(value, PROVIDER_SELECTOR_EXTENSIONS);
     const stripAssertionFunctionSelector = (value) => stripFunctionSelector(value, ASSERTION_SELECTOR_EXTENSIONS);
     const stripJavascriptFunctionSelector = (value) => stripFunctionSelector(value, JAVASCRIPT_SELECTOR_EXTENSIONS);
+    const stripTransformFunctionSelector = (value) => stripFunctionSelector(value, TRANSFORM_SELECTOR_EXTENSIONS);
     const processCompatibleFileUrl = (value, stripReferenceSelector = stripProviderFunctionSelector) => {
       const primary = stripReferenceSelector(value);
       const patterns = processFileUrl(primary);
@@ -38885,7 +38890,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
           return;
         }
-        if (!declaredFile && !isExecutable && !isFileUrl && (reference.length > 65536 || ["\n", "portkey://", "langfuse://", "helicone://"].some(
+        if (!declaredFile && !isExecutable && !isFileUrl && (reference.length > MAX_DEPENDENCY_REFERENCE_LENGTH || ["\n", "portkey://", "langfuse://", "helicone://"].some(
           (value) => reference.includes(value)
         ))) {
           return;
@@ -39033,11 +39038,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             continue;
           }
           try {
-            let promptEntryExists = isPromptGlob || fs6.existsSync(absolutePromptFile);
-            if (!promptEntryExists) {
+            if (!isPromptGlob && !fs6.existsSync(absolutePromptFile)) {
               try {
                 fs6.lstatSync(absolutePromptFile);
-                promptEntryExists = true;
               } catch (error2) {
                 if (error2.code === "ENOENT") {
                   continue;
@@ -39134,6 +39137,63 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
       }
     };
+    const extractGradingProvider = (provider) => {
+      if (typeof provider === "string") {
+        if (provider.startsWith("file://")) {
+          processCompatibleFileUrl(provider);
+        }
+        processFileBackedProviderReference(provider);
+        watchExternalProviderConfig(provider);
+        return;
+      }
+      if (!isTraversableRecord(provider)) return;
+      visitProviderReferences(provider);
+      const entries = Object.entries(provider);
+      const providerId = typeof provider.id === "string" ? provider.id : entries.length === 1 ? entries[0][0] : void 0;
+      if (!providerId) return;
+      if (providerId.startsWith("file://")) {
+        processCompatibleFileUrl(providerId);
+      }
+      processFileBackedProviderReference(providerId);
+      watchExternalProviderConfig(providerId);
+      if (/^https?(?::|$)/.test(providerId) || /\{[{%#]/.test(providerId)) {
+        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+      }
+    };
+    const extractRuntimeFileReferences = (value, stripReferenceSelector = stripTransformFunctionSelector, visitedRuntimeValues = /* @__PURE__ */ new WeakSet()) => {
+      if (typeof value === "string") {
+        if (value.startsWith("file://")) {
+          addHttpProviderPath(value, stripReferenceSelector);
+        }
+        return;
+      }
+      if (!Array.isArray(value) && !isTraversableRecord(value)) return;
+      if (visitedRuntimeValues.has(value)) return;
+      visitedRuntimeValues.add(value);
+      for (const nestedValue of Array.isArray(value) ? value : Object.values(value)) {
+        extractRuntimeFileReferences(
+          nestedValue,
+          stripReferenceSelector,
+          visitedRuntimeValues
+        );
+      }
+    };
+    const extractTestRuntimeFiles = (test) => {
+      extractRuntimeFileReferences(test.assertScoringFunction);
+      if (!isTraversableRecord(test.options)) return;
+      extractGradingProvider(test.options.provider);
+      for (const field of [
+        "postprocess",
+        "transform",
+        "transformVars",
+        "rubricPrompt"
+      ]) {
+        extractRuntimeFileReferences(
+          test.options[field],
+          field === "rubricPrompt" ? stripJavascriptFunctionSelector : stripTransformFunctionSelector
+        );
+      }
+    };
     const visitedAssertValues = /* @__PURE__ */ new WeakSet();
     const extractAssertFiles = (asserts) => {
       if (!Array.isArray(asserts) || visitedAssertValues.has(asserts)) return;
@@ -39153,11 +39213,19 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             dependencies.add(absolutePath);
           }
         }
+        extractGradingProvider(assert.provider);
+        extractRuntimeFileReferences(assert.contextTransform);
+        extractRuntimeFileReferences(assert.transform);
+        extractRuntimeFileReferences(
+          assert.rubricPrompt,
+          stripJavascriptFunctionSelector
+        );
         extractAssertFiles(assert.assert);
       }
     };
     if (isTraversableRecord(config2.defaultTest)) {
       extractVarFiles(config2.defaultTest.vars);
+      extractTestRuntimeFiles(config2.defaultTest);
       extractAssertFiles(config2.defaultTest.assert);
     }
     const visitedTestValues = /* @__PURE__ */ new WeakSet();
@@ -39195,6 +39263,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         extractTestPath(tests.path);
       }
       extractVarFiles(tests.vars);
+      extractTestRuntimeFiles(tests);
       extractAssertFiles(tests.assert);
       if ("tests" in tests) {
         extractTestValues(tests.tests);
@@ -39205,6 +39274,14 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     };
     extractTestValues(config2.tests);
     extractTestValues(config2.scenarios);
+    const extensions = typeof config2.extensions === "string" ? [config2.extensions] : Array.isArray(config2.extensions) ? config2.extensions : [];
+    for (const extension of extensions) {
+      if (typeof extension !== "string" || !extension) continue;
+      addHttpProviderPath(
+        extension.startsWith("file://") ? extension : `file://${extension}`,
+        stripTransformFunctionSelector
+      );
+    }
     if (isTraversableRecord(config2.nunjucksFilters)) {
       for (const filterPath of Object.values(config2.nunjucksFilters)) {
         if (typeof filterPath === "string") {
@@ -40203,7 +40280,7 @@ async function run() {
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const modifiedFiles = evaluationPromptFiles.join(", ");
-      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
+      let body = `\u26A0\uFE0F LLM evaluation included these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
