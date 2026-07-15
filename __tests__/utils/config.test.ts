@@ -1117,6 +1117,25 @@ tests:
     expect(deps).toContain('../config/data/examples.json');
   });
 
+  it('should extract file-backed test variables declared as strings or arrays', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  vars: file://data/default-cases.yaml
+tests:
+  - vars: file://data/scalar-cases.yaml
+  - vars:
+      - file://data/array-cases.yaml
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/data/default-cases.yaml',
+      '../config/data/scalar-cases.yaml',
+      '../config/data/array-cases.yaml',
+    ]);
+  });
+
   it('should extract assert files', () => {
     const configContent = `
 tests:
@@ -1258,8 +1277,6 @@ providers:
         path: "{{ env.MISSING_AUTH }}"
       tls:
         keyPath: "{{ env.MISSING_KEY }}"
-      tls:
-        keyPath: "{{ env.MISSING_KEY }}"
 tests:
   - assert:
       - type: llm-rubric
@@ -1298,6 +1315,7 @@ providers:
         certPath: ./credentials/client.crt
         keyPath: ./credentials/client.key
         pfxPath: ./credentials/client.pfx
+        jksPath: ./credentials/client.jks
 `);
 
     expect(
@@ -1312,6 +1330,7 @@ providers:
       'evals/credentials/client.crt',
       'evals/credentials/client.key',
       'evals/credentials/ca.pem',
+      'evals/credentials/client.jks',
     ]);
   });
 
@@ -1335,6 +1354,38 @@ providers:
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['./']);
+  });
+
+  it('should not expose unsafe literal or env-derived HTTP credential paths', () => {
+    vi.stubEnv('HTTP_CREDENTIAL_PATH', '../../outside/SENSITIVE-KEY-NAME.pem');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/auth
+    config:
+      auth:
+        type: file
+        path: ../../outside/secret-token.ts
+  - id: https://example.test/tls
+    config:
+      tls:
+        keyPath: "{{ env.HTTP_CREDENTIAL_PATH }}"
+        pfxPath: ./credentials/*.pfx
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/tmp/outside/SENSITIVE-PFX-NAME.pfx']);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/credentials/']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+    const warnings = vi.mocked(core.warning).mock.calls.join('\n');
+    expect(warnings).not.toContain('secret-token');
+    expect(warnings).not.toContain('SENSITIVE-KEY-NAME');
+    expect(warnings).not.toContain('SENSITIVE-PFX-NAME');
   });
 
   it('should extract dependencies inherited through YAML merge keys', () => {
@@ -1747,11 +1798,53 @@ prompts:
 
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toEqual(['prompts/']);
+    ).toEqual(['prompts/first.txt', 'prompts/second.txt']);
     expect(mockGlob.sync).toHaveBeenCalledWith(
       ['/test/working/prompts/first.txt', '/test/working/prompts/second.txt'],
       expect.objectContaining({ magicalBraces: true }),
     );
+  });
+
+  it('should inspect nested dependencies in scalar brace-only structured prompt files', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('defs/one.yaml')) {
+        return 'content: file://shared/one.txt\n';
+      }
+      if (String(filePath).endsWith('defs/two.yaml')) {
+        return 'content: file://shared/two.txt\n';
+      }
+      return "prompts: 'file://defs/{one,two}.yaml'\n";
+    });
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/defs/one.yaml',
+      '/test/working/defs/two.yaml',
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'defs/one.yaml',
+      'defs/two.yaml',
+      'shared/one.txt',
+      'shared/two.txt',
+    ]);
+  });
+
+  it.each([
+    'Answer in {{ env.TONE }} tone',
+    'Use {{- env["TONE"] -}} tone for this response',
+  ])('should ignore scalar inline prompt prose with environment templates: %s', (prompt) => {
+    mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
   it('should expand contained parent-directory brace alternatives before glob enumeration', () => {

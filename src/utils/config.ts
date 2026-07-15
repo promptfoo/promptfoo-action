@@ -29,12 +29,18 @@ const HTTP_CREDENTIAL_PATH_KEYS = [
   'certPath',
   'keyPath',
   'caPath',
+  'jksPath',
 ] as const;
+
+type TestVars =
+  | string
+  | string[]
+  | { [key: string]: string | { file?: string } };
 
 type TestEntry = {
   path?: string;
   config?: Record<string, unknown>;
-  vars?: { [key: string]: string | { file?: string } };
+  vars?: TestVars;
   assert?: Array<{ type?: string; value?: string | { file?: string } }>;
   [key: string]: unknown;
 };
@@ -42,10 +48,10 @@ type TestEntry = {
 export interface PromptfooConfig {
   env?: Record<string, unknown>;
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: PromptEntry[] | Record<string, string>;
+  prompts?: PromptEntry | PromptEntry[] | Record<string, string>;
   tests?: string | TestEntry | Array<string | TestEntry>;
   defaultTest?: {
-    vars?: { [key: string]: string | { file?: string } };
+    vars?: TestVars;
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
   };
 }
@@ -351,9 +357,12 @@ export function extractFileDependencies(
       fileUrl: string,
       stripFunctionSuffix = false,
       displayFileUrl = fileUrl,
+      redactDisplayPath = false,
     ): void => {
       const rawFilePath = fileUrl.replace('file://', '');
-      const displayFilePath = displayFileUrl.replace('file://', '');
+      const displayFilePath = redactDisplayPath
+        ? '[redacted]'
+        : displayFileUrl.replace('file://', '');
       const filePath = normalizeConfigFilePath(
         stripFunctionSuffix
           ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1')
@@ -386,7 +395,11 @@ export function extractFileDependencies(
           } else {
             core.warning(
               `Ignoring unsafe config dependency match "${
-                displayFileUrl === fileUrl ? match : displayFilePath
+                redactDisplayPath
+                  ? displayFilePath
+                  : displayFileUrl === fileUrl
+                    ? match
+                    : displayFilePath
               }": config file dependency glob match must stay within the repository workspace`,
             );
           }
@@ -395,6 +408,10 @@ export function extractFileDependencies(
         // Also add the base directory for watching
         // Extract the non-glob part of the path
         for (const safePattern of safePatterns) {
+          if (!glob.hasMagic(safePattern, globOptions)) {
+            dependencies.add(safePattern);
+            continue;
+          }
           const root = path.parse(safePattern).root;
           const pathParts = safePattern
             .slice(root.length)
@@ -407,9 +424,7 @@ export function extractFileDependencies(
             }
             basePath = path.join(basePath, part);
           }
-          const watchedDirectory = glob.hasMagic(safePattern, globOptions)
-            ? basePath
-            : path.dirname(safePattern);
+          const watchedDirectory = basePath;
           if (path.relative(cwd, watchedDirectory) === '') {
             dependencies.add(safePattern);
           } else {
@@ -582,6 +597,7 @@ export function extractFileDependencies(
               fileConfig.path.startsWith('file://')
                 ? fileConfig.path
                 : `file://${fileConfig.path}`,
+              true,
             );
           }
         }
@@ -598,10 +614,19 @@ export function extractFileDependencies(
             `file://${renderedPath}`,
             false,
             `file://${credentialPath}`,
+            true,
           );
         }
 
-        for (const entry of Object.values(value).reverse()) {
+        for (const [key, entry] of Object.entries(value).reverse()) {
+          if (
+            (fileConfig.type === 'file' && key === 'path') ||
+            HTTP_CREDENTIAL_PATH_KEYS.includes(
+              key as (typeof HTTP_CREDENTIAL_PATH_KEYS)[number],
+            )
+          ) {
+            continue;
+          }
           pending.push(entry);
         }
       }
@@ -776,16 +801,25 @@ export function extractFileDependencies(
     if (config.prompts) {
       const promptEntries = Array.isArray(config.prompts)
         ? config.prompts
-        : Object.keys(config.prompts);
+        : typeof config.prompts === 'string'
+          ? [config.prompts]
+          : Object.keys(config.prompts);
       for (const prompt of promptEntries) {
         extractPromptFile(prompt);
       }
     }
 
     // Extract test variable files
-    const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
-      if (!vars) return;
-      for (const value of Object.values(vars)) {
+    const extractVarFiles = (vars?: TestVars): void => {
+      const values =
+        typeof vars === 'string'
+          ? [vars]
+          : Array.isArray(vars)
+            ? vars
+            : vars
+              ? Object.values(vars)
+              : [];
+      for (const value of values) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
           if (/\.(?:[cm]?[jt]s|py):[^/\\]+$/i.test(value)) {
