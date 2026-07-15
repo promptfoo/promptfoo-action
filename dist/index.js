@@ -39817,6 +39817,7 @@ function isDirectory2(filePath) {
 // src/utils/config.ts
 var MAX_BRACE_EXPANSIONS = 1024;
 var MAX_PROVIDER_REFERENCE_LENGTH = 65536;
+var MAX_INSPECTED_FILE_SIZE = 10 * 1024 * 1024;
 function isPathInside(baseDir, targetPath) {
   const relativePath = path6.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
@@ -40153,15 +40154,19 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       const selectorMatch = selectorMode === "literal" ? null : selectorMode === "provider" ? filePath.match(/^([\s\S]+\.(?:py|go|rb|[cm]?[jt]s)):(.+)$/) : selectorMode === "javascript" ? filePath.match(/^([\s\S]+\.(?:[cm]?[jt]s)):(.+)$/) : filePath.match(/^([\s\S]+\.(?:py|rb|[cm]?[jt]s)):(.+)$/);
       const uppercaseJsSelector = !selectorMatch && selectorMode !== "literal" ? filePath.match(/^([\s\S]+\.(?:[cm]?[jt]s)):(.+)$/i) : null;
       const filePaths = selectorMatch ? [selectorMatch[1]] : uppercaseJsSelector ? [filePath, uppercaseJsSelector[1]] : [filePath];
+      const resolvedFiles = [];
       for (const candidatePath of filePaths) {
         const relativePath = baseDir === configDir ? candidatePath : path6.relative(configDir, path6.resolve(baseDir, candidatePath));
-        processFilePath(
-          relativePath,
-          "config file dependency",
-          preserveGlobRoot || hasEnvTemplate,
-          preserveGlobRoot || hasEnvTemplate
+        resolvedFiles.push(
+          ...processFilePath(
+            relativePath,
+            "config file dependency",
+            preserveGlobRoot || hasEnvTemplate,
+            preserveGlobRoot || hasEnvTemplate
+          )
         );
       }
+      return resolvedFiles;
     };
     const providerConfigFiles = /* @__PURE__ */ new Set();
     const providerConfigs = [];
@@ -40199,11 +40204,18 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         }
       }
     }
+    const structuredPromptFiles = /* @__PURE__ */ new Set();
     if (config2.prompts) {
       const prompts = Array.isArray(config2.prompts) ? config2.prompts : typeof config2.prompts === "string" ? [config2.prompts] : Object.keys(config2.prompts);
       for (const prompt of prompts) {
         const promptPath = typeof prompt === "string" ? prompt : typeof prompt.raw === "string" ? prompt.raw : typeof prompt.id === "string" ? prompt.id : typeof prompt.file === "string" ? prompt.file : void 0;
         if (!promptPath) {
+          continue;
+        }
+        const literalPromptPath = stripNunjucksComments(promptPath).replace(/\{%(?:[^%]|%(?!\}))*%\}/g, "").replace(/\{\{(?:[^}]|\}(?!\}))*\}\}/g, "").trim();
+        if (literalPromptPath && !(literalPromptPath.includes("file://") || literalPromptPath.startsWith("exec:") || /\.(?:cjs|cts|j2|js|jsonl?|md|mjs|mts|py|ts|txt|ya?ml)(?::[^/\\]+)?$/i.test(
+          literalPromptPath
+        ) || /[*/\\]/.test(literalPromptPath) || literalPromptPath.charAt(literalPromptPath.length - 3) === "." || literalPromptPath.charAt(literalPromptPath.length - 4) === ".")) {
           continue;
         }
         const expandedPromptPath = expandAndTrackEnvTemplates(promptPath);
@@ -40214,9 +40226,14 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         ) || /[*/\\]/.test(expandedPromptPath) || expandedPromptPath.charAt(expandedPromptPath.length - 3) === "." || expandedPromptPath.charAt(expandedPromptPath.length - 4) === ".")) {
           continue;
         }
-        processFileUrl(
-          `file://${expandedPromptPath.replace(/^(?:file:\/\/|exec:)/, "")}`
+        const promptFiles = processFileUrl(
+          `file://${expandedPromptPath.replace(/^exec:/, "").replace(/^file:\/\//, "")}`
         );
+        for (const promptFile of promptFiles) {
+          if (/\.(?:ya?ml|jsonl?)$/i.test(promptFile)) {
+            structuredPromptFiles.add(promptFile);
+          }
+        }
       }
     }
     const extractVarFiles = (vars, baseDir = configDir) => {
@@ -40327,10 +40344,26 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           const isHttpProvider = typeof providerId === "string" && /^https?(?::|$)/i.test(providerId);
           const providerConfig = typeof item === "object" && item !== null && "config" in item && typeof item.config === "object" && item.config !== null ? item.config : void 0;
           const fileAuth = providerConfig && "auth" in providerConfig && typeof providerConfig.auth === "object" && providerConfig.auth !== null ? providerConfig.auth : void 0;
-          if (isHttpProvider && fileAuth && "type" in fileAuth && fileAuth.type === "file" && "path" in fileAuth && typeof fileAuth.path === "string") {
-            processFileUrl(`file://${fileAuth.path}`, true);
+          const literalOrEnv = (value2, expected) => value2 === expected || typeof value2 === "string" && value2.includes("{{") && /\benv(?:\.|\[)/.test(value2);
+          if (isHttpProvider && fileAuth && "type" in fileAuth && literalOrEnv(fileAuth.type, "file") && "path" in fileAuth && typeof fileAuth.path === "string") {
+            processFileUrl(
+              `file://${fileAuth.path.replace(/^file:\/\//, "")}`,
+              true
+            );
           }
           if (isHttpProvider && providerConfig) {
+            const multipart = "multipart" in providerConfig && typeof providerConfig.multipart === "object" && providerConfig.multipart !== null && "parts" in providerConfig.multipart && Array.isArray(providerConfig.multipart.parts) ? providerConfig.multipart.parts : [];
+            for (const part of multipart) {
+              if (typeof part !== "object" || part === null || !("kind" in part) || !literalOrEnv(part.kind, "file") || !("source" in part) || typeof part.source !== "object" || part.source === null || !("type" in part.source) || !literalOrEnv(part.source.type, "path") || !("path" in part.source) || typeof part.source.path !== "string") {
+                continue;
+              }
+              processFilePath(
+                expandAndTrackEnvTemplates(part.source.path),
+                "provider multipart file dependency",
+                true,
+                true
+              );
+            }
             const securityGroups = [
               [
                 "signatureAuth",
@@ -40461,6 +40494,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         return;
       }
       inspectedTestFiles.add(inspectionKey);
+      let inspectionRoot = dependencyRoot;
       try {
         const realTestFile = fs6.realpathSync(testFile);
         const containingRoot = getRealDependencyRoots().find(
@@ -40473,9 +40507,31 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           );
           return;
         }
+        inspectionRoot = containingRoot.lexical;
         if (/\.(?:xlsx?|py|[cm]?[jt]s)$/i.test(realTestFile)) {
           dependencies.add(
             `${containingRoot.lexical.replace(/[\\/]+$/, "")}${path6.sep}`
+          );
+          return;
+        }
+        let fileSize;
+        try {
+          fileSize = fs6.statSync(realTestFile).size;
+        } catch {
+          dependencies.add(
+            `${containingRoot.lexical.replace(/[\\/]+$/, "")}${path6.sep}`
+          );
+          warnSafe(
+            `Skipping structured dependency "${testFile}": file could not be inspected safely; conservatively watching the dependency root`
+          );
+          return;
+        }
+        if (fileSize > MAX_INSPECTED_FILE_SIZE) {
+          dependencies.add(
+            `${containingRoot.lexical.replace(/[\\/]+$/, "")}${path6.sep}`
+          );
+          warnSafe(
+            `Skipping structured dependency "${testFile}": file exceeds the maximum inspection size; conservatively watching the dependency root`
           );
           return;
         }
@@ -40567,6 +40623,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           );
         }
       } catch {
+        dependencies.add(`${inspectionRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
         warnSafe(`Failed to inspect test file dependency "${testFile}"`);
       }
     };
@@ -40580,6 +40637,13 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       filePath = expandAndTrackEnvTemplates(filePath);
       const fileName = path6.basename(filePath);
       const sheetIndex = fileName.indexOf("#");
+      if (sheetIndex !== -1 && (fileName.length > MAX_PROVIDER_REFERENCE_LENGTH || /[\0\r\n]/.test(fileName))) {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        warnSafe(
+          "Skipping invalid or oversized test file reference; conservatively watching the dependency root"
+        );
+        return;
+      }
       if (sheetIndex !== -1 && /\.xlsx?$/i.test(fileName.slice(0, sheetIndex))) {
         filePath = path6.join(
           path6.dirname(filePath),
@@ -40618,6 +40682,9 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         inspectTestFile(testFile, refResolutionRoot, testBaseDir);
       }
     };
+    for (const structuredPromptFile of structuredPromptFiles) {
+      inspectTestFile(structuredPromptFile, refResolutionRoot, configDir);
+    }
     for (const providerConfigFile of providerConfigFiles) {
       inspectTestFile(
         providerConfigFile,
