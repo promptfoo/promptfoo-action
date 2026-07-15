@@ -1461,6 +1461,23 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should enumerate a backslash-separated action prompt glob on POSIX', async () => {
+      if (process.platform === 'win32') return;
+      withInputs({ prompts: String.raw`prompts\*.txt` });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/first.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/*.txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test.each([
       [
         `prompts/${'x'.repeat(65_537)}.txt`,
@@ -1727,6 +1744,37 @@ describe('GitHub Action Main', () => {
       expect(body).not.toContain(absolutePrompt);
     });
 
+    test('should safely log normalized evaluated prompts for a manual full run', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      const absolutePrompt = path.join(
+        process.cwd(),
+        'prompts/manual-prompt.txt',
+      );
+      withInputs({
+        prompts: `prompts/*.txt\n${path.join(process.cwd(), 'prompts/*.txt')}`,
+      });
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+      mockGitInterface.diff.mockResolvedValue('');
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: ["prompts/manual-prompt.txt"]',
+      );
+      expect(mockCore.info.mock.calls.join('\n')).not.toContain(absolutePrompt);
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.filter((arg) => arg.endsWith('manual-prompt.txt'))).toEqual([
+        'prompts/manual-prompt.txt',
+      ]);
+    });
+
     test('should exclude the config file before recording prompt-glob matches', async () => {
       withInputs({ prompts: '**/*' });
       mockOctokit.paginate.mockResolvedValue([
@@ -1833,7 +1881,7 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalledTimes(shouldRun ? 1 : 0);
     });
 
-    test('should use POSIX semantics when matching repository dependency globs', async () => {
+    test('should compile a POSIX matcher once for repository dependency globs', async () => {
       const posixMatcher = vi.spyOn(path.posix, 'matchesGlob');
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'tests/fixtures/deleted.yaml' },
@@ -1843,9 +1891,39 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(posixMatcher).toHaveBeenCalledWith(
-        'tests/fixtures/deleted.yaml',
-        'tests/**/*.yaml',
+      expect(posixMatcher).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should match a bounded brace dependency against 2000 changed files without recompiling', async () => {
+      const dependency = `providers/${Array.from({ length: 10 }, () => '{a,b}').join('/')}/*.txt`;
+      mockOctokit.paginate.mockResolvedValue(
+        Array.from({ length: 2000 }, (_, index) => ({
+          filename: `docs/file-${index}.md`,
+        })),
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+      const posixMatcher = vi.spyOn(path.posix, 'matchesGlob');
+      const started = performance.now();
+
+      await run();
+
+      expect(performance.now() - started).toBeLessThan(2000);
+      expect(posixMatcher).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed for a dependency with more than 1024 brace alternatives', async () => {
+      const dependency = `providers/${Array.from({ length: 11 }, () => '{a,b}').join('/')}/*.txt`;
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Config dependency glob has too many brace alternatives; conservatively running evaluation.',
       );
       expect(mockExec.exec).toHaveBeenCalled();
     });

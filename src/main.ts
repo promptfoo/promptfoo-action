@@ -4,7 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { braceExpand } from 'minimatch';
+import { braceExpand, Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -517,7 +517,8 @@ export async function run(): Promise<void> {
         throw new Error('Prompt glob pattern has too many brace alternatives');
       }
 
-      const expandedPatterns = braceExpand(normalizeGlobPattern(globPattern), {
+      const normalizedGlobPattern = normalizeGlobPattern(globPattern);
+      const expandedPatterns = braceExpand(normalizedGlobPattern, {
         braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
       });
       if (expandedPatterns.length > MAX_PROMPT_BRACE_EXPANSIONS) {
@@ -541,7 +542,7 @@ export async function run(): Promise<void> {
         );
       }
 
-      const matches = glob.sync(globPattern, {
+      const matches = glob.sync(normalizedGlobPattern, {
         cwd: workingDirectory,
         nodir: true,
         braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
@@ -644,13 +645,28 @@ export async function run(): Promise<void> {
                 glob.hasMagic(dep, {
                   windowsPathsNoEscape: true,
                   magicalBraces: true,
-                  braceExpandMax: 1024,
-                }) &&
-                changedFilesList.some((changedFile) =>
-                  path.posix.matchesGlob(changedFile, dep),
-                )
+                  braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
+                })
               ) {
-                return true;
+                const matcher = new Minimatch(dep, {
+                  platform: 'linux',
+                  windowsPathsNoEscape: true,
+                  magicalBraces: true,
+                  braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
+                });
+                if (matcher.set.length > MAX_PROMPT_BRACE_EXPANSIONS) {
+                  core.warning(
+                    'Config dependency glob has too many brace alternatives; conservatively running evaluation.',
+                  );
+                  return true;
+                }
+                if (
+                  changedFilesList.some((changedFile) =>
+                    matcher.match(changedFile),
+                  )
+                ) {
+                  return true;
+                }
               }
             } catch {
               core.warning(
@@ -706,6 +722,7 @@ export async function run(): Promise<void> {
         'Prompt file paths containing CR or LF characters are not supported.',
       );
     }
+    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
 
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');
@@ -713,7 +730,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${JSON.stringify(evaluatedPromptFiles)}`,
       );
     }
 
@@ -758,7 +775,6 @@ export async function run(): Promise<void> {
         ...selectedPromptFiles,
       ]);
     }
-    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
     // Check if sharing is enabled and validate authentication upfront
     if (noShare) {
       // Override config-level sharing as well as the action's default behavior.
