@@ -38762,7 +38762,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       }
     };
     if (config2.providers) {
-      for (const provider of config2.providers) {
+      const providers = typeof config2.providers === "string" ? [config2.providers] : config2.providers;
+      for (const provider of providers) {
         if (typeof provider === "string" && provider.startsWith("file://")) {
           processFileUrl(provider, true);
         } else if (typeof provider === "object" && provider.id?.startsWith("file://")) {
@@ -38790,6 +38791,25 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
       }
     }
+    extractNestedConfigDependencies(config2.scenarios);
+    if (config2.nunjucksFilters) {
+      for (const filterPath of Object.values(config2.nunjucksFilters)) {
+        const renderedFilterPath = renderEnvironmentTemplates(
+          filterPath,
+          templateEnv
+        );
+        if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedFilterPath)) {
+          hasDynamicPromptDependencies = true;
+          continue;
+        }
+        processFileUrl(
+          `file://${renderedFilterPath}`,
+          true,
+          `file://${filterPath}`
+        );
+      }
+    }
+    extractNestedConfigDependencies(config2.extensions);
     const extractPromptFile = (prompt) => {
       const processPromptReference = (reference) => {
         if (/[\r\n]/.test(reference) || reference.length > 65536) return;
@@ -38913,9 +38933,14 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         extractAssertFiles(assert.assert);
       }
     };
-    if (config2.defaultTest) {
+    if (typeof config2.defaultTest === "string") {
+      processFileUrl(config2.defaultTest, true);
+      extractNestedPromptFileUrls(config2.defaultTest);
+    } else if (config2.defaultTest) {
       extractVarFiles(config2.defaultTest.vars);
       extractAssertFiles(config2.defaultTest.assert);
+      extractNestedConfigDependencies(config2.defaultTest.options);
+      extractNestedConfigDependencies(config2.defaultTest.assertScoringFunction);
     }
     if (config2.tests) {
       const tests = Array.isArray(config2.tests) ? config2.tests : [config2.tests];
@@ -38954,6 +38979,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
+        extractNestedConfigDependencies(test.options);
+        extractNestedConfigDependencies(test.assertScoringFunction);
       }
     }
     if (hasDynamicPromptDependencies) {
