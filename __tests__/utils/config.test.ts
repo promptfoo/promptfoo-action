@@ -1179,8 +1179,10 @@ providers:
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['build_prompt']);
-    expect(core.warning).not.toHaveBeenCalled();
+    expect(deps).toEqual(['build_prompt', './']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
   });
 
   it('should conservatively watch map-style per-test HTTP providers', () => {
@@ -1534,6 +1536,7 @@ prompts:
       'prompts/render.MTS:render',
       'prompts/object.txt',
       'prompts/id-only.txt',
+      './',
     ]);
   });
 
@@ -2043,6 +2046,24 @@ tests:
       'providers/shared.py',
       './',
     ]);
+  });
+
+  it('should conservatively watch inline executable provider commands for side-input changes', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  provider: exec:python providers/default.py
+tests:
+  - provider: exec:./providers/per-test.sh
+  - options:
+      provider: exec:node providers/grader.js
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
   });
 
   it('should track inline and default grading providers and fail closed for executable test transforms', () => {
@@ -3104,6 +3125,23 @@ extensions:
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
 
     expect(deps).toEqual(['hooks/']);
+  });
+
+  it('should preserve a config-subdirectory provider glob base when the last provider is deleted', async () => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/']);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should preserve a filesystem-root glob base as a directory', () => {

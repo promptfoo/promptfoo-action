@@ -543,6 +543,10 @@ export function extractFileDependencies(configPath: string): string[] {
         watchDynamicDependency = true;
         return;
       }
+      if (providerPath?.startsWith('exec:')) {
+        watchDynamicDependency = true;
+        return;
+      }
       const filePath = providerPath?.startsWith('file://')
         ? providerPath.slice('file://'.length)
         : providerPath?.match(/^(?:python|golang|ruby):([\s\S]*)$/)?.[1];
@@ -815,6 +819,14 @@ export function extractFileDependencies(configPath: string): string[] {
         if (prompt.includes('{{') || prompt.includes('{%')) {
           watchDynamicDependency = true;
           continue;
+        }
+        if (
+          prompt.startsWith('exec:') ||
+          /\.(?:[cm]?js|[cm]?ts|py|rb|sh|bash|exe|bat|cmd|ps1|pl)(?::[^:]*)?$/i.test(
+            promptPath,
+          )
+        ) {
+          watchDynamicDependency = true;
         }
         const fileUrl = `file://${promptPath}`;
         const selectorSeparator = fileUrl.lastIndexOf(':');
