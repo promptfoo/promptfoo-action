@@ -4291,6 +4291,27 @@ tests:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should retain nested runtime-loaded HTTP body file paths', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/body
+    config:
+      body:
+        document:
+          path: 'file://fixtures\\payload\\{literal}.json'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/fixtures/payload/{literal}.json',
+      'evals/fixtures\\payload\\{literal}.json',
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should rebase file-backed provider-map keys from an external test file', () => {
     mockFs.existsSync.mockImplementation((filePath: string) =>
       filePath.endsWith('tests/cases.yaml'),
