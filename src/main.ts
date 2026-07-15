@@ -212,18 +212,31 @@ export async function run(): Promise<void> {
       core.getInput('promptfoo-version', { required: false }) || 'latest';
     validatePromptfooVersion(version);
     const workspaceRoot = process.cwd();
-    const workingDirectory = path.resolve(
+    let workingDirectory = path.resolve(
       path.join(
         workspaceRoot,
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    if (!isPathInside(workspaceRoot, workingDirectory)) {
+      throw new Error('Working directory must stay within the checkout.');
+    }
+    let resolvedWorkspaceRoot: string;
+    let resolvedWorkingDirectory: string;
+    try {
+      resolvedWorkspaceRoot = fs.realpathSync(workspaceRoot);
+      resolvedWorkingDirectory = fs.realpathSync(workingDirectory);
+    } catch {
+      throw new Error('Unable to resolve the working directory.');
+    }
+    if (!isPathInside(resolvedWorkspaceRoot, resolvedWorkingDirectory)) {
+      throw new Error('Working directory resolves outside the checkout.');
+    }
+    workingDirectory = resolvedWorkingDirectory;
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     if (isPathInside(workspaceRoot, configAbsolutePath)) {
-      let resolvedWorkspaceRoot: string;
       let resolvedConfigPath: string;
       try {
-        resolvedWorkspaceRoot = fs.realpathSync(workspaceRoot);
         resolvedConfigPath = fs.realpathSync(configAbsolutePath);
       } catch {
         throw new Error('Unable to resolve the in-checkout config path.');
@@ -519,9 +532,7 @@ export async function run(): Promise<void> {
       .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
       .filter((file) => file);
 
-    const promptRoots = isPathInside(workspaceRoot, workingDirectory)
-      ? [workspaceRoot]
-      : [workspaceRoot, workingDirectory];
+    const promptRoots = [workspaceRoot];
     let resolvedPromptRoots: string[];
     try {
       resolvedPromptRoots = promptRoots.map((root) => fs.realpathSync(root));
@@ -529,9 +540,15 @@ export async function run(): Promise<void> {
       throw new Error('Unable to resolve an allowed prompt directory.');
     }
 
-    for (const globPattern of promptFilesGlobs) {
-      validateGlobPattern(globPattern, 'Prompt file glob');
-      const expandedPatterns = braceExpand(globPattern, {
+    for (const globPattern of useConfigPrompts ? [] : promptFilesGlobs) {
+      const windowsPathsNoEscape =
+        process.platform === 'win32' ||
+        (!path.isAbsolute(globPattern) && path.win32.isAbsolute(globPattern));
+      const normalizedGlobPattern = windowsPathsNoEscape
+        ? globPattern.replace(/\\/g, '/')
+        : globPattern;
+      validateGlobPattern(normalizedGlobPattern, 'Prompt file glob');
+      const expandedPatterns = braceExpand(normalizedGlobPattern, {
         braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS + 1,
       });
       if (expandedPatterns.length > MAX_GLOB_BRACE_EXPANSIONS) {
@@ -550,10 +567,11 @@ export async function run(): Promise<void> {
           );
         }
       }
-      const matches = glob.sync(globPattern, {
+      const matches = glob.sync(normalizedGlobPattern, {
         cwd: workingDirectory,
         nodir: true,
         braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
+        windowsPathsNoEscape,
       });
 
       const eligibleMatches = matches
@@ -686,7 +704,10 @@ export async function run(): Promise<void> {
         : promptFiles
       ).values(),
     );
-    if (promptFilesToEvaluate.some((file) => /[\r\n]/.test(file))) {
+    if (
+      !useConfigPrompts &&
+      promptFilesToEvaluate.some((file) => /[\r\n]/.test(file))
+    ) {
       throw new Error('Prompt file paths must not contain newlines.');
     }
 

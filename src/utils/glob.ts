@@ -21,12 +21,17 @@ export function validateGlobPattern(
     path.sep === '\\' ||
     (!path.isAbsolute(globPattern) && path.win32.isAbsolute(globPattern));
   let braceDepth = 0;
+  let escapedOpeningBraces = 0;
   let inCharacterClass = false;
   let braceExpansionCount = 1;
   const braceAlternativeCounts: number[] = [];
+  const bracesStartedInCharacterClass: boolean[] = [];
   for (let index = 0; index < globPattern.length; index++) {
     const character = globPattern[index];
     if (character === '\\' && !usesWindowsSeparators) {
+      if (globPattern[index + 1] === '{') {
+        escapedOpeningBraces++;
+      }
       index++;
       continue;
     }
@@ -41,6 +46,7 @@ export function validateGlobPattern(
     if (character === '{') {
       braceDepth++;
       braceAlternativeCounts.push(1);
+      bracesStartedInCharacterClass.push(inCharacterClass);
       if (braceDepth > MAX_GLOB_BRACE_DEPTH) {
         throw new Error(`${description} is malformed.`);
       }
@@ -50,15 +56,23 @@ export function validateGlobPattern(
       if (braceDepth === 0 && inCharacterClass) {
         continue;
       }
+      if (braceDepth === 0 && escapedOpeningBraces > 0) {
+        escapedOpeningBraces--;
+        continue;
+      }
       braceDepth--;
       if (braceDepth < 0) {
         throw new Error(`${description} is malformed.`);
       }
       braceExpansionCount *= braceAlternativeCounts[braceDepth];
       braceAlternativeCounts.length = braceDepth;
+      bracesStartedInCharacterClass.length = braceDepth;
     }
   }
-  if (braceDepth !== 0 || inCharacterClass) {
+  if (
+    inCharacterClass ||
+    bracesStartedInCharacterClass.some((startedInClass) => !startedInClass)
+  ) {
     throw new Error(`${description} is malformed.`);
   }
   if (globPattern.length * braceExpansionCount > MAX_GLOB_EXPANDED_BYTES) {

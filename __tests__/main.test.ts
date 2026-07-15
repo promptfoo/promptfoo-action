@@ -355,6 +355,99 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should allow a CRLF-containing matched filename when using config prompts', async () => {
+      const changedPrompt = 'prompts/line\r\nbreak.txt';
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedPrompt }]);
+      mockGlob.sync.mockReturnValue([changedPrompt]);
+      mockConfig.extractFileDependencies.mockReturnValue([changedPrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(args).not.toContain(changedPrompt);
+    });
+
+    test.each([
+      ['malformed glob', 'prompts/{safe,../outside/*.txt'],
+      ['unresolvable match', 'prompts/*.txt'],
+    ])('should ignore an %s when using config prompts', async (kind, promptGlob) => {
+      withInputs({ prompts: promptGlob });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'hooks/policy.js' }]);
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/policy.js']);
+      mockGlob.sync.mockReturnValue(['prompts/unreadable.txt']);
+      if (kind === 'unresolvable match') {
+        mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+          if (String(value).endsWith('/prompts/unreadable.txt')) {
+            throw new Error('EACCES: prompt disappeared');
+          }
+          return String(value);
+        });
+      }
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
+    test('should allow a literal opening brace in a prompt character class', async () => {
+      withInputs({ prompts: 'prompts/[{].txt' });
+      mockOctokit.paginate.mockResolvedValue([]);
+      mockGlob.sync.mockReturnValue(['prompts/{.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/[{].txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should not log ignored CRLF action matches when config prompts run without a diff', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockResolvedValue('');
+      mockGlob.sync.mockReturnValue([
+        'prompts/line\r\n::error::forged-config-prompt.txt',
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: []',
+      );
+      expect(
+        mockCore.info.mock.calls.map((call) => String(call[0])).join('\n'),
+      ).not.toContain('::error::forged-config-prompt');
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should process all matching prompts when PR file list hits GitHub cap', async () => {
       mockOctokit.paginate.mockResolvedValue(
         Array.from({ length: 3000 }, (_, index) => ({
@@ -462,6 +555,36 @@ describe('GitHub Action Main', () => {
         trimWhitespace: false,
       });
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should normalize Windows prompt separators before brace expansion and globbing', async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      try {
+        withInputs({ prompts: 'prompts\\{left,right}\\*.txt' });
+        mockOctokit.paginate.mockResolvedValue([]);
+        mockGlob.sync.mockReturnValue(['prompts/left/one.txt']);
+
+        await run();
+
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          'prompts/{left,right}/*.txt',
+          expect.objectContaining({
+            braceExpandMax: 1024,
+            windowsPathsNoEscape: true,
+          }),
+        );
+        expect(mockExec.exec).toHaveBeenCalled();
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: originalPlatform,
+          configurable: true,
+        });
+      }
     });
 
     test('should reject a prompt glob with excessive brace expansion before enumeration', async () => {
@@ -1615,7 +1738,14 @@ describe('GitHub Action Main', () => {
 
     test('should fail closed when an allowed prompt root cannot be resolved', async () => {
       withInputs({ config: '/private/tmp/shared/promptfooconfig.yaml' });
-      mockFs.realpathSync.mockImplementation(() => {
+      let workspaceResolutions = 0;
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        if (String(value) === process.cwd()) {
+          workspaceResolutions++;
+          if (workspaceResolutions <= 2) {
+            return String(value);
+          }
+        }
         throw new Error('EACCES: denied\n::error::forged-root');
       });
 
@@ -1642,7 +1772,7 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
-    test('should allow prompts from an explicitly external working directory', async () => {
+    test('should reject an explicitly external working directory', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
         configurable: true,
@@ -1665,8 +1795,10 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(mockCore.setFailed).not.toHaveBeenCalled();
-      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Working directory must stay within the checkout.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should not narrow evaluation when a prompt and config change', async () => {
@@ -2365,6 +2497,80 @@ describe('GitHub Action Main', () => {
   });
 
   describe('security validation', () => {
+    test('should not evaluate a config-prompt run from a working-directory symlink outside the checkout', async () => {
+      withInputs({
+        'working-directory': 'shared-link',
+        prompts: 'prompts/*.txt',
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        return resolved.endsWith('/shared-link')
+          ? '/private/tmp/outside'
+          : resolved;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Working directory resolves outside the checkout.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should run from the resolved target of an in-checkout working-directory symlink', async () => {
+      withInputs({ 'working-directory': 'evals-link' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        return resolved.endsWith('/evals-link')
+          ? resolved.replace(/evals-link$/, 'evals-real')
+          : resolved;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.join(process.cwd(), 'evals-real', 'promptfooconfig.yaml'),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.any(Array),
+        expect.objectContaining({
+          cwd: path.join(process.cwd(), 'evals-real'),
+        }),
+      );
+    });
+
+    test('should fail closed with a constant error when the working directory cannot be resolved', async () => {
+      withInputs({ 'working-directory': 'evals' });
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        if (resolved.endsWith('/evals')) {
+          throw new Error('EACCES: denied\\n::error::forged-working-directory');
+        }
+        return resolved;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Unable to resolve the working directory.',
+      );
+      expect(
+        mockCore.setFailed.mock.calls
+          .map((call) => String(call[0]))
+          .join('\\n'),
+      ).not.toContain('::error::forged-working-directory');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should not evaluate an in-checkout config that resolves outside the checkout', async () => {
       withInputs({ config: 'shared-link/promptfooconfig.yaml' });
       mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {

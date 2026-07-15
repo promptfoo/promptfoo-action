@@ -15,6 +15,16 @@ import {
 
 const MAX_STRUCTURED_DEPENDENCY_SIZE = 10 * 1024 * 1024;
 const MAX_UNSAFE_DEPENDENCY_WARNINGS = 10;
+const DIRECT_FUNCTION_FILE_KEYS = new Set([
+  'request',
+  'validateStatus',
+  'transformRequest',
+  'transformResponse',
+  'responseParser',
+  'sessionParser',
+]);
+const NONBLOCKING_OPEN_FLAGS =
+  fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW;
 
 class UnsafeConfigDependencyError extends Error {}
 
@@ -38,6 +48,76 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
       !relativePath.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relativePath))
   );
+}
+
+function readBoundedRegularFile(
+  filePath: string,
+  allowedRoots: string[],
+): string | undefined {
+  const physicalPath = fs.realpathSync(filePath);
+  if (!allowedRoots.some((root) => isPathInside(root, physicalPath))) {
+    return undefined;
+  }
+
+  const beforeOpen = fs.statSync(physicalPath);
+  if (
+    !beforeOpen.isFile() ||
+    beforeOpen.size > MAX_STRUCTURED_DEPENDENCY_SIZE
+  ) {
+    return undefined;
+  }
+
+  let fileDescriptor: number | undefined;
+  try {
+    fileDescriptor = fs.openSync(physicalPath, NONBLOCKING_OPEN_FLAGS);
+    const openedFile = fs.fstatSync(fileDescriptor);
+    if (
+      !openedFile.isFile() ||
+      openedFile.size > MAX_STRUCTURED_DEPENDENCY_SIZE ||
+      openedFile.size !== beforeOpen.size ||
+      openedFile.dev !== beforeOpen.dev ||
+      openedFile.ino !== beforeOpen.ino
+    ) {
+      return undefined;
+    }
+    const postOpenPath = fs.realpathSync(physicalPath);
+    if (!allowedRoots.some((root) => isPathInside(root, postOpenPath))) {
+      return undefined;
+    }
+    const postOpen = fs.statSync(postOpenPath);
+    if (
+      !postOpen.isFile() ||
+      postOpen.size !== openedFile.size ||
+      postOpen.dev !== openedFile.dev ||
+      postOpen.ino !== openedFile.ino
+    ) {
+      return undefined;
+    }
+
+    const buffer = Buffer.alloc(MAX_STRUCTURED_DEPENDENCY_SIZE + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const bytesRead = fs.readSync(
+        fileDescriptor,
+        buffer,
+        offset,
+        buffer.length - offset,
+        offset,
+      );
+      if (bytesRead === 0) {
+        break;
+      }
+      offset += bytesRead;
+    }
+    if (offset > MAX_STRUCTURED_DEPENDENCY_SIZE) {
+      return undefined;
+    }
+    return buffer.toString('utf8', 0, offset);
+  } finally {
+    if (fileDescriptor !== undefined) {
+      fs.closeSync(fileDescriptor);
+    }
+  }
 }
 
 /**
@@ -64,22 +144,6 @@ export function extractFileDependencies(configPath: string): string[] {
       return ['./'];
     }
 
-    const configContent = fs.readFileSync(configPath, 'utf8');
-    if (!configContent.trim()) {
-      core.debug('Config file is empty or invalid');
-      return [];
-    }
-
-    const config = loadYaml(configContent, {
-      schema: CORE_SCHEMA.withTags(mergeTag),
-    }) as PromptfooConfig;
-
-    if (!config) {
-      core.debug('Config file is empty or invalid');
-      return [];
-    }
-    configParsed = true;
-
     let resolvedDependencyRoots: string[] | undefined;
     if (configIsInCheckout) {
       try {
@@ -99,6 +163,39 @@ export function extractFileDependencies(configPath: string): string[] {
         return [];
       }
     }
+
+    let configContent: string | undefined;
+    try {
+      const primaryRoots = resolvedDependencyRoots ?? [
+        path.dirname(fs.realpathSync(configPath)),
+      ];
+      configContent = readBoundedRegularFile(configPath, primaryRoots);
+    } catch {
+      core.warning(
+        'Unable to safely read the config file. Watching the repository workspace for changes.',
+      );
+      return ['./'];
+    }
+    if (configContent === undefined) {
+      core.warning(
+        'Unable to safely read the config file. Watching the repository workspace for changes.',
+      );
+      return ['./'];
+    }
+    if (!configContent.trim()) {
+      core.debug('Config file is empty or invalid');
+      return [];
+    }
+
+    const config = loadYaml(configContent, {
+      schema: CORE_SCHEMA.withTags(mergeTag),
+    }) as PromptfooConfig;
+
+    if (!config) {
+      core.debug('Config file is empty or invalid');
+      return [];
+    }
+    configParsed = true;
 
     const getResolvedDependencyRoots = (): string[] => {
       if (resolvedDependencyRoots) {
@@ -211,6 +308,13 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
+    const hasOptimizedCharacterClass = (
+      filePath: string,
+      windowsPathsNoEscape = false,
+    ): boolean =>
+      windowsPathsNoEscape
+        ? filePath.includes('[')
+        : /(?:^|[^\\])(?:\\\\)*\[[^![\]\\]\]/.test(filePath);
     const hasGlobSyntax = (filePath: string): boolean => {
       if (
         filePath.length > MAX_GLOB_PATTERN_LENGTH ||
@@ -219,7 +323,7 @@ export function extractFileDependencies(configPath: string): string[] {
         return false;
       }
       validateGlobPattern(filePath, 'Config file dependency pattern');
-      return glob.hasMagic(filePath);
+      return glob.hasMagic(filePath) || hasOptimizedCharacterClass(filePath);
     };
     const processFileUrl = (
       fileUrl: string,
@@ -285,12 +389,17 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       // Check if the path contains glob patterns
-      validateGlobPattern(filePath, 'Config file dependency pattern');
+      const canContainGlob = windowsPathsNoEscape || magicalBraces;
+      if (canContainGlob) {
+        validateGlobPattern(filePath, 'Config file dependency pattern');
+      }
       if (
-        glob.hasMagic(filePath, {
+        canContainGlob &&
+        (glob.hasMagic(filePath, {
           magicalBraces,
           windowsPathsNoEscape,
-        })
+        }) ||
+          hasOptimizedCharacterClass(filePath, windowsPathsNoEscape))
       ) {
         const safePatterns: string[] = [];
         const expandedPatterns = braceExpand(filePath, {
@@ -583,10 +692,12 @@ export function extractFileDependencies(configPath: string): string[] {
           kind: 'transform',
         },
         { value: auth && 'path' in auth ? auth.path : undefined, kind: 'auth' },
-        ...['caPath', 'certPath', 'keyPath', 'pfxPath'].map((key) => ({
-          value: tls && key in tls ? tls[key as keyof typeof tls] : undefined,
-          kind: 'file' as const,
-        })),
+        ...['caPath', 'certPath', 'keyPath', 'pfxPath', 'jksPath'].map(
+          (key) => ({
+            value: tls && key in tls ? tls[key as keyof typeof tls] : undefined,
+            kind: 'file' as const,
+          }),
+        ),
         ...[
           'privateKeyPath',
           'keystorePath',
@@ -825,6 +936,34 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
+    const processDirectFunctionFile = (value: unknown): void => {
+      if (typeof value !== 'string' || !value.startsWith('file://')) {
+        return;
+      }
+      if (value.includes('{{') || value.includes('{%')) {
+        watchDynamicDependency = true;
+        return;
+      }
+      const selectorSeparator = value.lastIndexOf(':');
+      const candidateFileUrl = value.slice(0, selectorSeparator);
+      const hasJavascriptSelector = /\.(?:[cm]?js|[cm]?ts)$/i.test(
+        candidateFileUrl,
+      );
+      const hasSelector =
+        selectorSeparator > 'file://'.length &&
+        selectorSeparator < value.length - 1 &&
+        hasJavascriptSelector;
+      processFileUrl(
+        hasSelector ? candidateFileUrl : value,
+        false,
+        false,
+        false,
+      );
+      if (hasSelector && !/\.(?:[cm]?js|[cm]?ts)$/.test(candidateFileUrl)) {
+        processFileUrl(value, false, false, false);
+      }
+    };
+
     // Extract test variable files
     const extractVarFiles = (vars?: unknown, baseDir = configDir): void => {
       if (!vars) return;
@@ -902,6 +1041,12 @@ export function extractFileDependencies(configPath: string): string[] {
           assert.value.startsWith('file://')
         ) {
           processAssertionFileUrl(assert.value);
+        } else if (Array.isArray(assert.value)) {
+          for (const value of assert.value) {
+            if (typeof value === 'string' && value.startsWith('file://')) {
+              processFileUrl(value, false, false, false);
+            }
+          }
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&
@@ -937,6 +1082,50 @@ export function extractFileDependencies(configPath: string): string[] {
       const gradingProvider =
         options && 'provider' in options ? options.provider : undefined;
       processProviderReference(gradingProvider, baseDir);
+      if (options) {
+        const optionValues: Array<{ value: unknown; globBacked: boolean }> = [
+          { value: options, globBacked: false },
+        ];
+        const visitedOptionValues = new WeakMap<object, boolean>();
+        const optionFiles = new Map<string, boolean>();
+        for (const { value, globBacked } of optionValues) {
+          if (typeof value === 'string') {
+            if (value.includes('{{') || value.includes('{%')) {
+              watchDynamicDependency = true;
+            } else if (value.startsWith('file://')) {
+              optionFiles.set(
+                value,
+                globBacked || optionFiles.get(value) === true,
+              );
+            }
+            continue;
+          }
+          if (value === null || typeof value !== 'object') {
+            continue;
+          }
+          const previousMode = visitedOptionValues.get(value);
+          if (previousMode === true || previousMode === globBacked) {
+            continue;
+          }
+          visitedOptionValues.set(value, globBacked);
+          for (const [key, childValue] of Object.entries(value)) {
+            if (DIRECT_FUNCTION_FILE_KEYS.has(key)) {
+              processDirectFunctionFile(childValue);
+            } else {
+              optionValues.push({
+                value: childValue,
+                globBacked:
+                  globBacked ||
+                  key === 'response_format' ||
+                  key === 'output_format',
+              });
+            }
+          }
+        }
+        for (const [fileUrl, globBacked] of optionFiles) {
+          processTestFilePath(fileUrl, globBacked && hasGlobSyntax(fileUrl));
+        }
+      }
       const runtimeFiles = [
         'assertScoringFunction' in test
           ? test.assertScoringFunction
@@ -1155,24 +1344,19 @@ export function extractFileDependencies(configPath: string): string[] {
       }
       scannedStructuredDependencies.add(dependency);
 
-      let dependencySize: number | undefined;
-      try {
-        dependencySize = fs.statSync(dependency).size;
-      } catch {
-        watchWorkspace = true;
-        continue;
-      }
-      if (typeof dependencySize !== 'number') {
-        continue;
-      }
-      if (dependencySize > MAX_STRUCTURED_DEPENDENCY_SIZE) {
-        watchWorkspace = true;
-        continue;
-      }
-
       let structuredConfig: unknown;
       try {
-        const structuredContent = fs.readFileSync(dependency, 'utf8');
+        if (typeof fs.statSync(dependency).size !== 'number') {
+          continue;
+        }
+        const structuredContent = readBoundedRegularFile(
+          dependency,
+          getResolvedDependencyRoots(),
+        );
+        if (structuredContent === undefined) {
+          watchWorkspace = true;
+          continue;
+        }
         const extension = path.extname(dependency).toLowerCase();
         structuredConfig =
           extension === '.csv'
@@ -1225,6 +1409,7 @@ export function extractFileDependencies(configPath: string): string[] {
           'postprocess',
           'transformVars',
           'rubricPrompt',
+          ...DIRECT_FUNCTION_FILE_KEYS,
         ]);
         const authConfig =
           record.auth !== null && typeof record.auth === 'object'
@@ -1244,10 +1429,12 @@ export function extractFileDependencies(configPath: string): string[] {
             ? (record.multipart as Record<string, unknown>)
             : undefined;
         const rawPaths: Array<{ value: unknown; decodeFileUrl: boolean }> = [
-          ...['caPath', 'certPath', 'keyPath', 'pfxPath'].map((key) => ({
-            value: tlsConfig?.[key],
-            decodeFileUrl: false,
-          })),
+          ...['caPath', 'certPath', 'keyPath', 'pfxPath', 'jksPath'].map(
+            (key) => ({
+              value: tlsConfig?.[key],
+              decodeFileUrl: false,
+            }),
+          ),
           ...[
             'privateKeyPath',
             'keystorePath',
@@ -1273,6 +1460,9 @@ export function extractFileDependencies(configPath: string): string[] {
               }))
             : []),
         ];
+        for (const key of DIRECT_FUNCTION_FILE_KEYS) {
+          processDirectFunctionFile(record[key]);
+        }
         const authPath = authConfig?.path;
         if (typeof authPath === 'string') {
           if (authPath.includes('{{') || authPath.includes('{%')) {

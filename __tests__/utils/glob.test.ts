@@ -21,6 +21,23 @@ describe('validateGlobPattern', () => {
 
     try {
       for (const promptGlob of [
+        'prompts/[{].txt',
+        path.join(promptsDir, '[{].txt'),
+      ]) {
+        expect(braceExpand(promptGlob, { braceExpandMax: 1025 })).toHaveLength(
+          1,
+        );
+        expect(() =>
+          validateGlobPattern(promptGlob, 'prompt glob'),
+        ).not.toThrow();
+        expect(
+          globSync(promptGlob, { cwd, nodir: true }).map((match) =>
+            path.basename(match),
+          ),
+        ).toEqual(['{.txt']);
+      }
+
+      for (const promptGlob of [
         'prompts/[\\{1..5000000}].txt',
         path.join(promptsDir, '[\\{1..5000000}].txt'),
       ]) {
