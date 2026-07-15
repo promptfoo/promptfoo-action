@@ -37045,7 +37045,8 @@ function extractFileDependencies(configPath) {
     if (typeof config2.prompts === "string") {
       processPromptReference(config2.prompts);
     } else if (config2.prompts) {
-      for (const prompt of config2.prompts) {
+      const configuredPrompts = Array.isArray(config2.prompts) ? config2.prompts : Object.keys(config2.prompts);
+      for (const prompt of configuredPrompts) {
         if (typeof prompt === "string") {
           if (isPromptReference(prompt)) {
             processPromptReference(prompt);
@@ -38373,6 +38374,15 @@ async function run() {
           per_page: 100
         }
       );
+      if (pullRequestFiles.some(
+        (file) => file.filename.includes("\0") || file.previous_filename?.includes("\0")
+      )) {
+        throw new PromptfooActionError(
+          "Invalid pull request file list: null bytes are not allowed.",
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Remove null bytes from the pull request file list."
+        );
+      }
       if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
         warning(
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
