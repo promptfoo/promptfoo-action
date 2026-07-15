@@ -47,13 +47,24 @@ function toRepositoryPath(filePath: string): string {
 }
 
 function normalizeWindowsPromptGlob(pattern: string): string {
-  if (process.platform !== 'win32' || !path.win32.isAbsolute(pattern)) {
+  if (
+    process.platform !== 'win32' ||
+    !pattern.split(/[{},]/).some((segment) => path.win32.isAbsolute(segment))
+  ) {
     return pattern;
   }
 
-  return pattern.includes('/')
-    ? pattern.replace(/\\(?![?*()[\]{}+@!])/g, '/')
-    : pattern.split('\\').join('/');
+  const firstForwardSlash = pattern.indexOf('/');
+  if (firstForwardSlash === -1) {
+    return pattern.split('\\').join('/');
+  }
+
+  const nativePrefix = pattern.slice(0, firstForwardSlash);
+  const escapedSuffix = pattern.slice(firstForwardSlash);
+  return (
+    nativePrefix.replace(/\\(?![,\.\-|^])/g, '/') +
+    escapedSuffix.replace(/\\(?![?*()[\]{}+@!,\.\-|^])/g, '/')
+  );
 }
 
 function parseGitDiffFiles(diff: string): ChangedFile[] {
@@ -276,13 +287,18 @@ export async function run(): Promise<void> {
       { windowsPathsNoEscape: false, magicalBraces: true },
     );
     let promptGlobMatchingCapped = false;
-    let promptGlobMatchers: Array<RegExp | Minimatch> | undefined;
-    const getPromptGlobMatchers = (): Array<RegExp | Minimatch> => {
+    let promptGlobMatchers:
+      | Array<{ matcher: Minimatch; expression?: RegExp }>
+      | undefined;
+    const getPromptGlobMatchers = (): Array<{
+      matcher: Minimatch;
+      expression?: RegExp;
+    }> => {
       if (promptGlobMatchers) {
         return promptGlobMatchers;
       }
 
-      const matchers: Array<RegExp | Minimatch> = [];
+      const matchers: Array<{ matcher: Minimatch; expression?: RegExp }> = [];
       for (const pattern of promptFilesGlobs) {
         const traversalPatterns = braceExpand(pattern, {
           braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
@@ -344,12 +360,14 @@ export async function run(): Promise<void> {
             platform: process.platform,
             windowsPathsNoEscape: false,
           });
-          matchers.push(
-            traversalPattern.split('/').filter((segment) => segment === '**')
-              .length > 1
-              ? matcher
-              : (matcher.makeRe() as RegExp),
-          );
+          matchers.push({
+            matcher,
+            expression:
+              traversalPattern.split('/').filter((segment) => segment === '**')
+                .length > 1
+                ? undefined
+                : (matcher.makeRe() as RegExp),
+          });
         }
       }
 
@@ -374,10 +392,10 @@ export async function run(): Promise<void> {
       const repositoryPath = toRepositoryPath(absolutePath);
       return (
         promptGlobMatchingCapped ||
-        matchers.some((matcher) =>
-          matcher instanceof RegExp
-            ? matcher.test(repositoryPath)
-            : matcher.match(repositoryPath),
+        matchers.some(
+          ({ matcher, expression }) =>
+            (!expression || expression.test(repositoryPath)) &&
+            matcher.match(repositoryPath),
         )
       );
     };
