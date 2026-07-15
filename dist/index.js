@@ -40058,6 +40058,7 @@ var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 var MAX_DEPENDENCY_GLOB_PATTERN_LENGTH = 65536;
 var MAX_PROMPT_BRACE_EXPANSIONS = 1024;
+var INVALID_CHANGED_FILE_PATH_ERROR = "Changed file path contains an invalid NUL character.";
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
@@ -40329,6 +40330,11 @@ async function run() {
           per_page: 100
         }
       );
+      if (pullRequestFiles.some(
+        (file) => file.filename.includes("\0") || file.previous_filename?.includes("\0")
+      )) {
+        throw new Error(INVALID_CHANGED_FILE_PATH_ERROR);
+      }
       if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
         warning(
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
@@ -40343,6 +40349,9 @@ async function run() {
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
+        if (filesInput.includes("\0")) {
+          throw new Error(INVALID_CHANGED_FILE_PATH_ERROR);
+        }
         const manualLines = filesInput.split(/\r?\n/).filter((file) => file.trim());
         const manualFiles = manualLines.flatMap((file) => {
           const trimmed2 = file.trim();
