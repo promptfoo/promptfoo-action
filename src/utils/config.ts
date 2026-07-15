@@ -44,6 +44,13 @@ export function extractFileDependencies(configPath: string): string[] {
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
 
   try {
+    if (/\.(?:[cm]?js|[cm]?ts)$/i.test(configPath)) {
+      core.warning(
+        'Unable to statically resolve dependencies from an executable config. Watching the repository workspace for changes.',
+      );
+      return ['./'];
+    }
+
     const configContent = fs.readFileSync(configPath, 'utf8');
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
@@ -290,11 +297,13 @@ export function extractFileDependencies(configPath: string): string[] {
       const windowsDriveSeparator = windowsDrive
         ? extension.indexOf(':', 'file://'.length)
         : -1;
-      processFileUrl(
-        hookSeparator > 8 && hookSeparator !== windowsDriveSeparator
-          ? extension.slice(0, hookSeparator)
-          : extension,
-      );
+      const candidateFileUrl = extension.slice(0, hookSeparator);
+      const hasHookSuffix =
+        hookSeparator > 8 &&
+        hookSeparator !== windowsDriveSeparator &&
+        (/\.(?:[cm]?js|[cm]?ts)$/i.test(candidateFileUrl) ||
+          candidateFileUrl.endsWith('.py'));
+      processFileUrl(hasHookSuffix ? candidateFileUrl : extension);
     }
 
     if (watchWorkspace) {

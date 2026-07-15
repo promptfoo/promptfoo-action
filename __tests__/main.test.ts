@@ -962,6 +962,25 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should run when an explicit config can inherit a changed default-config dependency', async () => {
+      withInputs({ config: 'qa.yaml' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'hooks/policy.js' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([]);
+      mockFs.existsSync.mockImplementation(
+        (filePath: fs.PathLike) =>
+          filePath.toString() ===
+          path.join(process.cwd(), 'promptfooconfig.yaml'),
+      );
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should detect dependency directories without a trailing slash', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },

@@ -33,6 +33,17 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
+const PROMPTFOO_DEFAULT_CONFIG_EXTENSIONS = [
+  'yaml',
+  'yml',
+  'json',
+  'cjs',
+  'cts',
+  'js',
+  'mjs',
+  'mts',
+  'ts',
+];
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
@@ -490,6 +501,21 @@ export async function run(): Promise<void> {
     if (changedFilesList.length > 0) {
       const dependencies =
         extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+      const inheritedDefaultConfig = PROMPTFOO_DEFAULT_CONFIG_EXTENSIONS.some(
+        (extension) => {
+          const defaultConfigPath = path.join(
+            workingDirectory,
+            `promptfooconfig.${extension}`,
+          );
+          return (
+            defaultConfigPath !== configAbsolutePath &&
+            fs.existsSync(defaultConfigPath)
+          );
+        },
+      );
+      if (inheritedDefaultConfig) {
+        dependencies.push('./');
+      }
       if (dependencies.length > 0) {
         core.debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,

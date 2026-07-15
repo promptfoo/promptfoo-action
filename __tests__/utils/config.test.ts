@@ -197,6 +197,44 @@ commandLineOptions:
     ]);
   });
 
+  it('should preserve colons in default-export extension paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/team:blue/result.js
+  - file://hooks/result:blue.js
+  - file://hooks/team:green/result.py
+  - file://hooks/result:green.py
+commandLineOptions:
+  extension:
+    - file://hooks/cli:blue/result.mjs
+    - file://hooks/cli-result:green.py
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'hooks/team:blue/result.js',
+      'hooks/result:blue.js',
+      'hooks/team:green/result.py',
+      'hooks/result:green.py',
+      'hooks/cli:blue/result.mjs',
+      'hooks/cli-result:green.py',
+    ]);
+  });
+
+  it('should conservatively watch the workspace for executable config files', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "module.exports = { extensions: ['file://hooks/policy.js:beforeAll'] };",
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.cjs');
+
+    expect(deps).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
   it('should conservatively watch the workspace for referenced extension lists', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
