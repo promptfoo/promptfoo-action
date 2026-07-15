@@ -279,8 +279,7 @@ export function extractFileDependencies(configPath: string): string[] {
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
-  const dependencyRoots =
-    dependencyRoot === cwd ? [cwd] : [dependencyRoot, cwd];
+  const dependencyRoots = Array.from(new Set([configDir, cwd]));
   let configParsed = false;
 
   try {
@@ -351,6 +350,16 @@ export function extractFileDependencies(configPath: string): string[] {
           const code = (error as NodeJS.ErrnoException).code;
           if (code !== 'ENOENT' && code !== 'ENOTDIR') {
             return false;
+          }
+
+          try {
+            fs.lstatSync(existingPath);
+            return false;
+          } catch (lstatError) {
+            const lstatCode = (lstatError as NodeJS.ErrnoException).code;
+            if (lstatCode !== 'ENOENT' && lstatCode !== 'ENOTDIR') {
+              return false;
+            }
           }
 
           existingPath = path.dirname(existingPath);

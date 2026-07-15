@@ -327,6 +327,43 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should parse CRLF-separated prompt glob inputs without retaining carriage returns', async () => {
+      withInputs({ prompts: 'prompts/*.txt\r\nprompts/*.md' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'prompts/prompt2.md' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) => {
+        if (pattern === 'prompts/*.txt') {
+          return ['prompts/prompt1.txt'];
+        }
+        if (pattern === 'prompts/*.md') {
+          return ['prompts/prompt2.md'];
+        }
+        return [];
+      });
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/*.txt',
+        expect.any(Object),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/*.md',
+        expect.any(Object),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.md',
+        ]),
+        expect.any(Object),
+      );
+    });
+
     test('should reject an unchanged prompt filename before a dependency-triggered full evaluation', async () => {
       const forgedAnnotation = 'UNCHANGED_PROMPT_CANARY_019F62C3';
       const unsafePrompt = `prompts/prompt\n::error::${forgedAnnotation}.txt`;

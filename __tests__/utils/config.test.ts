@@ -11,6 +11,7 @@ vi.mock('fs', async () => {
     ...realFs,
     readFileSync: vi.fn(),
     realpathSync: vi.fn(),
+    lstatSync: vi.fn(),
     existsSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
@@ -26,6 +27,7 @@ describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
     realpathSync: Mock;
+    lstatSync: Mock;
     existsSync: Mock;
     statSync: Mock;
   };
@@ -41,6 +43,9 @@ describe('extractFileDependencies', () => {
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
     mockFs.realpathSync.mockImplementation((value: unknown) => String(value));
+    mockFs.lstatSync.mockImplementation(() => {
+      throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+    });
     mockFs.existsSync.mockReturnValue(false);
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
@@ -2498,6 +2503,70 @@ providers:
     );
   });
 
+  it('should reject a dangling provider symlink instead of treating it as a missing file', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath.endsWith('/providers/dangling.py')) {
+        throw Object.assign(new Error('REALPATH_SECRET_CANARY'), {
+          code: 'ENOENT',
+        });
+      }
+      return filePath;
+    });
+    mockFs.lstatSync.mockImplementation((value: unknown) => {
+      if (String(value).endsWith('/providers/dangling.py')) {
+        return { isSymbolicLink: () => true } as fs.Stats;
+      }
+      throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+    });
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/dangling.py
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'REALPATH_SECRET_CANARY',
+    );
+  });
+
+  it.each([
+    ['ENOENT', ['providers/missing.py']],
+    ['ENOTDIR', ['providers/missing.py']],
+    ['EACCES', ['./']],
+  ])('should handle %s while checking whether a missing provider path is a symlink', (code, expected) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath.endsWith('/providers/missing.py')) {
+        throw Object.assign(new Error('REALPATH_SECRET_CANARY'), {
+          code: 'ENOENT',
+        });
+      }
+      return filePath;
+    });
+    mockFs.lstatSync.mockImplementation((value: unknown) => {
+      if (String(value).endsWith('/providers/missing.py')) {
+        throw Object.assign(new Error('LSTAT_SECRET_CANARY'), { code });
+      }
+      throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+    });
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/missing.py
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(expected);
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).not.toContain('REALPATH_SECRET_CANARY');
+    expect(warnings).not.toContain('LSTAT_SECRET_CANARY');
+  });
+
   it('should preserve a provider dependency when all of its contained ancestors are missing', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.realpathSync.mockImplementation((value: unknown) => {
@@ -2937,6 +3006,31 @@ providers:
         ([value]) => String(value) === '/private/configs',
       ),
     ).toHaveLength(0);
+  });
+
+  it('should keep valid relative dependencies for a config directory symlinked outside the checkout', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath.startsWith('/test/repository/config-link')) {
+        return filePath.replace(
+          '/test/repository/config-link',
+          '/private/configs/project',
+        );
+      }
+      return filePath;
+    });
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/current.py
+`);
+
+    expect(
+      extractFileDependencies(
+        '/test/repository/config-link/promptfooconfig.yaml',
+      ),
+    ).toEqual(['config-link/providers/current.py']);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should keep dependencies whose names begin with two dots', () => {
