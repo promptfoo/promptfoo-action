@@ -499,6 +499,12 @@ export async function run(): Promise<void> {
       }
     }
 
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error(
+        'Prompt file paths containing CR or LF characters are not supported.',
+      );
+    }
+
     const configChanged =
       changedFilesList.length > 0 &&
       changedFilesList.includes(configRepositoryPath);

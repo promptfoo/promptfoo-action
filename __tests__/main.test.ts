@@ -998,6 +998,23 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should reject a newline-containing matched prompt path before command or comment sinks', async () => {
+      const hostilePrompt = 'prompts/prompt.txt\n::error::forged-annotation';
+      mockOctokit.paginate.mockResolvedValue([{ filename: hostilePrompt }]);
+      mockGlob.sync.mockReturnValue([hostilePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths containing CR or LF characters are not supported.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.join('\n')).not.toContain(
+        'forged-annotation',
+      );
+    });
+
     test('should match tab and space-containing push filenames from NUL-delimited git output', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',
