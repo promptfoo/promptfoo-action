@@ -14,6 +14,7 @@ vi.mock('fs', async () => {
     ...realFs,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -28,6 +29,7 @@ describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
     existsSync: Mock;
+    realpathSync: Mock;
     statSync: Mock;
   };
   const mockGlob = glob as unknown as {
@@ -42,6 +44,7 @@ describe('extractFileDependencies', () => {
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => filePath);
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
 
@@ -188,6 +191,22 @@ prompts:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it.each([
+    'Explain *carefully* how this works',
+    'Summarize https://example.com/docs for the user',
+  ])('should ignore single-line inline prompt-map keys containing path markers: %s', (prompt) => {
+    mockFs.readFileSync.mockReturnValue(
+      `prompts:\n  "${prompt}": inline prompt\n`,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([]);
   });
 
@@ -368,6 +387,25 @@ prompts:
     ).toEqual(['prompts/broken.json']);
   });
 
+  it('should not read mapped structured prompts that resolve outside the workspace', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  file://prompts/linked.yaml: linked prompt\n';
+      }
+      return 'secret: SENSITIVE-REVIEW-TOKEN\n';
+    });
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockReturnValue('/tmp/outside/secret.yaml');
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/linked.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe prompt file dependency "prompts/linked.yaml": resolved path must stay within the repository workspace',
+    );
+  });
+
   it('should extract executable prompt-map keys without command arguments', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
@@ -477,6 +515,20 @@ prompts:
     ).toEqual(['generate.zsh']);
   });
 
+  it.each([
+    'generate.run',
+    'generate.xy',
+  ])('should extract root-level prompt-map executables with a short suffix: %s', (promptPath) => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  ${promptPath}: generated prompt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([promptPath]);
+  });
+
   it('should extract file-backed prompt ids', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
@@ -536,6 +588,7 @@ prompts:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should ignore null prompt and test entries from YAML', () => {

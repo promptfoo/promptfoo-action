@@ -274,15 +274,25 @@ export function extractFileDependencies(
       };
 
       for (const promptFile of promptFiles) {
+        const absolutePromptFile = path.resolve(promptFile);
         if (
-          !isPathInside(dependencyRoot, promptFile) ||
-          !/\.(?:json|ya?ml)$/i.test(promptFile)
+          !isPathInside(dependencyRoot, absolutePromptFile) ||
+          !/\.(?:json|ya?ml)$/i.test(absolutePromptFile)
         ) {
           continue;
         }
         try {
-          const promptContent = fs.readFileSync(promptFile, 'utf8');
-          const parsed = promptFile.endsWith('.json')
+          const physicalPromptFile = fs.existsSync(absolutePromptFile)
+            ? fs.realpathSync(absolutePromptFile)
+            : absolutePromptFile;
+          if (!isPathInside(dependencyRoot, physicalPromptFile)) {
+            core.warning(
+              `Ignoring unsafe prompt file dependency "${normalizedPath}": resolved path must stay within the repository workspace`,
+            );
+            continue;
+          }
+          const promptContent = fs.readFileSync(physicalPromptFile, 'utf8');
+          const parsed = absolutePromptFile.endsWith('.json')
             ? JSON.parse(promptContent)
             : loadYaml(promptContent, {
                 schema: YAML_LOAD_SCHEMA,
@@ -315,8 +325,10 @@ export function extractFileDependencies(
         const looksLikePath =
           isExecutable ||
           reference.startsWith('file://') ||
-          reference.includes('*') ||
-          /[\\/]/.test(reference) ||
+          (!/\s/.test(reference) &&
+            (reference.includes('*') || /[\\/]/.test(reference))) ||
+          reference.charAt(reference.length - 3) === '.' ||
+          reference.charAt(reference.length - 4) === '.' ||
           /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|zsh|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
             reference,
           );
@@ -332,6 +344,7 @@ export function extractFileDependencies(
           const promptPath = isExecutable
             ? (executableParts[0] ?? '')
             : reference;
+          if (!promptPath) return;
           processFileUrl(
             promptPath.startsWith('file://')
               ? promptPath
