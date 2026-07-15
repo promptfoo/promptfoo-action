@@ -561,6 +561,7 @@ export async function run(): Promise<void> {
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,
+        braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
       });
 
       const allMatches = matches.filter((file) => {

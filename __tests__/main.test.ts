@@ -1437,6 +1437,21 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should pass the brace-expansion cap to prompt-glob enumeration', async () => {
+      withInputs({ prompts: 'prompts/{one,two}.txt' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'prompts/one.txt' }]);
+      mockGlob.sync.mockReturnValue(['prompts/one.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/{one,two}.txt',
+        expect.objectContaining({ braceExpandMax: 1025, nodir: true }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should reject an oversized prompt glob before enumeration', async () => {
       withInputs({ prompts: `prompts/${'x'.repeat(65_537)}.txt` });
 
