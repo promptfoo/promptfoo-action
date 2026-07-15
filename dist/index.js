@@ -36456,9 +36456,19 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "API_HOST",
   "APPDATA",
   "AWS_CA_BUNDLE",
+  "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+  "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+  "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
   "AWS_CONFIG_FILE",
+  "AWS_DEFAULT_PROFILE",
+  "AWS_EC2_METADATA_SERVICE_ENDPOINT",
+  "AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE",
   "AWS_ENDPOINT_URL",
+  "AWS_PROFILE",
+  "AWS_ROLE_ARN",
+  "AWS_ROLE_SESSION_NAME",
   "AWS_SHARED_CREDENTIALS_FILE",
+  "AWS_WEB_IDENTITY_TOKEN_FILE",
   "AZURE_AI_PROJECT_URL",
   "AZURE_API_BASE_URL",
   "AZURE_API_HOST",
@@ -36469,6 +36479,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "AZURE_OPENAI_BASE_URL",
   "AR",
   "BASH_ENV",
+  "CDP_DOMAIN",
   "CC",
   "CGO_CFLAGS",
   "CGO_CPPFLAGS",
@@ -36495,6 +36506,9 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "GCCGO",
   "GCCGOTOOLDIR",
   "GCC_EXEC_PREFIX",
+  "GEM_HOME",
+  "GEM_PATH",
+  "GEM_SPEC_CACHE",
   "GOAUTH",
   "GOBIN",
   "GOCACHE",
@@ -36520,6 +36534,9 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "GOWORK",
   "GOOGLE_API_BASE_URL",
   "GOOGLE_API_HOST",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES",
+  "GOOGLE_GHA_CREDS_PATH",
   "HOME",
   "HTTP_PROXY",
   "HTTPS_PROXY",
@@ -36533,6 +36550,8 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "MISTRAL_API_HOST",
   "MLFLOW_GATEWAY_URL",
   "NVIDIA_API_BASE_URL",
+  "NODE_DEBUG",
+  "NODE_DEBUG_NATIVE",
   "NODE_EXTRA_CA_CERTS",
   "NODE_OPTIONS",
   "NODE_PATH",
@@ -36571,6 +36590,9 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_CA_CERT_PATH",
   "PROMPTFOO_CLOUD_API_URL",
   "PROMPTFOO_CONFIG_DIR",
+  "PROMPTFOO_DISABLE_REF_PARSER",
+  "PROMPTFOO_DISABLE_TEMPLATING",
+  "PROMPTFOO_DISABLE_VAR_EXPANSION",
   "PROMPTFOO_FAILED_TEST_EXIT_CODE",
   "PROMPTFOO_INSECURE_SSL",
   "PROMPTFOO_JKS_CERT_PATH",
@@ -36585,6 +36607,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_REMOTE_GENERATION_URL",
   "PROMPTFOO_RUBY",
   "PROMPTFOO_SHARING_APP_BASE_URL",
+  "PROMPTFOO_STRICT_FILES",
   "PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT",
   "PUPPETEER_CACHE_DIR",
   "PUPPETEER_CHROME_DOWNLOAD_BASE_URL",
@@ -36597,6 +36620,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PYTHONSTARTUP",
   "PYTHONUSERBASE",
   "REQUESTS_CA_BUNDLE",
+  "RUBYGEMS_GEMDEPS",
   "RUBYLIB",
   "RUBYOPT",
   "SHELL",
@@ -36614,7 +36638,9 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
 ]);
 var FORBIDDEN_ENV_FILE_PREFIXES = [
   "AWS_ENDPOINT_URL_",
+  "BUNDLE_",
   "CGO_",
+  "CLOUDSDK_",
   "DYLD_",
   "GIT_",
   "LD_",
@@ -37160,6 +37186,12 @@ async function run() {
           `Set repeat-min-pass to at most ${repeat}`
         );
       }
+    }
+    const implicitEnvFilePath = path6.join(workingDirectory, ".env");
+    if (fs7.existsSync(implicitEnvFilePath)) {
+      info(`Loading environment variables from ${implicitEnvFilePath}`);
+      loadEnvironmentFile(implicitEnvFilePath);
+      info(`Successfully loaded ${implicitEnvFilePath}`);
     }
     if (envFiles) {
       const envFileList = envFiles.split(",").map((f) => f.trim()).filter(Boolean);

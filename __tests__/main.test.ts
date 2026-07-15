@@ -587,6 +587,13 @@ describe('GitHub Action Main', () => {
       'pythonuserbase',
       'PERL5LIB',
       'RUBYLIB',
+      'RUBYGEMS_GEMDEPS',
+      'bundle_gemfile',
+      'BUNDLE_APP_CONFIG',
+      'BUNDLE_PATH',
+      'GEM_HOME',
+      'GEM_PATH',
+      'GEM_SPEC_CACHE',
       'PROMPTFOO_PYTHON',
       'PROMPTFOO_RUBY',
       'playwright_browsers_path',
@@ -600,6 +607,8 @@ describe('GitHub Action Main', () => {
       'PUPPETEER_DOWNLOAD_BASE_URL',
       'PUPPETEER_CHROME_DOWNLOAD_BASE_URL',
       'NODE_TLS_REJECT_UNAUTHORIZED',
+      'NODE_DEBUG',
+      'node_debug_native',
       'GOFLAGS',
       'goenv',
       'GOAUTH',
@@ -657,11 +666,27 @@ describe('GitHub Action Main', () => {
       'ANTHROPIC_BASE_URL',
       'aPi_HoSt',
       'AWS_ENDPOINT_URL',
+      'AWS_PROFILE',
+      'aws_default_profile',
+      'AWS_WEB_IDENTITY_TOKEN_FILE',
+      'AWS_ROLE_ARN',
+      'AWS_ROLE_SESSION_NAME',
+      'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE',
+      'AWS_CONTAINER_CREDENTIALS_FULL_URI',
+      'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
+      'AWS_EC2_METADATA_SERVICE_ENDPOINT',
+      'AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE',
       'aws_config_file',
       'AWS_SHARED_CREDENTIALS_FILE',
       'aws_endpoint_url_bedrock_runtime',
       'AWS_ENDPOINT_URL_SAGEMAKER_RUNTIME',
       'AZURE_OPENAI_API_HOST',
+      'GOOGLE_APPLICATION_CREDENTIALS',
+      'google_external_account_allow_executables',
+      'GOOGLE_GHA_CREDS_PATH',
+      'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
+      'cloudsdk_config',
+      'CLOUDSDK_PYTHON',
       'AZURE_AI_PROJECT_URL',
       'CLOUDFLARE_ACCOUNT_ID',
       'CLAUDE_CONFIG_DIR',
@@ -686,6 +711,11 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_CACHE_PATH',
       'PROMPTFOO_CONFIG_DIR',
       'PROMPTFOO_PASS_RATE_THRESHOLD',
+      'PROMPTFOO_DISABLE_VAR_EXPANSION',
+      'PROMPTFOO_DISABLE_REF_PARSER',
+      'PROMPTFOO_DISABLE_TEMPLATING',
+      'PROMPTFOO_STRICT_FILES',
+      'CDP_DOMAIN',
       'PROMPTFOO_FAILED_TEST_EXIT_CODE',
       'PROMPTFOO_LOG_DIR',
       'PROMPTFOO_MEDIA_PATH',
@@ -748,6 +778,76 @@ describe('GitHub Action Main', () => {
       } finally {
         delete process.env.CUSTOM_PROVIDER_SETTING;
         delete process.env.NODE_ENV;
+      }
+    });
+
+    test('should reject a forbidden variable from the implicit working-directory .env file', async () => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalBaseUrl = process.env.OPENAI_BASE_URL;
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { OPENAI_BASE_URL: 'http://attacker.invalid/v1' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('OPENAI_BASE_URL'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.OPENAI_BASE_URL).toBe(originalBaseUrl);
+      } finally {
+        if (originalBaseUrl === undefined) {
+          delete process.env.OPENAI_BASE_URL;
+        } else {
+          process.env.OPENAI_BASE_URL = originalBaseUrl;
+        }
+      }
+    });
+
+    test('should load the implicit .env before selected environment files', async () => {
+      withInputs({ 'env-files': '.env.local' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return (
+          value.endsWith(`${path.sep}.env`) || value.endsWith('.env.local')
+        );
+      });
+
+      const dotenv = await import('dotenv');
+      const loadedPaths: string[] = [];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          loadedPaths.push(options?.path ?? '');
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { CUSTOM_PROVIDER_SETTING: 'selected' }
+            : { CUSTOM_PROVIDER_SETTING: 'implicit' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(loadedPaths).toHaveLength(2);
+        expect(loadedPaths[0]).toMatch(/(?:^|[/\\])\.env$/);
+        expect(loadedPaths[1]).toMatch(/(?:^|[/\\])\.env\.local$/);
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({ CUSTOM_PROVIDER_SETTING: 'selected' }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
       }
     });
 
