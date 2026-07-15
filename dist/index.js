@@ -38321,6 +38321,7 @@ function isDirectory2(filePath) {
 // src/utils/config.ts
 var MAX_BRACE_EXPANSIONS = 1024;
 var MAX_GLOB_PATTERN_LENGTH = 65536;
+var MAX_STRUCTURED_PROMPT_BYTES = 10485760;
 var JAVASCRIPT_EXTENSIONS = /* @__PURE__ */ new Set(["cjs", "cts", "js", "mjs", "mts", "ts"]);
 var SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set(["py", "go", "rb"]);
 var PROMPT_FILE_EXTENSIONS = /* @__PURE__ */ new Set([
@@ -38392,21 +38393,39 @@ function getPathSuffix(filePath) {
   if (filePath.length > MAX_GLOB_PATTERN_LENGTH || /[\0\r\n]/.test(filePath)) {
     return void 0;
   }
-  const separator = Math.max(
-    filePath.lastIndexOf("/"),
-    filePath.lastIndexOf("\\")
-  );
-  const colon = filePath.indexOf(":", separator + 1);
-  if (colon === filePath.length - 1) return void 0;
-  const filenameEnd = colon === -1 ? filePath.length : colon;
-  const extensionStart = filePath.lastIndexOf(".", filenameEnd - 1);
+  let separator = -1;
+  let extensionStart = -1;
+  let selector;
+  for (let index = 0; index < filePath.length; index += 1) {
+    const character = filePath[index];
+    if (character === "/" || character === "\\") {
+      separator = index;
+      extensionStart = -1;
+      continue;
+    }
+    if (character === ".") {
+      extensionStart = index;
+      continue;
+    }
+    if (character !== ":" || extensionStart <= separator || index === filePath.length - 1) {
+      continue;
+    }
+    const extension2 = filePath.slice(extensionStart + 1, index);
+    if (!/^[A-Za-z0-9]{1,10}$/.test(extension2)) continue;
+    selector = {
+      extension: extension2,
+      pathWithoutSelector: filePath.slice(0, index),
+      hasSelector: true
+    };
+  }
+  if (selector) return selector;
   if (extensionStart <= separator) return void 0;
-  const extension = filePath.slice(extensionStart + 1, filenameEnd);
+  const extension = filePath.slice(extensionStart + 1);
   if (!/^[A-Za-z0-9]{1,10}$/.test(extension)) return void 0;
   return {
     extension,
-    pathWithoutSelector: filePath.slice(0, filenameEnd),
-    hasSelector: colon !== -1
+    pathWithoutSelector: filePath,
+    hasSelector: false
   };
 }
 function getFileFunctionSelector(filePath) {
@@ -38428,6 +38447,9 @@ function normalizeConfigFilePath(filePath, platform2 = process.platform) {
   return platform2 === "win32" ? filePath.replace(/^\/(?=[A-Za-z]:[\\/])/, "").replace(/\\/g, "/") : filePath;
 }
 function stripSpreadsheetSheetSelector(filePath) {
+  if (filePath.length > MAX_GLOB_PATTERN_LENGTH || /[\0\r\n]/.test(filePath)) {
+    return filePath;
+  }
   const hashIndex = filePath.indexOf("#");
   if (hashIndex === -1) return filePath;
   const pathWithoutSheet = filePath.slice(0, hashIndex);
@@ -38727,7 +38749,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       return safePatterns;
     };
     const processFileUrl = (fileUrl, stripFunctionSuffix = false, displayFileUrl = fileUrl, redactDisplayPath = false) => {
-      const rawFilePath = fileUrl.replace("file://", "");
+      const rawFilePath = stripSpreadsheetSheetSelector(
+        fileUrl.replace("file://", "")
+      );
       const displayFilePath = sanitizeDependencyDisplayPath(
         redactDisplayPath ? "[redacted]" : displayFileUrl.replace("file://", "")
       );
@@ -38861,18 +38885,24 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     };
     const extractHttpFileDependencies = (record, env) => {
       const auth2 = record.auth;
-      if (typeof auth2 === "object" && auth2 !== null && auth2.type === "file" && typeof auth2.path === "string") {
-        const authPath = auth2.path;
-        const renderedPath = renderEnvironmentTemplates(authPath, env);
-        if (hasNunjucksTemplate(renderedPath)) {
+      if (typeof auth2 === "object" && auth2 !== null && typeof auth2.path === "string") {
+        const authType = auth2.type;
+        const renderedAuthType = typeof authType === "string" ? renderEnvironmentTemplates(authType, env) : void 0;
+        if (renderedAuthType && hasNunjucksTemplate(renderedAuthType)) {
           hasDynamicPromptDependencies = true;
-        } else {
-          processFileUrl(
-            renderedPath.startsWith("file://") ? renderedPath : `file://${renderedPath}`,
-            true,
-            authPath.startsWith("file://") ? authPath : `file://${authPath}`,
-            true
-          );
+        } else if (renderedAuthType === "file") {
+          const authPath = auth2.path;
+          const renderedPath = renderEnvironmentTemplates(authPath, env);
+          if (hasNunjucksTemplate(renderedPath)) {
+            hasDynamicPromptDependencies = true;
+          } else {
+            processFileUrl(
+              renderedPath.startsWith("file://") ? renderedPath : `file://${renderedPath}`,
+              true,
+              authPath.startsWith("file://") ? authPath : `file://${authPath}`,
+              true
+            );
+          }
         }
       }
       for (const containerKey of ["signatureAuth", "tls"]) {
@@ -38899,9 +38929,16 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       for (const part of parts) {
         if (typeof part !== "object" || part === null) continue;
         const source = part.source;
-        if (typeof source !== "object" || source === null || source.type !== "path" || typeof source.path !== "string") {
+        if (typeof source !== "object" || source === null || typeof source.path !== "string") {
           continue;
         }
+        const sourceType = source.type;
+        const renderedSourceType = typeof sourceType === "string" ? renderEnvironmentTemplates(sourceType, env) : void 0;
+        if (renderedSourceType && hasNunjucksTemplate(renderedSourceType)) {
+          hasDynamicPromptDependencies = true;
+          continue;
+        }
+        if (renderedSourceType !== "path") continue;
         const sourcePath = source.path;
         const renderedPath = renderEnvironmentTemplates(sourcePath, env);
         if (hasNunjucksTemplate(renderedPath)) {
@@ -39048,15 +39085,39 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           );
           continue;
         }
+        let promptContent;
         try {
           if (visitedStructuredFiles.has(physicalPromptFile)) continue;
           visitedStructuredFiles.add(physicalPromptFile);
-          const promptContent = fs6.readFileSync(physicalPromptFile, "utf8");
+          let promptSize;
+          try {
+            promptSize = fs6.statSync(physicalPromptFile).size;
+          } catch {
+            hasDynamicPromptDependencies = true;
+            warning(
+              "Structured prompt file could not be inspected safely; watching all repository changes"
+            );
+            continue;
+          }
+          if (promptSize > MAX_STRUCTURED_PROMPT_BYTES) {
+            hasDynamicPromptDependencies = true;
+            warning(
+              "Structured prompt file is too large to scan safely; watching all repository changes"
+            );
+            continue;
+          }
+          promptContent = fs6.readFileSync(physicalPromptFile, "utf8");
           const parsed = absolutePromptFile.endsWith(".jsonl") ? promptContent.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line)) : absolutePromptFile.endsWith(".json") ? JSON.parse(promptContent) : load(promptContent, {
             schema: YAML_LOAD_SCHEMA
           });
           walk(parsed, physicalPromptFile);
         } catch {
+          if (promptContent !== void 0 && absolutePromptFile.endsWith(".jsonl")) {
+            hasDynamicPromptDependencies = true;
+            warning(
+              "Structured dependency file could not be parsed safely; watching all repository changes"
+            );
+          }
         }
       }
     };
@@ -39342,6 +39403,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         );
         if (absolutePath) {
           dependencies.add(absolutePath);
+          extractNestedPromptFileUrls(`file://${absolutePath}`, prompt.file);
         }
       }
     };
@@ -39360,6 +39422,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           if (selector?.isJavascript || selector?.extension === "py") {
             processFileUrl(value, true);
           }
+        } else if (typeof value === "string" && value.includes("file://") && hasNunjucksTemplate(value)) {
+          hasDynamicPromptDependencies = true;
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
           const absolutePath = resolveConfigDependency(
             value.file,
