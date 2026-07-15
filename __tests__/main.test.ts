@@ -420,10 +420,18 @@ describe('GitHub Action Main', () => {
       expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
     });
 
-    test('should ignore a removed CRLF filename outside the configured prompt globs', async () => {
-      mockOctokit.paginate.mockResolvedValue([
-        { filename: 'docs/old\nnotes.md', status: 'removed' },
-      ]);
+    test.each([
+      ['removed', { filename: 'docs/old\nnotes.md', status: 'removed' }],
+      [
+        'renamed',
+        {
+          filename: 'docs/new.md',
+          previous_filename: 'docs/old\rnotes.md',
+          status: 'renamed',
+        },
+      ],
+    ])('should ignore an unrelated %s CRLF filename outside the configured prompt globs', async (_label, file) => {
+      mockOctokit.paginate.mockResolvedValue([file]);
       mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
 
       await run();
@@ -744,8 +752,75 @@ describe('GitHub Action Main', () => {
         expect.stringContaining('monitored prompt was removed or moved'),
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
-        expect.arrayContaining(['--prompts', remainingPrompt]),
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
       );
+    });
+
+    test.each([
+      [
+        'config-triggered',
+        'promptfooconfig.yaml',
+        'Evaluated prompt files: prompts/selected.txt',
+      ],
+      [
+        'prompt-only',
+        'prompts/selected.txt',
+        'LLM prompt was modified in these files: prompts/selected.txt',
+      ],
+    ])('should keep %s absolute prompt matches repository-relative in argv and the PR comment', async (_label, changedFile, expectedComment) => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts/selected.txt');
+      withInputs({ prompts: path.join(process.cwd(), 'prompts/*.txt') });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: changedFile, status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/selected.txt']),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain(absolutePrompt);
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(expectedComment),
+        }),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.not.stringContaining(absolutePrompt),
+        }),
+      );
+    });
+
+    test('should keep workflow-dispatch absolute prompt matches repository-relative in logs and argv', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts/selected.txt');
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {},
+        configurable: true,
+      });
+      withInputs({ prompts: path.join(process.cwd(), 'prompts/*.txt') });
+      mockGitInterface.diff.mockResolvedValueOnce('');
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: prompts/selected.txt',
+      );
+      expect(
+        mockCore.info.mock.calls.every(
+          ([message]) => !String(message).includes(absolutePrompt),
+        ),
+      ).toBe(true);
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/selected.txt']),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain(absolutePrompt);
     });
 
     test('should detect a removed prompt with an absolute Windows-separator glob', async () => {
@@ -1497,10 +1572,42 @@ describe('GitHub Action Main', () => {
       );
     });
 
-    test('should conservatively process remaining prompts when brace expansion fails', async () => {
+    test('should conservatively use config prompts when brace expansion fails', async () => {
       mockBraceExpand.mockImplementation(() => {
         throw new Error('malformed brace pattern\n::error::forged');
       });
+      withInputs({ prompts: 'prompts/{broken,pattern}/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      try {
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Prompt glob matching exceeded its safety limits',
+          ),
+        );
+        expect(mockGlob.sync).not.toHaveBeenCalled();
+        expect(mockExec.exec.mock.calls[0][1]).not.toContain('--prompts');
+        expect(
+          mockCore.warning.mock.calls.every(
+            ([message]) => !String(message).includes('::error::forged'),
+          ),
+        ).toBe(true);
+      } finally {
+        mockBraceExpand.mockReset();
+      }
+    });
+
+    test('should conservatively process remaining prompts when matcher brace expansion fails after preflight', async () => {
+      mockBraceExpand
+        .mockImplementationOnce(() => ['prompts/broken/*.txt'])
+        .mockImplementationOnce(() => {
+          throw new Error('matcher brace failure\n::error::forged');
+        });
       withInputs({ prompts: 'prompts/{broken,pattern}/*.txt' });
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'prompts/removed.txt', status: 'removed' },
@@ -1530,11 +1637,43 @@ describe('GitHub Action Main', () => {
 
     test.each([
       ['an extreme numeric brace range', 'prompts/{1..1000000000}.txt'],
+      [
+        'an extreme numeric brace range after an even number of backslashes',
+        'prompts/\\\\{1..1000000000}.txt',
+      ],
+      [
+        'an extreme numeric brace range inside a character class',
+        'prompts/[{1..5000000}].txt',
+      ],
       ['an oversized pattern', `prompts/${'a'.repeat(65_537)}.txt`],
       ['a NUL-containing pattern', 'prompts/invalid\0name.txt'],
       ['a malformed brace pattern', 'prompts/{broken/*.txt'],
       ['an unmatched closing brace', 'prompts/broken}/*.txt'],
       ['an unsafe long numeric range', `prompts/{1..${'9'.repeat(17)}}.txt`],
+      [
+        'a zero-padded numeric range that would amplify expansion output',
+        `prompts/{${'0'.repeat(32_000)}1..1024}.txt`,
+      ],
+      [
+        'a deeply nested balanced brace pattern',
+        `prompts/${'{'.repeat(5000)}a,b${'}'.repeat(5000)}/*.txt`,
+      ],
+      [
+        'a deeply nested balanced brace pattern inside a character class',
+        `prompts/[${'{'.repeat(5000)}a,b${'}'.repeat(5000)}]/*.txt`,
+      ],
+      [
+        'a deeply nested brace pattern hidden by escaped closing braces',
+        `prompts/${'\\{'.repeat(5000)}${'{\\}'.repeat(5000)}a,b${'}'.repeat(5000)}/*.txt`,
+      ],
+      [
+        'a deeply nested extglob pattern',
+        `prompts/${'@('.repeat(1000)}x|y${')'.repeat(1000)}/*.txt`,
+      ],
+      [
+        'a deeply nested extglob pattern synthesized by brace alternatives',
+        `prompts/${'{@,@}('.repeat(24)}x|y${')'.repeat(24)}/*.txt`,
+      ],
     ])('should reject %s before brace expansion or filesystem globbing', async (_label, prompts) => {
       mockBraceExpand.mockImplementation(() => {
         throw new Error('unsafe brace expansion was invoked');
@@ -1556,8 +1695,30 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
-    test('should preserve an escaped numeric-brace literal in a POSIX prompt glob', async () => {
-      withInputs({ prompts: 'prompts/\\{1..1000000000\\}.txt' });
+    test('should reject nested extglobs exposed by brace-expansion backslash collapse before filesystem globbing', async () => {
+      const prompts = `prompts/{one,two}/${'\\\\\\@('.repeat(24)}x|y${')'.repeat(24)}/*.txt`;
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      ['an opening escape', 'prompts/\\{1..1000000000}.txt'],
+      ['three opening escapes', 'prompts/\\\\\\{1..1000000000}.txt'],
+      ['a closing escape', 'prompts/{1..1000000000\\}.txt'],
+    ])('should preserve a numeric-brace literal with %s in a POSIX prompt glob', async (_label, prompts) => {
+      withInputs({ prompts });
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'prompts/{1..1000000000}.txt', status: 'removed' },
       ]);
@@ -1566,7 +1727,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockGlob.sync).toHaveBeenCalledWith(
-        'prompts/\\{1..1000000000\\}.txt',
+        prompts,
         expect.objectContaining({ braceExpandMax: 1000 }),
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
@@ -1584,6 +1745,77 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockGlob.sync).toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve a bounded extglob prompt pattern', async () => {
+      withInputs({ prompts: 'prompts/@(one|two).txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/one.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/@(one|two).txt',
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve repeated literal-brace and parenthesis segments in a prompt path', async () => {
+      const prompts = `prompts/${'{literal}('.repeat(17)}x${')'.repeat(17)}.txt`;
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: prompts, status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([prompts]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', prompts]),
+      );
+    });
+
+    test('should preserve a bounded nested-brace prompt pattern', async () => {
+      const prompts = 'prompts/{outer,{one,two}}/*.txt';
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/two/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/two/remaining.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/two/remaining.txt']),
+      );
+    });
+
+    test('should preserve a bounded extglob exposed by brace-expansion backslash collapse', async () => {
+      const prompts = 'prompts/{one,two}/\\\\\\@([)]x|y).txt';
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/one/\\y.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
       expect(mockExec.exec).toHaveBeenCalled();
     });
 

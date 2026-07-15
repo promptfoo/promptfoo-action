@@ -854,6 +854,25 @@ providers:
     );
   });
 
+  it('should reject an extreme numeric dependency glob inside a character class before glob parsing', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/[{1..5000000}]/*.py
+`);
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error('unsafe glob parsing was invoked');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping an oversized numeric config dependency glob; conservatively watching the repository workspace',
+    );
+  });
+
   it('should reject a dependency glob with an unsafe long numeric range', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -867,10 +886,117 @@ providers:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
-  it('should preserve an escaped numeric-brace literal in a POSIX dependency glob', () => {
+  it('should reject a zero-padded numeric dependency range before glob parsing', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
-  - 'file://providers/\\{1..1000000000\\}/*.py'
+  - file://providers/{${'0'.repeat(32_000)}1..1024}/*.py
+`);
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error('unsafe glob parsing was invoked');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'an extreme range after an even number of backslashes',
+      'file://providers/\\\\{1..1000000000}/*.py',
+    ],
+    [
+      'a deeply nested balanced brace pattern',
+      `file://providers/${'{'.repeat(5000)}a,b${'}'.repeat(5000)}/*.py`,
+    ],
+    [
+      'a deeply nested balanced brace pattern inside a character class',
+      `file://providers/[${'{'.repeat(5000)}a,b${'}'.repeat(5000)}]/*.py`,
+    ],
+    [
+      'a deeply nested brace pattern hidden by escaped closing braces',
+      `file://providers/${'\\{'.repeat(5000)}${'{\\}'.repeat(5000)}a,b${'}'.repeat(5000)}/*.py`,
+    ],
+    [
+      'a deeply nested extglob pattern',
+      `file://providers/${'@('.repeat(1000)}x|y${')'.repeat(1000)}/*.py`,
+    ],
+    [
+      'a deeply nested extglob pattern hidden by character-class closing parentheses',
+      `file://providers/${'@([)]'.repeat(1000)}x|y${')'.repeat(1000)}/*.py`,
+    ],
+    [
+      'a deeply nested extglob pattern synthesized by brace alternatives',
+      `file://providers/${'{@,@}('.repeat(24)}x|y${')'.repeat(24)}/*.py`,
+    ],
+  ])('should reject %s before dependency glob parsing', (_label, provider) => {
+    mockFs.readFileSync.mockReturnValue(`providers:\n  - '${provider}'`);
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error('unsafe glob parsing was invoked');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should reject nested extglobs exposed by dependency brace-expansion backslash collapse before glob parsing', () => {
+    const provider = `file://providers/{one,two}/${'\\\\\\@('.repeat(24)}x|y${')'.repeat(24)}/*.py`;
+    mockFs.readFileSync.mockReturnValue(`providers:\n  - '${provider}'`);
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error('unsafe glob parsing was invoked');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should disable repeated expansion for a numeric range exposed by dependency brace-expansion backslash collapse', () => {
+    const provider = `file://providers/{one,two}/\\\\\\\\\\{1..1000000000}/*.py`;
+    mockFs.readFileSync.mockReturnValue(`providers:\n  - '${provider}'`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => value.includes('*') || value.includes('{'),
+    );
+
+    extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ nobrace: true, braceExpandMax: 1024 }),
+    );
+  });
+
+  it('should disable repeated expansion for nested braces exposed by dependency brace-expansion backslash collapse', () => {
+    const escaped = '\\'.repeat(5);
+    const provider = `file://providers/{one,two}/${`${escaped}{`.repeat(3000)}a,b${`${escaped}}`.repeat(3000)}/*.py`;
+    mockFs.readFileSync.mockReturnValue(`providers:\n  - '${provider}'`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => value.includes('*') || value.includes('{'),
+    );
+
+    extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      expect.any(Array),
+      expect.objectContaining({ nobrace: true, braceExpandMax: 1024 }),
+    );
+  });
+
+  it.each([
+    ['an opening escape', '\\{1..1000000000}'],
+    ['three opening escapes', '\\\\\\{1..1000000000}'],
+    ['a closing escape', '{1..1000000000\\}'],
+  ])('should preserve a numeric-brace literal with %s in a POSIX dependency glob', (_label, literal) => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'file://providers/${literal}/*.py'
 `);
     mockGlob.hasMagic.mockImplementation((value: string) =>
       value.includes('*'),
@@ -886,6 +1012,38 @@ providers:
       'providers/{1..1000000000}',
     ]);
     expect(mockGlob.sync).toHaveBeenCalled();
+  });
+
+  it('should preserve repeated literal-brace and parenthesis segments in a dependency path', () => {
+    const provider = `providers/${'{literal}('.repeat(17)}x${')'.repeat(17)}.py`;
+    mockFs.readFileSync.mockReturnValue(`providers:\n  - 'file://${provider}'`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([provider]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['*', '*', '\\*'],
+    ['?', '?', '\\?'],
+    ['an escaped-backslash asterisk', '\\*', '\\\\\\*'],
+    ['an escaped-backslash question mark', '\\?', '\\\\\\?'],
+  ])('should watch a POSIX dependency directory containing a literal %s', (_label, literal, pattern) => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'file://providers/${pattern}/**/*.py'
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      /(?<!\\)(?:\\\\)*[*?]/.test(value),
+    );
+    mockGlob.sync.mockReturnValue([
+      `/test/working/providers/${literal}/current.py`,
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([`providers/${literal}/current.py`, `providers/${literal}`]);
   });
 
   it('should preserve a bounded zero-step numeric range in a Windows dependency glob', () => {
@@ -2389,6 +2547,35 @@ providers:
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('must stay within the repository workspace'),
     );
+  });
+
+  it.each([
+    '/',
+    '\\',
+  ])('should normalize a triple-slash Windows file URL with a %s drive separator', (separator) => {
+    const currentPlatform = process.platform;
+    Object.defineProperty(process, 'platform', {
+      value: 'win32',
+      configurable: true,
+    });
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'file:///C:${separator}repo${separator}provider.py'
+`);
+
+    try {
+      expect(
+        extractFileDependencies('/test/working/promptfooconfig.yaml'),
+      ).toEqual([]);
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining(`"C:${separator}repo${separator}provider.py"`),
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        value: currentPlatform,
+        configurable: true,
+      });
+    }
   });
 
   it('should emit one containment warning for repeated foreign Windows-absolute dependencies', () => {

@@ -2,13 +2,15 @@ import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
-import { braceExpand } from 'minimatch';
+import { braceExpand, unescape as unescapeGlob } from 'minimatch';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
 const MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 const MAX_BRACE_EXPANSIONS = 1024;
 const MAX_NUMERIC_BRACE_RANGE = 100_000;
+const MAX_BRACE_DEPTH = 128;
+const MAX_EXTGLOB_DEPTH = 16;
 const MAX_STRUCTURED_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_STRUCTURED_FILES = 128;
 const MAX_STRUCTURED_NODES = 50_000;
@@ -86,6 +88,15 @@ function sanitizeLogText(value: string): string {
     .replace(/\n/g, '\\n');
 }
 
+function fileUrlPath(value: string): string {
+  const filePath = value.startsWith('file://')
+    ? value.slice('file://'.length)
+    : value;
+  return process.platform === 'win32' && /^\/[A-Za-z]:[\\/]/.test(filePath)
+    ? filePath.slice(1)
+    : filePath;
+}
+
 function hasMismatchedGlobDelimiters(pattern: string): boolean {
   let braceDepth = 0;
   let parenthesisDepth = 0;
@@ -93,6 +104,7 @@ function hasMismatchedGlobDelimiters(pattern: string): boolean {
   let escaped = false;
   for (const character of pattern) {
     if (escaped) {
+      if (character === '}' && braceDepth > 0) braceDepth--;
       escaped = false;
       continue;
     }
@@ -130,9 +142,87 @@ function hasMismatchedGlobDelimiters(pattern: string): boolean {
   return braceDepth > 0 || parenthesisDepth > 0 || inCharacterClass;
 }
 
+function hasExcessiveGlobDepth(pattern: string): boolean {
+  let braceDepth = 0;
+  let extglobDepth = 0;
+  let extglobOperator = false;
+  let escaped = false;
+  let inCharacterClass = false;
+  const braceOperators: Array<{
+    hasAlternatives: boolean;
+    hasOperatorAlternative: boolean;
+    endsWithOperator: boolean;
+  }> = [];
+  const updateBraceOperator = (character: string, isEscaped = false): void => {
+    const state = braceOperators[braceOperators.length - 1];
+    if (!state) return;
+    if (character === ',' && !isEscaped) {
+      state.hasAlternatives = true;
+      state.hasOperatorAlternative ||= state.endsWithOperator;
+      state.endsWithOperator = false;
+      return;
+    }
+    state.endsWithOperator = !isEscaped && '*+?@!'.includes(character);
+  };
+  for (const character of pattern) {
+    if (escaped) {
+      escaped = false;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === '{') {
+      braceDepth++;
+      if (braceDepth > MAX_BRACE_DEPTH) return true;
+      braceOperators.push({
+        hasAlternatives: false,
+        hasOperatorAlternative: false,
+        endsWithOperator: false,
+      });
+      extglobOperator = false;
+    } else if (character === '}' && braceDepth > 0) {
+      braceDepth--;
+      const state = braceOperators.pop();
+      const braceCanEndWithOperator =
+        !!state &&
+        state.hasAlternatives &&
+        (state.hasOperatorAlternative || state.endsWithOperator);
+      const parentState = braceOperators[braceOperators.length - 1];
+      if (parentState) {
+        parentState.endsWithOperator = braceCanEndWithOperator;
+      }
+      extglobOperator = braceCanEndWithOperator;
+    } else if (character === '[') {
+      inCharacterClass = true;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
+    } else if (character === ']' && inCharacterClass) {
+      inCharacterClass = false;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
+    } else if (!inCharacterClass && character === '(' && extglobOperator) {
+      extglobDepth++;
+      if (extglobDepth > MAX_EXTGLOB_DEPTH) return true;
+      extglobOperator = false;
+    } else if (!inCharacterClass && character === ')' && extglobDepth > 0) {
+      extglobDepth--;
+      extglobOperator = false;
+    } else {
+      updateBraceOperator(character, inCharacterClass);
+      extglobOperator = !inCharacterClass && '*+?@!'.includes(character);
+    }
+  }
+  return false;
+}
+
 function hasOversizedNumericBraceRange(pattern: string): boolean {
   for (const range of pattern.matchAll(
-    /\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g,
+    /(?<!\\)(?:\\\\)*\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g,
   )) {
     if (range.slice(1).some((value) => value && value.length > 16)) return true;
     const start = Number(range[1]);
@@ -144,6 +234,49 @@ function hasOversizedNumericBraceRange(pattern: string): boolean {
     ) {
       return true;
     }
+  }
+  return false;
+}
+
+function hasExcessiveExpandedExtglobDepth(pattern: string): boolean {
+  let extglobDepth = 0;
+  let extglobOperator = false;
+  let escaped = false;
+  let inCharacterClass = false;
+  for (const character of pattern) {
+    if (escaped) {
+      escaped = false;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === '[') {
+      inCharacterClass = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === ']' && inCharacterClass) {
+      inCharacterClass = false;
+      extglobOperator = false;
+      continue;
+    }
+    if (inCharacterClass) continue;
+    if (character === '(' && extglobOperator) {
+      extglobDepth++;
+      if (extglobDepth > MAX_EXTGLOB_DEPTH) return true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === ')' && extglobDepth > 0) {
+      extglobDepth--;
+      extglobOperator = false;
+      continue;
+    }
+    extglobOperator = '*+?@!'.includes(character);
   }
   return false;
 }
@@ -334,7 +467,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Helper function to process file:// paths with glob support
     const processFileUrl = (fileUrl: string): void => {
-      const filePath = fileUrl.replace('file://', '');
+      const filePath = fileUrlPath(fileUrl);
       if (filePath.length > MAX_GLOB_PATTERN_LENGTH) {
         watchWorkspace();
         core.warning(
@@ -343,7 +476,10 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
-      if (filePath.includes('{') && hasMismatchedGlobDelimiters(filePath)) {
+      if (
+        hasExcessiveGlobDepth(filePath) ||
+        (filePath.includes('{') && hasMismatchedGlobDelimiters(filePath))
+      ) {
         watchWorkspace();
         core.warning(
           'Skipping a malformed config dependency glob; conservatively watching the repository workspace',
@@ -382,24 +518,30 @@ export function extractFileDependencies(configPath: string): string[] {
       let isGlob: boolean;
       let expandedPaths: string[];
       try {
-        isGlob = glob.hasMagic(filePath, globOptions);
-        expandedPaths = isGlob
+        expandedPaths = filePath.includes('{')
           ? braceExpand(filePath, globOptions)
           : [filePath];
+        if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
+          watchWorkspace();
+          core.warning(
+            'Skipping config dependency glob with too many brace alternatives; conservatively watching the repository workspace',
+          );
+          return;
+        }
+        if (expandedPaths.some(hasExcessiveExpandedExtglobDepth)) {
+          watchWorkspace();
+          core.warning(
+            'Skipping a malformed config dependency glob; conservatively watching the repository workspace',
+          );
+          return;
+        }
+        isGlob = glob.hasMagic(filePath, globOptions);
       } catch (error) {
         watchWorkspace();
         core.warning(
           `Failed to parse config dependency glob: ${sanitizeLogText(
             error instanceof Error ? error.message : String(error),
           )}; conservatively watching the repository workspace`,
-        );
-        return;
-      }
-
-      if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-        watchWorkspace();
-        core.warning(
-          'Skipping config dependency glob with too many brace alternatives; conservatively watching the repository workspace',
         );
         return;
       }
@@ -423,6 +565,7 @@ export function extractFileDependencies(configPath: string): string[] {
         try {
           matches = glob.sync(safePatterns, {
             nodir: true,
+            nobrace: true,
             ...globOptions,
             braceExpandMax: MAX_BRACE_EXPANSIONS,
           });
@@ -500,7 +643,7 @@ export function extractFileDependencies(configPath: string): string[] {
         const literalBasePath =
           process.platform === 'win32'
             ? basePath
-            : basePath.replace(/\\([{}[\](),])/g, '$1');
+            : unescapeGlob(braceExpand(basePath, globOptions)[0], globOptions);
         dependencies.add(path.resolve(configDir, literalBasePath || '.'));
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
@@ -519,7 +662,7 @@ export function extractFileDependencies(configPath: string): string[] {
       extension: RegExp,
       options: { firstColon?: boolean; requireExport?: boolean } = {},
     ): void => {
-      const rawFilename = fileUrl.slice('file://'.length);
+      const rawFilename = fileUrlPath(fileUrl);
       const colon = options.firstColon
         ? rawFilename.indexOf(':', /^[A-Za-z]:[\\/]/.test(rawFilename) ? 2 : 0)
         : rawFilename.lastIndexOf(':');
@@ -564,9 +707,7 @@ export function extractFileDependencies(configPath: string): string[] {
       onParsed?: (value: unknown) => boolean | undefined,
       scanReferences = true,
     ): void => {
-      let filePath = fileReference.startsWith('file://')
-        ? fileReference.slice('file://'.length)
-        : fileReference;
+      let filePath = fileUrlPath(fileReference);
       const colon = filePath.lastIndexOf(':');
       if (colon !== -1 && TEST_FILE_SELECTOR.test(filePath.slice(0, colon))) {
         filePath = filePath.slice(0, colon);
@@ -682,7 +823,7 @@ export function extractFileDependencies(configPath: string): string[] {
             ? resolvedProviderId
             : `file://${path.resolve(
                 baseDir,
-                resolvedProviderId.slice('file://'.length),
+                fileUrlPath(resolvedProviderId),
               )}`;
         processFileSelector(providerFile, PROVIDER_FILE_SELECTOR);
         scanStructuredPrompt(providerFile, (parsed) => {
@@ -1024,9 +1165,7 @@ export function extractFileDependencies(configPath: string): string[] {
         if (!reserveStructuredEntries(values.length)) return;
         for (const value of values) {
           const resolvedValue = resolveEnvTemplate(value, config.env);
-          const rawValue = resolvedValue.startsWith('file://')
-            ? resolvedValue.slice('file://'.length)
-            : resolvedValue;
+          const rawValue = fileUrlPath(resolvedValue);
           processFileUrl(`file://${path.resolve(baseDir, rawValue)}`);
           scanStructuredPrompt(path.resolve(baseDir, rawValue));
         }
@@ -1119,9 +1258,7 @@ export function extractFileDependencies(configPath: string): string[] {
     ): void => {
       if (typeof tests === 'string') {
         const testPath = tests.replace(/(\.(?:xlsx|xls))#[^\\/]*$/i, '$1');
-        const rawTestPath = testPath.startsWith('file://')
-          ? testPath.slice('file://'.length)
-          : testPath;
+        const rawTestPath = fileUrlPath(testPath);
         const absoluteTestPath = path.resolve(baseDir, rawTestPath);
         processFileSelector(`file://${absoluteTestPath}`, TEST_FILE_SELECTOR);
         scanStructuredPrompt(

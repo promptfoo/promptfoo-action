@@ -36,6 +36,8 @@ const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const MAX_PROMPT_GLOB_VARIANTS = 1000;
 const MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
 const MAX_PROMPT_NUMERIC_RANGE = 100_000;
+const MAX_PROMPT_BRACE_DEPTH = 128;
+const MAX_PROMPT_EXTGLOB_DEPTH = 16;
 
 function isSafePromptGlob(pattern: string): boolean {
   if (pattern.length > MAX_PROMPT_GLOB_LENGTH || pattern.includes('\0')) {
@@ -43,36 +45,109 @@ function isSafePromptGlob(pattern: string): boolean {
   }
 
   let braceDepth = 0;
+  let activeBraceDepth = 0;
+  let extglobDepth = 0;
+  let extglobOperator = false;
+  let escapedOpeningBraces = 0;
   let escaped = false;
   let inCharacterClass = false;
+  const braceOperators: Array<{
+    hasAlternatives: boolean;
+    hasOperatorAlternative: boolean;
+    endsWithOperator: boolean;
+  }> = [];
+  const updateBraceOperator = (character: string, isEscaped = false): void => {
+    const state = braceOperators[braceOperators.length - 1];
+    if (!state) return;
+    if (character === ',' && !isEscaped) {
+      state.hasAlternatives = true;
+      state.hasOperatorAlternative ||= state.endsWithOperator;
+      state.endsWithOperator = false;
+      return;
+    }
+    state.endsWithOperator = !isEscaped && '*+?@!'.includes(character);
+  };
   for (const character of pattern) {
     if (escaped) {
+      if (character === '{') escapedOpeningBraces++;
+      if (character === '}' && braceDepth > 0) braceDepth--;
+      updateBraceOperator(character, true);
       escaped = false;
+      extglobOperator = false;
       continue;
     }
     if (character === '\\') {
       escaped = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === '{') {
+      braceDepth++;
+      activeBraceDepth++;
+      if (activeBraceDepth > MAX_PROMPT_BRACE_DEPTH) return false;
+      braceOperators.push({
+        hasAlternatives: false,
+        hasOperatorAlternative: false,
+        endsWithOperator: false,
+      });
+      extglobOperator = false;
+      continue;
+    }
+    if (character === '}') {
+      if (activeBraceDepth > 0) activeBraceDepth--;
+      const state = braceOperators.pop();
+      const braceCanEndWithOperator =
+        !!state &&
+        state.hasAlternatives &&
+        (state.hasOperatorAlternative || state.endsWithOperator);
+      const parentState = braceOperators[braceOperators.length - 1];
+      if (parentState) {
+        parentState.endsWithOperator = braceCanEndWithOperator;
+      }
+      if (braceDepth === 0) {
+        if (escapedOpeningBraces === 0) return false;
+        escapedOpeningBraces--;
+        extglobOperator = false;
+        continue;
+      }
+      braceDepth--;
+      extglobOperator = braceCanEndWithOperator;
       continue;
     }
     if (character === '[') {
       inCharacterClass = true;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
       continue;
     }
     if (character === ']' && inCharacterClass) {
       inCharacterClass = false;
+      updateBraceOperator(character, true);
+      extglobOperator = false;
       continue;
     }
-    if (inCharacterClass) continue;
-    if (character === '{') braceDepth++;
-    if (character === '}') {
-      if (braceDepth === 0) return false;
-      braceDepth--;
+    if (inCharacterClass) {
+      updateBraceOperator(character, true);
+      continue;
     }
+    if (character === '(' && extglobOperator) {
+      extglobDepth++;
+      if (extglobDepth > MAX_PROMPT_EXTGLOB_DEPTH) return false;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === ')' && extglobDepth > 0) {
+      extglobDepth--;
+      extglobOperator = false;
+      continue;
+    }
+    updateBraceOperator(character);
+    extglobOperator = '*+?@!'.includes(character);
   }
   if (braceDepth > 0 || inCharacterClass) return false;
 
   for (const range of pattern.matchAll(
-    /\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g,
+    /(?<!\\)(?:\\\\)*\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g,
   )) {
     if (range.slice(1).some((value) => value && value.length > 16))
       return false;
@@ -87,6 +162,49 @@ function isSafePromptGlob(pattern: string): boolean {
     }
   }
   return true;
+}
+
+function hasExcessiveExpandedExtglobDepth(pattern: string): boolean {
+  let extglobDepth = 0;
+  let extglobOperator = false;
+  let escaped = false;
+  let inCharacterClass = false;
+  for (const character of pattern) {
+    if (escaped) {
+      escaped = false;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === '[') {
+      inCharacterClass = true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === ']' && inCharacterClass) {
+      inCharacterClass = false;
+      extglobOperator = false;
+      continue;
+    }
+    if (inCharacterClass) continue;
+    if (character === '(' && extglobOperator) {
+      extglobDepth++;
+      if (extglobDepth > MAX_PROMPT_EXTGLOB_DEPTH) return true;
+      extglobOperator = false;
+      continue;
+    }
+    if (character === ')' && extglobDepth > 0) {
+      extglobDepth--;
+      extglobOperator = false;
+      continue;
+    }
+    extglobOperator = '*+?@!'.includes(character);
+  }
+  return false;
 }
 
 type ChangedFile = {
@@ -360,7 +478,17 @@ export async function run(): Promise<void> {
       toRepositoryPath(workingDirectory),
       { windowsPathsNoEscape: false, magicalBraces: true },
     );
-    const validPromptFilesGlobs = promptFilesGlobs.filter(isSafePromptGlob);
+    const validPromptFilesGlobs = promptFilesGlobs.filter((pattern) => {
+      if (!isSafePromptGlob(pattern)) return false;
+      if (!pattern.includes('{')) return true;
+      try {
+        return !braceExpand(pattern, {
+          braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
+        }).some(hasExcessiveExpandedExtglobDepth);
+      } catch {
+        return false;
+      }
+    });
     let promptGlobMatchingCapped =
       validPromptFilesGlobs.length !== promptFilesGlobs.length;
     let promptGlobMatchers:
@@ -840,41 +968,47 @@ export async function run(): Promise<void> {
         braceExpandMax: MAX_PROMPT_GLOB_VARIANTS,
       });
 
-      const allMatches = matches.filter((file) => {
-        const absolutePrompt = path.resolve(workingDirectory, file);
-        if (!isPathInside(workspaceRoot, absolutePrompt)) {
-          throw new PromptfooActionError(
-            'Prompt file resolves outside the repository workspace.',
-            ErrorCodes.INVALID_CONFIGURATION,
-          );
-        }
+      const allMatches = matches
+        .filter((file) => {
+          const absolutePrompt = path.resolve(workingDirectory, file);
+          if (!isPathInside(workspaceRoot, absolutePrompt)) {
+            throw new PromptfooActionError(
+              'Prompt file resolves outside the repository workspace.',
+              ErrorCodes.INVALID_CONFIGURATION,
+            );
+          }
 
-        let realPrompt: string;
-        try {
-          realWorkspaceRoot ??= fs.realpathSync(workspaceRoot);
-          realPrompt = fs.realpathSync(absolutePrompt);
-        } catch {
-          throw new PromptfooActionError(
-            'Prompt file resolves outside the repository workspace.',
-            ErrorCodes.INVALID_CONFIGURATION,
-          );
-        }
-        if (!isPathInside(realWorkspaceRoot, realPrompt)) {
-          throw new PromptfooActionError(
-            'Prompt file resolves outside the repository workspace.',
-            ErrorCodes.INVALID_CONFIGURATION,
-          );
-        }
+          let realPrompt: string;
+          try {
+            realWorkspaceRoot ??= fs.realpathSync(workspaceRoot);
+            realPrompt = fs.realpathSync(absolutePrompt);
+          } catch {
+            throw new PromptfooActionError(
+              'Prompt file resolves outside the repository workspace.',
+              ErrorCodes.INVALID_CONFIGURATION,
+            );
+          }
+          if (!isPathInside(realWorkspaceRoot, realPrompt)) {
+            throw new PromptfooActionError(
+              'Prompt file resolves outside the repository workspace.',
+              ErrorCodes.INVALID_CONFIGURATION,
+            );
+          }
 
-        const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, absolutePrompt),
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, absolutePrompt),
+          );
+          const promptKey = repositoryKey(repositoryFile);
+          if (promptKey === configKey) return false;
+          if (seenPromptFiles.has(promptKey)) return false;
+          seenPromptFiles.add(promptKey);
+          return true;
+        })
+        .map((file) =>
+          path.isAbsolute(file)
+            ? toRepositoryPath(path.relative(workingDirectory, file))
+            : file,
         );
-        const promptKey = repositoryKey(repositoryFile);
-        if (promptKey === configKey) return false;
-        if (seenPromptFiles.has(promptKey)) return false;
-        seenPromptFiles.add(promptKey);
-        return true;
-      });
       allPromptFiles.push(...allMatches);
 
       if (changedFilesList.length > 0) {
