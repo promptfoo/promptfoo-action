@@ -616,6 +616,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -687,6 +688,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -879,6 +881,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
           'feature-branch',
           'HEAD',
           '--',
@@ -907,6 +910,103 @@ describe('GitHub Action Main', () => {
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when a referenced config dependency is renamed away', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archive/renamed-provider.py',
+          previous_filename: 'providers/custom.py',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'push',
+      'workflow_dispatch',
+    ])('should run when a referenced config dependency is renamed away during %s', async (eventName) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: eventName,
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value:
+          eventName === 'push'
+            ? { before: 'a'.repeat(40), after: 'b'.repeat(40) }
+            : { inputs: { base: 'feature-branch' } },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockImplementationOnce(async (options) =>
+        options.includes('--no-renames')
+          ? 'providers/custom.py\narchive/renamed-provider.py'
+          : 'archive/renamed-provider.py',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when manually supplied CRLF file paths include a config dependency', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: '  providers/custom.py\r\n README.md  \r\n',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve whitespace in a changed PR dependency filename', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/custom-provider.py ' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom-provider.py ',
+      ]);
 
       await run();
 
@@ -1604,6 +1704,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',

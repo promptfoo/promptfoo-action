@@ -20,6 +20,7 @@ import { isDirectory } from './fs';
 type PromptEntry =
   | string
   | { file?: string; id?: string; raw?: string; [key: string]: unknown };
+type ProviderEntry = string | { id?: string; [key: string]: unknown };
 type TestVars = string | string[] | { [key: string]: unknown };
 
 type LegacyYamlSet = Record<string, unknown>;
@@ -52,7 +53,8 @@ const CONFIG_YAML_SCHEMA = CORE_SCHEMA.withTags(
 );
 
 export interface PromptfooConfig {
-  providers?: Array<string | { id?: string; [key: string]: unknown }>;
+  providers?: ProviderEntry | ProviderEntry[];
+  targets?: ProviderEntry | ProviderEntry[];
   prompts?: string | PromptEntry[] | Record<string, string>;
   tests?: Array<{
     vars?: TestVars;
@@ -264,18 +266,115 @@ export function extractFileDependencies(
       }
     };
 
-    // Extract provider files
-    if (Array.isArray(config.providers)) {
-      for (const provider of config.providers) {
-        if (typeof provider === 'string' && provider.startsWith('file://')) {
-          processFileUrl(provider);
-        } else if (
-          typeof provider === 'object' &&
-          provider !== null &&
-          typeof provider.id === 'string' &&
-          provider.id.startsWith('file://')
+    // Extract provider and target files
+    const stripProviderFunctionSelector = (value: string): string =>
+      value.replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, '$1');
+    const visitedProviderValues = new WeakSet<object>();
+    const visitProviderReferences = (value: unknown): void => {
+      if (typeof value === 'string' && value.startsWith('file://')) {
+        processFileUrl(stripProviderFunctionSelector(value));
+      } else if (Array.isArray(value)) {
+        if (visitedProviderValues.has(value)) {
+          return;
+        }
+        visitedProviderValues.add(value);
+        for (const nestedValue of value) {
+          visitProviderReferences(nestedValue);
+        }
+      } else if (isTraversableRecord(value)) {
+        if (visitedProviderValues.has(value)) {
+          return;
+        }
+        visitedProviderValues.add(value);
+        for (const nestedValue of Object.values(value)) {
+          visitProviderReferences(nestedValue);
+        }
+      }
+    };
+
+    const addHttpProviderPath = (value: unknown): void => {
+      if (typeof value !== 'string' || !value) {
+        return;
+      }
+      const filePath = stripProviderFunctionSelector(
+        value.replace(/^file:\/\//, ''),
+      ).replace(/\\/g, '/');
+      const absolutePath = path.isAbsolute(filePath)
+        ? path.resolve(filePath)
+        : path.resolve(path.join(configDir, filePath));
+      if (
+        filePath.includes('\0') ||
+        !isPathInside(dependencyRoot, absolutePath)
+      ) {
+        core.warning(
+          'Ignoring unsafe HTTP provider file dependency: path must stay within the repository workspace',
+        );
+        return;
+      }
+      processFileUrl(`file://${filePath}`);
+    };
+
+    for (const providers of [config.providers, config.targets]) {
+      const providerEntries =
+        typeof providers === 'string'
+          ? [providers]
+          : Array.isArray(providers)
+            ? providers
+            : [];
+      for (const provider of providerEntries) {
+        visitProviderReferences(provider);
+        if (!isTraversableRecord(provider)) {
+          continue;
+        }
+
+        const mappedProvider = Object.entries(provider);
+        const providerId =
+          typeof provider.id === 'string'
+            ? provider.id
+            : mappedProvider.length === 1
+              ? mappedProvider[0][0]
+              : undefined;
+        const providerOptions =
+          typeof provider.id === 'string'
+            ? provider
+            : mappedProvider.length === 1 &&
+                isTraversableRecord(mappedProvider[0][1])
+              ? mappedProvider[0][1]
+              : undefined;
+        if (
+          !providerId ||
+          !/^https?(?::|$)/.test(providerId) ||
+          !providerOptions ||
+          !isTraversableRecord(providerOptions.config)
         ) {
-          processFileUrl(provider.id);
+          continue;
+        }
+
+        const { auth, tls, signatureAuth } = providerOptions.config;
+        if (isTraversableRecord(auth) && auth.type === 'file') {
+          addHttpProviderPath(auth.path);
+        }
+        if (isTraversableRecord(tls)) {
+          for (const key of [
+            'caPath',
+            'certPath',
+            'keyPath',
+            'pfxPath',
+            'jksPath',
+          ]) {
+            addHttpProviderPath(tls[key]);
+          }
+        }
+        if (isTraversableRecord(signatureAuth)) {
+          for (const key of [
+            'privateKeyPath',
+            'keystorePath',
+            'pfxPath',
+            'certPath',
+            'keyPath',
+          ]) {
+            addHttpProviderPath(signatureAuth[key]);
+          }
         }
       }
     }

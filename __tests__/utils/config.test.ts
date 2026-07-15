@@ -63,6 +63,256 @@ providers:
     expect(deps).toContain('../config/another_provider.js');
   });
 
+  it('should extract file-backed targets and nested target dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - file://providers/custom.py
+  - id: file://providers/another.js
+    config:
+      request: file://fixtures/request.json
+  - id: openai:gpt-4
+    config:
+      tools:
+        - schema: file://schemas/tool.yaml
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/custom.py',
+      'providers/another.js',
+      'fixtures/request.json',
+      'schemas/tool.yaml',
+    ]);
+  });
+
+  it.each([
+    'providers',
+    'targets',
+  ])('should extract a scalar file-backed %s reference', (field) => {
+    mockFs.readFileSync.mockReturnValue(
+      `${field}: file://providers/scalar.yaml\n`,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/scalar.yaml']);
+  });
+
+  it('should extract nested and bare HTTP dependencies from a target map entry', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - https:
+      config:
+        request: file://fixtures/map-request.json
+        auth:
+          type: file
+          path: ./auth/map-token.ts
+        tls:
+          caPath: ./certs/map-ca.pem
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'fixtures/map-request.json',
+      'auth/map-token.ts',
+      'certs/map-ca.pem',
+    ]);
+  });
+
+  it('should preserve dependencies when a target contains a cyclic YAML alias', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - &target
+    id: http
+    config:
+      request: file://fixtures/cyclic-request.json
+      auth:
+        type: file
+        path: ./auth/cyclic-token.ts
+    self: *target
+prompts: file://prompts/main.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'fixtures/cyclic-request.json',
+      'auth/cyclic-token.ts',
+      'prompts/main.txt',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should preserve dependencies when a nested target array contains a cyclic YAML alias', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: openai:gpt-4
+    config:
+      request: &request
+        - file://fixtures/cyclic-array-request.json
+        - *request
+prompts: file://prompts/main.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'fixtures/cyclic-array-request.json',
+      'prompts/main.txt',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should ignore unsupported target-map shapes without dropping valid dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - http: not-provider-options
+  - http: {}
+    https: {}
+prompts: file://prompts/main.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/main.txt']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should extract bare HTTP target auth, TLS, and signature file paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: http
+    config:
+      auth:
+        type: file
+        path: ./auth/get-token.js
+      tls:
+        caPath: ./certs/ca.pem
+        certPath: ./certs/client.pem
+        keyPath: ./certs/client.key
+        pfxPath: ./certs/client.pfx
+        jksPath: ./certs/client.jks
+      signatureAuth:
+        privateKeyPath: ./signing/private.key
+        keystorePath: ./signing/keystore.jks
+        pfxPath: ./signing/signature.pfx
+        certPath: ./signing/signature.pem
+        keyPath: ./signing/signature.key
+  - id: https://example.test/chat
+    config:
+      auth:
+        type: file
+        path: /test/working/auth/https-token.ts
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'auth/get-token.js',
+      'certs/ca.pem',
+      'certs/client.pem',
+      'certs/client.key',
+      'certs/client.pfx',
+      'certs/client.jks',
+      'signing/private.key',
+      'signing/keystore.jks',
+      'signing/signature.pfx',
+      'signing/signature.pem',
+      'signing/signature.key',
+      'auth/https-token.ts',
+    ]);
+  });
+
+  it('should normalize file-backed target function references', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: file://providers/custom.py:call_api
+  - id: http
+    config:
+      auth:
+        type: file
+        path: file://./auth/get-token.ts:buildAuth
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.py', 'auth/get-token.ts']);
+  });
+
+  it('should not extract bare auth or TLS paths from a non-HTTP target', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: openai:gpt-4
+    config:
+      auth:
+        type: file
+        path: ./private/not-a-provider-auth-file.js
+      tls:
+        caPath: ./private/not-a-provider-ca.pem
+      signatureAuth:
+        privateKeyPath: ./private/not-a-provider-key.pem
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should ignore empty and non-string HTTP target paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: https
+    config:
+      auth:
+        type: file
+        path: ''
+      tls:
+        caPath: 42
+      signatureAuth:
+        privateKeyPath: null
+  - id: http://example.test/chat
+    config:
+      auth:
+        type: bearer
+        path: ./private/not-file-auth.js
+prompts: file://prompts/main.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/main.txt']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should reject escaped HTTP target paths without disclosing their values', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: http
+    config:
+      auth:
+        type: file
+        path: ../../SENSITIVE-REVIEW-TOKEN/auth.ts
+      tls:
+        caPath: ../../SENSITIVE-REVIEW-TOKEN/ca.pem
+      signatureAuth:
+        privateKeyPath: ../../SENSITIVE-REVIEW-TOKEN/private.key
+prompts: file://prompts/main.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/main.txt']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe HTTP provider file dependency: path must stay within the repository workspace',
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
+  });
+
   it('should extract prompt files', () => {
     const configContent = `
 prompts:
@@ -1710,6 +1960,31 @@ prompts: !!binary ${binaryMetadata}
     objectKeys.mockRestore();
 
     expect(deps).toEqual(['providers/provider.py']);
+    expect(enumeratedBinary).toBe(false);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should not enumerate binary target metadata while extracting nested dependencies', () => {
+    const binaryMetadata = Buffer.alloc(64 * 1024, 65).toString('base64');
+    const objectValues = vi.spyOn(Object, 'values');
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: http
+    config:
+      metadata: !!binary ${binaryMetadata}
+      auth:
+        type: file
+        path: ./auth/get-token.js
+      request: file://fixtures/request.json
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+    const enumeratedBinary = objectValues.mock.calls.some(([value]) =>
+      ArrayBuffer.isView(value),
+    );
+    objectValues.mockRestore();
+
+    expect(deps).toEqual(['fixtures/request.json', 'auth/get-token.js']);
     expect(enumeratedBinary).toBe(false);
     expect(core.warning).not.toHaveBeenCalled();
   });
