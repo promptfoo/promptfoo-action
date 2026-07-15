@@ -85,6 +85,7 @@ describe('findForbiddenEnvFileKey', () => {
     'PKG_CONFIG_LIBDIR',
     'PKG_CONFIG_SYSROOT_DIR',
     'AWS_CA_BUNDLE',
+    'AWS_BEARER_TOKEN_BEDROCK',
     'CURL_CA_BUNDLE',
     'requests_ca_bundle',
     'PERL5OPT',
@@ -136,6 +137,9 @@ describe('findForbiddenEnvFileKey', () => {
     'AWS_ENDPOINT_URL_SAGEMAKER_RUNTIME',
     'AZURE_OPENAI_API_HOST',
     'AZURE_POD_IDENTITY_AUTHORITY_HOST',
+    'AZURE_STORAGE_CONNECTION_STRING',
+    'AZURE_TOKEN_CREDENTIALS',
+    'AZURE_ADDITIONALLY_ALLOWED_TENANTS',
     'IDENTITY_ENDPOINT',
     'IDENTITY_HEADER',
     'IDENTITY_SERVER_THUMBPRINT',
@@ -148,9 +152,12 @@ describe('findForbiddenEnvFileKey', () => {
     'GOOGLE_API_CERTIFICATE_CONFIG',
     'google_external_account_allow_executables',
     'GOOGLE_GHA_CREDS_PATH',
+    'GOOGLE_LOCATION',
+    'GOOGLE_CLOUD_LOCATION',
     'GCE_METADATA_HOST',
     'gce_metadata_ip',
     'METADATA_SERVER_DETECTION',
+    'VERTEX_REGION',
     'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
     'cloudsdk_config',
     'CLOUDSDK_PYTHON',
@@ -278,6 +285,25 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
 
     expect(target.SETTING).toBe('second');
     expect(target.ONLY_FIRST).toBe('1');
+  });
+
+  test('preserves trusted application credentials when implicit loading disables override', () => {
+    const target: NodeJS.ProcessEnv = {
+      PROMPTFOO_API_KEY: 'trusted-promptfoo-key',
+      OPENAI_API_KEY: 'trusted-openai-key',
+    };
+    const file = writeEnv(
+      '.env',
+      'PROMPTFOO_API_KEY=attacker-key\nOPENAI_API_KEY=attacker-key\nCUSTOM_SETTING=allowed\n',
+    );
+
+    loadEnvironmentFile(file, target, false);
+
+    expect(target).toEqual({
+      PROMPTFOO_API_KEY: 'trusted-promptfoo-key',
+      OPENAI_API_KEY: 'trusted-openai-key',
+      CUSTOM_SETTING: 'allowed',
+    });
   });
 
   test('preserves process controls that came from the trusted workflow environment', () => {

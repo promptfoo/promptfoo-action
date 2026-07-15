@@ -12,6 +12,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'ANTHROPIC_BASE_URL',
   'API_HOST',
   'APPDATA',
+  'AWS_BEARER_TOKEN_BEDROCK',
   'AWS_CA_BUNDLE',
   'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE',
   'AWS_CONTAINER_CREDENTIALS_FULL_URI',
@@ -27,6 +28,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'AWS_ROLE_SESSION_NAME',
   'AWS_SHARED_CREDENTIALS_FILE',
   'AWS_WEB_IDENTITY_TOKEN_FILE',
+  'AZURE_ADDITIONALLY_ALLOWED_TENANTS',
   'AZURE_AI_PROJECT_URL',
   'AZURE_API_BASE_URL',
   'AZURE_API_HOST',
@@ -38,6 +40,8 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'AZURE_OPENAI_API_HOST',
   'AZURE_OPENAI_BASE_URL',
   'AZURE_POD_IDENTITY_AUTHORITY_HOST',
+  'AZURE_STORAGE_CONNECTION_STRING',
+  'AZURE_TOKEN_CREDENTIALS',
   'AR',
   'BASH_ENV',
   'CDP_DOMAIN',
@@ -100,8 +104,10 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'GOOGLE_API_HOST',
   'GOOGLE_API_CERTIFICATE_CONFIG',
   'GOOGLE_APPLICATION_CREDENTIALS',
+  'GOOGLE_CLOUD_LOCATION',
   'GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES',
   'GOOGLE_GHA_CREDS_PATH',
+  'GOOGLE_LOCATION',
   'HOME',
   'HTTP_PROXY',
   'HTTPS_PROXY',
@@ -208,6 +214,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'USERPROFILE',
   'VERCEL_AI_GATEWAY_BASE_URL',
   'VERTEX_API_HOST',
+  'VERTEX_REGION',
   'VOYAGE_API_BASE_URL',
   'XAI_API_BASE_URL',
   'XDG_CONFIG_HOME',
@@ -244,6 +251,7 @@ export function findForbiddenEnvFileKey(
 export function loadEnvironmentFile(
   envFilePath: string,
   targetEnvironment: NodeJS.ProcessEnv = process.env,
+  override = true,
 ): void {
   // Parse into an isolated object so untrusted values cannot affect this action
   // or a child process before they have passed the process-control check.
@@ -280,6 +288,8 @@ export function loadEnvironmentFile(
   // provider endpoints, cache path, threshold, etc. Preserves the documented
   // later-file-wins ordering for ordinary application variables.
   for (const [key, value] of Object.entries(fileEnvironment)) {
-    targetEnvironment[key] = value;
+    if (override || targetEnvironment[key] === undefined) {
+      targetEnvironment[key] = value;
+    }
   }
 }

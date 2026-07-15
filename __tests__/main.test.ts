@@ -661,6 +661,7 @@ describe('GitHub Action Main', () => {
       'PKG_CONFIG_LIBDIR',
       'PKG_CONFIG_SYSROOT_DIR',
       'AWS_CA_BUNDLE',
+      'AWS_BEARER_TOKEN_BEDROCK',
       'CURL_CA_BUNDLE',
       'requests_ca_bundle',
       'OPENAI_BASE_URL',
@@ -686,6 +687,9 @@ describe('GitHub Action Main', () => {
       'AWS_ENDPOINT_URL_SAGEMAKER_RUNTIME',
       'AZURE_OPENAI_API_HOST',
       'AZURE_POD_IDENTITY_AUTHORITY_HOST',
+      'AZURE_STORAGE_CONNECTION_STRING',
+      'AZURE_TOKEN_CREDENTIALS',
+      'AZURE_ADDITIONALLY_ALLOWED_TENANTS',
       'IDENTITY_ENDPOINT',
       'IDENTITY_HEADER',
       'IDENTITY_SERVER_THUMBPRINT',
@@ -698,9 +702,12 @@ describe('GitHub Action Main', () => {
       'GOOGLE_API_CERTIFICATE_CONFIG',
       'google_external_account_allow_executables',
       'GOOGLE_GHA_CREDS_PATH',
+      'GOOGLE_LOCATION',
+      'GOOGLE_CLOUD_LOCATION',
       'GCE_METADATA_HOST',
       'gce_metadata_ip',
       'METADATA_SERVER_DETECTION',
+      'VERTEX_REGION',
       'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
       'cloudsdk_config',
       'CLOUDSDK_PYTHON',
@@ -869,6 +876,92 @@ describe('GitHub Action Main', () => {
         );
       } finally {
         delete process.env.CUSTOM_PROVIDER_SETTING;
+      }
+    });
+
+    test('should preserve trusted workflow credentials when loading the implicit .env', async () => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalPromptfooKey = process.env.PROMPTFOO_API_KEY;
+      const originalOpenaiKey = process.env.OPENAI_API_KEY;
+      process.env.PROMPTFOO_API_KEY = 'trusted-promptfoo-key';
+      process.env.OPENAI_API_KEY = 'trusted-openai-key';
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = {
+            PROMPTFOO_API_KEY: 'attacker-key',
+            OPENAI_API_KEY: 'attacker-key',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({
+            PROMPTFOO_API_KEY: 'trusted-promptfoo-key',
+            OPENAI_API_KEY: 'trusted-openai-key',
+          }),
+        );
+      } finally {
+        if (originalPromptfooKey === undefined) {
+          delete process.env.PROMPTFOO_API_KEY;
+        } else {
+          process.env.PROMPTFOO_API_KEY = originalPromptfooKey;
+        }
+        if (originalOpenaiKey === undefined) {
+          delete process.env.OPENAI_API_KEY;
+        } else {
+          process.env.OPENAI_API_KEY = originalOpenaiKey;
+        }
+      }
+    });
+
+    test('should reject an implicit .env.vault when the plaintext .env is absent', async () => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env.vault`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      const originalBaseUrl = process.env.OPENAI_BASE_URL;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { OPENAI_BASE_URL: 'http://attacker.invalid/v1' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('OPENAI_BASE_URL'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.OPENAI_BASE_URL).toBe(originalBaseUrl);
+      } finally {
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+        if (originalBaseUrl === undefined) {
+          delete process.env.OPENAI_BASE_URL;
+        } else {
+          process.env.OPENAI_BASE_URL = originalBaseUrl;
+        }
       }
     });
 
