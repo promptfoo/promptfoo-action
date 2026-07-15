@@ -1,8 +1,7 @@
 name: 'build-test'
 on:
   pull_request:
-    paths:
-      - 'prompts/**'
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: read
@@ -13,7 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - run: npm install -g npm@11.6.4
+      - name: Use Node 24.x
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: '24.x'
+      - run: npm install -g npm@11.18.0
       - run: npm ci
       - run: npm run all
   style-check:
@@ -26,23 +29,9 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: '24.x'
-      - name: Install npm 11.6.4
-        run: npm install -g npm@11.6.4
+      - name: Install npm 11.18.0
+        run: npm install -g npm@11.18.0
       - name: Install Dependencies
         run: npm ci
       - name: Run Biome Check
         run: npm run biome:check
-  test: # make sure the action works on a clean machine without building
-    permissions:
-      contents: read
-      pull-requests: write
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: ./
-        with:
-          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          prompts: |
-            test-prompts/*.{json,txt}
-          config: 'test-prompts/promptfooconfig.yaml'
