@@ -511,6 +511,20 @@ prompts:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
+  it('should not treat an inline prompt asterisk as a dependency glob', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts:\n  - "Return * when unknown"',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it('should not widen an ordinary inline env-templated prompt to the workspace', () => {
     mockFs.readFileSync.mockReturnValue(
       'prompts: "Hello {{ env.USER_NAME | default(\'friend\') }}"',

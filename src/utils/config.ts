@@ -594,7 +594,9 @@ export function extractFileDependencies(
             /\.(?:cjs|cts|j2|js|jsonl?|md|mjs|mts|py|ts|txt|ya?ml)(?::[^/\\]+)?$/i.test(
               literalPromptPath,
             ) ||
-            /[*/\\]/.test(literalPromptPath) ||
+            /[\\/]/.test(literalPromptPath) ||
+            (!/\s/.test(literalPromptPath) &&
+              literalPromptPath.includes('*')) ||
             literalPromptPath.charAt(literalPromptPath.length - 3) === '.' ||
             literalPromptPath.charAt(literalPromptPath.length - 4) === '.'
           )
