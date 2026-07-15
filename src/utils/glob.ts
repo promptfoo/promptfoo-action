@@ -1,5 +1,6 @@
 export const MAX_BRACE_EXPANSIONS = 1024;
 export const MAX_GLOB_PATTERN_LENGTH = 4096;
+const MAX_NUMERIC_BRACE_ENDPOINT_WIDTH = 256;
 
 const NUMERIC_BRACE_RANGE_PATTERN = /\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g;
 const ZERO = BigInt(0);
@@ -17,6 +18,12 @@ export function hasUnsafeNumericGlobRange(pattern: string): boolean {
         escapeCount++;
       }
       if (escapeCount % 2 === 1) continue;
+    }
+    if (
+      match[1].length > MAX_NUMERIC_BRACE_ENDPOINT_WIDTH ||
+      match[2].length > MAX_NUMERIC_BRACE_ENDPOINT_WIDTH
+    ) {
+      return true;
     }
     const start = BigInt(match[1]);
     const end = BigInt(match[2]);

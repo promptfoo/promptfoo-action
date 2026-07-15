@@ -2152,6 +2152,19 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should reject an amplified zero-padded numeric action prompt brace range before enumeration', async () => {
+      const paddedStart = `${'0'.repeat(1024)}1`;
+      withInputs({ prompts: `prompts/{${paddedStart}..1024}.txt` });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Action prompt glob expands to more than 1024 alternatives; refusing to enumerate unsafe pattern',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should reject a zero-step numeric action prompt brace range before enumeration', async () => {
       withInputs({ prompts: 'prompts/{1..8..0}.txt' });
 

@@ -2165,6 +2165,22 @@ prompts:
     );
   });
 
+  it('should reject an amplified zero-padded numeric dependency brace range before glob parsing', () => {
+    const paddedStart = `${'0'.repeat(1024)}1`;
+    mockFs.readFileSync.mockReturnValue(
+      `providers: file://providers/{${paddedStart}..1024}.py`,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
   it('should reject a multiplicative dependency brace glob before enumeration', () => {
     mockFs.readFileSync.mockReturnValue(
       `providers: file://providers/${'{one,two}'.repeat(11)}.py`,

@@ -38074,6 +38074,7 @@ function isDirectory2(filePath) {
 // src/utils/glob.ts
 var MAX_BRACE_EXPANSIONS = 1024;
 var MAX_GLOB_PATTERN_LENGTH = 4096;
+var MAX_NUMERIC_BRACE_ENDPOINT_WIDTH = 256;
 var NUMERIC_BRACE_RANGE_PATTERN = /\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g;
 var ZERO = BigInt(0);
 var ONE = BigInt(1);
@@ -38085,6 +38086,9 @@ function hasUnsafeNumericGlobRange(pattern) {
         escapeCount++;
       }
       if (escapeCount % 2 === 1) continue;
+    }
+    if (match2[1].length > MAX_NUMERIC_BRACE_ENDPOINT_WIDTH || match2[2].length > MAX_NUMERIC_BRACE_ENDPOINT_WIDTH) {
+      return true;
     }
     const start = BigInt(match2[1]);
     const end = BigInt(match2[2]);
