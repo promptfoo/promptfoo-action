@@ -4,6 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
+import { Minimatch } from 'minimatch';
 import {
   afterEach,
   beforeEach,
@@ -32,7 +33,7 @@ type MockOctokit = {
 };
 
 // Use vi.hoisted() to define mocks before vi.mock() hoisting
-const { mockGitInterface } = vi.hoisted(() => ({
+const { mockGitInterface, mockBraceExpand } = vi.hoisted(() => ({
   mockGitInterface: {
     fetch: vi.fn(async (options: string[]) => {
       // Simulate git error for invalid ref names (with spaces)
@@ -46,15 +47,26 @@ const { mockGitInterface } = vi.hoisted(() => ({
     }),
     revparse: vi.fn(() => Promise.resolve('mock-commit-hash\n')),
     diff: vi.fn(() =>
-      Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+      Promise.resolve('M\0prompts/prompt1.txt\0M\0promptfooconfig.yaml\0'),
     ),
   },
+  mockBraceExpand: vi.fn(),
 }));
 
 // Mock simple-git before importing main.ts
 vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => mockGitInterface),
 }));
+vi.mock('minimatch', async () => {
+  const actual = await vi.importActual<typeof import('minimatch')>('minimatch');
+  return {
+    ...actual,
+    braceExpand: (...args: Parameters<typeof actual.braceExpand>) =>
+      mockBraceExpand.getMockImplementation()
+        ? mockBraceExpand(...args)
+        : actual.braceExpand(...args),
+  };
+});
 
 // Mock auth utilities
 vi.mock('../src/utils/auth');
@@ -93,6 +105,7 @@ vi.mock('fs', async () => {
   return {
     ...actual,
     readFileSync: vi.fn(),
+    realpathSync: vi.fn(),
     existsSync: vi.fn(),
     unlinkSync: vi.fn(),
     promises: {
@@ -128,6 +141,7 @@ const mockExec = exec as unknown as {
 };
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
@@ -160,10 +174,11 @@ function setupCommonMocks(): MockOctokit {
   // Reset git interface mocks
   mockGitInterface.fetch.mockClear();
   mockGitInterface.revparse.mockClear();
+  mockBraceExpand.mockReset();
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
-    'prompts/prompt1.txt\npromptfooconfig.yaml',
+    'M\0prompts/prompt1.txt\0M\0promptfooconfig.yaml\0',
   );
   mockCache.cleanupOldCache.mockResolvedValue(0);
   mockCache.createCacheManifest.mockResolvedValue();
@@ -245,6 +260,9 @@ function setupCommonMocks(): MockOctokit {
     }),
   );
   mockFs.existsSync.mockReturnValue(false);
+  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+    String(filePath),
+  );
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -302,8 +320,194 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
+    });
+
+    test('should reject an in-checkout config symlink that resolves outside the workspace', async () => {
+      withInputs({ config: 'shared-link/promptfooconfig.yaml' });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        return value.endsWith('/shared-link/promptfooconfig.yaml')
+          ? '/outside/promptfooconfig.yaml'
+          : value;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Config file resolves outside the repository workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed when an in-checkout config path cannot be resolved', async () => {
+      mockFs.realpathSync.mockImplementation(() => {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Config file resolves outside the repository workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a changed PR prompt whose filename contains a newline', async () => {
+      const filename = 'prompts/line\nbreak.txt';
+      mockOctokit.paginate.mockResolvedValue([
+        { filename, status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([filename]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should reject a PR prompt filename that could forge a workflow annotation', async () => {
+      const filename = 'prompts/policy\n::error::forged.txt';
+      mockOctokit.paginate.mockResolvedValue([{ filename, status: 'added' }]);
+      mockGlob.sync.mockReturnValue([filename]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(
+        mockCore.info.mock.calls.every(
+          ([message]) => !message.includes(filename),
+        ),
+      ).toBe(true);
+    });
+
+    test.each([
+      [
+        'removed',
+        { filename: 'prompts/policy\n::error::forged.txt', status: 'removed' },
+      ],
+      [
+        'renamed-out',
+        {
+          filename: 'archive/policy.txt',
+          previous_filename: 'prompts/policy\r::error::forged.txt',
+          status: 'renamed',
+        },
+      ],
+    ])('should reject a CRLF %s prompt before full-scan fallback', async (_case, file) => {
+      mockOctokit.paginate.mockResolvedValue([file]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['removed', { filename: 'docs/old\nnotes.md', status: 'removed' }],
+      [
+        'renamed',
+        {
+          filename: 'docs/new.md',
+          previous_filename: 'docs/old\rnotes.md',
+          status: 'renamed',
+        },
+      ],
+    ])('should ignore an unrelated %s CRLF filename outside the configured prompt globs', async (_label, file) => {
+      mockOctokit.paginate.mockResolvedValue([file]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should accurately describe a PR full scan after a monitored prompt is removed', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/remaining.txt',
+        'prompts/unchanged.txt',
+      ]);
+
+      await run();
+
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluated prompt files: prompts/remaining.txt, prompts/unchanged.txt',
+          ),
+        }),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.not.stringContaining('LLM prompt was modified'),
+        }),
+      );
+    });
+
+    test('should accurately describe a PR full scan that falls back to config prompts', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain('--prompts');
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluation used prompts defined in the Promptfoo config.',
+          ),
+        }),
+      );
+    });
+
+    test('should reject a CRLF rename-out when prompt-glob matching is capped', async () => {
+      withInputs({ prompts: `prompts/${'a'.repeat(65536)}\nprompts/*.txt` });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archive/policy.txt',
+          previous_filename: 'prompts/policy\n::error::forged.txt',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should skip evaluation when no relevant files change', async () => {
@@ -321,6 +525,29 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalledWith(
         'npx',
         expect.any(Array),
+        expect.any(Object),
+      );
+    });
+
+    test('should process a removed prompt when the prompt-glob input uses CRLF lines', async () => {
+      withInputs({ prompts: 'prompts/*.txt\r\nprompts/**/*.md\r\n' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/*.txt' ? ['prompts/remaining.txt'] : [],
+      );
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/*.txt',
         expect.any(Object),
       );
     });
@@ -350,6 +577,1482 @@ describe('GitHub Action Main', () => {
           'prompts/prompt2.txt',
         ]),
       );
+    });
+
+    test('should deduplicate overlapping prompt globs with relative and absolute matches', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts/shared.txt');
+      withInputs({
+        prompts: `prompts/*.txt\n${path.dirname(absolutePrompt)}/*.txt`,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml', status: 'modified' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/*.txt'
+          ? ['promptfooconfig.yaml', 'prompts/shared.txt']
+          : [absolutePrompt],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(
+        args.filter(
+          (value) => value === 'prompts/shared.txt' || value === absolutePrompt,
+        ),
+      ).toEqual(['prompts/shared.txt']);
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluated prompt files: prompts/shared.txt',
+          ),
+        }),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.not.stringContaining(absolutePrompt),
+        }),
+      );
+    });
+
+    test('should preserve a changed prompt and exclude config across Windows casing variants', async () => {
+      const currentPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      withInputs({
+        config: 'PromptFooConfig.yaml',
+        prompts: 'PROMPTS/*.txt\nprompts/*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/shared.txt', status: 'modified' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'PROMPTS/*.txt'
+          ? ['promptfooconfig.yaml', 'PROMPTS/Shared.txt']
+          : ['prompts/shared.txt'],
+      );
+
+      try {
+        await run();
+
+        const args = mockExec.exec.mock.calls[0][1] as string[];
+        expect(args).toContain('PROMPTS/Shared.txt');
+        expect(args).not.toContain('prompts/shared.txt');
+        expect(args).not.toContain('promptfooconfig.yaml');
+        expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+          expect.objectContaining({
+            body: expect.stringContaining(
+              'LLM prompt was modified in these files: PROMPTS/Shared.txt',
+            ),
+          }),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test('should evaluate all prompts when the Windows config path changes with different casing', async () => {
+      const currentPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      withInputs({ config: 'PromptFooConfig.yaml' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/unchanged.txt']);
+
+      try {
+        await run();
+
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/unchanged.txt']),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test('should process all remaining prompts when a monitored prompt is deleted', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should detect a removed prompt with a leading-dot glob', async () => {
+      withInputs({ prompts: './prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should detect a removed prompt in a repository sibling directory', async () => {
+      withInputs({
+        prompts: '../shared/*.txt',
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'packages/shared/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../shared/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', '../shared/remaining.txt']),
+      );
+    });
+
+    test('should detect a removed prompt with an absolute in-workspace glob', async () => {
+      const promptPattern = path.join(process.cwd(), 'prompts/*.txt');
+      const remainingPrompt = path.join(process.cwd(), 'prompts/remaining.txt');
+      withInputs({ prompts: promptPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([remainingPrompt]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test.each([
+      [
+        'config-triggered',
+        'promptfooconfig.yaml',
+        'Evaluated prompt files: prompts/selected.txt',
+      ],
+      [
+        'prompt-only',
+        'prompts/selected.txt',
+        'LLM prompt was modified in these files: prompts/selected.txt',
+      ],
+    ])('should keep %s absolute prompt matches repository-relative in argv and the PR comment', async (_label, changedFile, expectedComment) => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts/selected.txt');
+      withInputs({ prompts: path.join(process.cwd(), 'prompts/*.txt') });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: changedFile, status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/selected.txt']),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain(absolutePrompt);
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(expectedComment),
+        }),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.not.stringContaining(absolutePrompt),
+        }),
+      );
+    });
+
+    test('should keep workflow-dispatch absolute prompt matches repository-relative in logs and argv', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts/selected.txt');
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {},
+        configurable: true,
+      });
+      withInputs({ prompts: path.join(process.cwd(), 'prompts/*.txt') });
+      mockGitInterface.diff.mockResolvedValueOnce('');
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: prompts/selected.txt',
+      );
+      expect(
+        mockCore.info.mock.calls.every(
+          ([message]) => !String(message).includes(absolutePrompt),
+        ),
+      ).toBe(true);
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/selected.txt']),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain(absolutePrompt);
+    });
+
+    test('should detect a removed prompt with an absolute Windows-separator glob', async () => {
+      const currentPlatform = process.platform;
+      const promptPattern = path
+        .join(process.cwd(), 'prompts/*.txt')
+        .split(path.sep)
+        .join('\\');
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'prompts/removed.txt', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          promptPattern.split('\\').join('/'),
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test('should detect a removed prompt with a mixed Windows-separator glob', async () => {
+      const currentPlatform = process.platform;
+      const promptPattern = `${path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('\\')}/[tr]/*.txt`;
+
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'prompts/t/removed.txt', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/t/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          promptPattern.split('\\').join('/'),
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test('should detect a removed prompt with a native wildcard separator after a Windows forward slash', async () => {
+      const currentPlatform = process.platform;
+      const promptRoot = path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('/');
+      const promptPattern = `${promptRoot}\\*.txt`;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'prompts/removed.txt', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(`${promptRoot}/*.txt`, {
+          cwd: process.cwd(),
+          nodir: true,
+          braceExpandMax: 1000,
+        });
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test.each([
+      '.prompts',
+      '-prompts',
+      ',prompts',
+      '^prompts',
+    ])('should detect a removed prompt under a native Windows punctuation directory %s', async (promptDirectory) => {
+      const currentPlatform = process.platform;
+      const nativeRoot = process.cwd().split(path.sep).join('\\');
+      const promptPattern = `${nativeRoot}\\${promptDirectory}\\*.txt`;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: `${promptDirectory}/removed.txt`, status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue([`${promptDirectory}/remaining.txt`]);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          `${process.cwd()}/${promptDirectory}/*.txt`,
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test.each([
+      ['[tr]', 't'],
+      ['*', 't'],
+      ['{t,r}', 't'],
+    ])('should detect a removed prompt with a native separator before Windows glob %s', async (globSegment, promptDirectory) => {
+      const currentPlatform = process.platform;
+      const promptRoot = path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('\\');
+      const promptPattern = `${promptRoot}\\${globSegment}/*.txt`;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          {
+            filename: `prompts/${promptDirectory}/removed.txt`,
+            status: 'removed',
+          },
+        ]);
+        mockGlob.sync.mockReturnValue([
+          `prompts/${promptDirectory}/remaining.txt`,
+        ]);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          `${promptRoot.split('\\').join('/')}/${globSegment}/*.txt`,
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test('should preserve escaped magic in an absolute Windows glob', async () => {
+      const currentPlatform = process.platform;
+      const promptPattern = `${path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('/')}/\\[team\\]/*.txt`;
+
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'prompts/[team]/removed.txt', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/[team]/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(promptPattern, {
+          cwd: process.cwd(),
+          nodir: true,
+          braceExpandMax: 1000,
+        });
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test.each([
+      ['{red\\,blue,green}', 'red,blue'],
+      ['[a\\-c]', '-'],
+      ['[\\^a]', '^'],
+      ['{v1\\..v3,stable}', 'v1..v3'],
+    ])('should preserve escaped Windows glob punctuation %s', async (globSegment, promptDirectory) => {
+      const currentPlatform = process.platform;
+      const promptPattern = `${path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('/')}/${globSegment}/*.txt`;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          {
+            filename: `prompts/${promptDirectory}/removed.txt`,
+            status: 'removed',
+          },
+        ]);
+        mockGlob.sync.mockReturnValue([
+          `prompts/${promptDirectory}/remaining.txt`,
+        ]);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(promptPattern, {
+          cwd: process.cwd(),
+          nodir: true,
+          braceExpandMax: 1000,
+        });
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test.each([
+      ['[team\\]', '[team]', '\\[team\\]'],
+      ['{red\\,blue,green}', 'red,blue', '{red\\,blue,green}'],
+    ])('should preserve escaped punctuation in a native Windows glob %s', async (nativeSegment, promptDirectory, normalizedSegment) => {
+      const currentPlatform = process.platform;
+      const promptRoot = path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('\\');
+      const promptPattern = `${promptRoot}\\${nativeSegment}\\*.txt`;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          {
+            filename: `prompts/${promptDirectory}/removed.txt`,
+            status: 'removed',
+          },
+        ]);
+        mockGlob.sync.mockReturnValue([
+          `prompts/${promptDirectory}/remaining.txt`,
+        ]);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          `${promptRoot.split('\\').join('/')}/${normalizedSegment}/*.txt`,
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test('should detect a removed prompt under an escaped directory glob', async () => {
+      withInputs({ prompts: 'prompts/\\[team\\]/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/[team]/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/[team]/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/[team]/remaining.txt']),
+      );
+    });
+
+    test.each([
+      'packages/[team]',
+      'packages/{alpha,beta}',
+      'packages/{1..3}',
+      'packages/\\{alpha,beta}',
+      'packages/\\\\{1..3}',
+      'packages/app*(team)',
+    ])('should treat glob characters in the working directory %s as literal', async (workingDirectory) => {
+      withInputs({
+        prompts: 'prompts/*.txt',
+        'working-directory': workingDirectory,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: `${workingDirectory}/prompts/removed.txt`,
+          status: 'removed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test.each([
+      [
+        '../../packages/shared/prompts/*.txt',
+        'packages/shared/prompts/removed.txt',
+        '../../packages/shared/prompts/remaining.txt',
+      ],
+      [
+        '../app/prompts/*.txt',
+        'packages/app/prompts/removed.txt',
+        '../app/prompts/remaining.txt',
+      ],
+      [
+        '../../**/*.txt',
+        'packages/shared/prompts/removed.txt',
+        '../../packages/shared/prompts/remaining.txt',
+      ],
+      [
+        'prompts/**/../*.txt',
+        'packages/app/prompts/sub/removed.txt',
+        'prompts/sub/remaining.txt',
+      ],
+      ['prompts/**/../*.txt', 'packages/app/removed.txt', 'remaining.txt'],
+      ['prompts/**/./../*.txt', 'packages/app/removed.txt', 'remaining.txt'],
+      ['prompts/**//../*.txt', 'packages/app/removed.txt', 'remaining.txt'],
+      [
+        'prompts/**/../../**/*.txt',
+        'packages/shared/prompts/removed.txt',
+        '../shared/prompts/remaining.txt',
+      ],
+      [
+        'prompts/{**,sub}/../*.txt',
+        'packages/app/removed.txt',
+        'remaining.txt',
+      ],
+    ])('should preserve deletion matching for the working-directory-relative glob %s', async (promptPattern, removedPrompt, remainingPrompt) => {
+      withInputs({
+        prompts: promptPattern,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: removedPrompt, status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([remainingPrompt]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', remainingPrompt]),
+      );
+    });
+
+    test('should detect a removed prompt below separated globstars', async () => {
+      withInputs({ prompts: '**/sub/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/sub/deep/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/sub/deep/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/sub/deep/remaining.txt']),
+      );
+    });
+
+    test('should ignore a removed hidden prompt outside a globstar match', async () => {
+      withInputs({ prompts: 'prompts/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/.hidden/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should match a removed prompt when the regexp optimization is unavailable', async () => {
+      const makeRe = vi
+        .spyOn(Minimatch.prototype, 'makeRe')
+        .mockReturnValue(false);
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      try {
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+      } finally {
+        makeRe.mockRestore();
+      }
+    });
+
+    test('should detect a removed prompt in an absolute brace alternative', async () => {
+      const absolutePromptDirectory = path.join(process.cwd(), 'prompts');
+      withInputs({
+        prompts: `{${absolutePromptDirectory},archive}/*.txt`,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should detect a removed prompt in a native Windows brace alternative', async () => {
+      const currentPlatform = process.platform;
+      const absolutePromptDirectory = path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('\\');
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({
+          prompts: `{${absolutePromptDirectory},archive}/*.txt`,
+          'working-directory': 'packages/app',
+        });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'prompts/removed.txt', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          `{${absolutePromptDirectory.split('\\').join('/')},archive}/*.txt`,
+          {
+            cwd: path.join(process.cwd(), 'packages/app'),
+            nodir: true,
+            braceExpandMax: 1000,
+          },
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test.each([
+      'prompts/**/./../*.txt',
+      'prompts/**//../*.txt',
+    ])('should preserve rename-out matching for the redundant-parent glob %s', async (prompts) => {
+      withInputs({ prompts, 'working-directory': 'packages/app' });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archive/renamed.md',
+          previous_filename: 'packages/app/removed.txt',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'remaining.txt']),
+      );
+    });
+
+    test('should fail open when prompt traversal expansion is excessive', async () => {
+      withInputs({
+        prompts: `prompts${'/**/..'.repeat(10)}/**/*.txt`,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/unrelated.md', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should fail open before a single traversal group exceeds the variant cap', async () => {
+      withInputs({
+        prompts: `prompts/**${'/..'.repeat(1001)}/**/*.txt`,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/unrelated.md', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should fail open when brace expansion exceeds the variant cap', async () => {
+      withInputs({ prompts: 'prompts/{1..1001}/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/unrelated.md', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should fail open when a prompt glob exceeds the minimatch pattern limit', async () => {
+      withInputs({
+        prompts: `prompts/${'a'.repeat(65536)}\nprompts/*.txt`,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern) => {
+        if (typeof pattern === 'string' && pattern.length > 65536) {
+          throw new TypeError('pattern is too long');
+        }
+        return ['prompts/remaining.txt'];
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+      expect(mockGlob.sync).toHaveBeenCalledWith('prompts/*.txt', {
+        cwd: process.cwd(),
+        nodir: true,
+        braceExpandMax: 1000,
+      });
+    });
+
+    test('should explain capped prompt-glob matching when no prompt was removed', async () => {
+      withInputs({
+        prompts: `prompts/${'a'.repeat(65536)}\nprompts/*.txt`,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/changed.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+      );
+    });
+
+    test('should avoid building prompt matchers for in-workspace transitions once matching is capped', async () => {
+      const makeRe = vi.spyOn(Minimatch.prototype, 'makeRe');
+      withInputs({
+        prompts: `prompts/${'a'.repeat(65_537)}\nprompts/*.txt`,
+      });
+      mockOctokit.paginate.mockResolvedValue(
+        Array.from({ length: 128 }, (_, index) => ({
+          filename: `docs/removed-${index}.md`,
+          status: 'removed',
+        })),
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      try {
+        await run();
+
+        expect(makeRe).not.toHaveBeenCalled();
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Prompt glob matching exceeded its safety limits',
+          ),
+        );
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+        );
+      } finally {
+        makeRe.mockRestore();
+      }
+    });
+
+    test('should fail open when the working-directory prefix exceeds the minimatch pattern limit', async () => {
+      withInputs({
+        prompts: `${'a'.repeat(65520)}\nprompts/*.txt`,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'packages/app/prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should compile capped brace patterns once when scanning many removed files', async () => {
+      withInputs({ prompts: 'prompts/{1..1000}/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue(
+        Array.from({ length: 2999 }, (_, index) => ({
+          filename: `docs/removed-${index}.md`,
+          status: 'removed',
+        })),
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/{1..1001}/**/*.txt',
+      `prompts${'/**/..'.repeat(10)}/**/*.txt`,
+    ])('should not let a capped prompt glob mask a rename-out for %s', async (prompts) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archive/new.txt',
+          previous_filename: 'prompts/old.txt',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should conservatively use config prompts when brace expansion fails', async () => {
+      mockBraceExpand.mockImplementation(() => {
+        throw new Error('malformed brace pattern\n::error::forged');
+      });
+      withInputs({ prompts: 'prompts/{broken,pattern}/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      try {
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Prompt glob matching exceeded its safety limits',
+          ),
+        );
+        expect(mockGlob.sync).not.toHaveBeenCalled();
+        expect(mockExec.exec.mock.calls[0][1]).not.toContain('--prompts');
+        expect(
+          mockCore.warning.mock.calls.every(
+            ([message]) => !String(message).includes('::error::forged'),
+          ),
+        ).toBe(true);
+      } finally {
+        mockBraceExpand.mockReset();
+      }
+    });
+
+    test('should conservatively process remaining prompts when matcher brace expansion fails after preflight', async () => {
+      mockBraceExpand
+        .mockImplementationOnce(() => ['prompts/broken/*.txt'])
+        .mockImplementationOnce(() => {
+          throw new Error('matcher brace failure\n::error::forged');
+        });
+      withInputs({ prompts: 'prompts/{broken,pattern}/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      try {
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Prompt glob matching exceeded its safety limits',
+          ),
+        );
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+        );
+        expect(
+          mockCore.warning.mock.calls.every(
+            ([message]) => !String(message).includes('::error::forged'),
+          ),
+        ).toBe(true);
+      } finally {
+        mockBraceExpand.mockReset();
+      }
+    });
+
+    test.each([
+      ['an extreme numeric brace range', 'prompts/{1..1000000000}.txt'],
+      [
+        'an extreme numeric brace range after an even number of backslashes',
+        'prompts/\\\\{1..1000000000}.txt',
+      ],
+      [
+        'an extreme numeric brace range inside a character class',
+        'prompts/[{1..5000000}].txt',
+      ],
+      ['an oversized pattern', `prompts/${'a'.repeat(65_537)}.txt`],
+      ['a NUL-containing pattern', 'prompts/invalid\0name.txt'],
+      ['a malformed brace pattern', 'prompts/{broken/*.txt'],
+      ['an unmatched closing brace', 'prompts/broken}/*.txt'],
+      ['an unsafe long numeric range', `prompts/{1..${'9'.repeat(17)}}.txt`],
+      [
+        'a zero-padded numeric range that would amplify expansion output',
+        `prompts/{${'0'.repeat(32_000)}1..1024}.txt`,
+      ],
+      [
+        'a deeply nested balanced brace pattern',
+        `prompts/${'{'.repeat(5000)}a,b${'}'.repeat(5000)}/*.txt`,
+      ],
+      [
+        'a deeply nested balanced brace pattern inside a character class',
+        `prompts/[${'{'.repeat(5000)}a,b${'}'.repeat(5000)}]/*.txt`,
+      ],
+      [
+        'a deeply nested brace pattern hidden by escaped closing braces',
+        `prompts/${'\\{'.repeat(5000)}${'{\\}'.repeat(5000)}a,b${'}'.repeat(5000)}/*.txt`,
+      ],
+      [
+        'a deeply nested extglob pattern',
+        `prompts/${'@('.repeat(1000)}x|y${')'.repeat(1000)}/*.txt`,
+      ],
+      [
+        'a repeating extglob pattern over the safe nesting budget',
+        `prompts/${'*('.repeat(9)}x|y${')'.repeat(9)}/*.txt`,
+      ],
+      [
+        'a deeply nested extglob pattern synthesized by brace alternatives',
+        `prompts/${'{@,@}('.repeat(24)}x|y${')'.repeat(24)}/*.txt`,
+      ],
+    ])('should reject %s before brace expansion or filesystem globbing', async (_label, prompts) => {
+      mockBraceExpand.mockImplementation(() => {
+        throw new Error('unsafe brace expansion was invoked');
+      });
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+
+      await run();
+
+      expect(mockBraceExpand).not.toHaveBeenCalled();
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject nested extglobs exposed by brace-expansion backslash collapse before filesystem globbing', async () => {
+      const prompts = `prompts/{one,two}/${'\\\\\\@('.repeat(24)}x|y${')'.repeat(24)}/*.txt`;
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      ['an opening escape', 'prompts/\\{1..1000000000}.txt'],
+      ['three opening escapes', 'prompts/\\\\\\{1..1000000000}.txt'],
+      ['a closing escape', 'prompts/{1..1000000000\\}.txt'],
+    ])('should preserve a numeric-brace literal with %s in a POSIX prompt glob', async (_label, prompts) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/{1..1000000000}.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should preserve a bounded zero-step numeric range in a prompt glob', async () => {
+      withInputs({ prompts: 'prompts/{1..3..0}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/2.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve a bounded extglob prompt pattern', async () => {
+      withInputs({ prompts: 'prompts/@(one|two).txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/one.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/@(one|two).txt',
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve repeated literal-brace and parenthesis segments in a prompt path', async () => {
+      const prompts = `prompts/${'{literal}('.repeat(17)}x${')'.repeat(17)}.txt`;
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: prompts, status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([prompts]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', prompts]),
+      );
+    });
+
+    test('should preserve a bounded nested-brace prompt pattern', async () => {
+      const prompts = 'prompts/{outer,{one,two}}/*.txt';
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/two/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/two/remaining.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/two/remaining.txt']),
+      );
+    });
+
+    test('should preserve a bounded extglob exposed by brace-expansion backslash collapse', async () => {
+      const prompts = 'prompts/{one,two}/\\\\\\@([)]x|y).txt';
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/one/\\y.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'darwin',
+      'win32',
+    ])('should detect a removed prompt with case differences on %s', async (platform) => {
+      const currentPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: platform,
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: 'prompts/*.txt' });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'Prompts/OLD.TXT', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test('should ignore a removed prompt path outside the workspace', async () => {
+      withInputs({
+        prompts: '../../../outside/*.txt',
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: path.join(
+            path.dirname(process.cwd()),
+            'outside/secret.txt',
+          ),
+          status: 'removed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should process all remaining prompts when a prompt is renamed out of scope', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archive/original.txt',
+          previous_filename: 'prompts/original.txt',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should select the new path when a prompt is renamed within scope', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'prompts/new.txt',
+          previous_filename: 'prompts/old.txt',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/new.txt']);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/new.txt']),
+      );
+    });
+
+    test('should select the new path when a prompt is renamed into scope', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'prompts/new.txt',
+          previous_filename: 'archive/old.txt',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/new.txt']);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should ignore a rename row without a previous filename', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'archive/new.txt', status: 'renamed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should ignore a deletion outside the configured working directory', async () => {
+      mockCore.getInput.mockImplementation((name: string) => {
+        const inputs = {
+          ...DEFAULT_INPUTS,
+          'working-directory': 'packages/app',
+        };
+        return inputs[name] || '';
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'packages/other/prompts/removed.txt',
+          status: 'removed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should still evaluate config prompts when no current prompt remains', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      const promptfooCall = mockExec.exec.mock.calls[0];
+      const args = promptfooCall[1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
+    test('should skip an unrelated deleted file', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/removed.md', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should preserve deleted config dependency detection', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should handle empty prompts input', async () => {
@@ -618,12 +2321,171 @@ describe('GitHub Action Main', () => {
       >;
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
-          '--name-only',
+          '--name-status',
+          '--find-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
         ]);
       }
+    });
+
+    test('should process remaining prompts when a push deletes a monitored prompt', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce('D\0prompts/removed.txt\0');
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should process remaining prompts when a push renames a prompt out of scope', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'R100\0prompts/old.txt\0archive/new.txt\0',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test.each([
+      ['removed', 'D\0prompts/policy\n::error::forged.txt\0'],
+      [
+        'renamed-out',
+        'R100\0prompts/policy\r::error::forged.txt\0archive/policy.txt\0',
+      ],
+    ])('should reject a CRLF %s push prompt before full-scan fallback', async (_case, diff) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(diff);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('Could not compare commits'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should select a copied prompt from a push comparison', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'C100\0archive/template.txt\0prompts/copied.txt\0',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/copied.txt']);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/copied.txt']),
+      );
+    });
+
+    test('should reject a changed push prompt whose filename contains a tab and newline', async () => {
+      const filename = 'prompts/tab\tline\nbreak.txt';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(`M\0${filename}\0`);
+      mockGlob.sync.mockReturnValue([filename]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        expect.stringContaining('found 1 changed file(s).'),
+      );
+      expect(
+        mockCore.info.mock.calls.every(
+          ([message]) => !message.includes(filename),
+        ),
+      ).toBe(true);
+    });
+
+    test.each([
+      ['an empty status', '\0prompts/changed.txt\0'],
+      ['an empty path', 'M\0\0'],
+      ['an incomplete rename', 'R100\0prompts/old.txt\0'],
+      ['an incomplete copy', 'C100\0archive/template.txt\0'],
+      [
+        'a truncated rename after a valid prefix',
+        'M\0docs/readme.md\0R100\0prompts/old.txt\0',
+      ],
+      ['a dangling final status after a valid prefix', 'M\0docs/readme.md\0D'],
+    ])('should process all prompts when a push diff contains %s', async (_case, diff) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(diff);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
     });
 
     test('should process all prompts when push diff fails', async () => {
@@ -689,7 +2551,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
-        '--name-only',
+        '--name-status',
+        '--find-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -738,9 +2602,189 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using manually specified files: prompts/file1.txt, prompts/file2.txt',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should process remaining prompts when a manually specified prompt is missing', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'prompts/removed.txt' } },
+        configurable: true,
+      });
+      mockFs.existsSync.mockReturnValue(false);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should trim a manually specified missing prompt', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: '  prompts/removed.txt  \r\n  ' } },
+        configurable: true,
+      });
+      mockFs.existsSync.mockReturnValue(false);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should select an existing manually specified prompt', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'prompts/changed.txt' } },
+        configurable: true,
+      });
+      mockFs.existsSync.mockReturnValue(true);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/remaining.txt',
+      ]);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+      );
+      expect(args).not.toContain('prompts/remaining.txt');
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should trim an existing manually specified prompt before filtering', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: '  prompts/changed.txt  \r\n  ' } },
+        configurable: true,
+      });
+      mockFs.existsSync.mockReturnValue(true);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/remaining.txt',
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+      );
+      expect(args).not.toContain('prompts/remaining.txt');
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should preserve leading and trailing spaces in a manually specified dependency path', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: ' providers/spaced.py \r\n' } },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' providers/spaced.py ',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should preserve leading and trailing spaces in the workflow-files action input', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      const rawFile = ' providers/spaced.py ';
+      mockCore.getInput.mockImplementation((name, options) => {
+        if (name === 'workflow-files') {
+          return options?.trimWhitespace === false ? rawFile : rawFile.trim();
+        }
+        return DEFAULT_INPUTS[name] || '';
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([rawFile]);
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('workflow-files', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should reject a NUL in a manually specified filename before logging or resolving it', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'prompts/changed.txt\0::error::forged' } },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Manually specified filenames cannot contain NUL characters.',
+      );
+      expect(mockFs.existsSync).not.toHaveBeenCalledWith(
+        expect.stringContaining('::error::forged'),
+      );
+      expect(
+        mockCore.info.mock.calls.every(
+          ([message]) => !message.includes('::error::forged'),
+        ),
+      ).toBe(true);
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should handle workflow_dispatch with custom base comparison', async () => {
@@ -765,6 +2809,77 @@ describe('GitHub Action Main', () => {
         expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
+    });
+
+    test('should process remaining prompts when a manual comparison deletes a prompt', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { base: 'main' } },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce('D\0prompts/removed.txt\0');
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should process remaining prompts when a manual comparison renames a prompt out of scope', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { base: 'main' } },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'R096\0prompts/old.txt\0archive/new.txt\0',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should reject a CRLF removed prompt from a manual comparison before full-scan fallback', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { base: 'main' } },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'D\0prompts/policy\n::error::forged.txt\0',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('Could not compare against'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should handle workflow_dispatch when diff comparison fails', async () => {
@@ -881,7 +2996,9 @@ describe('GitHub Action Main', () => {
       >;
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
-          '--name-only',
+          '--name-status',
+          '--find-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -919,6 +3036,224 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should detect mixed-case Windows file and directory config dependencies', async () => {
+      const currentPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json', status: 'modified' },
+        { filename: 'assets/nested/example.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/unchanged.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'Data/Context.json',
+        'ASSETS/',
+      ]);
+
+      try {
+        await run();
+
+        expect(mockCore.info).toHaveBeenCalledWith(
+          'Detected changes in config file dependencies',
+        );
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/unchanged.txt']),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test('should not narrow evaluation when a prompt and shared config dependency change together', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+        { filename: 'data/context.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/unchanged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/changed.txt',
+          'prompts/unchanged.txt',
+        ]),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluated prompt files: prompts/changed.txt, prompts/unchanged.txt',
+          ),
+        }),
+      );
+    });
+
+    test('should preserve all input prompt matches when a prompt and config change together', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+        { filename: 'promptfooconfig.yaml', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/unchanged.txt',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/changed.txt',
+          'prompts/unchanged.txt',
+        ]),
+      );
+    });
+
+    test('should reject an unchanged CRLF prompt selected for a dependency-triggered full evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+        { filename: 'data/context.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/policy\n::error::forged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an out-of-workspace prompt selected for a dependency-triggered full evaluation', async () => {
+      withInputs({ prompts: '../secrets/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../secrets/leak.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file resolves outside the repository workspace.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an escaped prompt symlink during a removed-prompt full scan', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/link.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        String(filePath).endsWith(`${path.sep}prompts${path.sep}link.txt`)
+          ? '/outside/leak.txt'
+          : String(filePath),
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file resolves outside the repository workspace.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed when a matched prompt cannot be verified', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/unreadable.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (
+          String(filePath).endsWith(
+            `${path.sep}prompts${path.sep}unreadable.txt`,
+          )
+        ) {
+          throw new Error('EACCES');
+        }
+        return String(filePath);
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file resolves outside the repository workspace.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should accurately describe a dependency-triggered PR evaluation using config prompts', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/unchanged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain('--prompts');
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluation used prompts defined in the Promptfoo config.',
+          ),
+        }),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.not.stringContaining('prompts/unchanged.txt'),
+        }),
+      );
+    });
+
+    test('should not log an unsafe config-dependency filename while detecting its change', async () => {
+      const dependency = 'data/policy\n::error::forged.json';
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+        { filename: dependency, status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/changed.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        'Found 1 file dependencies in config',
+      );
+      expect(
+        mockCore.debug.mock.calls.every(
+          ([message]) => !message.includes(dependency),
+        ),
+      ).toBe(true);
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+      );
+    });
+
     test('should run when a file inside a dependency directory changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },
@@ -944,7 +3279,40 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(mockFsUtils.isDirectory).toHaveBeenCalledWith('data');
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when the last matching config-glob dependency is deleted', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/removed.json', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data']);
+      mockFsUtils.isDirectory.mockReturnValue(false);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      './',
+      '/',
+    ])('should run when a root dependency watcher %s observes a changed file', async (dependency) => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/removed.json', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
@@ -1091,7 +3459,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
 
       // Should still fail the action after posting the comment
@@ -1405,6 +3773,35 @@ describe('GitHub Action Main', () => {
       expect(mockCore.summary.write).toHaveBeenCalled();
     });
 
+    test('should omit action prompt globs from a dependency-triggered config-prompt summary', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockResolvedValue('M\0data/context.json\0');
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/unchanged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain('--prompts');
+      expect(mockCore.summary.addHeading).not.toHaveBeenCalledWith(
+        'Evaluated Files',
+        3,
+      );
+      expect(mockCore.summary.addList).not.toHaveBeenCalled();
+    });
+
     test('should handle non-Error failures', async () => {
       mockExec.exec.mockRejectedValue('subprocess unavailable');
 
@@ -1531,7 +3928,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
-        '--name-only',
+        '--name-status',
+        '--find-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',
