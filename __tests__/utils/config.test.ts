@@ -298,6 +298,20 @@ commandLineOptions:
     );
   });
 
+  it('should watch the repository workspace for unresolved extensions in an external config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://{{ env.HOOK_PATH }}:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
   it('should conservatively watch the workspace for referenced commandLineOptions', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:

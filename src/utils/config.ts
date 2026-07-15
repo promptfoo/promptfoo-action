@@ -307,7 +307,7 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     if (watchWorkspace) {
-      dependencies.add(`${dependencyRoot}${path.sep}`);
+      dependencies.add(cwd);
       core.warning(
         'Unable to statically resolve all config extension dependencies. Watching the repository workspace for changes.',
       );
