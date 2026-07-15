@@ -39855,27 +39855,29 @@ async function run() {
       } else {
         changedFiles = pullRequestFiles.flatMap(
           (file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]
-        ).join("\n");
+        ).join("\0");
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        changedFiles = filesInput;
-        info(`Using manually specified files: ${changedFiles}`);
+        const manualFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter((file) => file);
+        changedFiles = manualFiles.join("\0");
+        info(`Using manually specified files: ${manualFiles.join("\n")}`);
       } else {
         validateGitRevision(compareBase);
         try {
           changedFiles = await gitInterface.diff([
             "--name-only",
             "--no-renames",
+            "-z",
             compareBase,
             "HEAD",
             "--"
           ]);
           info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`
+            `Comparing against ${compareBase}, found ${changedFiles.split("\0").filter((file) => file).length} changed files`
           );
         } catch (error2) {
           warning(
@@ -39895,12 +39897,13 @@ async function run() {
           changedFiles = await gitInterface.diff([
             "--name-only",
             "--no-renames",
+            "-z",
             beforeSha,
             afterSha,
             "--"
           ]);
           info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`
+            `Comparing ${beforeSha}..${afterSha}, found ${changedFiles.split("\0").filter((file) => file).length} changed files`
           );
         } catch (error2) {
           warning(
@@ -39920,7 +39923,7 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const changedFilesList = changedFiles.split(/\r?\n/).map((file) => file.trim()).filter((file) => file);
+    const changedFilesList = changedFiles.split("\0").filter((file) => file);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
