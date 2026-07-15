@@ -38490,12 +38490,83 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         );
       }
     };
-    if (Array.isArray(config2.providers)) {
-      for (const provider of config2.providers) {
-        if (typeof provider === "string" && provider.startsWith("file://")) {
-          processFileUrl(provider);
-        } else if (typeof provider === "object" && provider !== null && typeof provider.id === "string" && provider.id.startsWith("file://")) {
-          processFileUrl(provider.id);
+    const stripProviderFunctionSelector = (value) => value.replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, "$1");
+    const visitedProviderValues = /* @__PURE__ */ new WeakSet();
+    const visitProviderReferences = (value) => {
+      if (typeof value === "string" && value.startsWith("file://")) {
+        processFileUrl(stripProviderFunctionSelector(value));
+      } else if (Array.isArray(value)) {
+        if (visitedProviderValues.has(value)) {
+          return;
+        }
+        visitedProviderValues.add(value);
+        for (const nestedValue of value) {
+          visitProviderReferences(nestedValue);
+        }
+      } else if (isTraversableRecord(value)) {
+        if (visitedProviderValues.has(value)) {
+          return;
+        }
+        visitedProviderValues.add(value);
+        for (const nestedValue of Object.values(value)) {
+          visitProviderReferences(nestedValue);
+        }
+      }
+    };
+    const addHttpProviderPath = (value) => {
+      if (typeof value !== "string" || !value) {
+        return;
+      }
+      const filePath = stripProviderFunctionSelector(
+        value.replace(/^file:\/\//, "")
+      ).replace(/\\/g, "/");
+      const absolutePath = path6.isAbsolute(filePath) ? path6.resolve(filePath) : path6.resolve(path6.join(configDir, filePath));
+      if (filePath.includes("\0") || !isPathInside(dependencyRoot, absolutePath)) {
+        warning(
+          "Ignoring unsafe HTTP provider file dependency: path must stay within the repository workspace"
+        );
+        return;
+      }
+      processFileUrl(`file://${filePath}`);
+    };
+    for (const providers of [config2.providers, config2.targets]) {
+      const providerEntries = typeof providers === "string" ? [providers] : Array.isArray(providers) ? providers : [];
+      for (const provider of providerEntries) {
+        visitProviderReferences(provider);
+        if (!isTraversableRecord(provider)) {
+          continue;
+        }
+        const mappedProvider = Object.entries(provider);
+        const providerId = typeof provider.id === "string" ? provider.id : mappedProvider.length === 1 ? mappedProvider[0][0] : void 0;
+        const providerOptions = typeof provider.id === "string" ? provider : mappedProvider.length === 1 && isTraversableRecord(mappedProvider[0][1]) ? mappedProvider[0][1] : void 0;
+        if (!providerId || !/^https?(?::|$)/.test(providerId) || !providerOptions || !isTraversableRecord(providerOptions.config)) {
+          continue;
+        }
+        const { auth: auth2, tls, signatureAuth } = providerOptions.config;
+        if (isTraversableRecord(auth2) && auth2.type === "file") {
+          addHttpProviderPath(auth2.path);
+        }
+        if (isTraversableRecord(tls)) {
+          for (const key of [
+            "caPath",
+            "certPath",
+            "keyPath",
+            "pfxPath",
+            "jksPath"
+          ]) {
+            addHttpProviderPath(tls[key]);
+          }
+        }
+        if (isTraversableRecord(signatureAuth)) {
+          for (const key of [
+            "privateKeyPath",
+            "keystorePath",
+            "pfxPath",
+            "certPath",
+            "keyPath"
+          ]) {
+            addHttpProviderPath(signatureAuth[key]);
+          }
         }
       }
     }
@@ -39359,20 +39430,23 @@ async function run() {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join("\n");
+        changedFiles = pullRequestFiles.flatMap(
+          (file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]
+        ).join("\n");
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        changedFiles = filesInput;
+        changedFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter((file) => file).join("\n");
         info(`Using manually specified files: ${changedFiles}`);
       } else {
         validateGitRevision(compareBase);
         try {
           changedFiles = await gitInterface.diff([
             "--name-only",
+            "--no-renames",
             compareBase,
             "HEAD",
             "--"
@@ -39397,6 +39471,7 @@ async function run() {
         try {
           changedFiles = await gitInterface.diff([
             "--name-only",
+            "--no-renames",
             beforeSha,
             afterSha,
             "--"
@@ -39422,7 +39497,7 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const changedFilesList = changedFiles.split("\n").filter((f) => f);
+    const changedFilesList = changedFiles.split(/\r?\n/).filter((file) => file);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
