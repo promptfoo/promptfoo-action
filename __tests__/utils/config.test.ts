@@ -646,6 +646,22 @@ providers:
     expect(deps).toEqual(['./']);
   });
 
+  it('should conservatively watch file-bearing provider expressions with a leading literal', () => {
+    process.env.PROVIDER_TOOLS_PATH = 'current.ts:getTools';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    config:
+      tools: "{{ 'file://tools/' + env.PROVIDER_TOOLS_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
   it('should prefer caller env over external provider-file defaults', () => {
     mockFs.readFileSync.mockImplementation((filePath: string) =>
       filePath.endsWith('promptfooconfig.yaml')

@@ -366,9 +366,8 @@ export function extractFileDependencies(configPath: string): string[] {
           ...process.env,
           ...activeEnv,
         });
-        const unresolvedLeadingEnvTemplate = /^\s*\{\{-?\s*env(?:\.|\[)/.test(
-          renderedProvider,
-        );
+        const unresolvedLeadingEnvTemplate =
+          /^\s*\{\{-?(?:[^}]|\}(?!\}))*\benv(?:\.|\[)/.test(renderedProvider);
         if (!renderedProvider.startsWith('file://')) {
           if (
             (isProviderReference && /\{\{|\{%|\{#/.test(renderedProvider)) ||
