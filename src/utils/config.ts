@@ -216,9 +216,9 @@ export function extractFileDependencies(
             ? `${watchedDirectory.replace(/[\\/]+$/, '')}${path.sep}`
             : watchedDirectory,
         );
-      } else if (isDirectory(absolutePath)) {
+      } else if (isDirectory(absolutePath) || /[\\/]$/.test(fileUrl)) {
         // It's a directory, preserve trailing slash if it was there
-        const directoryPath = fileUrl.endsWith('/')
+        const directoryPath = /[\\/]$/.test(fileUrl)
           ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
           : absolutePath;
         dependencies.add(directoryPath);
@@ -257,15 +257,19 @@ export function extractFileDependencies(
         : [absolutePath];
 
       const visited = new WeakSet<object>();
-      const walk = (value: unknown): void => {
-        if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(value);
-        } else if (Array.isArray(value)) {
-          for (const entry of value) walk(entry);
-        } else if (typeof value === 'object' && value !== null) {
-          if (visited.has(value)) return;
-          visited.add(value);
-          for (const entry of Object.values(value)) walk(entry);
+      const walk = (root: unknown): void => {
+        const pending = [root];
+        while (pending.length > 0) {
+          const value = pending.pop();
+          if (typeof value === 'string' && value.startsWith('file://')) {
+            processFileUrl(value);
+          } else if (typeof value === 'object' && value !== null) {
+            if (visited.has(value)) continue;
+            visited.add(value);
+            for (const entry of Object.values(value).reverse()) {
+              pending.push(entry);
+            }
+          }
         }
       };
 
@@ -351,10 +355,17 @@ export function extractFileDependencies(
             const argumentPath = path.isAbsolute(executableArgument)
               ? path.resolve(executableArgument)
               : path.resolve(promptExecutionCwd, executableArgument);
-            if (
-              !isPathInside(dependencyRoot, argumentPath) ||
-              !fs.existsSync(argumentPath)
-            ) {
+            if (!isPathInside(dependencyRoot, argumentPath)) {
+              continue;
+            }
+            if (!fs.existsSync(argumentPath)) {
+              if (
+                !executableArgument.startsWith('-') &&
+                (/[\\/]/.test(executableArgument) ||
+                  /\.[A-Za-z0-9]{1,10}$/.test(executableArgument))
+              ) {
+                dependencies.add(argumentPath);
+              }
               continue;
             }
             try {
@@ -475,16 +486,19 @@ export function extractFileDependencies(
     // Process tests
     if (config.tests) {
       const tests = Array.isArray(config.tests) ? config.tests : [config.tests];
-      const extractNestedFileUrls = (value: unknown): void => {
-        if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(value);
-        } else if (Array.isArray(value)) {
-          for (const entry of value) {
-            extractNestedFileUrls(entry);
-          }
-        } else if (typeof value === 'object' && value !== null) {
-          for (const entry of Object.values(value)) {
-            extractNestedFileUrls(entry);
+      const visitedNestedConfig = new WeakSet<object>();
+      const extractNestedFileUrls = (root: unknown): void => {
+        const pending = [root];
+        while (pending.length > 0) {
+          const value = pending.pop();
+          if (typeof value === 'string' && value.startsWith('file://')) {
+            processFileUrl(value);
+          } else if (typeof value === 'object' && value !== null) {
+            if (visitedNestedConfig.has(value)) continue;
+            visitedNestedConfig.add(value);
+            for (const entry of Object.values(value).reverse()) {
+              pending.push(entry);
+            }
           }
         }
       };

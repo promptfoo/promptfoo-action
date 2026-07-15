@@ -36406,8 +36406,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         dependencies.add(
           matches.length === 0 ? `${watchedDirectory.replace(/[\\/]+$/, "")}${path5.sep}` : watchedDirectory
         );
-      } else if (isDirectory2(absolutePath)) {
-        const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
+      } else if (isDirectory2(absolutePath) || /[\\/]$/.test(fileUrl)) {
+        const directoryPath = /[\\/]$/.test(fileUrl) ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
         dependencies.add(directoryPath);
       } else {
         dependencies.add(absolutePath);
@@ -36435,15 +36435,19 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         windowsPathsNoEscape: true
       }) : [absolutePath];
       const visited = /* @__PURE__ */ new WeakSet();
-      const walk = (value) => {
-        if (typeof value === "string" && value.startsWith("file://")) {
-          processFileUrl(value);
-        } else if (Array.isArray(value)) {
-          for (const entry of value) walk(entry);
-        } else if (typeof value === "object" && value !== null) {
-          if (visited.has(value)) return;
-          visited.add(value);
-          for (const entry of Object.values(value)) walk(entry);
+      const walk = (root) => {
+        const pending = [root];
+        while (pending.length > 0) {
+          const value = pending.pop();
+          if (typeof value === "string" && value.startsWith("file://")) {
+            processFileUrl(value);
+          } else if (typeof value === "object" && value !== null) {
+            if (visited.has(value)) continue;
+            visited.add(value);
+            for (const entry of Object.values(value).reverse()) {
+              pending.push(entry);
+            }
+          }
         }
       };
       for (const promptFile of promptFiles) {
@@ -36488,7 +36492,13 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           const promptExecutionCwd = typeof promptConfig?.basePath === "string" ? path5.resolve(executionCwd, promptConfig.basePath) : executionCwd;
           for (const executableArgument of executableParts.slice(1)) {
             const argumentPath = path5.isAbsolute(executableArgument) ? path5.resolve(executableArgument) : path5.resolve(promptExecutionCwd, executableArgument);
-            if (!isPathInside(dependencyRoot, argumentPath) || !fs6.existsSync(argumentPath)) {
+            if (!isPathInside(dependencyRoot, argumentPath)) {
+              continue;
+            }
+            if (!fs6.existsSync(argumentPath)) {
+              if (!executableArgument.startsWith("-") && (/[\\/]/.test(executableArgument) || /\.[A-Za-z0-9]{1,10}$/.test(executableArgument))) {
+                dependencies.add(argumentPath);
+              }
               continue;
             }
             try {
@@ -36566,16 +36576,19 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     }
     if (config2.tests) {
       const tests = Array.isArray(config2.tests) ? config2.tests : [config2.tests];
-      const extractNestedFileUrls = (value) => {
-        if (typeof value === "string" && value.startsWith("file://")) {
-          processFileUrl(value);
-        } else if (Array.isArray(value)) {
-          for (const entry of value) {
-            extractNestedFileUrls(entry);
-          }
-        } else if (typeof value === "object" && value !== null) {
-          for (const entry of Object.values(value)) {
-            extractNestedFileUrls(entry);
+      const visitedNestedConfig = /* @__PURE__ */ new WeakSet();
+      const extractNestedFileUrls = (root) => {
+        const pending = [root];
+        while (pending.length > 0) {
+          const value = pending.pop();
+          if (typeof value === "string" && value.startsWith("file://")) {
+            processFileUrl(value);
+          } else if (typeof value === "object" && value !== null) {
+            if (visitedNestedConfig.has(value)) continue;
+            visitedNestedConfig.add(value);
+            for (const entry of Object.values(value).reverse()) {
+              pending.push(entry);
+            }
           }
         }
       };

@@ -251,6 +251,23 @@ system: file://partials/system.txt
     ).toEqual(['prompts/chat.yaml', 'partials/system.txt']);
   });
 
+  it('should tolerate self-referential arrays in mapped structured prompts', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return `prompts:\n  file://prompts/chat.yaml: yaml prompt\n`;
+      }
+      if (candidate.endsWith('/prompts/chat.yaml')) {
+        return `items: &items [*items, file://partials/system.txt]\n`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'partials/system.txt']);
+  });
+
   it('should reject invalid Promptfoo legacy YAML sets', () => {
     mockFs.readFileSync.mockReturnValue(`
 metadata: !!set {a: not-null}
@@ -360,6 +377,18 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/prompts/generate.sh']);
+  });
+
+  it('should retain a deleted file argument for mapped executable prompts', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  exec:node templates/generate.js --tone formal: generated prompt
+`);
+    mockFs.existsSync.mockReturnValue(false);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['node', 'templates/generate.js']);
   });
 
   it('should track existing file arguments for mapped executable prompts from the action working directory', () => {
@@ -579,6 +608,22 @@ tests:
       '../config/data/first.json',
       '../config/data/second.json',
     ]);
+  });
+
+  it('should tolerate self-referential generator config objects and arrays', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: file://tests/generate.py:create_tests
+  config:
+    object: &object
+      self: *object
+      source: file://data/object.json
+    array: &array [*array, file://data/array.json]
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['tests/generate.py', 'data/object.json', 'data/array.json']);
   });
 
   it('should extract test variable files', () => {
@@ -932,6 +977,18 @@ prompts:
     );
 
     expect(deps).toEqual(['evals/']);
+  });
+
+  it('should preserve an explicitly mapped prompt directory after its last file is deleted', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://prompts/: mapped prompts
+`);
+    mockFs.existsSync.mockReturnValue(false);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/']);
   });
 
   it('should preserve a repository-root directory sentinel', () => {
