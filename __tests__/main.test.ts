@@ -1505,6 +1505,36 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should avoid building prompt matchers for in-workspace transitions once matching is capped', async () => {
+      const makeRe = vi.spyOn(Minimatch.prototype, 'makeRe');
+      withInputs({
+        prompts: `prompts/${'a'.repeat(65_537)}\nprompts/*.txt`,
+      });
+      mockOctokit.paginate.mockResolvedValue(
+        Array.from({ length: 128 }, (_, index) => ({
+          filename: `docs/removed-${index}.md`,
+          status: 'removed',
+        })),
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      try {
+        await run();
+
+        expect(makeRe).not.toHaveBeenCalled();
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining(
+            'Prompt glob matching exceeded its safety limits',
+          ),
+        );
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+        );
+      } finally {
+        makeRe.mockRestore();
+      }
+    });
+
     test('should fail open when the working-directory prefix exceeds the minimatch pattern limit', async () => {
       withInputs({
         prompts: `${'a'.repeat(65520)}\nprompts/*.txt`,
@@ -1669,6 +1699,10 @@ describe('GitHub Action Main', () => {
       [
         'a deeply nested extglob pattern',
         `prompts/${'@('.repeat(1000)}x|y${')'.repeat(1000)}/*.txt`,
+      ],
+      [
+        'a repeating extglob pattern over the safe nesting budget',
+        `prompts/${'*('.repeat(9)}x|y${')'.repeat(9)}/*.txt`,
       ],
       [
         'a deeply nested extglob pattern synthesized by brace alternatives',

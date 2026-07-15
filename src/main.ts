@@ -37,7 +37,7 @@ const MAX_PROMPT_GLOB_VARIANTS = 1000;
 const MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
 const MAX_PROMPT_NUMERIC_RANGE = 100_000;
 const MAX_PROMPT_BRACE_DEPTH = 128;
-const MAX_PROMPT_EXTGLOB_DEPTH = 16;
+const MAX_PROMPT_EXTGLOB_DEPTH = 8;
 
 function isSafePromptGlob(pattern: string): boolean {
   if (pattern.length > MAX_PROMPT_GLOB_LENGTH || pattern.includes('\0')) {
@@ -599,6 +599,8 @@ export async function run(): Promise<void> {
       ) {
         return false;
       }
+
+      if (promptGlobMatchingCapped) return true;
 
       const matchers = getPromptGlobMatchers();
       const repositoryPath = toRepositoryPath(absolutePath);

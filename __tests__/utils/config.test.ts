@@ -944,6 +944,27 @@ providers:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
+  it.each([
+    '*',
+    '+',
+  ])('should reject repeated %s extglobs over the safe nesting budget before dependency glob parsing', (operator) => {
+    const providers = Array.from(
+      { length: 32 },
+      (_, index) =>
+        `  - 'file://providers/${index}/${`${operator}(`.repeat(9)}x|y${')'.repeat(9)}/*.py'`,
+    ).join('\n');
+    mockFs.readFileSync.mockReturnValue(`providers:\n${providers}`);
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error('unsafe glob parsing was invoked');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it('should reject nested extglobs exposed by dependency brace-expansion backslash collapse before glob parsing', () => {
     const provider = `file://providers/{one,two}/${'\\\\\\@('.repeat(24)}x|y${')'.repeat(24)}/*.py`;
     mockFs.readFileSync.mockReturnValue(`providers:\n  - '${provider}'`);
