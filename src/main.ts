@@ -530,38 +530,45 @@ export async function run(): Promise<void> {
         core.debug(`Found ${dependencies.length} file dependencies in config`);
 
         // Check if any changed file matches the dependencies
-        dependencyChanged = dependencies.some((dep) => {
-          if (dep === './') {
-            return true;
-          }
+        try {
+          dependencyChanged = dependencies.some((dep) => {
+            if (dep === './') {
+              return true;
+            }
 
-          if (
-            glob.hasMagic(dep, {
-              magicalBraces: true,
-              braceExpandMax: 1025,
-            }) &&
-            changedFilesList.some((changedFile) =>
-              path.posix.matchesGlob(changedFile, dep),
-            )
-          ) {
-            return true;
-          }
+            if (
+              glob.hasMagic(dep, {
+                magicalBraces: true,
+                braceExpandMax: 1025,
+              }) &&
+              changedFilesList.some((changedFile) =>
+                path.posix.matchesGlob(changedFile, dep),
+              )
+            ) {
+              return true;
+            }
 
-          // Direct file match
-          if (changedFilesList.includes(dep)) {
-            return true;
-          }
+            // Direct file match
+            if (changedFilesList.includes(dep)) {
+              return true;
+            }
 
-          // Check if the dependency is a directory and any changed file is within it
-          if (dep.endsWith('/') || isDirectory(dep)) {
-            const depDir = dep.endsWith('/') ? dep : `${dep}/`;
-            return changedFilesList.some((changedFile) =>
-              changedFile.startsWith(depDir),
-            );
-          }
+            // Check if the dependency is a directory and any changed file is within it
+            if (dep.endsWith('/') || isDirectory(dep)) {
+              const depDir = dep.endsWith('/') ? dep : `${dep}/`;
+              return changedFilesList.some((changedFile) =>
+                changedFile.startsWith(depDir),
+              );
+            }
 
-          return false;
-        });
+            return false;
+          });
+        } catch {
+          dependencyChanged = true;
+          core.warning(
+            'Failed to validate config dependency glob; conservatively running evaluation',
+          );
+        }
 
         if (dependencyChanged) {
           core.info('Detected changes in config file dependencies');
@@ -628,7 +635,12 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (!useConfigPrompts && promptFiles.length > 0) {
+    if (
+      !useConfigPrompts &&
+      !configChanged &&
+      !dependencyChanged &&
+      promptFiles.length > 0
+    ) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
     // Check if sharing is enabled and validate authentication upfront

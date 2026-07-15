@@ -70,6 +70,17 @@ export function extractFileDependencies(configPath: string): string[] {
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const dependencyRoots =
+    dependencyRoot === cwd ? [dependencyRoot] : [dependencyRoot, cwd];
+  const getContainingDependencyRoot = (
+    absolutePath: string,
+  ): string | undefined =>
+    dependencyRoots.find((root) => isPathInside(root, absolutePath));
+  const watchDependencyRoots = (): void => {
+    for (const root of dependencyRoots) {
+      dependencies.add(`${root.replace(/[\\/]+$/, '')}${path.sep}`);
+    }
+  };
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -88,47 +99,72 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     let dependencyRootUnavailable = false;
-    let dependencyRootResolved = false;
     let dependencyRootWarningEmitted = false;
-    let realDependencyRoot: string | undefined;
-    const isSafeDependencyPath = (absolutePath: string): boolean => {
-      if (!isPathInside(dependencyRoot, absolutePath)) {
-        return false;
+    const realDependencyRoots = new Map<string, string | undefined>();
+    const resolveSafeDependencyPath = (
+      absolutePath: string,
+    ): string | undefined => {
+      const containingRoot = getContainingDependencyRoot(absolutePath);
+      if (!containingRoot) {
+        return undefined;
       }
 
-      if (!dependencyRootResolved) {
-        dependencyRootResolved = true;
-        try {
-          realDependencyRoot = fs.realpathSync(dependencyRoot);
-        } catch {
-          dependencyRootUnavailable = true;
-          return false;
+      for (const root of dependencyRoots) {
+        if (!realDependencyRoots.has(root)) {
+          try {
+            realDependencyRoots.set(root, fs.realpathSync(root));
+          } catch {
+            dependencyRootUnavailable = true;
+            realDependencyRoots.set(root, undefined);
+          }
         }
       }
-      if (!realDependencyRoot) {
-        return false;
-      }
+      const safeRealRoots = Array.from(realDependencyRoots.values()).filter(
+        (root): root is string => root !== undefined,
+      );
 
       let existingPath = absolutePath;
+      const missingSegments: string[] = [];
 
       while (true) {
         try {
-          return isPathInside(
-            realDependencyRoot,
-            fs.realpathSync(existingPath),
-          );
+          const realExistingPath = fs.realpathSync(existingPath);
+          if (
+            !safeRealRoots.some((root) => isPathInside(root, realExistingPath))
+          ) {
+            return undefined;
+          }
+          return path.resolve(realExistingPath, ...missingSegments.reverse());
         } catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
           if (code !== 'ENOENT' && code !== 'ENOTDIR') {
-            return false;
+            return undefined;
           }
 
           const parentPath = path.dirname(existingPath);
           if (parentPath === existingPath) {
-            return false;
+            return undefined;
           }
+          missingSegments.push(path.basename(existingPath));
           existingPath = parentPath;
         }
+      }
+    };
+    const isSafeDependencyPath = (absolutePath: string): boolean =>
+      resolveSafeDependencyPath(absolutePath) !== undefined;
+    const addDependencyPath = (absolutePath: string): void => {
+      dependencies.add(absolutePath);
+      const realPath = resolveSafeDependencyPath(absolutePath);
+      if (
+        realPath &&
+        realPath !== absolutePath &&
+        isPathInside(cwd, realPath)
+      ) {
+        dependencies.add(
+          /[\\/]$/.test(absolutePath)
+            ? `${realPath.replace(/[\\/]+$/, '')}${path.sep}`
+            : realPath,
+        );
       }
     };
 
@@ -153,16 +189,19 @@ export function extractFileDependencies(configPath: string): string[] {
 
         return absolutePath;
       } catch {
-        if (
-          filePath &&
-          !filePath.includes('\0') &&
-          isPathInside(dependencyRoot, path.resolve(configDir, filePath))
-        ) {
-          dependencies.add(
-            dependencyRootUnavailable
-              ? `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`
-              : path.resolve(configDir, filePath),
-          );
+        const lexicalPath =
+          filePath && !filePath.includes('\0')
+            ? path.resolve(configDir, filePath)
+            : undefined;
+        const containingRoot = lexicalPath
+          ? getContainingDependencyRoot(lexicalPath)
+          : undefined;
+        if (lexicalPath && containingRoot) {
+          if (dependencyRootUnavailable) {
+            watchDependencyRoots();
+          } else {
+            dependencies.add(lexicalPath);
+          }
         }
         if (!dependencyRootWarningEmitted) {
           core.warning(
@@ -187,9 +226,7 @@ export function extractFileDependencies(configPath: string): string[] {
           braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
         });
         if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-          dependencies.add(
-            `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
-          );
+          watchDependencyRoots();
           core.warning(
             'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
           );
@@ -207,9 +244,7 @@ export function extractFileDependencies(configPath: string): string[] {
           }
         }
         if (unsafeAlternative) {
-          dependencies.add(
-            `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
-          );
+          watchDependencyRoots();
           core.warning(
             'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
           );
@@ -226,7 +261,7 @@ export function extractFileDependencies(configPath: string): string[] {
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
           if (isSafeDependencyPath(absoluteMatch)) {
-            dependencies.add(absoluteMatch);
+            addDependencyPath(absoluteMatch);
             resolvedPaths.push(absoluteMatch);
           } else {
             core.warning(
@@ -252,7 +287,9 @@ export function extractFileDependencies(configPath: string): string[] {
             if (path.relative(cwd, basePath) === '') {
               dependencies.add(safePattern);
             } else {
-              dependencies.add(`${basePath.replace(/[\\/]+$/, '')}${path.sep}`);
+              addDependencyPath(
+                `${basePath.replace(/[\\/]+$/, '')}${path.sep}`,
+              );
             }
           }
         }
@@ -270,11 +307,11 @@ export function extractFileDependencies(configPath: string): string[] {
           const directoryPath = fileUrl.endsWith('/')
             ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
             : absolutePath;
-          dependencies.add(directoryPath);
+          addDependencyPath(directoryPath);
           resolvedPaths.push(absolutePath);
         } else {
           // It's a regular file path
-          dependencies.add(absolutePath);
+          addDependencyPath(absolutePath);
           resolvedPaths.push(absolutePath);
         }
       }
@@ -286,7 +323,7 @@ export function extractFileDependencies(configPath: string): string[] {
       try {
         return processFileUrlUnchecked(fileUrl);
       } catch {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        watchDependencyRoots();
         core.warning(
           'Skipping invalid config dependency glob; conservatively watching the dependency root',
         );
@@ -311,7 +348,7 @@ export function extractFileDependencies(configPath: string): string[] {
     let providerTraversalCount = 0;
     let providerTraversalStopped = false;
     const stopProviderTraversal = (): void => {
-      dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+      watchDependencyRoots();
       if (!providerTraversalStopped) {
         providerTraversalStopped = true;
         core.warning(
@@ -448,9 +485,7 @@ export function extractFileDependencies(configPath: string): string[] {
               (unresolvedLeadingFileEnvTemplate ||
                 unresolvedComputedFileTemplate))
           ) {
-            dependencies.add(
-              `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
-            );
+            watchDependencyRoots();
           }
           return;
         }
@@ -462,9 +497,7 @@ export function extractFileDependencies(configPath: string): string[] {
             ? encodedProviderPath.slice(1)
             : encodedProviderPath;
         if (/\{\{|\}\}|\{%|\{#/.test(providerPath)) {
-          dependencies.add(
-            `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
-          );
+          watchDependencyRoots();
           return;
         }
 
@@ -500,7 +533,7 @@ export function extractFileDependencies(configPath: string): string[] {
           !cleanPath.includes('\0')
         ) {
           const lexicalPath = path.resolve(configDir, cleanPath);
-          if (isPathInside(dependencyRoot, lexicalPath)) {
+          if (getContainingDependencyRoot(lexicalPath)) {
             dependencies.add(lexicalPath);
           }
         }
@@ -546,9 +579,7 @@ export function extractFileDependencies(configPath: string): string[] {
               true,
             );
           } catch {
-            dependencies.add(
-              `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
-            );
+            watchDependencyRoots();
             core.warning(
               'Failed to extract nested provider dependencies; conservatively watching the dependency root',
             );
@@ -617,9 +648,8 @@ export function extractFileDependencies(configPath: string): string[] {
         }
 
         const isProviderOptionsObject =
-          externalProviderConfig ||
-          (isProviderReference &&
-            ('id' in value || 'env' in value || 'config' in value));
+          (externalProviderConfig || isProviderReference) &&
+          ('id' in value || 'env' in value || 'config' in value);
         const isProviderMap = isProviderReference && !isProviderOptionsObject;
         const valueEnv =
           isProviderOptionsObject && 'env' in value ? value.env : undefined;
@@ -788,7 +818,7 @@ export function extractFileDependencies(configPath: string): string[] {
             'prompt file dependency',
           );
           if (absolutePath) {
-            dependencies.add(absolutePath);
+            addDependencyPath(absolutePath);
           }
         }
       }
@@ -811,7 +841,7 @@ export function extractFileDependencies(configPath: string): string[] {
             'test variable file dependency',
           );
           if (absolutePath) {
-            dependencies.add(absolutePath);
+            addDependencyPath(absolutePath);
           }
         }
       }
@@ -839,7 +869,7 @@ export function extractFileDependencies(configPath: string): string[] {
             'assertion file dependency',
           );
           if (absolutePath) {
-            dependencies.add(absolutePath);
+            addDependencyPath(absolutePath);
           }
         }
       }
@@ -873,10 +903,9 @@ export function extractFileDependencies(configPath: string): string[] {
     core.warning(
       'Failed to extract dependencies from config; conservatively watching the dependency root',
     );
-    const relativeRoot = path
-      .relative(cwd, dependencyRoot)
-      .split(path.sep)
-      .join('/');
-    return [relativeRoot ? `${relativeRoot}/` : './'];
+    return dependencyRoots.map((root) => {
+      const relativeRoot = path.relative(cwd, root).split(path.sep).join('/');
+      return relativeRoot ? `${relativeRoot}/` : './';
+    });
   }
 }

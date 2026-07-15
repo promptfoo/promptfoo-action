@@ -138,6 +138,102 @@ providers: file:///test/working/providers/custom.py:call_api
     expect(deps).toEqual(['providers/custom.py']);
   });
 
+  it('should extract checkout dependencies from a config outside the workspace', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/direct.py:call_api
+  - file:///test/working/providers/glob_*.py
+  - id: https://example.test/upload
+    config:
+      method: POST
+      multipart:
+        parts:
+          - kind: file
+            name: report
+            source:
+              type: path
+              path: /test/working/fixtures/report.pdf
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/providers/glob_current.py']);
+
+    const deps = extractFileDependencies(
+      '/private/config/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'providers/direct.py',
+      'providers/glob_current.py',
+      'providers/',
+      'fixtures/report.pdf',
+    ]);
+  });
+
+  it('should conservatively watch the checkout for unresolved external-config dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROVIDER_ROOT: /test/working/providers
+providers:
+  - file:///test/working/providers/BROKEN_SECRET_MARKER[.py
+  - "{{ 'file://' + env.PROVIDER_ROOT + '/computed.py:call_api' }}"
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.includes('BROKEN_SECRET_MARKER')) {
+        throw new TypeError('BROKEN_SECRET_MARKER: invalid pattern');
+      }
+      return false;
+    });
+
+    const deps = extractFileDependencies(
+      '/private/config/promptfooconfig.yaml',
+    );
+
+    expect(deps).toContain('./');
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) =>
+          String(call[0]).includes('BROKEN_SECRET_MARKER'),
+        ),
+    ).toBe(false);
+  });
+
+  it('should track checkout targets reached through an external-config symlink', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///private/config/link-to-repo/providers/direct.py:call_api
+  - file:///private/config/link-to-repo/providers/glob_*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/private/config/link-to-repo/providers/glob_current.py',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: string) => {
+      if (filePath.includes('*')) {
+        throw Object.assign(new Error('missing glob path'), { code: 'ENOENT' });
+      }
+      if (filePath.includes('/private/config/link-to-repo')) {
+        return filePath.replace(
+          '/private/config/link-to-repo',
+          '/test/working',
+        );
+      }
+      return filePath;
+    });
+
+    const deps = extractFileDependencies(
+      '/private/config/promptfooconfig.yaml',
+    );
+
+    expect(deps).toContain('providers/direct.py');
+    expect(deps).toContain('providers/glob_current.py');
+    expect(deps).toContain('providers/');
+  });
+
   it('should preserve a Windows drive colon in a file provider path', () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
@@ -499,6 +595,73 @@ providers:
     );
 
     expect(deps).toEqual(['evals/auth/current-token.ts']);
+  });
+
+  it('should honor provider-map env for an HTTP file-auth path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - https://example.test/mapped-env:
+      env:
+        AUTH_PATH: ./auth/mapped-env-token.ts
+      config:
+        method: GET
+        auth:
+          type: file
+          path: "{{ env.AUTH_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/auth/mapped-env-token.ts']);
+  });
+
+  it('should apply provider-map env templates once for HTTP file dependencies', () => {
+    process.env.PROVIDER_PATH = 'a';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - https://example.test/mapped-env:
+      env:
+        AUTH_REV: "{{ env.PROVIDER_PATH }}x"
+      config:
+        method: GET
+        auth:
+          type: file
+          path: "./auth/{{ env.AUTH_REV }}.ts"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/auth/ax.ts']);
+  });
+
+  it('should extract HTTP file-auth paths from an external provider map', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'providers: file://providers.yaml'
+        : `
+https://example.test/external-map:
+  env:
+    AUTH_PATH: ./auth/external-map-token.ts
+  config:
+    method: GET
+    auth:
+      type: file
+      path: "{{ env.AUTH_PATH }}"
+`,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/providers.yaml',
+      'evals/auth/external-map-token.ts',
+    ]);
   });
 
   it('should resolve a whitespace-controlled default env template in an HTTP file-auth path', () => {
@@ -1690,7 +1853,11 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/', '../config/providers/deleted.py']);
+    expect(deps).toEqual([
+      '../config/',
+      './',
+      '../config/providers/deleted.py',
+    ]);
   });
 
   it('should validate the parent when realpath reports ENOTDIR', () => {
@@ -1724,7 +1891,11 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/deleted.py']);
+    expect(deps).toEqual([
+      '../config/',
+      './',
+      '../config/providers/deleted.py',
+    ]);
   });
 
   it('should stop safely when a provider-path ancestor is inaccessible', () => {
@@ -1760,7 +1931,11 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/', '../config/providers/private.py']);
+    expect(deps).toEqual([
+      '../config/',
+      './',
+      '../config/providers/private.py',
+    ]);
     expect(
       vi
         .mocked(core.warning)
@@ -1836,7 +2011,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py', '../config/']);
+    expect(deps).toEqual(['../config/providers/custom.py', '../config/', './']);
     expect(core.warning).toHaveBeenCalledWith(
       'Provider dependency traversal stopped; conservatively watching the dependency root',
     );
@@ -1857,7 +2032,7 @@ config:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers.yaml', '../config/']);
+    expect(deps).toEqual(['../config/providers.yaml', '../config/', './']);
     expect(core.warning).toHaveBeenCalledWith(
       'Provider dependency traversal stopped; conservatively watching the dependency root',
     );
@@ -1941,6 +2116,7 @@ providers:
     expect(deps).toEqual([
       '../config/invalid-SECRET_MARKER.yaml',
       '../config/',
+      './',
       '../config/unreadable-SECRET_MARKER.json',
     ]);
     expect(core.warning).toHaveBeenCalledWith(
@@ -1972,7 +2148,7 @@ config:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers.yaml', '../config/']);
+    expect(deps).toEqual(['../config/providers.yaml', '../config/', './']);
     expect(core.warning).toHaveBeenCalledWith(
       'Failed to extract nested provider dependencies; conservatively watching the dependency root',
     );
@@ -2127,7 +2303,7 @@ shared: &shared
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/']);
+    expect(deps).toEqual(['../config/', './']);
     expect(core.warning).toHaveBeenCalledWith(
       'Failed to extract dependencies from config; conservatively watching the dependency root',
     );
@@ -2155,7 +2331,7 @@ shared: &shared
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/']);
+    expect(deps).toEqual(['../config/', './']);
   });
 
   it('should handle non-Error file read failures gracefully', () => {
@@ -2165,7 +2341,7 @@ shared: &shared
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/']);
+    expect(deps).toEqual(['../config/', './']);
   });
 
   it('should ignore dependencies that escape the config directory', () => {
@@ -2313,9 +2489,66 @@ providers:
 
     expect(deps).toEqual([
       '../config/',
+      './',
       '../config/providers/custom.py',
       '../config/providers/',
     ]);
+  });
+
+  it('should ignore unsafe external-config glob matches and preserve safe siblings', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'providers: file://../repository/providers/*.yaml';
+      }
+      if (filePath.endsWith('safe.yaml')) {
+        return 'config:\n  tools: file://tools/safe.py';
+      }
+      throw new Error(`UNSAFE_READ_SECRET_MARKER: ${filePath}`);
+    });
+    mockFs.realpathSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('escaped-SECRET_MARKER.yaml')) {
+        return '/private/outside/ESCAPED_SECRET_MARKER.yaml';
+      }
+      if (filePath.endsWith('blocked-SECRET_MARKER.yaml')) {
+        throw Object.assign(new Error('EACCES_SECRET_MARKER'), {
+          code: 'EACCES',
+        });
+      }
+      return filePath;
+    });
+    mockGlob.hasMagic.mockImplementation((filePath: string) =>
+      filePath.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/repository/providers/escaped-SECRET_MARKER.yaml',
+      '/test/repository/providers/blocked-SECRET_MARKER.yaml',
+      '/test/repository/providers/safe.yaml',
+    ]);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/safe.yaml',
+      'providers/',
+      '../config/tools/safe.py',
+    ]);
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(
+      '/test/repository/providers/escaped-SECRET_MARKER.yaml',
+      'utf-8',
+    );
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(
+      '/test/repository/providers/blocked-SECRET_MARKER.yaml',
+      'utf-8',
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
   });
 
   it('should extract all file types from complex config', () => {

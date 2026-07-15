@@ -1066,6 +1066,28 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should evaluate all prompts when a prompt and shared dependency change together', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'fixtures/referenced-upload.pdf' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced-upload.pdf',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      const promptfooArgs = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(promptfooArgs).not.toContain('--prompts');
+    });
+
     test('should run when a referenced dependency is renamed away in a pull request', async () => {
       mockOctokit.paginate.mockResolvedValue([
         {
@@ -1294,6 +1316,34 @@ describe('GitHub Action Main', () => {
         'No LLM prompt, config files, or dependencies were modified.',
       );
       expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should conservatively run when dependency glob validation throws', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/INVALID_GLOB_SECRET_MARKER[.py',
+      ]);
+      mockGlob.hasMagic.mockImplementation((value: string) => {
+        if (value.includes('INVALID_GLOB_SECRET_MARKER')) {
+          throw new TypeError('INVALID_GLOB_SECRET_MARKER: invalid pattern');
+        }
+        return false;
+      });
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Failed to validate config dependency glob; conservatively running evaluation',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) =>
+            String(call[0]).includes('INVALID_GLOB_SECRET_MARKER'),
+          ),
+      ).toBe(false);
     });
 
     test('should force evaluation when no relevant files changed', async () => {
