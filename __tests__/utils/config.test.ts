@@ -332,6 +332,27 @@ providers:
     expect(deps).toEqual(['./']);
   });
 
+  it('should not watch the workspace for arbitrary nested provider templates', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    label: "build {{ vars.NAME }}"
+    config:
+      body: "hello {{ prompt }}"
+      header: "{% if vars.FLAG %}enabled{% endif %}"
+      headers:
+        "{{ env.API_KEY }}": literal
+        Authorization: "Bearer {{ env.API_KEY }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should normalize a Windows drive after provider-path templating', () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
@@ -741,6 +762,75 @@ providers:
     ]);
   });
 
+  it('should expand brace-only provider globs', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://providers/provider_{one,two}.py',
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/config/providers/provider_one.py',
+      '/test/config/providers/provider_two.py',
+    ]);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider_one.py',
+      '../config/providers/provider_two.py',
+      '../config/providers/',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    expect(
+      mockGlob.hasMagic.mock.calls.some(
+        (call) =>
+          String(call[0]).includes('{one,two}') &&
+          call[1]?.magicalBraces === true,
+      ),
+    ).toBe(true);
+  });
+
+  it('should reject escaping brace alternatives before glob enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://{..,fixtures}/provider_*.py',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/fixtures/provider_one.py']);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./', 'fixtures/provider_one.py', 'fixtures/']);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    const enumeratedPatterns = mockGlob.sync.mock.calls[0]?.[0];
+    expect(enumeratedPatterns).toEqual([
+      '/test/working/fixtures/provider_*.py',
+    ]);
+  });
+
+  it('should bound brace expansion before glob enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://providers/provider_{1..1025}.py',
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
   it('should preserve the watch root for an empty absolute provider glob', () => {
     mockFs.readFileSync.mockReturnValue(
       'providers: file:///test/working/providers/deleted_*.yaml',
@@ -1123,6 +1213,30 @@ config:
     );
   });
 
+  it('should stop reading provider config glob matches when traversal is bounded', () => {
+    const providerConfigs = Array.from(
+      { length: 1300 },
+      (_, index) => `/test/config/providers/provider_${index}.yaml`,
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'providers: file://providers/provider_*.yaml'
+        : 'null',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(providerConfigs);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toContain('../config/');
+    expect(mockFs.readFileSync.mock.calls.length).toBeLessThanOrEqual(1025);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Provider dependency traversal stopped; conservatively watching the dependency root',
+    );
+  });
+
   it('should handle repeated and empty nested provider config files', () => {
     mockFs.readFileSync.mockImplementation((filePath: string) => {
       if (filePath.endsWith('promptfooconfig.yaml')) {
@@ -1436,6 +1550,39 @@ tests:
     expect(deps).toEqual([]);
   });
 
+  it('should retain contained lexical prompt, variable, and assertion symlinks that escape', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - file://prompts/linked.txt
+  - file: prompts/linked-object.txt
+tests:
+  - vars:
+      linked: file://vars/linked.txt
+      linkedObject:
+        file: vars/linked-object.txt
+    assert:
+      - type: javascript
+        value: file://assertions/linked.js
+      - type: javascript
+        value:
+          file: assertions/linked-object.js
+`);
+    mockFs.realpathSync.mockImplementation((filePath: string) =>
+      filePath.includes('linked') ? '/private/outside/secret' : filePath,
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/prompts/linked.txt',
+      '../config/prompts/linked-object.txt',
+      '../config/vars/linked.txt',
+      '../config/vars/linked-object.txt',
+      '../config/assertions/linked.js',
+      '../config/assertions/linked-object.js',
+    ]);
+  });
+
   it('should keep sibling dependencies inside the workspace', () => {
     const configContent = `
 providers:
@@ -1498,7 +1645,11 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py', '../config/']);
+    expect(deps).toEqual([
+      '../config/',
+      '../config/providers/custom.py',
+      '../config/providers/',
+    ]);
   });
 
   it('should extract all file types from complex config', () => {

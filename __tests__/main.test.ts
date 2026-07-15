@@ -988,6 +988,27 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should run when a brace-only dependency glob matches a deleted file', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/deleted_one.yaml' },
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/deleted_{one,two}.yaml',
+      ]);
+      mockGlob.hasMagic.mockImplementation(
+        (value: string, options?: { magicalBraces?: boolean }) =>
+          value.includes('*') ||
+          (options?.magicalBraces === true && value.includes('{')),
+      );
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should skip an unrelated change for a workspace-root dependency glob', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'docs/readme.md' }]);
       mockGlob.sync.mockReturnValue([]);

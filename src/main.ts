@@ -500,7 +500,10 @@ export async function run(): Promise<void> {
           }
 
           if (
-            glob.hasMagic(dep) &&
+            glob.hasMagic(dep, {
+              magicalBraces: true,
+              braceExpandMax: 1025,
+            }) &&
             changedFilesList.some((changedFile) =>
               path.matchesGlob(changedFile, dep),
             )
