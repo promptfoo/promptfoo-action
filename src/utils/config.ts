@@ -322,10 +322,19 @@ export function extractFileDependencies(
       const processPromptReference = (reference: string): void => {
         if (/[\r\n]/.test(reference) || reference.length > 65_536) return;
         const isExecutable = reference.startsWith('exec:');
+        const hasPathPrefix = /^(?:\.{0,2}[\\/]|[A-Za-z]:[\\/])/.test(
+          reference,
+        );
+        const hasUriScheme = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(reference);
+        const pathSegments = reference.split(/[\\/]/);
+        const hasPathLikeSegment =
+          !hasUriScheme &&
+          pathSegments.length > 1 &&
+          pathSegments.some((segment) => segment && !/\s/.test(segment));
         const looksLikePath =
           isExecutable ||
           reference.startsWith('file://') ||
-          (!/\s/.test(reference) &&
+          ((!/\s/.test(reference) || hasPathPrefix || hasPathLikeSegment) &&
             (reference.includes('*') || /[\\/]/.test(reference))) ||
           reference.charAt(reference.length - 3) === '.' ||
           reference.charAt(reference.length - 4) === '.' ||

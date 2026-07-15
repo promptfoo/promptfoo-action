@@ -197,6 +197,7 @@ prompts:
   it.each([
     'Explain *carefully* how this works',
     'Summarize https://example.com/docs for the user',
+    'Compare this / that for clarity',
   ])('should ignore single-line inline prompt-map keys containing path markers: %s', (prompt) => {
     mockFs.readFileSync.mockReturnValue(
       `prompts:\n  "${prompt}": inline prompt\n`,
@@ -208,6 +209,30 @@ prompts:
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([]);
+  });
+
+  it('should extract bare executable prompt paths and globs containing spaces', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  ./tools/my generator: generated prompt
+  tools/my other generator: another generated prompt
+  prompts with spaces/*.tmpl: globbed prompt
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/prompts with spaces/generate.tmpl',
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'tools/my generator',
+      'tools/my other generator',
+      'prompts with spaces/generate.tmpl',
+      'prompts with spaces',
+    ]);
   });
 
   it('should extract nested file references from mapped YAML and JSON prompts', () => {

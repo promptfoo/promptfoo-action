@@ -36485,7 +36485,13 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       const processPromptReference = (reference) => {
         if (/[\r\n]/.test(reference) || reference.length > 65536) return;
         const isExecutable = reference.startsWith("exec:");
-        const looksLikePath = isExecutable || reference.startsWith("file://") || !/\s/.test(reference) && (reference.includes("*") || /[\\/]/.test(reference)) || reference.charAt(reference.length - 3) === "." || reference.charAt(reference.length - 4) === "." || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|zsh|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
+        const hasPathPrefix = /^(?:\.{0,2}[\\/]|[A-Za-z]:[\\/])/.test(
+          reference
+        );
+        const hasUriScheme = /\b[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(reference);
+        const pathSegments = reference.split(/[\\/]/);
+        const hasPathLikeSegment = !hasUriScheme && pathSegments.length > 1 && pathSegments.some((segment) => segment && !/\s/.test(segment));
+        const looksLikePath = isExecutable || reference.startsWith("file://") || (!/\s/.test(reference) || hasPathPrefix || hasPathLikeSegment) && (reference.includes("*") || /[\\/]/.test(reference)) || reference.charAt(reference.length - 3) === "." || reference.charAt(reference.length - 4) === "." || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|zsh|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
           reference
         );
         if (looksLikePath) {
