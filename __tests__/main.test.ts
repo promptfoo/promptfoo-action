@@ -325,6 +325,33 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should mask trusted provider keys before skipping unrelated changes', async () => {
+      withInputs({ 'openai-api-key': 'trusted-openai-input' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'trusted-anthropic-env';
+
+      try {
+        await run();
+
+        expect(mockCore.setSecret).toHaveBeenCalledWith('trusted-openai-input');
+        expect(mockCore.setSecret).toHaveBeenCalledWith(
+          'trusted-anthropic-env',
+        );
+        expect(mockCore.info).toHaveBeenCalledWith(
+          'No LLM prompt, config files, or dependencies were modified.',
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        if (originalAnthropicKey === undefined) {
+          delete process.env.ANTHROPIC_API_KEY;
+        } else {
+          process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+        }
+      }
+    });
+
     test('should skip unrelated changes before validating an implicit .env', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
@@ -1027,6 +1054,134 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test.each([
+      { implicitFile: '.env', dotenvKey: undefined },
+      { implicitFile: '.env.vault', dotenvKey: 'trusted-dotenv-key' },
+    ])('should preserve explicit order when $implicitFile is selected', async ({
+      implicitFile,
+      dotenvKey,
+    }) => {
+      withInputs({ 'env-files': `.env.local,./${implicitFile}` });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return (
+          value.endsWith(`${path.sep}${implicitFile}`) ||
+          value.endsWith(`${path.sep}.env.local`)
+        );
+      });
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      if (dotenvKey === undefined) {
+        delete process.env.DOTENV_KEY;
+      } else {
+        process.env.DOTENV_KEY = dotenvKey;
+      }
+      const loadedPaths: string[] = [];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          loadedPaths.push(options?.path ?? '');
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { CUSTOM_PROVIDER_SETTING: 'selected' }
+            : { CUSTOM_PROVIDER_SETTING: 'implicit' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(loadedPaths).toEqual([
+          path.join(process.cwd(), '.env.local'),
+          path.join(process.cwd(), implicitFile),
+        ]);
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({ CUSTOM_PROVIDER_SETTING: 'implicit' }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
+    });
+
+    test('should preserve explicit order when .env aliases a vault-only implicit file', async () => {
+      withInputs({ 'env-files': '.env.local,.env' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return (
+          value.endsWith(`${path.sep}.env.vault`) ||
+          value.endsWith(`${path.sep}.env.local`)
+        );
+      });
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      const loadedPaths: string[] = [];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const requestedPath = options?.path ?? '';
+          const effectivePath = requestedPath.endsWith('.env')
+            ? `${requestedPath}.vault`
+            : requestedPath;
+          loadedPaths.push(effectivePath);
+          const parsed = effectivePath.endsWith('.env.local')
+            ? { CUSTOM_PROVIDER_SETTING: 'selected' }
+            : { CUSTOM_PROVIDER_SETTING: 'implicit' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(loadedPaths).toEqual([
+          path.join(process.cwd(), '.env.local'),
+          path.join(process.cwd(), '.env.vault'),
+        ]);
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({ CUSTOM_PROVIDER_SETTING: 'implicit' }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
+    });
+
+    test('should keep an absolute-looking env file path under the working directory', async () => {
+      const absoluteInput = path.join(path.sep, 'tmp', 'outside.env');
+      const expectedPath = path.resolve(
+        path.join(process.cwd(), absoluteInput),
+      );
+      withInputs({ 'env-files': absoluteInput });
+      mockFs.existsSync.mockImplementation(
+        (filePath: fs.PathLike) => filePath.toString() === expectedPath,
+      );
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockReturnValue({ error: null });
+
+      await run();
+
+      expect(dotenv.config).toHaveBeenCalledWith(
+        expect.objectContaining({ path: expectedPath }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should preserve trusted workflow credentials when loading the implicit .env', async () => {
       withInputs({ 'env-files': '' });
       mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
@@ -1229,6 +1384,46 @@ describe('GitHub Action Main', () => {
           } else {
             process.env[key] = value;
           }
+        }
+      }
+    });
+
+    test.each([
+      { envFiles: '.missing', loadedFile: '.env' },
+      { envFiles: '.env.local,.missing', loadedFile: '.env.local' },
+    ])('should mask a provider key loaded from $loadedFile before a later error', async ({
+      envFiles,
+      loadedFile,
+    }) => {
+      withInputs({ 'env-files': envFiles });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}${loadedFile}`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalOpenaiKey = process.env.OPENAI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { OPENAI_API_KEY: 'loaded-openai-key' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setSecret).toHaveBeenCalledWith('loaded-openai-key');
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('.missing'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        if (originalOpenaiKey === undefined) {
+          delete process.env.OPENAI_API_KEY;
+        } else {
+          process.env.OPENAI_API_KEY = originalOpenaiKey;
         }
       }
     });

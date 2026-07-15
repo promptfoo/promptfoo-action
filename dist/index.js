@@ -37444,6 +37444,41 @@ async function run() {
     const groqApiKey = getInput("groq-api-key", {
       required: false
     });
+    const maskApiKeys = () => {
+      const apiKeys = [
+        openaiApiKey,
+        azureApiKey,
+        anthropicApiKey,
+        huggingfaceApiKey,
+        awsAccessKeyId,
+        awsSecretAccessKey,
+        replicateApiKey,
+        palmApiKey,
+        vertexApiKey,
+        cohereApiKey,
+        mistralApiKey,
+        groqApiKey,
+        process.env.OPENAI_API_KEY,
+        process.env.AZURE_OPENAI_API_KEY,
+        process.env.ANTHROPIC_API_KEY,
+        process.env.HF_API_TOKEN,
+        process.env.AWS_ACCESS_KEY_ID,
+        process.env.AWS_SECRET_ACCESS_KEY,
+        process.env.REPLICATE_API_KEY,
+        process.env.PALM_API_KEY,
+        process.env.VERTEX_API_KEY,
+        process.env.COHERE_API_KEY,
+        process.env.MISTRAL_API_KEY,
+        process.env.GROQ_API_KEY,
+        process.env.PROMPTFOO_API_KEY
+      ];
+      for (const key of apiKeys) {
+        if (key) {
+          setSecret(key);
+        }
+      }
+    };
+    maskApiKeys();
     const githubToken = getInput("github-token", {
       required: true
     });
@@ -37540,18 +37575,23 @@ async function run() {
       const implicitEnvExists = fs7.existsSync(implicitEnvFilePath);
       const implicitVaultExists = process.env.DOTENV_KEY && fs7.existsSync(implicitVaultFilePath);
       const implicitFilePath = implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath;
-      if (implicitEnvExists || implicitVaultExists) {
+      const explicitEnvFiles = envFiles.split(",").map((envFile) => envFile.trim()).filter(Boolean).map((envFile) => path6.resolve(path6.join(workingDirectory, envFile))).map((envFilePath) => {
+        const vaultPath = envFilePath.endsWith(".vault") ? envFilePath : `${envFilePath}.vault`;
+        return process.env.DOTENV_KEY && fs7.existsSync(vaultPath) ? vaultPath : envFilePath;
+      });
+      const implicitFileIsExplicit = explicitEnvFiles.includes(implicitFilePath);
+      if ((implicitEnvExists || implicitVaultExists) && !implicitFileIsExplicit) {
         info(`Loading environment variables from ${implicitFilePath}`);
         loadEnvironmentFile(implicitFilePath, process.env, false);
+        maskApiKeys();
         info(`Successfully loaded ${implicitFilePath}`);
       }
-      if (envFiles) {
-        const envFileList = envFiles.split(",").map((f) => f.trim()).filter(Boolean);
-        for (const envFile of envFileList) {
-          const envFilePath = path6.join(workingDirectory, envFile);
+      if (explicitEnvFiles.length > 0) {
+        for (const envFilePath of explicitEnvFiles) {
           if (fs7.existsSync(envFilePath)) {
             info(`Loading environment variables from ${envFilePath}`);
             loadEnvironmentFile(envFilePath);
+            maskApiKeys();
             info(`Successfully loaded ${envFilePath}`);
           } else {
             throw new PromptfooActionError(
@@ -37560,38 +37600,6 @@ async function run() {
               `Make sure the file path is correct relative to ${workingDirectory}`
             );
           }
-        }
-      }
-      const apiKeys = [
-        openaiApiKey,
-        azureApiKey,
-        anthropicApiKey,
-        huggingfaceApiKey,
-        awsAccessKeyId,
-        awsSecretAccessKey,
-        replicateApiKey,
-        palmApiKey,
-        vertexApiKey,
-        cohereApiKey,
-        mistralApiKey,
-        groqApiKey,
-        process.env.OPENAI_API_KEY,
-        process.env.AZURE_OPENAI_API_KEY,
-        process.env.ANTHROPIC_API_KEY,
-        process.env.HF_API_TOKEN,
-        process.env.AWS_ACCESS_KEY_ID,
-        process.env.AWS_SECRET_ACCESS_KEY,
-        process.env.REPLICATE_API_KEY,
-        process.env.PALM_API_KEY,
-        process.env.VERTEX_API_KEY,
-        process.env.COHERE_API_KEY,
-        process.env.MISTRAL_API_KEY,
-        process.env.GROQ_API_KEY,
-        process.env.PROMPTFOO_API_KEY
-      ];
-      for (const key of apiKeys) {
-        if (key) {
-          setSecret(key);
         }
       }
     };
