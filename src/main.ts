@@ -995,7 +995,7 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (promptFilesToEvaluate.length > 0) {
+      if (!useConfigPrompts && promptFilesToEvaluate.length > 0) {
         summary.addHeading('Evaluated Files', 3);
         summary.addList(promptFilesToEvaluate);
       }

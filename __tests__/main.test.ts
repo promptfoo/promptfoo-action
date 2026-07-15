@@ -2239,14 +2239,24 @@ describe('GitHub Action Main', () => {
         },
         configurable: true,
       });
-      withInputs({ prompts: '' });
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
 
       await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
 
       expect(mockCore.summary.addHeading).not.toHaveBeenCalledWith(
         'Evaluated Files',
         3,
       );
+      expect(mockCore.summary.addList).not.toHaveBeenCalledWith([
+        'prompts/prompt1.txt',
+      ]);
       expect(mockCore.summary.write).toHaveBeenCalled();
     });
 
