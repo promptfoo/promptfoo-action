@@ -33,9 +33,20 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
+const MAX_GLOB_PATTERN_LENGTH = 65_536;
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
+}
+
+function isPathInside(root: string, target: string): boolean {
+  const relativePath = path.relative(root, target);
+  return (
+    relativePath === '' ||
+    (!relativePath.startsWith(`..${path.sep}`) &&
+      relativePath !== '..' &&
+      !path.isAbsolute(relativePath))
+  );
 }
 
 function parseGitDiffPaths(diff: string): string[] {
@@ -213,7 +224,7 @@ export async function run(): Promise<void> {
     });
     const promptsInput = core.getInput('prompts', { required: false });
     const promptFilesGlobs: string[] = promptsInput
-      ? promptsInput.split('\n').filter((line) => line.trim())
+      ? promptsInput.split(/\r?\n/).filter((line) => line.trim())
       : [];
     const configPath: string = core.getInput('config', {
       required: true,
@@ -230,6 +241,21 @@ export async function run(): Promise<void> {
       ),
     );
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
+    if (isPathInside(workspaceRoot, configAbsolutePath)) {
+      let realWorkspaceRoot: string;
+      let realConfigPath: string;
+      try {
+        realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+        realConfigPath = fs.realpathSync(configAbsolutePath);
+      } catch {
+        throw new Error('Config file cannot be safely resolved.');
+      }
+      if (!isPathInside(realWorkspaceRoot, realConfigPath)) {
+        throw new Error(
+          'Config file resolves outside the repository workspace.',
+        );
+      }
+    }
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
     );
@@ -408,10 +434,20 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput
-          .split(/\r?\n/)
-          .map((file: string) => file.trim())
-          .filter(Boolean);
+        changedFiles = Array.from(
+          new Set(
+            filesInput.split('\n').flatMap((file: string) => {
+              const rawFile = file.endsWith('\r') ? file.slice(0, -1) : file;
+              const trimmedFile = rawFile.trim();
+              if (!trimmedFile) {
+                return [];
+              }
+              return rawFile === trimmedFile
+                ? [rawFile]
+                : [rawFile, trimmedFile];
+            }),
+          ),
+        );
         core.info(
           `Using manually specified files: ${JSON.stringify(changedFiles)}`,
         );
@@ -487,6 +523,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
+    const allPromptFiles: string[] = [];
     const changedFilesList = changedFiles;
 
     for (const globPattern of promptFilesGlobs) {
@@ -494,32 +531,30 @@ export async function run(): Promise<void> {
         cwd: workingDirectory,
         nodir: true,
       });
+      const allMatches = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...allMatches);
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
-          return (
-            repositoryFile !== configRepositoryPath &&
-            changedFilesList.includes(repositoryFile)
-          );
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
         promptFiles.push(...allMatches);
       }
     }
 
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error(
         'Prompt file paths cannot contain carriage returns or line feeds.',
       );
@@ -538,7 +573,7 @@ export async function run(): Promise<void> {
       ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(
-          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
+          `Found ${dependencies.length} file dependencies in config: ${JSON.stringify(dependencies)}`,
         );
 
         // Check if any changed file matches the dependencies
@@ -554,23 +589,40 @@ export async function run(): Promise<void> {
             return true;
           }
 
-          if (
-            changedFilesList.some((changedFile) =>
-              minimatch(changedFile, dep, {
-                dot: true,
-                windowsPathsNoEscape: true,
-                magicalBraces: true,
-                braceExpandMax: 1025,
-              }),
-            )
-          ) {
-            return true;
+          let globMatchFailed = false;
+          if (dep.length > MAX_GLOB_PATTERN_LENGTH) {
+            core.warning(
+              'Skipping config dependency glob matching because the pattern exceeds the maximum length',
+            );
+            globMatchFailed = true;
+          } else {
+            try {
+              if (
+                changedFilesList.some((changedFile) =>
+                  minimatch(changedFile, dep, {
+                    dot: true,
+                    windowsPathsNoEscape: true,
+                    magicalBraces: true,
+                    braceExpandMax: 1025,
+                  }),
+                )
+              ) {
+                return true;
+              }
+            } catch {
+              core.warning(
+                'Failed to match a config dependency glob; conservatively running the evaluation',
+              );
+              globMatchFailed = true;
+            }
           }
 
           // Preserve deleted directories that no longer exist in the checkout.
           const depDir = dep.endsWith('/') ? dep : `${dep}/`;
-          return changedFilesList.some((changedFile) =>
-            changedFile.startsWith(depDir),
+          return (
+            changedFilesList.some((changedFile) =>
+              changedFile.startsWith(depDir),
+            ) || globMatchFailed
           );
         });
 
@@ -639,13 +691,13 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (
-      !useConfigPrompts &&
-      !configChanged &&
-      !dependencyChanged &&
-      promptFiles.length > 0
-    ) {
-      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
+    const evaluationPromptFiles =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
+      promptfooArgs = promptfooArgs.concat([
+        '--prompts',
+        ...evaluationPromptFiles,
+      ]);
     }
     // Check if sharing is enabled and validate authentication upfront
     if (noShare) {
@@ -875,7 +927,7 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
+      const modifiedFiles = evaluationPromptFiles.join(', ');
       let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
@@ -911,9 +963,9 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (promptFiles.length > 0) {
+      if (evaluationPromptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
-        summary.addList(promptFiles);
+        summary.addList(evaluationPromptFiles);
       }
 
       if (repeatCheckResult) {

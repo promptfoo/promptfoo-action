@@ -11,6 +11,7 @@ vi.mock('fs', async () => {
     ...realFs,
     readFileSync: vi.fn(),
     realpathSync: vi.fn(),
+    lstatSync: vi.fn(),
     existsSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
@@ -26,6 +27,7 @@ describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
     realpathSync: Mock;
+    lstatSync: Mock;
     existsSync: Mock;
     statSync: Mock;
   };
@@ -45,6 +47,9 @@ describe('extractFileDependencies', () => {
     mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
       String(filePath),
     );
+    mockFs.lstatSync.mockImplementation(() => {
+      throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+    });
   });
 
   it('should extract file:// providers', () => {
@@ -247,6 +252,58 @@ targets:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/auth/get-token.js', '../config/credentials/ca.pem']);
+  });
+
+  it.each([
+    [
+      'provider',
+      [
+        'providers:',
+        '  - id: https://example.test/infer',
+        '    config:',
+        '      validateStatus: file://validators/status.js:accept_status',
+      ].join('\n'),
+    ],
+    [
+      'target',
+      [
+        'targets:',
+        '  - id: http://example.test/infer',
+        '    config:',
+        '      validateStatus: file://validators/status.mjs:accept_status',
+      ].join('\n'),
+    ],
+    [
+      'per-test provider',
+      [
+        'tests:',
+        '  - provider:',
+        '      id: https://example.test/infer',
+        '      config:',
+        '        validateStatus: file://validators/status.cjs:accept_status',
+      ].join('\n'),
+    ],
+  ])('should extract an HTTP %s status-validator module and strip its export selector', (_source, configContent) => {
+    mockFs.readFileSync.mockReturnValue(configContent);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      expect.stringMatching(/^\.\.\/config\/validators\/status\.(?:m?js|cjs)$/),
+    ]);
+  });
+
+  it('should preserve an uppercase HTTP status-validator extension and literal colon filename', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/infer
+    config:
+      validateStatus: file://validators/status.JS:accept_status
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/validators/status.JS:accept_status']);
   });
 
   it('should not treat non-HTTP provider config as bare security paths', () => {
@@ -1870,7 +1927,31 @@ tests:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/tests/external.yaml']);
+    ).toEqual([]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency: resolved path must stay within the repository workspace',
+    );
+  });
+
+  it('should stop inspecting a test whose symlink target escapes after the direct-path check', () => {
+    mockFs.readFileSync.mockReturnValue('tests: file://tests/changed.yaml');
+    mockFs.existsSync.mockReturnValue(true);
+    let testRealpathCalls = 0;
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const value = String(filePath);
+      if (!value.endsWith('changed.yaml')) {
+        return value;
+      }
+      testRealpathCalls++;
+      return testRealpathCalls === 1
+        ? value
+        : '/private/tmp/outside-secret.yaml';
+    });
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('test file dependency must stay within'),
@@ -2373,6 +2454,78 @@ tests: file:///test/working/tests/*.yaml
     ).toEqual(['tests/cases.yaml', 'tests/fixtures/context.txt']);
   });
 
+  it('should inspect a checkout test file when an unused external config root is inaccessible', () => {
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath).endsWith('cases.yaml')
+        ? 'vars: fixtures/context.txt'
+        : 'tests: file:///test/working/tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const value = String(filePath);
+      if (value === '/test/shared') {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      if (value.startsWith('/test/working')) {
+        return value.replace('/test/working', '/real/workspace');
+      }
+      return value;
+    });
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['tests/cases.yaml', 'tests/fixtures/context.txt']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should watch the checkout root for an executable test when an external config root is inaccessible', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: file:///test/working/tests/generate.py',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const value = String(filePath);
+      if (value === '/test/shared') {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      if (value.startsWith('/test/working')) {
+        return value.replace('/test/working', '/real/workspace');
+      }
+      return value;
+    });
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['tests/generate.py', '/']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should reject a symlinked in-checkout config root that resolves outside the checkout', () => {
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath).endsWith('cases.yaml')
+        ? 'vars: fixtures/context.txt'
+        : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const value = String(filePath);
+      if (value === '/test/working') {
+        return '/real/workspace';
+      }
+      if (value.startsWith('/test/working/shared-link')) {
+        return value.replace('/test/working/shared-link', '/real/shared');
+      }
+      return value;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/shared-link/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependencies: config directory resolves outside the repository workspace',
+    );
+  });
+
   it('should ignore remote file-backed tests', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests: https://docs.google.com/spreadsheets/d/example
@@ -2528,6 +2681,35 @@ shared: &shared
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([]);
+  });
+
+  it('should conservatively watch the checkout after an unexpected post-parse extraction error', () => {
+    const canary = 'EXTRACTION_ERROR_CANARY_019F62C3';
+    mockFs.readFileSync.mockReturnValue('providers: file://providers/*.py');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockImplementation(() => {
+      throw new Error(`glob failed\r\n::error::${canary}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['/']);
+    const warnings = (core.warning as Mock).mock.calls.flat().join('\n');
+    expect(warnings).toContain(`::error::${canary}`);
+    expect(warnings).not.toMatch(/(?:\r|\n)::error::EXTRACTION_ERROR/);
+  });
+
+  it('should represent a direct checkout-root directory dependency with the root sentinel', () => {
+    mockFs.readFileSync.mockReturnValue('tests: file://.');
+    mockFs.statSync.mockImplementation((filePath: fs.PathLike) => ({
+      isDirectory: () => String(filePath) === '/test/working',
+    }));
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['/']);
   });
 
   it('should ignore dependencies that escape the config directory', () => {
@@ -2851,6 +3033,130 @@ providers:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should reject an existing direct dependency symlink outside both allowed roots', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/leak.py
+  - file:///test/working/providers/shared.py
+`);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath).endsWith('/providers/leak.py')
+        ? '/test/secrets/leak.py'
+        : String(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['providers/shared.py']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency: resolved path must stay within the repository workspace',
+    );
+  });
+
+  it('should reject an existing dangling direct dependency symlink', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/dangling.py
+`);
+    mockFs.lstatSync.mockReturnValue({} as fs.Stats);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (String(filePath).endsWith('/providers/dangling.py')) {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      return String(filePath);
+    });
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency: resolved path cannot be verified',
+    );
+  });
+
+  it.each([
+    'ENOENT',
+    'ENOTDIR',
+  ])('should preserve a missing direct dependency when realpath reports %s', (code) => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/missing.py
+`);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (String(filePath).endsWith('/providers/missing.py')) {
+        throw Object.assign(new Error('not found'), { code });
+      }
+      return String(filePath);
+    });
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['providers/missing.py']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['realpath', 'EACCES'],
+    ['lstat', 'EACCES'],
+  ])('should reject a direct dependency whose %s check reports %s', (stage, code) => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/denied.py
+`);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (String(filePath).endsWith('/providers/denied.py')) {
+        throw Object.assign(new Error('not found'), {
+          code: stage === 'realpath' ? code : 'ENOENT',
+        });
+      }
+      return String(filePath);
+    });
+    if (stage === 'lstat') {
+      mockFs.lstatSync.mockImplementation(() => {
+        throw Object.assign(new Error('permission denied'), { code });
+      });
+    }
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency: resolved path cannot be verified',
+    );
+  });
+
+  it('should reject direct and glob dependencies from a symlinked in-checkout config root', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/direct.py
+  - file://providers/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/shared-link/providers/glob.js',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const value = String(filePath);
+      if (value === '/test/working') {
+        return '/real/workspace';
+      }
+      if (value.startsWith('/test/working/shared-link')) {
+        return value.replace('/test/working/shared-link', '/real/shared');
+      }
+      return value;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/shared-link/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependencies: config directory resolves outside the repository workspace',
+    );
+  });
+
   it.each([
     '\n',
     '\r',
@@ -2890,7 +3196,11 @@ providers:
     extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     const warnings = (core.warning as Mock).mock.calls.flat().join('\n');
-    expect(warnings).toContain(`::error::${canary}`);
+    if (code === 'ENOENT') {
+      expect(warnings).toContain(`::error::${canary}`);
+    } else {
+      expect(warnings).not.toContain(canary);
+    }
     expect(warnings).not.toMatch(/(?:\r|\n)::error::INSPECT_/);
   });
 
