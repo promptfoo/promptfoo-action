@@ -6,10 +6,8 @@ import * as path from 'path';
 import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
-  extensions?: string[] | null;
-  commandLineOptions?: {
-    extension?: string[] | null;
-  };
+  extensions?: unknown;
+  commandLineOptions?: unknown;
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
@@ -254,14 +252,19 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Process extension hook files
     const extensions: unknown[] = [];
+    const commandLineOptions =
+      config.commandLineOptions != null &&
+      typeof config.commandLineOptions === 'object'
+        ? config.commandLineOptions
+        : undefined;
     let watchWorkspace =
       (typeof config === 'object' && '$ref' in config) ||
-      (config.commandLineOptions != null &&
-        typeof config.commandLineOptions === 'object' &&
-        '$ref' in config.commandLineOptions);
+      (commandLineOptions != null && '$ref' in commandLineOptions);
     for (const extensionList of [
       config.extensions,
-      config.commandLineOptions?.extension,
+      commandLineOptions != null && 'extension' in commandLineOptions
+        ? commandLineOptions.extension
+        : undefined,
     ]) {
       if (extensionList == null) {
         continue;

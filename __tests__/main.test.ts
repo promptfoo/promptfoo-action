@@ -962,7 +962,7 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
-    test('should run when an explicit config can inherit a changed default-config dependency', async () => {
+    test('should ignore unrelated changes when an explicit config is used alongside a default config', async () => {
       withInputs({ config: 'qa.yaml' });
       mockOctokit.paginate.mockResolvedValue([{ filename: 'hooks/policy.js' }]);
       mockGlob.sync.mockReturnValue([]);
@@ -976,9 +976,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Detected changes in config file dependencies',
+        'No LLM prompt, config files, or dependencies were modified.',
       );
-      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should detect dependency directories without a trailing slash', async () => {
