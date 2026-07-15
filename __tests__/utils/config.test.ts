@@ -1285,6 +1285,97 @@ providers:
     ).toEqual(['evals/tools/mapped-tools.json', 'evals/auth/mapped-token.ts']);
   });
 
+  it('should extract a scalar file-backed provider config', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file://providers/providers.yaml\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/providers.yaml']);
+  });
+
+  it('should extract file-backed top-level scenario, filter, and extension resources', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: []
+scenarios:
+  - file://scenarios/security.yaml
+nunjucksFilters:
+  normalize: ./filters/normalize.js
+extensions:
+  - file://extensions/report.py:report
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/scenarios/security.yaml',
+      'evals/filters/normalize.js',
+      'evals/extensions/report.py',
+    ]);
+  });
+
+  it('should conservatively watch an unresolved Nunjucks filter path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+nunjucksFilters:
+  normalize: "{{ env.MISSING_FILTER_PATH }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should extract inline test transforms and scoring function files', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  options:
+    transform: file://transforms/default-output.ts:transform
+    transformVars: file://transforms/default-vars.py:transform_vars
+  assertScoringFunction: file://scoring/default.js:score
+tests:
+  - options:
+      transform: file://transforms/output.js:transform
+      transformVars: file://transforms/vars.py:transform_vars
+    assertScoringFunction: file://scoring/score.js:score
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/transforms/default-output.ts',
+      'evals/transforms/default-vars.py',
+      'evals/scoring/default.js',
+      'evals/transforms/output.js',
+      'evals/transforms/vars.py',
+      'evals/scoring/score.js',
+    ]);
+  });
+
+  it('should extract a file-backed defaultTest and its nested dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml\n';
+      }
+      return `
+vars:
+  context: file://data/context.yaml
+options:
+  transform: file://transforms/default.js:transform
+assertScoringFunction: file://scoring/default.py:score
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/context.yaml',
+      'evals/transforms/default.js',
+      'evals/scoring/default.py',
+    ]);
+  });
+
   it('should conservatively watch unresolved nested auth and assertion dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:

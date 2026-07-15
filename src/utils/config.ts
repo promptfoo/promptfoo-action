@@ -47,13 +47,13 @@ type TestEntry = {
 
 export interface PromptfooConfig {
   env?: Record<string, unknown>;
-  providers?: Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: PromptEntry | PromptEntry[] | Record<string, string>;
+  providers?: string | Array<string | { id?: string; [key: string]: unknown }>;
+  prompts?: string | PromptEntry[] | Record<string, string>;
   tests?: string | TestEntry | Array<string | TestEntry>;
-  defaultTest?: {
-    vars?: TestVars;
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
-  };
+  defaultTest?: string | TestEntry;
+  scenarios?: unknown;
+  nunjucksFilters?: Record<string, string>;
+  extensions?: unknown;
 }
 
 const legacySetTag = defineMappingTag<Record<string, unknown>>(
@@ -645,7 +645,11 @@ export function extractFileDependencies(
 
     // Extract provider files
     if (config.providers) {
-      for (const provider of config.providers) {
+      const providers =
+        typeof config.providers === 'string'
+          ? [config.providers]
+          : config.providers;
+      for (const provider of providers) {
         if (typeof provider === 'string' && provider.startsWith('file://')) {
           processFileUrl(provider, true);
         } else if (
@@ -687,6 +691,26 @@ export function extractFileDependencies(
         }
       }
     }
+
+    extractNestedConfigDependencies(config.scenarios);
+    if (config.nunjucksFilters) {
+      for (const filterPath of Object.values(config.nunjucksFilters)) {
+        const renderedFilterPath = renderEnvironmentTemplates(
+          filterPath,
+          templateEnv,
+        );
+        if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedFilterPath)) {
+          hasDynamicPromptDependencies = true;
+          continue;
+        }
+        processFileUrl(
+          `file://${renderedFilterPath}`,
+          true,
+          `file://${filterPath}`,
+        );
+      }
+    }
+    extractNestedConfigDependencies(config.extensions);
 
     const extractPromptFile = (prompt: PromptEntry): void => {
       const processPromptReference = (reference: string): void => {
@@ -918,9 +942,14 @@ export function extractFileDependencies(
     };
 
     // Process defaultTest
-    if (config.defaultTest) {
+    if (typeof config.defaultTest === 'string') {
+      processFileUrl(config.defaultTest, true);
+      extractNestedPromptFileUrls(config.defaultTest);
+    } else if (config.defaultTest) {
       extractVarFiles(config.defaultTest.vars);
       extractAssertFiles(config.defaultTest.assert);
+      extractNestedConfigDependencies(config.defaultTest.options);
+      extractNestedConfigDependencies(config.defaultTest.assertScoringFunction);
     }
 
     // Process tests
@@ -963,6 +992,8 @@ export function extractFileDependencies(
         }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
+        extractNestedConfigDependencies(test.options);
+        extractNestedConfigDependencies(test.assertScoringFunction);
       }
     }
 
