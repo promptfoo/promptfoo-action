@@ -38402,6 +38402,10 @@ function extractFileDependencies(configPath) {
     };
     const processFileUrl = (fileUrl, resolvedPath) => {
       const filePath = normalizeConfigFilePath(fileUrl.replace("file://", ""));
+      if (!filePath || filePath.includes("\0")) {
+        resolveConfigDependency(filePath, "config file dependency");
+        return [];
+      }
       if (watchDynamicFilePath(filePath)) return [];
       if (le(filePath, globOptions)) {
         const expandedPaths = braceExpand(filePath.replace(/\\/g, "/"), {
@@ -39519,7 +39523,7 @@ async function run() {
             magicalBraces: true,
             braceExpandMax: 1025
           }) && changedFilesList.some(
-            (changedFile) => path7.matchesGlob(changedFile, dep)
+            (changedFile) => path7.posix.matchesGlob(changedFile, dep)
           )) {
             return true;
           }
