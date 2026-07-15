@@ -89,6 +89,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     let dependencyRootUnavailable = false;
     let dependencyRootResolved = false;
+    let dependencyRootWarningEmitted = false;
     let realDependencyRoot: string | undefined;
     const isSafeDependencyPath = (absolutePath: string): boolean => {
       if (!isPathInside(dependencyRoot, absolutePath)) {
@@ -151,7 +152,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }
 
         return absolutePath;
-      } catch (error) {
+      } catch {
         if (
           filePath &&
           !filePath.includes('\0') &&
@@ -163,11 +164,12 @@ export function extractFileDependencies(configPath: string): string[] {
               : path.resolve(configDir, filePath),
           );
         }
-        core.warning(
-          `Skipping unsafe config dependency content; its path may still be tracked for change detection: ${String(
-            error,
-          ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
-        );
+        if (!dependencyRootUnavailable || !dependencyRootWarningEmitted) {
+          core.warning(
+            'Skipping unsafe config dependency content; its path may still be tracked for change detection',
+          );
+          dependencyRootWarningEmitted = dependencyRootUnavailable;
+        }
         return undefined;
       }
     };

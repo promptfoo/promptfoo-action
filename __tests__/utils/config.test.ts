@@ -1506,6 +1506,7 @@ tests:
     );
 
     expect(deps).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledTimes(1);
     expect(
       vi
         .mocked(core.warning)
