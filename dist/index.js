@@ -38137,22 +38137,23 @@ function providerFilePath(fileUrl, allowJavascript = false) {
 }
 function renderEnvTemplate(value, environment) {
   if (/^(?:1|true|yes|yup|yeppers)$/i.test(
-    environment.PROMPTFOO_DISABLE_TEMPLATING ?? ""
+    String(environment.PROMPTFOO_DISABLE_TEMPLATING ?? "")
   )) {
     return value;
   }
-  const uncommentedValue = value.replace(
-    /^(?:\s*\{#[\s\S]*?#\}\s*)+(?=\{\{-?\s*env(?:\.|\[))/,
-    ""
-  );
+  const withoutLeadingComments = stripLeadingNunjucksComments(value);
+  const uncommentedValue = startsWithEnvExpression(withoutLeadingComments) ? withoutLeadingComments : value;
   return uncommentedValue.replace(
     /\{\{-?\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*(?:\|\s*(?:default|d)\(\s*(['"])([^'"]*)\3\s*(?:,\s*(true|false))?\s*\))?\s*-?\}\}/g,
     (template, dotName, bracketName, _quote, defaultValue, defaultOnFalsy) => {
       const envValue = environment[dotName ?? bracketName];
-      if (envValue !== void 0 && defaultOnFalsy === "true") {
-        return template;
+      if (envValue !== void 0) {
+        if (defaultOnFalsy === "true" && !envValue) {
+          return defaultValue;
+        }
+        return String(envValue);
       }
-      return envValue ?? defaultValue ?? template;
+      return defaultValue ?? template;
     }
   );
 }
@@ -38160,21 +38161,49 @@ function environmentValues(value, baseEnvironment) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
   }
-  return Object.fromEntries(
-    Object.entries(value).flatMap(([key, envValue]) => {
-      if (typeof envValue === "string") {
-        return [[key, renderEnvTemplate(envValue, baseEnvironment)]];
-      }
-      if (typeof envValue === "number" || typeof envValue === "boolean") {
-        return [[key, String(envValue)]];
-      }
-      return [];
-    })
-  );
+  const entries = [];
+  for (const [key, envValue] of Object.entries(value)) {
+    if (typeof envValue === "string") {
+      entries.push([key, renderEnvTemplate(envValue, baseEnvironment)]);
+    } else if (typeof envValue === "number" || typeof envValue === "boolean") {
+      entries.push([key, envValue]);
+    }
+  }
+  return Object.fromEntries(entries);
+}
+function stripLeadingNunjucksComments(value) {
+  let index = 0;
+  let foundComment = false;
+  while (index < value.length && value[index]?.trim() === "") {
+    index += 1;
+  }
+  while (value.startsWith("{#", index)) {
+    const commentEnd = value.indexOf("#}", index + 2);
+    if (commentEnd === -1) {
+      return value;
+    }
+    foundComment = true;
+    index = commentEnd + 2;
+    while (index < value.length && value[index]?.trim() === "") {
+      index += 1;
+    }
+  }
+  return foundComment ? value.slice(index) : value;
+}
+function startsWithEnvExpression(value) {
+  const candidate = value.trimStart();
+  if (!candidate.startsWith("{{")) {
+    return false;
+  }
+  let index = candidate.startsWith("{{-") ? 3 : 2;
+  while (index < candidate.length && candidate[index]?.trim() === "") {
+    index += 1;
+  }
+  return candidate.startsWith("env.", index) || candidate.startsWith("env[", index);
 }
 function mayRenderFileUrl(value) {
-  const candidate = value.trimStart().replace(/^(?:\s*\{#[\s\S]*?#\}\s*)+/, "");
-  if (candidate.startsWith("file://") || /^\{\{-?\s*env(?:\.|\[)|^\{%-?[^%]*\benv(?:\.|\[)/.test(candidate)) {
+  const candidate = stripLeadingNunjucksComments(value.trimStart());
+  if (candidate.startsWith("file://") || startsWithEnvExpression(candidate)) {
     return true;
   }
   return candidate.includes("file://") && /^\{(?:\{-?|%-?)/.test(candidate) || candidate.includes("{#") && candidate.replace(/\{#[\s\S]*?#\}/g, "").startsWith("file://");
@@ -38203,7 +38232,7 @@ function extractFileDependencies(configPath) {
     const disableTemplateEnvVars = rootEnvironment.PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS ?? process.env.PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS;
     const selfHosted = rootEnvironment.PROMPTFOO_SELF_HOSTED ?? process.env.PROMPTFOO_SELF_HOSTED;
     const hidesProcessEnvironment = /^(?:1|true|yes|yup|yeppers)$/i.test(
-      disableTemplateEnvVars ?? selfHosted ?? ""
+      String(disableTemplateEnvVars ?? selfHosted ?? "")
     );
     const baseEnvironment = hidesProcessEnvironment ? {} : process.env;
     const configOverrides = environmentValues(config2.env, baseEnvironment);
@@ -38278,6 +38307,14 @@ function extractFileDependencies(configPath) {
       }
       const filePath = isProvider ? providerFilePath(renderedFileUrl, allowJavascript) : renderedFileUrl.slice("file://".length);
       const displayPath = isProvider ? fileUrl.startsWith("file://") ? providerFilePath(fileUrl, allowJavascript) : fileUrl : fileUrl.slice("file://".length);
+      if (filePath.includes("\0")) {
+        resolveConfigDependency(
+          filePath,
+          "config file dependency",
+          displayPath
+        );
+        return [];
+      }
       if (le(filePath, { magicalBraces: true })) {
         const expandedPaths = braceExpand(filePath, {
           braceExpandMax: MAX_BRACE_EXPANSIONS + 1
@@ -38568,18 +38605,24 @@ function extractFileDependencies(configPath) {
         environment
       );
       const isProviderConfig = /\.(?:ya?ml|json)$/i.test(providerPath);
+      const isProviderGlob = le(providerPath, {
+        magicalBraces: true
+      });
       if (providerPaths.length === 0) {
+        if (!providerPath || providerPath.includes("\0")) {
+          return;
+        }
         const isContainedReference = isPathInside(
           dependencyRoot,
           path6.resolve(configDir, providerPath)
         );
-        if (isProviderConfig || providerPath.length > 0 && !providerPath.includes("\0") && isContainedReference && !le(providerPath, { magicalBraces: true })) {
+        if (isProviderConfig && !isProviderGlob || isContainedReference && !isProviderGlob) {
           dependencies.add(`${dependencyRoot}${path6.sep}`);
         }
         return;
       }
       for (const absolutePath of providerPaths) {
-        const inspectionKey = `${absolutePath}\0${JSON.stringify(
+        const inspectionKey = `${absolutePath}\0${callerProviderContext}\0${JSON.stringify(
           environment,
           Object.keys(environment).sort()
         )}`;
@@ -38628,7 +38671,7 @@ function extractFileDependencies(configPath) {
       const renderedValue = renderEnvTemplate(value, configEnvironment);
       if (renderedValue.startsWith("file://")) {
         processFileUrl(value);
-      } else if (mayRenderFileUrl(value)) {
+      } else if (mayRenderFileUrl(value) && /\{\{|\{%|\{#/.test(renderedValue)) {
         dependencies.add(`${dependencyRoot}${path6.sep}`);
       }
     };

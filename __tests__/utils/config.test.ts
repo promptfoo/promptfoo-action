@@ -623,6 +623,24 @@ providers:
     );
   });
 
+  it('should reject and redact a null-byte HTTP credential path', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      signatureAuth:
+        privateKeyPath: "\\0PRIVATE_KEY_SECRET_CANARY_019F62C3.pem"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'PRIVATE_KEY_SECRET_CANARY_019F62C3',
+    );
+  });
+
   it('should revisit an aliased HTTP file-auth value in its auth context', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -744,7 +762,7 @@ providers:
     vi.unstubAllEnvs();
   });
 
-  it('should conservatively watch falsy env values with a Nunjucks default filter', () => {
+  it('should resolve falsy env values with a Nunjucks default filter', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -761,7 +779,7 @@ providers:
       '/test/repository/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['./']);
+    expect(deps).toEqual(['tools/enabled.ts', 'tools/version.ts']);
   });
 
   it('should conservatively watch computed nested response-schema templates', () => {
@@ -881,6 +899,26 @@ providers:
     ).toEqual(['providers/current.py']);
   });
 
+  it('should handle long and malformed Nunjucks comment prefixes without backtracking', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    const validPrefix = '{# choose #} '.repeat(2_000);
+    const malformedPrefix = `{{#${'#}}{{#'.repeat(2_000)}`;
+    const unclosedComment = `{#${'{{#'.repeat(2_000)}`;
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROVIDER_REF: file://providers/current.py
+providers:
+  - ${JSON.stringify(`${validPrefix}{{ env.PROVIDER_REF }}`)}
+prompts:
+  - ${JSON.stringify(malformedPrefix)}
+  - ${JSON.stringify(unclosedComment)}
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['providers/current.py']);
+  });
+
   it('should extract string and array test-vars file references', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -914,6 +952,32 @@ prompts:
 tests:
   - vars:
       message: "Mention file:// only as text beside {{ env.API_KEY }}."
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should not conservatively watch resolved non-file env templates or blocks', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROMPT_TEXT: Say hi
+  PROVIDER_ID: openai:chat:gpt-4
+  SHORT: yes
+providers:
+  - "{{ env.PROVIDER_ID | default('openai:chat:gpt-4', true) }}"
+prompts:
+  - "{{ env.PROMPT_TEXT }}"
+  - "{% if env.SHORT %}Say hi{% endif %}"
+tests:
+  - vars:
+      message: "{{ env.PROMPT_TEXT }}"
+      block: "{% if env.SHORT %}Say hi{% endif %}"
+    assert:
+      - type: contains
+        value: "{{ env.PROMPT_TEXT }}"
 `);
 
     expect(
@@ -1303,6 +1367,23 @@ providers:
     expect(deps).toEqual(['*.py']);
   });
 
+  it('should preserve empty YAML provider globs without watching the workspace', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://*.yaml
+  - file://providers/*.json
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['*.yaml', 'providers/']);
+  });
+
   it('should extract nested file references from a provider YAML file', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('provider.yaml')) {
@@ -1461,6 +1542,34 @@ providers:
 
     expect(deps).toEqual([
       'provider-object-precedence.yaml',
+      'providers/root.py',
+    ]);
+  });
+
+  it('should inspect a shared provider file separately for bare and object caller contexts', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/provider-context.yaml')) {
+        return `
+env:
+  IMPL: fallback
+id: file://providers/{{ env.IMPL }}.py
+`;
+      }
+      return `
+env:
+  IMPL: root
+providers:
+  - file://provider-context.yaml
+  - id: file://provider-context.yaml
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual([
+      'provider-context.yaml',
+      'providers/fallback.py',
       'providers/root.py',
     ]);
   });
@@ -2575,6 +2684,22 @@ providers:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([]);
+  });
+
+  it('should ignore null-byte provider globs without expanding them', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "file://\\0*.py"
+  - file://providers/safe.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/providers/safe.py']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
   it('should ignore unsafe object-form variable and assertion dependencies', () => {
