@@ -269,6 +269,9 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_AUTHOR',
     'CI',
     'PROMPTFOO_DISABLE_SHARING',
+    'PROMPTFOO_DISABLE_TELEMETRY',
+    'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
     'PROMPTFOO_DISABLE_ERROR_LOG',
     'PROMPTFOO_DISABLE_DEBUG_LOG',
     'PROMPTFOO_STRIP_GRADING_RESULT',
@@ -393,6 +396,18 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
   test('detects forbidden keys case-insensitively', () => {
     const file = writeEnv('.env', 'nOdE_oPtIoNs=--inspect\n');
     expect(() => loadEnvironmentFile(file, {})).toThrow(/nOdE_oPtIoNs/);
+  });
+
+  test.each([
+    'PROMPTFOO_DISABLE_TELEMETRY',
+    'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+    'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+  ])('rejects privacy control %s without leaking sibling values', (key) => {
+    const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
+    const file = writeEnv('.env', `SAFE=must-not-merge\n${key}=false\n`);
+
+    expect(() => loadEnvironmentFile(file, target)).toThrow(key);
+    expect(target).toEqual({ EXISTING: 'keep' });
   });
 
   test('rejects GIT_ and NPM_CONFIG_ prefixed controls', () => {
