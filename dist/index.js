@@ -38807,12 +38807,9 @@ function normalizeWindowsPromptGlob(pattern) {
     return pattern;
   }
   const firstForwardSlash = pattern.indexOf("/");
-  if (firstForwardSlash === -1) {
-    return pattern.split("\\").join("/");
-  }
-  const nativePrefix = pattern.slice(0, firstForwardSlash);
-  const escapedSuffix = pattern.slice(firstForwardSlash);
-  return nativePrefix.replace(/\\(?![,\.\-|^])/g, "/") + escapedSuffix.replace(/\\(?![?*()[\]{}+@!,\.\-|^])/g, "/");
+  const nativePrefix = firstForwardSlash === -1 ? pattern : pattern.slice(0, firstForwardSlash);
+  const escapedSuffix = firstForwardSlash === -1 ? "" : pattern.slice(firstForwardSlash);
+  return nativePrefix.replace(/\\(\[[^\\]*\\\])(?=\\|$)/g, "/\\$1").replace(/(?<!\/)\\(?![,.\-|^\]})])/g, "/") + escapedSuffix.replace(/\\(?![?*()[\]{}+@!,.\-|^])/g, "/");
 }
 function parseGitDiffFiles(diff) {
   if (diff && !diff.endsWith("\0")) {
@@ -39028,7 +39025,7 @@ async function run() {
           });
           matchers.push({
             matcher,
-            expression: traversalPattern.split("/").filter((segment) => segment === "**").length > 1 ? void 0 : matcher.makeRe()
+            expression: traversalPattern.split("/").filter((segment) => segment === "**").length > 1 ? void 0 : matcher.makeRe() || void 0
           });
         }
       }
