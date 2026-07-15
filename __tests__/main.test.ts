@@ -1389,6 +1389,33 @@ describe('GitHub Action Main', () => {
       expect(args).toContain('prompts/prompt2.txt');
     });
 
+    test.each([
+      ['config-triggered', 'promptfooconfig.yaml'],
+      ['prompt-only', 'prompts/prompt1.txt'],
+    ])('should keep absolute prompt-glob matches relative during %s evaluation', async (_kind, changedFile) => {
+      const absoluteGlob = path.join(process.cwd(), 'prompts/*.txt');
+      const absolutePrompt = path.join(process.cwd(), 'prompts/prompt1.txt');
+      withInputs({ prompts: absoluteGlob });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/prompt1.txt');
+      expect(args).not.toContain(absolutePrompt);
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Promptfoo evaluated these prompt files: prompts/prompt1.txt',
+          ),
+        }),
+      );
+      expect(
+        String(mockOctokit.rest.issues.createComment.mock.calls[0][0].body),
+      ).not.toContain(absolutePrompt);
+    });
+
     test('should reject an escaped prompt glob before dependency-triggered evaluation', async () => {
       withInputs({ prompts: '../secrets/*.txt' });
       mockOctokit.paginate.mockResolvedValue([

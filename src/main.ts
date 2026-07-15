@@ -543,31 +543,42 @@ export async function run(): Promise<void> {
         braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
       });
 
-      const eligibleMatches = matches.filter((file) => {
-        const absoluteFile = path.resolve(workingDirectory, file);
-        if (!promptRoots.some((root) => isPathInside(root, absoluteFile))) {
-          throw new Error(
-            'Prompt file paths must stay within the checkout or working directory.',
+      const eligibleMatches = matches
+        .filter((file) => {
+          const absoluteFile = path.resolve(workingDirectory, file);
+          if (!promptRoots.some((root) => isPathInside(root, absoluteFile))) {
+            throw new Error(
+              'Prompt file paths must stay within the checkout or working directory.',
+            );
+          }
+          let resolvedFile: string;
+          try {
+            resolvedFile = fs.realpathSync(absoluteFile);
+          } catch {
+            throw new Error('Unable to resolve a matched prompt file.');
+          }
+          if (
+            !resolvedPromptRoots.some((root) =>
+              isPathInside(root, resolvedFile),
+            )
+          ) {
+            throw new Error(
+              'Prompt file paths must stay within the checkout or working directory.',
+            );
+          }
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, absoluteFile),
           );
-        }
-        let resolvedFile: string;
-        try {
-          resolvedFile = fs.realpathSync(absoluteFile);
-        } catch {
-          throw new Error('Unable to resolve a matched prompt file.');
-        }
-        if (
-          !resolvedPromptRoots.some((root) => isPathInside(root, resolvedFile))
-        ) {
-          throw new Error(
-            'Prompt file paths must stay within the checkout or working directory.',
-          );
-        }
-        const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, absoluteFile),
+          return repositoryFile !== configRepositoryPath;
+        })
+        .map((file) =>
+          toRepositoryPath(
+            path.relative(
+              workingDirectory,
+              path.resolve(workingDirectory, file),
+            ),
+          ),
         );
-        return repositoryFile !== configRepositoryPath;
-      });
       for (const file of eligibleMatches) {
         const absoluteFile = path.resolve(workingDirectory, file);
         if (!allPromptFiles.has(absoluteFile)) {
