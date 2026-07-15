@@ -36284,15 +36284,20 @@ function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
-function providerFilePath(fileUrl) {
+function providerFilePath(fileUrl, allowJavascript = false) {
   const encodedPath = fileUrl.slice("file://".length);
   const rawPath = process.platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(encodedPath) ? encodedPath.slice(1) : encodedPath;
   const functionSeparator = rawPath.lastIndexOf(":");
   const scriptPath = rawPath.slice(0, functionSeparator);
   const functionName = rawPath.slice(functionSeparator + 1);
-  if (functionSeparator > 1 && /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(scriptPath) && /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
+  const isRuby = /\.rb$/i.test(scriptPath);
+  const isSupportedScript = /\.(?:py|go|rb)$/i.test(scriptPath) || allowJavascript && /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(scriptPath);
+  const isValidFunctionName = isRuby ? /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[!?]?$/.test(
     functionName
-  )) {
+  ) : /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
+    functionName
+  );
+  if (functionSeparator > 1 && isSupportedScript && isValidFunctionName) {
     return scriptPath;
   }
   return rawPath;
@@ -36352,8 +36357,8 @@ function extractFileDependencies(configPath) {
         return void 0;
       }
     };
-    const processFileUrl = (fileUrl, isProvider = false) => {
-      const filePath = isProvider ? providerFilePath(fileUrl) : fileUrl.slice("file://".length);
+    const processFileUrl = (fileUrl, isProvider = false, allowJavascript = false) => {
+      const filePath = isProvider ? providerFilePath(fileUrl, allowJavascript) : fileUrl.slice("file://".length);
       const absolutePath = resolveConfigDependency(
         filePath,
         "config file dependency"
@@ -36391,12 +36396,12 @@ function extractFileDependencies(configPath) {
     };
     const inspectedProviderFiles = /* @__PURE__ */ new Set();
     const inspectedProviderObjects = /* @__PURE__ */ new WeakSet();
-    const processProviderValue = (value) => {
+    const processProviderValue = (value, isProviderReference = false) => {
       if (typeof value === "string") {
         if (!value.startsWith("file://")) {
           return;
         }
-        processProviderReference(value);
+        processProviderReference(value, isProviderReference);
         return;
       }
       if (!value || typeof value !== "object") {
@@ -36408,7 +36413,7 @@ function extractFileDependencies(configPath) {
       inspectedProviderObjects.add(value);
       if (Array.isArray(value)) {
         for (const item of value) {
-          processProviderValue(item);
+          processProviderValue(item, isProviderReference);
         }
         return;
       }
@@ -36416,12 +36421,13 @@ function extractFileDependencies(configPath) {
         if (key.startsWith("file://")) {
           processProviderReference(key);
         }
-        processProviderValue(nestedValue);
+        processProviderValue(nestedValue, key === "id");
       }
     };
-    const processProviderReference = (provider) => {
-      const providerPath = providerFilePath(provider);
-      const providerPaths = processFileUrl(provider, true);
+    const processProviderReference = (provider, isProviderReference = true) => {
+      const allowJavascript = !isProviderReference;
+      const providerPath = providerFilePath(provider, allowJavascript);
+      const providerPaths = processFileUrl(provider, true, allowJavascript);
       const isProviderConfig = /\.(?:ya?ml|json)$/i.test(providerPath);
       if (providerPaths.length === 0) {
         if (isProviderConfig) {
@@ -36452,7 +36458,7 @@ function extractFileDependencies(configPath) {
     };
     for (const providers of [config2.providers, config2.targets]) {
       if (providers) {
-        processProviderValue(providers);
+        processProviderValue(providers, true);
       }
     }
     if (config2.prompts) {

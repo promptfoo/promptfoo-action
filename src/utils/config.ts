@@ -34,7 +34,9 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
 // qualifies script providers with a function selector (`...py:custom_call`).
 // Strip valid (including dotted) selectors only for supported script types so
 // malformed selectors and non-script paths are not silently reinterpreted.
-function providerFilePath(fileUrl: string): string {
+// JavaScript/TypeScript selectors are supported for nested provider config
+// references (such as tools), but not for top-level provider IDs.
+function providerFilePath(fileUrl: string, allowJavascript = false): string {
   const encodedPath = fileUrl.slice('file://'.length);
   // On Windows a `file:///C:/...` URL yields a leading slash before the drive
   // letter; drop it so the drive colon is not mistaken for a function selector.
@@ -45,13 +47,18 @@ function providerFilePath(fileUrl: string): string {
   const functionSeparator = rawPath.lastIndexOf(':');
   const scriptPath = rawPath.slice(0, functionSeparator);
   const functionName = rawPath.slice(functionSeparator + 1);
-  if (
-    functionSeparator > 1 &&
-    /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(scriptPath) &&
-    /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
-      functionName,
-    )
-  ) {
+  const isRuby = /\.rb$/i.test(scriptPath);
+  const isSupportedScript =
+    /\.(?:py|go|rb)$/i.test(scriptPath) ||
+    (allowJavascript && /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(scriptPath));
+  const isValidFunctionName = isRuby
+    ? /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[!?]?$/.test(
+        functionName,
+      )
+    : /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
+        functionName,
+      );
+  if (functionSeparator > 1 && isSupportedScript && isValidFunctionName) {
     return scriptPath;
   }
   return rawPath;
@@ -129,9 +136,13 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string, isProvider = false): string[] => {
+    const processFileUrl = (
+      fileUrl: string,
+      isProvider = false,
+      allowJavascript = false,
+    ): string[] => {
       const filePath = isProvider
-        ? providerFilePath(fileUrl)
+        ? providerFilePath(fileUrl, allowJavascript)
         : fileUrl.slice('file://'.length);
       const absolutePath = resolveConfigDependency(
         filePath,
@@ -183,12 +194,15 @@ export function extractFileDependencies(configPath: string): string[] {
     const inspectedProviderFiles = new Set<string>();
     const inspectedProviderObjects = new WeakSet<object>();
 
-    const processProviderValue = (value: unknown): void => {
+    const processProviderValue = (
+      value: unknown,
+      isProviderReference = false,
+    ): void => {
       if (typeof value === 'string') {
         if (!value.startsWith('file://')) {
           return;
         }
-        processProviderReference(value);
+        processProviderReference(value, isProviderReference);
         return;
       }
 
@@ -203,7 +217,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
       if (Array.isArray(value)) {
         for (const item of value) {
-          processProviderValue(item);
+          processProviderValue(item, isProviderReference);
         }
         return;
       }
@@ -212,13 +226,17 @@ export function extractFileDependencies(configPath: string): string[] {
         if (key.startsWith('file://')) {
           processProviderReference(key);
         }
-        processProviderValue(nestedValue);
+        processProviderValue(nestedValue, key === 'id');
       }
     };
 
-    const processProviderReference = (provider: string): void => {
-      const providerPath = providerFilePath(provider);
-      const providerPaths = processFileUrl(provider, true);
+    const processProviderReference = (
+      provider: string,
+      isProviderReference = true,
+    ): void => {
+      const allowJavascript = !isProviderReference;
+      const providerPath = providerFilePath(provider, allowJavascript);
+      const providerPaths = processFileUrl(provider, true, allowJavascript);
       const isProviderConfig = /\.(?:ya?ml|json)$/i.test(providerPath);
       if (providerPaths.length === 0) {
         if (isProviderConfig) {
@@ -255,7 +273,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     for (const providers of [config.providers, config.targets]) {
       if (providers) {
-        processProviderValue(providers);
+        processProviderValue(providers, true);
       }
     }
 

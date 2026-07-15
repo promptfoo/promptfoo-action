@@ -85,20 +85,35 @@ providers:
     expect(deps).toEqual(['../config/providers/provider.py']);
   });
 
-  it('should extract function-qualified JavaScript, Ruby, and Go providers', () => {
+  it('should extract function-qualified Ruby and Go providers including Ruby bang methods', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
-  - file://providers/provider.js:handlers.callApi
-  - file://providers/provider.rb:generate_response
+  - file://providers/provider.rb:generate_response!
+  - file://providers/check.rb:valid_response?
   - file://providers/provider.go:CallApi
 `);
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([
-      '../config/providers/provider.js',
       '../config/providers/provider.rb',
+      '../config/providers/check.rb',
       '../config/providers/provider.go',
+    ]);
+  });
+
+  it('should not reinterpret unsupported JavaScript or TypeScript provider selectors', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.js:handlers.callApi
+  - file://providers/provider.ts:callApi
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.js:handlers.callApi',
+      '../config/providers/provider.ts:callApi',
     ]);
   });
 
@@ -228,6 +243,31 @@ providers:
       '../config/configs/tools.json',
       '../config/configs/schema.yaml',
       '../config/prompts/system.txt',
+    ]);
+  });
+
+  it('should extract supported JavaScript and TypeScript function references nested in provider config', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('provider.yaml')) {
+        return `
+id: openai:chat:gpt-4
+config:
+  tools: file://tools/tools.js:getTools
+  transform: file://tools/transform.ts:handlers.transform
+`;
+      }
+      return `
+providers:
+  - file://providers/provider.yaml
+`;
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.yaml',
+      '../config/tools/tools.js',
+      '../config/tools/transform.ts',
     ]);
   });
 
