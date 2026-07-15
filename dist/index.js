@@ -38419,10 +38419,20 @@ function getProviderFileUrl(value) {
   const providerPath = value.slice(separator + 1);
   return providerPath.startsWith("file://") ? providerPath : `file://${providerPath}`;
 }
-function hasBalancedGlobDelimiters(filePath) {
+function hasBalancedGlobDelimiters(filePath, windowsPathsNoEscape = true) {
   const expectedClosers = [];
+  let escaped = false;
   for (let index = 0; index < filePath.length; index++) {
     const character = filePath[index];
+    if (!windowsPathsNoEscape && character === "\\") {
+      escaped = !escaped;
+      continue;
+    }
+    if (!windowsPathsNoEscape && escaped && "{}[]()".includes(character)) {
+      escaped = false;
+      continue;
+    }
+    escaped = false;
     if (expectedClosers[expectedClosers.length - 1] === "]") {
       if (character === "]") expectedClosers.pop();
       continue;
@@ -38440,6 +38450,92 @@ function hasBalancedGlobDelimiters(filePath) {
     }
   }
   return expectedClosers.length === 0;
+}
+function hasSafeNumericBraceRanges(filePath, maxExpansions, windowsPathsNoEscape = true) {
+  const frames = [{ product: 1, sum: 0, alternatives: false }];
+  let escaped = false;
+  let literalBraceDepth = 0;
+  const readInteger = (start) => {
+    let next = start;
+    if (filePath[next] === "-") next++;
+    const digits = next;
+    while (next < filePath.length && filePath.charCodeAt(next) >= 48 && filePath.charCodeAt(next) <= 57) {
+      next++;
+    }
+    if (next === digits) return void 0;
+    const value = Number(filePath.slice(start, next));
+    return {
+      value,
+      next,
+      safe: next - digits <= 32 && Number.isSafeInteger(value)
+    };
+  };
+  for (let index = 0; index < filePath.length; index++) {
+    if (!windowsPathsNoEscape && filePath[index] === "\\") {
+      escaped = !escaped;
+      continue;
+    }
+    if (!windowsPathsNoEscape && escaped && "{}[](),".includes(filePath[index])) {
+      escaped = false;
+      continue;
+    }
+    escaped = false;
+    const character = filePath[index];
+    if (literalBraceDepth > 0) {
+      if (character === "{") literalBraceDepth++;
+      if (character === "}") literalBraceDepth--;
+      continue;
+    }
+    if (character === "{" && filePath[index - 1] === "$") {
+      literalBraceDepth = 1;
+      continue;
+    }
+    if (character === "{") {
+      const start = readInteger(index + 1);
+      if (start && filePath.slice(start.next, start.next + 2) === "..") {
+        const end = readInteger(start.next + 2);
+        if (end) {
+          let next = end.next;
+          let step = 1;
+          if (filePath.slice(next, next + 2) === "..") {
+            const parsedStep = readInteger(next + 2);
+            if (parsedStep) {
+              if (!parsedStep.safe) return false;
+              step = Math.abs(parsedStep.value);
+              next = parsedStep.next;
+            }
+          }
+          if (filePath[next] === "}") {
+            if (!start.safe || !end.safe || step === 0) return false;
+            const range2 = Math.floor(Math.abs(end.value - start.value) / step) + 1;
+            const frame2 = frames[frames.length - 1];
+            if (range2 > maxExpansions / frame2.product) return false;
+            frame2.product *= range2;
+            index = next;
+            continue;
+          }
+        }
+      }
+      frames.push({ product: 1, sum: 0, alternatives: false });
+      continue;
+    }
+    const frame = frames[frames.length - 1];
+    if (character === "," && frames.length > 1) {
+      frame.sum += frame.product;
+      if (frame.sum > maxExpansions) return false;
+      frame.product = 1;
+      frame.alternatives = true;
+      continue;
+    }
+    if (character === "}" && frames.length > 1) {
+      frames.pop();
+      const alternatives = frame.alternatives ? frame.sum + frame.product : frame.product;
+      const parent = frames[frames.length - 1];
+      if (alternatives > maxExpansions / parent.product) return false;
+      parent.product *= alternatives;
+    }
+  }
+  return true;
 }
 function isForeignWindowsPath(filePath) {
   return process.platform !== "win32" && (/^[A-Za-z]:/.test(filePath) || filePath.startsWith("\\"));
@@ -38576,6 +38672,20 @@ function extractFileDependencies(configPath) {
     };
     const getGlobMagic = (filePath) => {
       if (!isValidGlobLength(filePath)) return void 0;
+      if (filePath.includes("\0")) {
+        addDependencyRootWatchers();
+        warning(
+          "Skipping invalid config dependency glob pattern with mismatched or unclosed delimiters; conservatively watching the dependency root"
+        );
+        return void 0;
+      }
+      if (!hasSafeNumericBraceRanges(filePath, MAX_BRACE_EXPANSIONS)) {
+        addDependencyRootWatchers();
+        warning(
+          "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
+        );
+        return void 0;
+      }
       try {
         return le(filePath, globOptions);
       } catch {
@@ -38588,8 +38698,15 @@ function extractFileDependencies(configPath) {
       ["{%", "%}"],
       ["{#", "#}"]
     ].some(([open2, close]) => {
-      const start = filePath.indexOf(open2);
-      return start >= 0 && filePath.indexOf(close, start + 2) >= 0;
+      let start = filePath.indexOf(open2);
+      while (start >= 0) {
+        if (filePath.indexOf(close, start + 2) < 0) return false;
+        if (open2 !== "{{" || !/^-?\d+\.\.-?\d+/.test(filePath.slice(start + 2))) {
+          return true;
+        }
+        start = filePath.indexOf(open2, start + 2);
+      }
+      return false;
     });
     const watchDynamicFilePath = (filePath) => {
       if (!hasDynamicFilePath(filePath)) return false;
@@ -40012,15 +40129,23 @@ async function run() {
         const absoluteFile = path7.resolve(workingDirectory, file);
         if (seen.has(absoluteFile)) continue;
         seen.add(absoluteFile);
-        target.push(file);
+        target.push(path7.relative(workingDirectory, absoluteFile));
       }
     };
     const changedFilesList = changedFiles.split("\0").filter((file) => file);
     for (const globPattern of promptFilesGlobs) {
-      if (globPattern.length > MAX_GLOB_PATTERN_LENGTH2 || !hasBalancedGlobDelimiters(globPattern)) {
+      if (globPattern.length > MAX_GLOB_PATTERN_LENGTH2 || globPattern.includes("\0") || !hasBalancedGlobDelimiters(globPattern, process.platform === "win32")) {
         throw new Error("Prompt glob pattern is invalid or too large");
       }
-      const expandedPatterns = braceExpand(globPattern.replace(/\\/g, "/"), {
+      if (!hasSafeNumericBraceRanges(
+        globPattern,
+        MAX_BRACE_EXPANSIONS2,
+        process.platform === "win32"
+      )) {
+        throw new Error("Prompt glob pattern has too many brace alternatives");
+      }
+      const expansionPattern = process.platform === "win32" ? globPattern.replace(/\\/g, "/") : globPattern;
+      const expandedPatterns = braceExpand(expansionPattern, {
         braceExpandMax: MAX_BRACE_EXPANSIONS2 + 1
       });
       if (expandedPatterns.length > MAX_BRACE_EXPANSIONS2) {
@@ -40040,7 +40165,8 @@ async function run() {
       }
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
-        nodir: true
+        nodir: true,
+        braceExpandMax: MAX_BRACE_EXPANSIONS2 + 1
       });
       const allMatches = matches.filter((file) => {
         const absoluteFile = path7.resolve(workingDirectory, file);
@@ -40104,13 +40230,23 @@ async function run() {
             return false;
           }
           try {
-            if (le(dep, {
+            if (dep.includes("\0") || !hasBalancedGlobDelimiters(dep, false) || !hasSafeNumericBraceRanges(dep, MAX_BRACE_EXPANSIONS2, false)) {
+              warning("Skipping invalid config dependency glob pattern");
+            } else if (le(dep, {
               magicalBraces: true,
-              braceExpandMax: 1025
-            }) && changedFilesList.some(
-              (changedFile) => path7.posix.matchesGlob(changedFile, dep)
-            )) {
-              return true;
+              braceExpandMax: MAX_BRACE_EXPANSIONS2 + 1
+            })) {
+              const dependencyMatcher = new Minimatch(dep, {
+                platform: "linux",
+                windowsPathsNoEscape: false,
+                magicalBraces: true,
+                braceExpandMax: MAX_BRACE_EXPANSIONS2 + 1
+              });
+              if (changedFilesList.some(
+                (changedFile) => dependencyMatcher.match(changedFile)
+              )) {
+                return true;
+              }
             }
           } catch {
             warning("Skipping invalid config dependency glob pattern");
@@ -40143,7 +40279,7 @@ async function run() {
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${promptFiles.join(", ")}`
+        `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`
       );
     }
     startGroup("Setting up cache");
