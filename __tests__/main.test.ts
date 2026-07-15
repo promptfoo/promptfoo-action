@@ -2401,6 +2401,27 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
 
+    test('should reject a workflow file list containing a null byte without logging it', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'prompts/first\0::error::forged.txt' } },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid workflow file list: null bytes are not allowed.\n\nHelp: Remove null bytes from the workflow file list.',
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('::error::forged'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should handle workflow_dispatch with custom base comparison', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -2804,6 +2825,26 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should evaluate conservatively for a config dependency containing control characters', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'data/context\n::error::forged.json',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(
+        mockCore.debug.mock.calls.every(
+          ([message]) => !/[\r\n]/.test(String(message)),
+        ),
+      ).toBe(true);
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should detect a config dependency renamed away in a pull request', async () => {
       mockOctokit.paginate.mockResolvedValue([
         {
@@ -3049,6 +3090,25 @@ describe('GitHub Action Main', () => {
         'Force run enabled - running evaluation regardless of changes',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should evaluate all action prompts on a forced unrelated change', async () => {
+      const allPrompts = ['prompts/first.txt', 'prompts/second.txt'];
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(allPrompts);
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 3)).toEqual(
+        allPrompts,
+      );
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain(allPrompts.join(', '));
     });
 
     test('should clean old cache entries in CI', async () => {

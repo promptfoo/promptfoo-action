@@ -531,6 +531,13 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
+        if (filesInput.includes('\0')) {
+          throw new PromptfooActionError(
+            'Invalid workflow file list: null bytes are not allowed.',
+            ErrorCodes.INVALID_CONFIGURATION,
+            'Remove null bytes from the workflow file list.',
+          );
+        }
         const manualFiles = filesInput
           .split('\n')
           .map((file: string) => file.replace(/\r$/, ''));
@@ -671,7 +678,7 @@ export async function run(): Promise<void> {
 
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
-          if (dep === './' || dep === '.') {
+          if (dep === './' || dep === '.' || /[\r\n\0]/.test(dep)) {
             return true;
           }
           // Direct file match
@@ -712,7 +719,7 @@ export async function run(): Promise<void> {
 
     const evaluatedPromptFiles = useConfigPrompts
       ? []
-      : configChanged || dependencyChanged
+      : forceRun || configChanged || dependencyChanged
         ? allPromptFiles
         : promptFiles;
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {

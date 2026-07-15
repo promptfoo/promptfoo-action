@@ -1,6 +1,5 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
-import * as glob from 'glob';
 import {
   binaryTag,
   CORE_SCHEMA,
@@ -56,6 +55,79 @@ export interface PromptfooConfig {
       };
   scenarios?: unknown;
   nunjucksFilters?: Record<string, unknown>;
+  extensions?: unknown;
+}
+
+const MAX_TRANSITIVE_CONFIG_BYTES = 1024 * 1024;
+const MAX_NESTED_CONFIG_VALUES = 100_000;
+const TRANSITIVE_CONFIG_EXTENSION =
+  /\.(?:yaml|yml|json|jsonl|csv|xlsx|xls)(?:#[^\r\n]*)?$/i;
+const BINARY_TRANSITIVE_CONFIG_EXTENSION = /\.(?:xlsx|xls)(?:#[^\r\n]*)?$/i;
+const TRANSITIVE_NESTED_EXTENSIONS = new Set([
+  'yaml',
+  'yml',
+  'json',
+  'jsonl',
+  'csv',
+  'xlsx',
+  'xls',
+  'js',
+  'cjs',
+  'mjs',
+  'ts',
+  'cts',
+  'mts',
+  'py',
+  'go',
+  'rb',
+]);
+
+function hasTransitiveNestedReference(contents: string): boolean {
+  for (const token of contents.split(/[\s,"'[\]{}()]+/)) {
+    if (!token) continue;
+    const normalized = token.startsWith('-') ? token.slice(1) : token;
+    if (
+      normalized.startsWith('python:') ||
+      normalized.startsWith('golang:') ||
+      normalized.startsWith('ruby:') ||
+      normalized.startsWith('exec:')
+    ) {
+      return true;
+    }
+    const sheetIndex = normalized.indexOf('#');
+    const withoutSheet =
+      sheetIndex > -1 ? normalized.slice(0, sheetIndex) : normalized;
+    const selectorIndex = withoutSheet.lastIndexOf(':');
+    const candidate =
+      selectorIndex > -1 ? withoutSheet.slice(0, selectorIndex) : withoutSheet;
+    const extensionIndex = candidate.lastIndexOf('.');
+    if (
+      extensionIndex > -1 &&
+      TRANSITIVE_NESTED_EXTENSIONS.has(
+        candidate.slice(extensionIndex + 1).toLowerCase(),
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasGlobMagic(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (path.sep === '/' && character === '\\') {
+      index++;
+      continue;
+    }
+    if ('*?[]{}'.includes(character)) {
+      return true;
+    }
+    if ('*?@+!'.includes(character) && value[index + 1] === '(') {
+      return true;
+    }
+  }
+  return false;
 }
 
 function isPathInside(baseDir: string, targetPath: string): boolean {
@@ -160,11 +232,23 @@ function normalizeFileUrlSelectors(
 }
 
 function normalizeProviderFileUrls(providerPath: string): string[] {
-  const fileUrl = providerPath.startsWith('file://')
-    ? providerPath
-    : /^(?:python|golang|ruby):/.test(providerPath)
-      ? `file://${providerPath.slice(providerPath.indexOf(':') + 1)}`
-      : undefined;
+  const executable = providerPath.startsWith('exec:')
+    ? providerPath.slice('exec:'.length)
+    : undefined;
+  if (executable !== undefined && /\s/.test(executable)) {
+    throw new Error('Command-style Promptfoo exec providers are unsafe');
+  }
+  const fileUrl = executable?.startsWith('file://')
+    ? executable
+    : executable !== undefined
+      ? `file://${executable}`
+      : providerPath.startsWith('file://')
+        ? providerPath
+        : /^(?:python|golang|ruby):/.test(providerPath)
+          ? `file://${providerPath.slice(providerPath.indexOf(':') + 1)}`
+          : /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(providerPath)
+            ? `file://${providerPath}`
+            : undefined;
   return fileUrl
     ? normalizeFileUrlSelectors(
         fileUrl,
@@ -212,6 +296,7 @@ export function extractFileDependencies(
   const maxConfigRefs = 100;
   const maxGlobPatternLength = 64 * 1024;
   const maxGlobBraceExpansions = 1024;
+  let requiresFullEvaluation = false;
 
   try {
     if (!isPathInside(cwd, resolvedWorkingDirectory)) {
@@ -222,10 +307,7 @@ export function extractFileDependencies(
     if (
       configPath.length > maxGlobPatternLength ||
       isUnsupportedWindowsPath(configPath) ||
-      glob.hasMagic(configPath, {
-        magicalBraces: true,
-        windowsPathsNoEscape: true,
-      }) ||
+      hasGlobMagic(configPath) ||
       configPath.includes('{{')
     ) {
       throw new Error('Dynamic Promptfoo configs cannot be safely inspected');
@@ -970,12 +1052,39 @@ export function extractFileDependencies(
         }
 
         let lexicalStats: fs.Stats | undefined;
+        let existingPath = absolutePath;
         try {
           lexicalStats = fs.lstatSync(absolutePath);
         } catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
           if (code !== 'ENOENT' && code !== 'ENOTDIR') {
             throw error;
+          }
+          while (true) {
+            const parentPath = path.dirname(existingPath);
+            if (parentPath === existingPath) {
+              throw error;
+            }
+            existingPath = parentPath;
+            try {
+              fs.lstatSync(existingPath);
+              break;
+            } catch (parentError) {
+              const parentCode = (parentError as NodeJS.ErrnoException).code;
+              if (parentCode !== 'ENOENT' && parentCode !== 'ENOTDIR') {
+                throw parentError;
+              }
+            }
+          }
+          const realExistingPath = path.resolve(fs.realpathSync(existingPath));
+          if (
+            !getRealDependencyRoots().some((root) =>
+              isPathInside(root, realExistingPath),
+            )
+          ) {
+            throw new Error(
+              `${source} resolved path must stay within the repository workspace`,
+            );
           }
         }
         if (lexicalStats) {
@@ -1005,12 +1114,70 @@ export function extractFileDependencies(
 
         return absolutePath;
       } catch (error) {
+        if (String(error).includes('resolved path')) {
+          requiresFullEvaluation = true;
+        }
         core.warning(
           `Ignoring unsafe config dependency "${sanitizeLogText(filePath)}": ${sanitizeLogText(
             String(error).replace(/^(?:[A-Za-z]+)?Error: /, ''),
           )}`,
         );
         return undefined;
+      }
+    };
+
+    const inspectTransitiveReference = (reference: string): void => {
+      const rawPath = reference.startsWith('file://')
+        ? reference.slice('file://'.length)
+        : reference;
+      if (
+        !rawPath ||
+        rawPath.length > maxGlobPatternLength ||
+        /[\0\r\n]/.test(rawPath)
+      ) {
+        throw new Error('Invalid transitive Promptfoo config dependency');
+      }
+      const selectorIndex = rawPath.lastIndexOf(':');
+      const candidatePath =
+        selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
+      const filePath = TRANSITIVE_CONFIG_EXTENSION.test(rawPath)
+        ? rawPath
+        : TRANSITIVE_CONFIG_EXTENSION.test(candidatePath)
+          ? candidatePath
+          : undefined;
+      if (!filePath) return;
+      if (BINARY_TRANSITIVE_CONFIG_EXTENSION.test(filePath)) {
+        throw new Error(
+          'Binary Promptfoo test dependencies cannot be safely inspected',
+        );
+      }
+      if (hasGlobMagic(filePath)) {
+        throw new Error(
+          'Dynamic transitive Promptfoo config dependencies cannot be safely inspected',
+        );
+      }
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        'transitive Promptfoo config dependency',
+      );
+      if (!absolutePath) {
+        throw new Error('Unsafe transitive Promptfoo config dependency');
+      }
+      const stat = fs.statSync(absolutePath);
+      if (stat.size > MAX_TRANSITIVE_CONFIG_BYTES) {
+        throw new Error(
+          'Transitive Promptfoo config dependency exceeds the size limit',
+        );
+      }
+      const contents = fs.readFileSync(absolutePath, 'utf8').toString();
+      if (
+        Buffer.byteLength(contents, 'utf8') > MAX_TRANSITIVE_CONFIG_BYTES ||
+        contents.includes('file://') ||
+        hasTransitiveNestedReference(contents)
+      ) {
+        throw new Error(
+          'Nested transitive Promptfoo config dependencies require a full evaluation',
+        );
       }
     };
 
@@ -1029,7 +1196,7 @@ export function extractFileDependencies(
       }
 
       // Check if the path contains glob patterns
-      if (glob.hasMagic(filePath)) {
+      if (hasGlobMagic(filePath)) {
         if (hasUnsafeGroupedGlob(filePath)) {
           throw new Error('Unsafe grouped config dependency pattern');
         }
@@ -1045,54 +1212,26 @@ export function extractFileDependencies(
             throw new Error('Config dependency brace expansion is too large');
           }
         }
-        // It's a glob pattern, expand it
-        const matches = glob.sync(absolutePath, { nodir: true });
-        const realDependencyRoots = getRealDependencyRoots();
-        for (const match of matches) {
-          if (/[\r\n]/.test(match)) {
-            core.warning(
-              'Ignoring unsafe config dependency glob match: resolved path contains an invalid line break',
-            );
-            continue;
-          }
-          const absoluteMatch = path.resolve(match);
-          if (!isSafeDependency(absoluteMatch)) {
-            core.warning(
-              'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
-            );
-            continue;
-          }
-          try {
-            const realMatch = path.resolve(fs.realpathSync(absoluteMatch));
-            if (
-              !realDependencyRoots.some((root) => isPathInside(root, realMatch))
-            ) {
-              core.warning(
-                'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
-              );
-              continue;
-            }
-            dependencies.add(absoluteMatch);
-          } catch {
-            core.warning(
-              'Ignoring unsafe config dependency glob match: resolved path cannot be verified',
-            );
-          }
-        }
-
-        // Also add the base directory for watching
-        // Extract the non-glob part of the path
+        // A directory sentinel catches additions and deletions without an
+        // eager repository-wide glob walk.
         const filePathRoot = path.parse(filePath).root;
         const pathParts = filePath.slice(filePathRoot.length).split(/[\\/]/);
         let basePath = filePathRoot;
         for (const part of pathParts) {
-          if (glob.hasMagic(part)) {
+          if (hasGlobMagic(part)) {
             break;
           }
           basePath = basePath ? path.join(basePath, part) : part;
         }
-        const baseDirectory = path.resolve(configDir, basePath || '.');
-        dependencies.add(`${baseDirectory.replace(/[\\/]+$/, '')}${path.sep}`);
+        const baseDirectory = resolveConfigDependency(
+          basePath || '.',
+          'config file dependency glob base',
+        );
+        if (baseDirectory) {
+          dependencies.add(
+            `${baseDirectory.replace(/[\\/]+$/, '')}${path.sep}`,
+          );
+        }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = fileUrl.endsWith('/')
@@ -1110,6 +1249,14 @@ export function extractFileDependencies(
       for (const provider of config.providers) {
         if (typeof provider === 'string') {
           for (const fileUrl of normalizeProviderFileUrls(provider)) {
+            inspectTransitiveReference(fileUrl);
+            if (
+              TRANSITIVE_CONFIG_EXTENSION.test(fileUrl.slice('file://'.length))
+            ) {
+              throw new Error(
+                'External Promptfoo provider configs require a full evaluation',
+              );
+            }
             processFileUrl(fileUrl);
           }
         } else if (
@@ -1118,6 +1265,14 @@ export function extractFileDependencies(
           typeof provider.id === 'string'
         ) {
           for (const fileUrl of normalizeProviderFileUrls(provider.id)) {
+            inspectTransitiveReference(fileUrl);
+            if (
+              TRANSITIVE_CONFIG_EXTENSION.test(fileUrl.slice('file://'.length))
+            ) {
+              throw new Error(
+                'External Promptfoo provider configs require a full evaluation',
+              );
+            }
             processFileUrl(fileUrl);
           }
         }
@@ -1125,10 +1280,70 @@ export function extractFileDependencies(
     }
 
     const processConfigReference = (reference: string): void => {
+      inspectTransitiveReference(reference);
       processFileUrl(
         reference.startsWith('file://') ? reference : `file://${reference}`,
       );
     };
+
+    const processHookReference = (reference: unknown): void => {
+      if (typeof reference !== 'string' || !reference.startsWith('file://')) {
+        return;
+      }
+      normalizedSelectorUrls.add(reference);
+      for (const fileUrl of normalizeFileUrlSelectors(
+        reference,
+        /\.(?:js|cjs|mjs|ts|cts|mts|py)$/,
+      )) {
+        processFileUrl(fileUrl);
+      }
+    };
+
+    const processNestedHookReferences = (value: unknown): void => {
+      const pendingValues: unknown[] = [value];
+      const visited = new WeakSet<object>();
+      let inspected = 0;
+      while (pendingValues.length > 0) {
+        const current = pendingValues.pop();
+        inspected++;
+        if (inspected > MAX_NESTED_CONFIG_VALUES) {
+          throw new Error(
+            'Nested Promptfoo hook dependencies exceed the limit',
+          );
+        }
+        if (typeof current === 'string') {
+          processHookReference(current);
+          continue;
+        }
+        if (typeof current !== 'object' || current === null) continue;
+        if (visited.has(current)) {
+          throw new Error(
+            'Circular Promptfoo hook dependencies are unsupported',
+          );
+        }
+        visited.add(current);
+        pendingValues.push(...Object.values(current));
+      }
+    };
+
+    const processProviderHooks = (provider: unknown): void => {
+      if (typeof provider !== 'object' || provider === null) return;
+      const record = provider as Record<string, unknown>;
+      processHookReference(record.transform);
+      const mapped =
+        typeof record.id === 'string'
+          ? record
+          : Object.values(record).find(
+              (value) => typeof value === 'object' && value !== null,
+            );
+      if (typeof mapped !== 'object' || mapped === null) return;
+      processHookReference((mapped as Record<string, unknown>).transform);
+    };
+
+    for (const providers of [config.providers, config.targets]) {
+      if (!providers) continue;
+      for (const provider of providers) processProviderHooks(provider);
+    }
 
     const isPromptReference = (reference: string): boolean => {
       if (
@@ -1218,8 +1433,24 @@ export function extractFileDependencies(
     }
 
     // Extract test variable files
-    const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
+    const extractVarFiles = (vars?: unknown): void => {
       if (!vars) return;
+      if (typeof vars === 'string') {
+        processConfigReference(vars);
+        return;
+      }
+      if (Array.isArray(vars)) {
+        for (const value of vars) {
+          if (typeof value !== 'string') {
+            throw new Error('Invalid Promptfoo vars file dependency');
+          }
+          processConfigReference(value);
+        }
+        return;
+      }
+      if (typeof vars !== 'object') {
+        throw new Error('Invalid Promptfoo vars file dependency');
+      }
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
@@ -1289,6 +1520,17 @@ export function extractFileDependencies(
         ) {
           pendingAsserts.push(...assertion.assert);
         }
+        for (const field of ['transform', 'contextTransform']) {
+          processHookReference((assertion as Record<string, unknown>)[field]);
+        }
+        if ('provider' in assertion) {
+          processProviderHooks((assertion as Record<string, unknown>).provider);
+        }
+        if ('rubricPrompt' in assertion) {
+          processNestedHookReferences(
+            (assertion as Record<string, unknown>).rubricPrompt,
+          );
+        }
       }
     };
 
@@ -1298,6 +1540,17 @@ export function extractFileDependencies(
     } else if (config.defaultTest) {
       extractVarFiles(config.defaultTest.vars);
       extractAssertFiles(config.defaultTest.assert);
+      const defaultTest = config.defaultTest as Record<string, unknown>;
+      processHookReference(defaultTest.assertScoringFunction);
+      processProviderHooks(defaultTest.provider);
+      if (typeof defaultTest.options === 'object' && defaultTest.options) {
+        const options = defaultTest.options as Record<string, unknown>;
+        for (const field of ['postprocess', 'transform', 'transformVars']) {
+          processHookReference(options[field]);
+        }
+        processProviderHooks(options.provider);
+        processNestedHookReferences(options.rubricPrompt);
+      }
     }
 
     const processTestInputs = (tests: unknown): void => {
@@ -1327,12 +1580,20 @@ export function extractFileDependencies(
             processFileUrl(fileUrl);
           }
         }
-        extractVarFiles(
-          testRecord.vars as { [key: string]: unknown } | undefined,
-        );
+        extractVarFiles(testRecord.vars as unknown);
         extractAssertFiles(
           testRecord.assert as PromptfooAssertion[] | undefined,
         );
+        processHookReference(testRecord.assertScoringFunction);
+        processProviderHooks(testRecord.provider);
+        if (typeof testRecord.options === 'object' && testRecord.options) {
+          const options = testRecord.options as Record<string, unknown>;
+          for (const field of ['postprocess', 'transform', 'transformVars']) {
+            processHookReference(options[field]);
+          }
+          processProviderHooks(options.provider);
+          processNestedHookReferences(options.rubricPrompt);
+        }
       }
     };
 
@@ -1373,6 +1634,18 @@ export function extractFileDependencies(
           throw new Error('Invalid Promptfoo Nunjucks filter dependency');
         }
         processConfigReference(filter);
+      }
+    }
+
+    if (config.extensions !== undefined) {
+      if (!Array.isArray(config.extensions)) {
+        throw new Error('Invalid Promptfoo extension dependency');
+      }
+      for (const extension of config.extensions) {
+        if (typeof extension !== 'string') {
+          throw new Error('Invalid Promptfoo extension dependency');
+        }
+        processHookReference(extension);
       }
     }
 
@@ -1418,6 +1691,10 @@ export function extractFileDependencies(
           }
         }
       }
+    }
+
+    if (requiresFullEvaluation) {
+      return ['./'];
     }
 
     // Convert absolute paths back to repository-relative paths.
