@@ -38320,6 +38320,15 @@ function isDirectory2(filePath) {
 
 // src/utils/config.ts
 var MAX_BRACE_EXPANSIONS = 1024;
+var HTTP_CREDENTIAL_PATH_KEYS = [
+  "privateKeyPath",
+  "keystorePath",
+  "pfxPath",
+  "certPath",
+  "keyPath",
+  "caPath",
+  "jksPath"
+];
 var legacySetTag = defineMappingTag(
   "tag:yaml.org,2002:set",
   {
@@ -38544,9 +38553,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       }
       return safePatterns;
     };
-    const processFileUrl = (fileUrl, stripFunctionSuffix = false, displayFileUrl = fileUrl) => {
+    const processFileUrl = (fileUrl, stripFunctionSuffix = false, displayFileUrl = fileUrl, redactDisplayPath = false) => {
       const rawFilePath = fileUrl.replace("file://", "");
-      const displayFilePath = displayFileUrl.replace("file://", "");
+      const displayFilePath = redactDisplayPath ? "[redacted]" : displayFileUrl.replace("file://", "");
       const filePath = normalizeConfigFilePath(
         stripFunctionSuffix ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, "$1") : rawFilePath
       );
@@ -38569,11 +38578,15 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             dependencies.add(absoluteMatch);
           } else {
             warning(
-              `Ignoring unsafe config dependency match "${displayFileUrl === fileUrl ? match2 : displayFilePath}": config file dependency glob match must stay within the repository workspace`
+              `Ignoring unsafe config dependency match "${redactDisplayPath ? displayFilePath : displayFileUrl === fileUrl ? match2 : displayFilePath}": config file dependency glob match must stay within the repository workspace`
             );
           }
         }
         for (const safePattern of safePatterns) {
+          if (!le(safePattern, globOptions)) {
+            dependencies.add(safePattern);
+            continue;
+          }
           const root = path6.parse(safePattern).root;
           const pathParts = safePattern.slice(root.length).split(/[\\/]/).filter(Boolean);
           let basePath = root;
@@ -38583,7 +38596,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             }
             basePath = path6.join(basePath, part);
           }
-          const watchedDirectory = le(safePattern, globOptions) ? basePath : path6.dirname(safePattern);
+          const watchedDirectory = basePath;
           if (path6.relative(cwd, watchedDirectory) === "") {
             dependencies.add(safePattern);
           } else {
@@ -38685,7 +38698,13 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       const pending = [root];
       while (pending.length > 0) {
         const value = pending.pop();
-        if (typeof value === "string" && value.startsWith("file://")) {
+        if (typeof value === "string") {
+          if (!value.startsWith("file://")) {
+            if (value.includes("file://") && /\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(value)) {
+              hasDynamicPromptDependencies = true;
+            }
+            continue;
+          }
           const renderedReference = renderEnvironmentTemplates(value, env);
           if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedReference)) {
             hasDynamicPromptDependencies = true;
@@ -38706,11 +38725,32 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             processFileUrl(
               renderedPath.startsWith("file://") ? renderedPath : `file://${renderedPath}`,
               true,
-              fileConfig.path.startsWith("file://") ? fileConfig.path : `file://${fileConfig.path}`
+              fileConfig.path.startsWith("file://") ? fileConfig.path : `file://${fileConfig.path}`,
+              true
             );
           }
         }
-        for (const entry of Object.values(value).reverse()) {
+        for (const key of HTTP_CREDENTIAL_PATH_KEYS) {
+          const credentialPath = value[key];
+          if (typeof credentialPath !== "string") continue;
+          const renderedPath = renderEnvironmentTemplates(credentialPath, env);
+          if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedPath)) {
+            hasDynamicPromptDependencies = true;
+            continue;
+          }
+          processFileUrl(
+            `file://${renderedPath}`,
+            false,
+            `file://${credentialPath}`,
+            true
+          );
+        }
+        for (const [key, entry] of Object.entries(value).reverse()) {
+          if (fileConfig.type === "file" && key === "path" || HTTP_CREDENTIAL_PATH_KEYS.includes(
+            key
+          )) {
+            continue;
+          }
           pending.push(entry);
         }
       }
@@ -38807,14 +38847,14 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       }
     };
     if (config2.prompts) {
-      const promptEntries = Array.isArray(config2.prompts) ? config2.prompts : Object.keys(config2.prompts);
+      const promptEntries = Array.isArray(config2.prompts) ? config2.prompts : typeof config2.prompts === "string" ? [config2.prompts] : Object.keys(config2.prompts);
       for (const prompt of promptEntries) {
         extractPromptFile(prompt);
       }
     }
     const extractVarFiles = (vars) => {
-      if (!vars) return;
-      for (const value of Object.values(vars)) {
+      const values = typeof vars === "string" ? [vars] : Array.isArray(vars) ? vars : vars ? Object.values(vars) : [];
+      for (const value of values) {
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value);
           if (/\.(?:[cm]?[jt]s|py):[^/\\]+$/i.test(value)) {
