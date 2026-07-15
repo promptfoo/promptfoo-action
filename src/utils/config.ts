@@ -233,7 +233,7 @@ export function extractFileDependencies(
         const isExecutable = reference.startsWith('exec:');
         const isFileUrl = reference.startsWith('file://');
         const isTemplated = /\{[{%#]/.test(reference);
-        const isEnvironmentTemplate = /\{\{\s*env\./.test(reference);
+        const isEnvironmentTemplate = /\{\{\s*env(?:\.|\s*\[)/.test(reference);
         if (
           !declaredFile &&
           !isExecutable &&

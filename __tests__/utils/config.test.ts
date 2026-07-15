@@ -908,6 +908,7 @@ prompts: file://configs/prompts.yaml
 
   it.each([
     '{{ env.PROMPT_FILE }}',
+    "{{ env['PROMPT-FILE'] }}",
     '{{ env.TEST_PROMPT_PATH }}/prompt.txt',
     "{{ env.OPTIONAL_PATH | default('./shared/prompts') }}/prompt.txt",
   ])('should watch the repository for a root-templated prompt path', (prompt) => {
