@@ -2900,6 +2900,23 @@ tests:
     ]);
   });
 
+  it('tracks file-backed config for a top-level test generator', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'tests:',
+        '  path: generators/build-tests.py',
+        '  config:',
+        '    fixture: file://data/cases.json',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(
+      expect.arrayContaining(['generators/build-tests.py', 'data/cases.json']),
+    );
+  });
+
   it('fails closed for a templated top-level file URL prompt', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml':

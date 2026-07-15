@@ -1587,6 +1587,7 @@ export function extractFileDependencies(
         );
         processHookReference(testRecord.assertScoringFunction);
         processProviderHooks(testRecord.provider);
+        processNestedHookReferences(testRecord.config);
         if (typeof testRecord.options === 'object' && testRecord.options) {
           const options = testRecord.options as Record<string, unknown>;
           for (const field of ['postprocess', 'transform', 'transformVars']) {
