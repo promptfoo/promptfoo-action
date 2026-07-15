@@ -1267,6 +1267,24 @@ tests:
     ]);
   });
 
+  it('should extract nested dependencies from mapped providers', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - openai:gpt-4o:
+      env:
+        AUTH_PATH: ./auth/mapped-token.ts
+      config:
+        tools: file://tools/mapped-tools.json
+        auth:
+          type: file
+          path: "{{ env.AUTH_PATH }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/tools/mapped-tools.json', 'evals/auth/mapped-token.ts']);
+  });
+
   it('should conservatively watch unresolved nested auth and assertion dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -1833,6 +1851,32 @@ prompts:
       'shared/one.txt',
       'shared/two.txt',
     ]);
+  });
+
+  it.each([
+    '$PROMPT_DIR',
+    ['$', '{PROMPT_DIR}'].join(''),
+  ])('should expand environment variables in mapped prompt paths: %s', (promptDirectory) => {
+    vi.stubEnv('PROMPT_DIR', 'prompts');
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://${promptDirectory}/main.txt: mapped prompt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/main.txt']);
+  });
+
+  it('should conservatively watch an unresolved mapped prompt path environment variable', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://$MISSING_PROMPT_DIR/main.txt: mapped prompt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
   });
 
   it.each([

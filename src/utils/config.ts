@@ -166,6 +166,17 @@ function renderEnvironmentTemplates(
   });
 }
 
+function renderPathEnvironmentVariables(
+  value: string,
+  env: Record<string, string | undefined>,
+): string {
+  return value.replace(
+    /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+    (template, bracedName: string | undefined, bareName: string | undefined) =>
+      env[bracedName ?? (bareName as string)] ?? template,
+  );
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -645,10 +656,23 @@ export function extractFileDependencies(
         }
 
         if (typeof provider === 'object' && provider !== null) {
+          const providerOptions = provider.config
+            ? provider
+            : Object.values(provider).find(
+                (entry) => typeof entry === 'object' && entry !== null,
+              );
+          if (typeof providerOptions !== 'object' || providerOptions === null) {
+            continue;
+          }
+          const providerRecord = providerOptions as {
+            env?: unknown;
+            config?: unknown;
+          };
           const providerEnv = Object.fromEntries(
             Object.entries(
-              typeof provider.env === 'object' && provider.env !== null
-                ? provider.env
+              typeof providerRecord.env === 'object' &&
+                providerRecord.env !== null
+                ? providerRecord.env
                 : {},
             ).flatMap(([name, value]) =>
               typeof value === 'string'
@@ -656,7 +680,7 @@ export function extractFileDependencies(
                 : [],
             ),
           );
-          extractNestedConfigDependencies(provider.config, {
+          extractNestedConfigDependencies(providerRecord.config, {
             ...templateEnv,
             ...providerEnv,
           });
@@ -722,19 +746,31 @@ export function extractFileDependencies(
             ? (executableParts[0] ?? '')
             : reference;
           if (!rawPromptPath) return;
+          const renderedPromptPath = isExecutable
+            ? rawPromptPath
+            : renderPathEnvironmentVariables(rawPromptPath, templateEnv);
+          if (
+            /\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/.test(
+              renderedPromptPath,
+            )
+          ) {
+            hasDynamicPromptDependencies = true;
+            return;
+          }
           const promptPath = isExecutable
             ? path.resolve(
                 promptExecutionCwd,
                 normalizeConfigFilePath(
-                  rawPromptPath.replace(/^file:\/\//, ''),
+                  renderedPromptPath.replace(/^file:\/\//, ''),
                 ),
               )
-            : rawPromptPath;
+            : renderedPromptPath;
           processFileUrl(
             promptPath.startsWith('file://')
               ? promptPath
               : `file://${promptPath}`,
             true,
+            rawPromptPath,
           );
           extractNestedPromptFileUrls(promptPath);
 
