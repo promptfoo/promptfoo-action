@@ -934,6 +934,21 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should run when a workspace-root dependency sentinel is present', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'deleted_provider_one.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should detect dependency directories without a trailing slash', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },

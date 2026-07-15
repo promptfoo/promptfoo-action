@@ -136,6 +136,21 @@ providers:
     ]);
   });
 
+  it('should strip Ruby bang and predicate method selectors', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "file://providers/custom.rb:call_api!"
+  - "file://providers/other.rb:MyProvider.available?"
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/custom.rb',
+      '../config/providers/other.rb',
+    ]);
+  });
+
   it('should preserve an invalid provider function selector as part of the path', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers: file://providers/custom.py:not-a-function
@@ -253,6 +268,22 @@ targets: file://targets/custom.py:call_api
     );
 
     expect(deps).toEqual(['providers/']);
+  });
+
+  it('should preserve the workspace sentinel for an empty root provider glob', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file:///test/working/deleted_provider_*.yaml',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
   });
 
   it('should stop safely if a provider glob has no non-glob ancestor', () => {

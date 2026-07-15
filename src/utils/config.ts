@@ -174,12 +174,13 @@ export function extractFileDependencies(configPath: string): string[] {
         const selectorIndex = providerPath.lastIndexOf(':');
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
+        const selectorPattern = /\.rb$/i.test(candidatePath)
+          ? /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[!?]?$/
+          : /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
         const cleanPath =
           selectorIndex > 1 &&
           /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(candidatePath) &&
-          /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
-            selector,
-          )
+          selectorPattern.test(selector)
             ? candidatePath
             : providerPath;
 
@@ -337,7 +338,7 @@ export function extractFileDependencies(configPath: string): string[] {
       const repositoryPath = relativePath.split(path.sep).join('/');
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
-        return `${repositoryPath}/`;
+        return repositoryPath ? `${repositoryPath}/` : './';
       }
       return repositoryPath;
     });

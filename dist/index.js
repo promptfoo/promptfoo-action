@@ -36394,9 +36394,8 @@ function extractFileDependencies(configPath) {
         const selectorIndex = providerPath.lastIndexOf(":");
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
-        const cleanPath = selectorIndex > 1 && /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(candidatePath) && /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
-          selector
-        ) ? candidatePath : providerPath;
+        const selectorPattern = /\.rb$/i.test(candidatePath) ? /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[!?]?$/ : /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
+        const cleanPath = selectorIndex > 1 && /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(candidatePath) && selectorPattern.test(selector) ? candidatePath : providerPath;
         const resolvedPaths = processFileUrl(`file://${cleanPath}`);
         if (resolvedPaths.length === 0 && cleanPath && !cleanPath.includes("\0") && !le(cleanPath)) {
           const lexicalPath = path5.resolve(configDir, cleanPath);
@@ -36508,7 +36507,7 @@ function extractFileDependencies(configPath) {
       const relativePath = path5.relative(cwd, dep);
       const repositoryPath = relativePath.split(path5.sep).join("/");
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
-        return `${repositoryPath}/`;
+        return repositoryPath ? `${repositoryPath}/` : "./";
       }
       return repositoryPath;
     });
@@ -37196,6 +37195,9 @@ async function run() {
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
         );
         dependencyChanged = dependencies.some((dep) => {
+          if (dep === "./") {
+            return true;
+          }
           if (changedFilesList.includes(dep)) {
             return true;
           }
