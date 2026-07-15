@@ -440,6 +440,20 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should skip an unchanged newline-named prompt when an unrelated file changes', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/policy\n::error::unchanged.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should isolate npx from a repository-controlled project .npmrc', async () => {
       await run();
 
@@ -2637,6 +2651,67 @@ describe('GitHub Action Main', () => {
       expect(
         mockOctokit.rest.issues.createComment.mock.calls[0][0].body,
       ).toContain('prompts/prompt1.txt, prompts/prompt2.txt');
+    });
+
+    test('should reject a full-evaluation prompt glob that lexically escapes the working directory', async () => {
+      withInputs({ prompts: '../secrets/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../secrets/private.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: prompt files must stay within the working directory.\n\nHelp: Use readable prompt files and glob patterns contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should reject a full-evaluation prompt symlink that physically escapes the working directory', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/linked.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return value.endsWith(`${path.sep}prompts${path.sep}linked.txt`)
+          ? '/private/tmp/outside/secret.txt'
+          : value;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: prompt files must stay within the working directory.\n\nHelp: Use readable prompt files and glob patterns contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should reject an unreadable matched prompt before evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/unreadable.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (
+          filePath
+            .toString()
+            .endsWith(`${path.sep}prompts${path.sep}unreadable.txt`)
+        ) {
+          throw Object.assign(new Error('denied'), { code: 'EACCES' });
+        }
+        return filePath.toString();
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: prompt files must stay within the working directory.\n\nHelp: Use readable prompt files and glob patterns contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should report all action prompts in a non-PR summary when a dependency changes', async () => {

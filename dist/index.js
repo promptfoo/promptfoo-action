@@ -38301,6 +38301,35 @@ var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
+function isPathInside2(baseDir, targetPath) {
+  const relativePath = path7.relative(baseDir, targetPath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relativePath);
+}
+function validatePromptPath(workspaceRoot, workingDirectory, filePath) {
+  const resolvedPath = path7.resolve(workingDirectory, filePath);
+  try {
+    if (!isPathInside2(workspaceRoot, resolvedPath) || !isPathInside2(workingDirectory, resolvedPath)) {
+      throw new Error("Prompt path escapes the workspace");
+    }
+    const realWorkspaceRoot = path7.resolve(
+      fs8.realpathSync(workspaceRoot).toString()
+    );
+    const realWorkingDirectory = path7.resolve(
+      fs8.realpathSync(workingDirectory).toString()
+    );
+    const realPath = path7.resolve(fs8.realpathSync(resolvedPath).toString());
+    if (!isPathInside2(realWorkspaceRoot, realPath) || !isPathInside2(realWorkingDirectory, realPath)) {
+      throw new Error("Prompt path escapes the workspace");
+    }
+    return resolvedPath;
+  } catch {
+    throw new PromptfooActionError(
+      "Invalid prompt file path: prompt files must stay within the working directory.",
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Use readable prompt files and glob patterns contained within the working directory."
+    );
+  }
+}
 function formatChangedFilesForLog(changedFiles) {
   return JSON.stringify(
     changedFiles.split(changedFiles.includes("\0") ? "\0" : "\n").filter(Boolean)
@@ -38710,13 +38739,6 @@ async function run() {
         cwd: workingDirectory,
         nodir: true
       });
-      if (matches.some((file) => /[\r\n]/.test(file))) {
-        throw new PromptfooActionError(
-          "Invalid prompt file path: line breaks are not allowed.",
-          ErrorCodes.INVALID_CONFIGURATION,
-          "Rename the prompt file so its path does not contain CR or LF characters."
-        );
-      }
       const allMatches = matches.filter((file) => {
         const repositoryFile = toRepositoryPath(
           path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
@@ -38772,6 +38794,17 @@ async function run() {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
+    const evaluatedPromptFiles = useConfigPrompts ? [] : configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new PromptfooActionError(
+        "Invalid prompt file path: line breaks are not allowed.",
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Rename the prompt file so its path does not contain CR or LF characters."
+      );
+    }
+    for (const file of evaluatedPromptFiles) {
+      validatePromptPath(workspaceRoot, workingDirectory, file);
+    }
     loadEnvironmentFiles();
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
@@ -38809,7 +38842,6 @@ async function run() {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
-    const evaluatedPromptFiles = useConfigPrompts ? [] : configChanged || dependencyChanged ? allPromptFiles : promptFiles;
     if (evaluatedPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         "--prompts",
