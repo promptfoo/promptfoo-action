@@ -331,12 +331,21 @@ export function extractFileDependencies(
 
       if (typeof prompt === 'string') {
         processPromptReference(prompt);
-      } else if (typeof prompt === 'object' && typeof prompt.raw === 'string') {
+      } else if (
+        typeof prompt === 'object' &&
+        prompt !== null &&
+        typeof prompt.raw === 'string'
+      ) {
         processPromptReference(prompt.raw);
-      } else if (typeof prompt === 'object' && typeof prompt.id === 'string') {
+      } else if (
+        typeof prompt === 'object' &&
+        prompt !== null &&
+        typeof prompt.id === 'string'
+      ) {
         processPromptReference(prompt.id);
       } else if (
         typeof prompt === 'object' &&
+        prompt !== null &&
         typeof prompt.file === 'string'
       ) {
         const absolutePath = resolveConfigDependency(
@@ -448,6 +457,7 @@ export function extractFileDependencies(
           }
           continue;
         }
+        if (typeof test !== 'object' || test === null) continue;
 
         if (typeof test.path === 'string') {
           processFileUrl(

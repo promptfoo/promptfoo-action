@@ -430,6 +430,22 @@ prompts:
     ).toEqual([]);
   });
 
+  it('should ignore null prompt and test entries from YAML', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - null
+  - inline prompt
+tests:
+  - null
+  - vars:
+      context: file://data/context.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['data/context.txt']);
+  });
+
   it('should extract dependencies from a singleton test generator', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
