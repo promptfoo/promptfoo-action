@@ -5712,7 +5712,7 @@ var require_client_h1 = __commonJS({
       kResume,
       kHTTPContext
     } = require_symbols();
-    var constants3 = require_constants2();
+    var constants4 = require_constants2();
     var EMPTY_BUF = Buffer.alloc(0);
     var FastBuffer = Buffer[Symbol.species];
     var addListener = util.addListener;
@@ -5787,7 +5787,7 @@ var require_client_h1 = __commonJS({
       constructor(client, socket, { exports: exports3 }) {
         assert(Number.isFinite(client[kMaxHeadersSize]) && client[kMaxHeadersSize] > 0);
         this.llhttp = exports3;
-        this.ptr = this.llhttp.llhttp_alloc(constants3.TYPE.RESPONSE);
+        this.ptr = this.llhttp.llhttp_alloc(constants4.TYPE.RESPONSE);
         this.client = client;
         this.socket = socket;
         this.timeout = null;
@@ -5882,11 +5882,11 @@ var require_client_h1 = __commonJS({
             currentBufferRef = null;
           }
           const offset = llhttp.llhttp_get_error_pos(this.ptr) - currentBufferPtr;
-          if (ret !== constants3.ERROR.OK) {
+          if (ret !== constants4.ERROR.OK) {
             const body = data.subarray(offset);
-            if (ret === constants3.ERROR.PAUSED_UPGRADE) {
+            if (ret === constants4.ERROR.PAUSED_UPGRADE) {
               this.onUpgrade(body);
-            } else if (ret === constants3.ERROR.PAUSED) {
+            } else if (ret === constants4.ERROR.PAUSED) {
               this.paused = true;
               socket.unshift(body);
             } else {
@@ -5909,10 +5909,10 @@ var require_client_h1 = __commonJS({
         } finally {
           currentParser = null;
         }
-        if (ret === constants3.ERROR.OK) {
+        if (ret === constants4.ERROR.OK) {
           return null;
         }
-        if (ret === constants3.ERROR.PAUSED || ret === constants3.ERROR.PAUSED_UPGRADE) {
+        if (ret === constants4.ERROR.PAUSED || ret === constants4.ERROR.PAUSED_UPGRADE) {
           this.paused = true;
           return null;
         }
@@ -5929,7 +5929,7 @@ var require_client_h1 = __commonJS({
           const len = new Uint8Array(llhttp.memory.buffer, ptr).indexOf(0);
           message = "Response does not match the HTTP/1.1 protocol (" + Buffer.from(llhttp.memory.buffer, ptr, len).toString() + ")";
         }
-        return new HTTPParserError(message, constants3.ERROR[ret], data);
+        return new HTTPParserError(message, constants4.ERROR[ret], data);
       }
       destroy() {
         assert(this.ptr != null);
@@ -6108,7 +6108,7 @@ var require_client_h1 = __commonJS({
           socket[kBlocking] = false;
           client[kResume]();
         }
-        return pause ? constants3.ERROR.PAUSED : 0;
+        return pause ? constants4.ERROR.PAUSED : 0;
       }
       onBody(buf) {
         const { client, socket, statusCode, maxResponseSize } = this;
@@ -6130,7 +6130,7 @@ var require_client_h1 = __commonJS({
         }
         this.bytesRead += buf.length;
         if (request2.onData(buf) === false) {
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         }
       }
       onMessageComplete() {
@@ -6166,13 +6166,13 @@ var require_client_h1 = __commonJS({
         if (socket[kWriting]) {
           assert(client[kRunning] === 0);
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (!shouldKeepAlive) {
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (socket[kReset] && client[kRunning] === 0) {
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (client[kPipelining] == null || client[kPipelining] === 1) {
           setImmediate(() => client[kResume]());
         } else {
@@ -38322,24 +38322,25 @@ function isDirectory2(filePath) {
 // src/utils/glob.ts
 var MAX_GLOB_DELIMITER_DEPTH = 128;
 function normalizeGlobSeparators(value, windowsPathsNoEscape = false) {
-  let normalized = "";
+  const normalizedParts = [];
   for (let index = 0; index < value.length; index++) {
     const character = value.charAt(index);
     if (character !== "\\") {
-      normalized += character;
+      normalizedParts.push(character);
       continue;
     }
     let end = index + 1;
     while (value.charAt(end) === "\\") end++;
     const next = value.charAt(end);
     if (!windowsPathsNoEscape && "{}[]()".includes(next)) {
-      normalized += value.slice(index, end) + next;
+      normalizedParts.push(value.slice(index, end), next);
       index = end;
       continue;
     }
-    normalized += "/".repeat(end - index);
+    normalizedParts.push("/".repeat(end - index));
     index = end - 1;
   }
+  const normalized = normalizedParts.join("");
   if (windowsPathsNoEscape && /^\/[A-Za-z]:\//.test(normalized)) {
     return normalized.slice(1);
   }
@@ -38360,6 +38361,16 @@ function preflightGlob(value, {
       index++;
       continue;
     }
+    if (character === "]") {
+      let classIndex = expectedClosers.length - 1;
+      while (classIndex >= 0 && expectedClosers[classIndex].closer === "}") {
+        classIndex--;
+      }
+      if (classIndex >= 0 && expectedClosers[classIndex].closer === "]") {
+        expectedClosers.length = classIndex;
+        continue;
+      }
+    }
     if (expectedClosers[expectedClosers.length - 1]?.closer === "]") {
       if (character === "{") {
         if (expectedClosers.length >= MAX_GLOB_DELIMITER_DEPTH)
@@ -38367,7 +38378,6 @@ function preflightGlob(value, {
         expectedClosers.push({ closer: "}", opener: index });
         continue;
       }
-      if (character === "]") expectedClosers.pop();
       continue;
     }
     if (character === "{" || character === "[") {
@@ -38407,6 +38417,49 @@ function preflightGlob(value, {
 var MAX_BRACE_EXPANSIONS = 1024;
 var MAX_DEPENDENCY_REFERENCE_LENGTH = 65536;
 var MAX_STRUCTURED_PROMPT_FILE_SIZE = 10 * 1024 * 1024;
+function readRegularFile(filePath, isPhysicalPathAllowed) {
+  const inspectedStat = fs6.statSync(filePath);
+  const physicalPath = fs6.realpathSync(filePath);
+  if (!isPhysicalPathAllowed(physicalPath)) return { status: "inspection" };
+  if (!inspectedStat.isFile()) return { status: "non-file" };
+  if (inspectedStat.size > MAX_STRUCTURED_PROMPT_FILE_SIZE) {
+    return { status: "oversized" };
+  }
+  const descriptor = fs6.openSync(
+    physicalPath,
+    fs6.constants.O_RDONLY | fs6.constants.O_NONBLOCK | fs6.constants.O_NOFOLLOW
+  );
+  try {
+    const fileStat = fs6.fstatSync(descriptor);
+    if (fileStat.dev !== inspectedStat.dev || fileStat.ino !== inspectedStat.ino) {
+      return { status: "inspection" };
+    }
+    if (!fileStat.isFile()) return { status: "non-file" };
+    if (fileStat.size > MAX_STRUCTURED_PROMPT_FILE_SIZE) {
+      return { status: "oversized" };
+    }
+    const chunks = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_STRUCTURED_PROMPT_FILE_SIZE) {
+      const chunk = Buffer.allocUnsafe(
+        Math.min(65536, MAX_STRUCTURED_PROMPT_FILE_SIZE + 1 - totalBytes)
+      );
+      const bytesRead = fs6.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      chunks.push(chunk.subarray(0, bytesRead));
+      totalBytes += bytesRead;
+    }
+    if (totalBytes > MAX_STRUCTURED_PROMPT_FILE_SIZE) {
+      return { status: "oversized" };
+    }
+    return {
+      status: "ok",
+      content: Buffer.concat(chunks, totalBytes).toString("utf8")
+    };
+  } finally {
+    fs6.closeSync(descriptor);
+  }
+}
 var PROVIDER_SELECTOR_EXTENSIONS = /* @__PURE__ */ new Set([
   "cjs",
   "cts",
@@ -38482,6 +38535,7 @@ var EXPANDED_GLOB_MAGIC_OPTIONS = {
   ...GLOB_MAGIC_OPTIONS,
   nobrace: true
 };
+var hasGlobMagic = (value, options) => value.includes("[{]") || le(value, options);
 var GLOB_SYNC_OPTIONS = {
   nodir: true,
   windowsPathsNoEscape: path6.sep === "\\",
@@ -38631,7 +38685,22 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     );
   };
   try {
-    const configContent = fs6.readFileSync(configPath, "utf8");
+    let configFile;
+    try {
+      configFile = readRegularFile(configPath, isInsidePhysicalDependencyRoots);
+    } catch {
+      warning(
+        "Failed to extract dependencies from config: unable to read or parse config"
+      );
+      return ["./"];
+    }
+    if (configFile.status !== "ok") {
+      warning(
+        "Failed to extract dependencies from config: unable to read or parse config"
+      );
+      return ["./"];
+    }
+    const configContent = configFile.content;
     if (!configContent.trim()) {
       debug("Config file is empty or invalid");
       return [];
@@ -38695,7 +38764,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       }
       try {
         const isTemplatedPath = /\{[{%#]/.test(filePath);
-        if (isTemplatedPath && dependencyRoot !== cwd) {
+        if (isTemplatedPath) {
           const staticSegments = [];
           for (const segment of filePath.split(/[\\/]/)) {
             if (/\{[{%#]/.test(segment)) break;
@@ -38731,7 +38800,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             return;
           }
         }
-        if (!isTemplatedPath && le(filePath, GLOB_MAGIC_OPTIONS)) {
+        if (!isTemplatedPath && hasGlobMagic(filePath, GLOB_MAGIC_OPTIONS)) {
           const expandedPaths = braceExpand(filePath, {
             braceExpandMax: MAX_BRACE_EXPANSIONS + 1
           });
@@ -38788,7 +38857,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             }
           }
           for (const absolutePattern of safePatterns) {
-            if (!le(absolutePattern, EXPANDED_GLOB_MAGIC_OPTIONS)) {
+            if (!hasGlobMagic(absolutePattern, EXPANDED_GLOB_MAGIC_OPTIONS)) {
               dependencies.add(absolutePattern);
               continue;
             }
@@ -38796,7 +38865,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             const pathParts = path6.relative(absoluteRoot, absolutePattern).split(path6.sep);
             let basePath = absoluteRoot;
             for (const part of pathParts) {
-              if (le(part, EXPANDED_GLOB_MAGIC_OPTIONS)) {
+              if (hasGlobMagic(part, EXPANDED_GLOB_MAGIC_OPTIONS)) {
                 break;
               }
               basePath = path6.join(basePath, part);
@@ -38881,11 +38950,49 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       }
     };
     const visitedProviderValues = /* @__PURE__ */ new WeakSet();
-    const visitProviderReferences = (value, fieldName) => {
+    const visitProviderReferences = (value, fieldPath = []) => {
       if (typeof value === "string" && value.startsWith("file://")) {
+        const fieldName = fieldPath[fieldPath.length - 1];
+        const selectorExtensions = JAVASCRIPT_FILE_REFERENCE_FIELDS.has(
+          fieldName ?? ""
+        ) ? JAVASCRIPT_SELECTOR_EXTENSIONS : PROVIDER_SELECTOR_EXTENSIONS;
+        const isDirectHttpReference = /(?:^|\.)config\.(?:validateStatus|transformRequest|transformResponse|responseParser|sessionParser|session\.responseParser|auth\.path|tls\.(?:caPath|certPath|keyPath|pfxPath|jksPath)|signatureAuth\.(?:privateKeyPath|keystorePath|pfxPath|certPath|keyPath)|multipart\.parts\.source\.path)$/.test(
+          fieldPath.join(".")
+        );
+        if (path6.sep === "/" && value.includes("\\")) {
+          const literalFilePath = stripFunctionSelector(
+            value,
+            selectorExtensions,
+            true
+          ).replace(/^file:\/\//, "");
+          const literalPreflight = preflightGlob(literalFilePath, {
+            maxLength: MAX_DEPENDENCY_REFERENCE_LENGTH,
+            maxBraceExpansions: MAX_BRACE_EXPANSIONS
+          });
+          const isLiteralPath = literalPreflight === "safe" && !le(literalFilePath, {
+            ...GLOB_MAGIC_OPTIONS,
+            windowsPathsNoEscape: false
+          });
+          if (isDirectHttpReference || isLiteralPath) {
+            const literalAbsolutePath = path6.resolve(
+              configDir,
+              literalFilePath
+            );
+            if (literalFilePath.includes("\0") || !isInsideDependencyRoots(literalAbsolutePath)) {
+              warning(
+                "Ignoring unsafe config dependency: literal file reference must stay within the repository workspace"
+              );
+            } else {
+              dependencies.add(literalAbsolutePath);
+            }
+          }
+        }
+        if (path6.sep === "/" && value.includes("\\") && isDirectHttpReference) {
+          return;
+        }
         processCompatibleFileUrl(
           value,
-          JAVASCRIPT_FILE_REFERENCE_FIELDS.has(fieldName ?? "") ? stripJavascriptFunctionSelector : stripProviderFunctionSelector
+          selectorExtensions === JAVASCRIPT_SELECTOR_EXTENSIONS ? stripJavascriptFunctionSelector : stripProviderFunctionSelector
         );
       } else if (Array.isArray(value)) {
         if (visitedProviderValues.has(value)) {
@@ -38893,7 +39000,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         visitedProviderValues.add(value);
         for (const nestedValue of value) {
-          visitProviderReferences(nestedValue, fieldName);
+          visitProviderReferences(nestedValue, fieldPath);
         }
       } else if (isTraversableRecord(value)) {
         if (visitedProviderValues.has(value)) {
@@ -38901,7 +39008,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         visitedProviderValues.add(value);
         for (const [nestedFieldName, nestedValue] of Object.entries(value)) {
-          visitProviderReferences(nestedValue, nestedFieldName);
+          visitProviderReferences(nestedValue, [...fieldPath, nestedFieldName]);
         }
       }
     };
@@ -38976,11 +39083,44 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           continue;
         }
         const { auth: auth2, tls, signatureAuth, validateStatus, multipart } = providerOptions.config;
-        if (typeof validateStatus === "string" && validateStatus.startsWith("file://")) {
+        if (typeof validateStatus === "string" && validateStatus.startsWith("file://") && !(path6.sep === "/" && validateStatus.includes("\\"))) {
           addHttpProviderPath(validateStatus, stripJavascriptFunctionSelector);
         }
         if (isTraversableRecord(auth2) && (auth2.type === "file" || typeof auth2.type === "string" && /\{[{%#]/.test(auth2.type))) {
-          addHttpProviderPath(auth2.path);
+          if (path6.sep === "/" && typeof auth2.path === "string" && auth2.path.includes("\\")) {
+            addHttpProviderPath(
+              stripFunctionSelector(
+                auth2.path,
+                PROVIDER_SELECTOR_EXTENSIONS,
+                true
+              ),
+              stripProviderFunctionSelector,
+              true
+            );
+          } else {
+            addHttpProviderPath(auth2.path);
+          }
+        }
+        const session = providerOptions.config.session;
+        for (const value of [
+          validateStatus,
+          providerOptions.config.transformRequest,
+          providerOptions.config.transformResponse,
+          providerOptions.config.responseParser,
+          providerOptions.config.sessionParser,
+          isTraversableRecord(session) ? session.responseParser : void 0
+        ]) {
+          if (typeof value === "string" && value.startsWith("file://") && value.includes("\\")) {
+            addHttpProviderPath(
+              stripFunctionSelector(
+                value,
+                JAVASCRIPT_SELECTOR_EXTENSIONS,
+                true
+              ),
+              stripJavascriptFunctionSelector,
+              true
+            );
+          }
         }
         if (isTraversableRecord(tls)) {
           for (const key of [
@@ -39060,7 +39200,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             maxBraceExpansions: MAX_BRACE_EXPANSIONS,
             windowsPathsNoEscape: path6.sep === "\\"
           });
-          referenceHasMagic = referencePreflight === "too-many-braces" || referencePreflight === "safe" && le(reference, GLOB_MAGIC_OPTIONS);
+          referenceHasMagic = referencePreflight === "too-many-braces" || referencePreflight === "safe" && hasGlobMagic(reference, GLOB_MAGIC_OPTIONS);
         }
         const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) || /^[^*]*\*+$/.test(reference) || !/\s/.test(reference) && /\*\([^/]*\)/.test(reference)) || referenceHasMagic || /[\\/]/.test(reference) && !/\s/.test(reference) || hasPromptFileExtension(reference);
         if (!looksLikePath) {
@@ -39173,7 +39313,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           }) !== "safe") {
             return;
           }
-          isPromptGlob = le(promptPath, GLOB_MAGIC_OPTIONS);
+          isPromptGlob = hasGlobMagic(promptPath, GLOB_MAGIC_OPTIONS);
         } catch {
           return;
         }
@@ -39228,17 +39368,30 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
               continue;
             }
             visitedPromptFiles.add(physicalPromptFile);
-            if (fs6.statSync(physicalPromptFile).size > MAX_STRUCTURED_PROMPT_FILE_SIZE) {
+            const promptFileContent = readRegularFile(
+              physicalPromptFile,
+              isInsidePhysicalDependencyRoots
+            );
+            if (promptFileContent.status === "non-file") {
+              dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+              warning(
+                "Skipping non-file structured prompt dependency; nested references will not be inspected"
+              );
+              continue;
+            }
+            if (promptFileContent.status === "oversized") {
               dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
               warning(
                 "Skipping oversized structured prompt dependency; nested references will not be inspected"
               );
               continue;
             }
-            const nestedConfig = load(
-              fs6.readFileSync(physicalPromptFile, "utf8"),
-              { schema: CONFIG_YAML_SCHEMA }
-            );
+            if (promptFileContent.status === "inspection") {
+              throw new Error("Unable to safely inspect structured prompt");
+            }
+            const nestedConfig = load(promptFileContent.content, {
+              schema: CONFIG_YAML_SCHEMA
+            });
             const visitedNestedValues = /* @__PURE__ */ new WeakSet();
             const visitNestedReferences = (value) => {
               if (typeof value === "string" && value.startsWith("file://")) {
@@ -39356,7 +39509,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         "postprocess",
         "transform",
         "transformVars",
-        "rubricPrompt"
+        "rubricPrompt",
+        "response_format"
       ]) {
         extractRuntimeFileReferences(
           test.options[field],
@@ -39383,6 +39537,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             dependencies.add(absolutePath);
           }
         }
+        if (Array.isArray(assert.value)) {
+          extractRuntimeFileReferences(
+            assert.value,
+            stripAssertionFunctionSelector
+          );
+        }
         extractGradingProvider(assert.provider);
         extractRuntimeFileReferences(assert.contextTransform);
         extractRuntimeFileReferences(assert.transform);
@@ -39393,7 +39553,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         extractAssertFiles(assert.assert);
       }
     };
-    if (isTraversableRecord(config2.defaultTest)) {
+    if (typeof config2.defaultTest === "string") {
+      processCompatibleFileUrl(
+        config2.defaultTest.startsWith("file://") ? config2.defaultTest : `file://${config2.defaultTest}`
+      );
+      dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+    } else if (isTraversableRecord(config2.defaultTest)) {
       extractVarFiles(config2.defaultTest.vars);
       extractTestRuntimeFiles(config2.defaultTest);
       extractAssertFiles(config2.defaultTest.assert);
@@ -39410,10 +39575,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         return;
       }
       const testsPath = stripSpreadsheetSheetSelector(testPath);
-      processCompatibleFileUrl(
+      const testPatterns = processCompatibleFileUrl(
         testsPath.startsWith("file://") ? testsPath : `file://${testsPath}`
       );
-      if (/[.{,(|](?:ya?ml|jsonl?|xlsx?|csv)(?=$|[},:#?|)])/i.test(testsPath)) {
+      if (/[.{,(|](?:ya?ml|jsonl?|xlsx?|csv)(?=$|[},:#?|)])/i.test(testsPath) || testPatterns?.some((pattern) => isDirectory2(pattern))) {
         dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
       }
     };
@@ -39931,6 +40096,21 @@ async function run() {
         getInput("working-directory", { required: false }) || "."
       )
     );
+    let physicalWorkspaceRoot;
+    let physicalWorkingDirectory;
+    try {
+      physicalWorkspaceRoot = fs7.realpathSync(workspaceRoot);
+      physicalWorkingDirectory = fs7.realpathSync(workingDirectory);
+    } catch {
+      throw new Error(
+        "Could not resolve the repository workspace or working directory safely"
+      );
+    }
+    if (!isPathInside2(workspaceRoot, workingDirectory) || !isPathInside2(physicalWorkspaceRoot, physicalWorkingDirectory)) {
+      throw new Error(
+        "Working directory must stay within the repository workspace"
+      );
+    }
     const configAbsolutePath = path7.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
       path7.relative(workspaceRoot, configAbsolutePath)
@@ -40074,6 +40254,13 @@ async function run() {
           per_page: 100
         }
       );
+      if (pullRequestFiles.some(
+        (file) => file.filename.includes("\0") || file.previous_filename?.includes("\0")
+      )) {
+        throw new Error(
+          "Pull request file paths containing null bytes are not supported"
+        );
+      }
       if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
         warning(
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
@@ -40089,6 +40276,11 @@ async function run() {
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
+        if (filesInput.includes("\0")) {
+          throw new Error(
+            "Workflow file paths containing null bytes are not supported"
+          );
+        }
         changedFiles = filesInput.split(/\r?\n/).flatMap((file) => {
           const trimmed2 = file.trim();
           return trimmed2 && trimmed2 !== file ? [file, trimmed2] : [file];
@@ -40166,15 +40358,17 @@ async function run() {
         target.push(file);
       }
     };
-    let physicalWorkspaceRoot;
     let promptGlobFailed = false;
     const changedFilesList = changedFiles.split(changedFiles.includes("\0") ? "\0" : /\r?\n/).filter((file) => file);
-    for (const globPattern of promptFilesGlobs) {
+    for (const rawGlobPattern of promptFilesGlobs) {
+      const windowsPathsNoEscape = process.platform === "win32";
+      const globPattern = windowsPathsNoEscape && rawGlobPattern.length <= MAX_DEPENDENCY_GLOB_LENGTH ? normalizeGlobSeparators(rawGlobPattern, true) : rawGlobPattern;
       let matches;
       try {
         if (preflightGlob(globPattern, {
           maxLength: MAX_DEPENDENCY_GLOB_LENGTH,
-          maxBraceExpansions: MAX_PROMPT_BRACE_EXPANSIONS
+          maxBraceExpansions: MAX_PROMPT_BRACE_EXPANSIONS,
+          windowsPathsNoEscape
         }) !== "safe" || braceExpand(globPattern, {
           braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1
         }).length > MAX_PROMPT_BRACE_EXPANSIONS) {
@@ -40187,7 +40381,8 @@ async function run() {
         matches = Ui(globPattern, {
           cwd: workingDirectory,
           nodir: true,
-          braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS
+          braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
+          ...windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}
         });
       } catch {
         promptGlobFailed = true;
@@ -40197,6 +40392,7 @@ async function run() {
         continue;
       }
       const allMatches = matches.filter((file) => {
+        if (useConfigPrompts) return true;
         const absoluteFile = path7.resolve(workingDirectory, file);
         if (!isPathInside2(workspaceRoot, absoluteFile)) {
           warning(
@@ -40205,7 +40401,6 @@ async function run() {
           return false;
         }
         try {
-          physicalWorkspaceRoot ??= fs7.realpathSync(workspaceRoot);
           const physicalFile = fs7.realpathSync(absoluteFile);
           if (!isPathInside2(physicalWorkspaceRoot, physicalFile)) {
             warning(
@@ -40305,7 +40500,7 @@ async function run() {
         }
       }
     }
-    const evaluationPromptFiles = configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const evaluationPromptFiles = useConfigPrompts ? [] : configChanged || dependencyChanged ? allPromptFiles : promptFiles;
     if (!forceRun && promptFiles.length < 1 && !configChanged && !dependencyChanged && !promptGlobFailed && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
