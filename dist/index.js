@@ -37074,7 +37074,11 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_JKS_CERT_PATH",
   "PROMPTFOO_LOG_DIR",
   "PROMPTFOO_MEDIA_PATH",
+  "PROMPTFOO_OTEL_DEBUG",
+  "PROMPTFOO_OTEL_ENABLED",
   "PROMPTFOO_OTEL_ENDPOINT",
+  "PROMPTFOO_OTEL_LOCAL_EXPORT",
+  "PROMPTFOO_OTEL_SERVICE_NAME",
   "PROMPTFOO_PASS_RATE_THRESHOLD",
   "PROMPTFOO_PFX_CERT_PATH",
   "PROMPTFOO_PYTHON",
@@ -37085,6 +37089,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_SELF_HOSTED",
   "PROMPTFOO_SHARING_APP_BASE_URL",
   "PROMPTFOO_STRICT_FILES",
+  "PROMPTFOO_TRACING_ENABLED",
   "PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT",
   "PROTOTYPE",
   "PUPPETEER_CACHE_DIR",
@@ -37184,7 +37189,7 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, overr
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      "Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead."
+      "Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, telemetry/tracing, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead."
     );
   }
   for (const [key, value] of Object.entries(fileEnvironment)) {
@@ -37266,7 +37271,7 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
         }
         throw error2;
       }
-      if (defaultConfigPath !== lexicalConfigPath && fs7.realpathSync(defaultConfigPath) !== realSelectedConfigPath) {
+      if (defaultConfigPath !== lexicalConfigPath && (!/\.(?:ya?ml|json)$/i.test(defaultConfigPath) || !/\.(?:ya?ml|json)$/i.test(lexicalConfigPath) || fs7.realpathSync(defaultConfigPath) !== realSelectedConfigPath)) {
         throw new PromptfooActionError(
           `Implicit Promptfoo config ${defaultConfigPath} cannot be safely preflighted alongside ${configPath}`,
           ErrorCodes.INVALID_CONFIGURATION,
@@ -38021,7 +38026,7 @@ async function run() {
     const groqApiKey = getInput("groq-api-key", {
       required: false
     });
-    const maskApiKeys = () => {
+    const maskApiKeys = (environment = process.env) => {
       const apiKeys = [
         openaiApiKey,
         azureApiKey,
@@ -38036,7 +38041,7 @@ async function run() {
         mistralApiKey,
         groqApiKey
       ];
-      for (const [name, value] of Object.entries(process.env)) {
+      for (const [name, value] of Object.entries(environment)) {
         if (value && (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
           name
         ) || /(?:^|_)BEARER_TOKEN(?:_|$)/i.test(name) || name.toUpperCase() === "FAL_KEY" || name.toUpperCase() === "ABLIT_KEY")) {
@@ -38390,8 +38395,13 @@ async function run() {
         `Processing all matching prompt files: ${JSON.stringify(promptFiles)}`
       );
     }
-    loadConfigEnvironmentFiles(configAbsolutePath, workingDirectory);
-    maskApiKeys();
+    const configEnvironment = { ...process.env };
+    loadConfigEnvironmentFiles(
+      configAbsolutePath,
+      workingDirectory,
+      configEnvironment
+    );
+    maskApiKeys(configEnvironment);
     startGroup("Setting up cache");
     const resolvedCachePath = cachePath ? path7.resolve(workingDirectory, cachePath) : void 0;
     setupCacheEnvironment(resolvedCachePath);

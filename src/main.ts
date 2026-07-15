@@ -191,7 +191,9 @@ export async function run(): Promise<void> {
     const groqApiKey: string = core.getInput('groq-api-key', {
       required: false,
     });
-    const maskApiKeys = (): void => {
+    const maskApiKeys = (
+      environment: NodeJS.ProcessEnv = process.env,
+    ): void => {
       const apiKeys = [
         openaiApiKey,
         azureApiKey,
@@ -206,7 +208,7 @@ export async function run(): Promise<void> {
         mistralApiKey,
         groqApiKey,
       ];
-      for (const [name, value] of Object.entries(process.env)) {
+      for (const [name, value] of Object.entries(environment)) {
         if (
           value &&
           (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
@@ -679,8 +681,13 @@ export async function run(): Promise<void> {
       );
     }
 
-    loadConfigEnvironmentFiles(configAbsolutePath, workingDirectory);
-    maskApiKeys();
+    const configEnvironment: NodeJS.ProcessEnv = { ...process.env };
+    loadConfigEnvironmentFiles(
+      configAbsolutePath,
+      workingDirectory,
+      configEnvironment,
+    );
+    maskApiKeys(configEnvironment);
 
     // Set up caching environment for optimal performance
     core.startGroup('Setting up cache');

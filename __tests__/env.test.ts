@@ -288,6 +288,11 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_DISABLE_REMOTE_GENERATION',
     'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
     'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+    'PROMPTFOO_TRACING_ENABLED',
+    'PROMPTFOO_OTEL_ENABLED',
+    'PROMPTFOO_OTEL_LOCAL_EXPORT',
+    'PROMPTFOO_OTEL_DEBUG',
+    'PROMPTFOO_OTEL_SERVICE_NAME',
     'PROMPTFOO_DISABLE_ERROR_LOG',
     'PROMPTFOO_DISABLE_DEBUG_LOG',
     'PROMPTFOO_STRIP_GRADING_RESULT',
@@ -463,6 +468,11 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     'PROMPTFOO_DISABLE_REMOTE_GENERATION',
     'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
     'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+    'PROMPTFOO_TRACING_ENABLED',
+    'PROMPTFOO_OTEL_ENABLED',
+    'PROMPTFOO_OTEL_LOCAL_EXPORT',
+    'PROMPTFOO_OTEL_DEBUG',
+    'PROMPTFOO_OTEL_SERVICE_NAME',
   ])('rejects privacy control %s without leaking sibling values', (key) => {
     const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
     const file = writeEnv('.env', `SAFE=must-not-merge\n${key}=false\n`);
@@ -608,6 +618,11 @@ describe('loadConfigEnvironmentFiles', () => {
     'PROMPTFOO_DISABLE_REMOTE_GENERATION',
     'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
     'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+    'PROMPTFOO_TRACING_ENABLED',
+    'PROMPTFOO_OTEL_ENABLED',
+    'PROMPTFOO_OTEL_LOCAL_EXPORT',
+    'PROMPTFOO_OTEL_DEBUG',
+    'PROMPTFOO_OTEL_SERVICE_NAME',
   ])('rejects %s from a config-declared envPath', (variableName) => {
     const configPath = writeFile(
       'promptfooconfig.yaml',
@@ -1256,6 +1271,19 @@ describe('loadConfigEnvironmentFiles', () => {
     expect(() =>
       loadConfigEnvironmentFiles(selectedConfig, tmpDir, {}),
     ).toThrow(/PROMPTFOO_CLOUD_API_URL/);
+  });
+
+  test('rejects an implicit executable alias of a selected YAML config', () => {
+    const selectedConfig = writeFile(
+      'configs/main.yaml',
+      'commandLineOptions:\n  envPath: .env.safe\n',
+    );
+    fs.symlinkSync(selectedConfig, path.join(tmpDir, 'promptfooconfig.js'));
+    writeFile('configs/.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+
+    expect(() =>
+      loadConfigEnvironmentFiles(selectedConfig, tmpDir, {}),
+    ).toThrow(/Implicit Promptfoo config.*cannot be safely preflighted/);
   });
 
   test('resolves nested refs from the lexical path of a symlinked ref', () => {

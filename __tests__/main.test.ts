@@ -959,6 +959,11 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_DISABLE_REMOTE_GENERATION',
       'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
       'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+      'PROMPTFOO_TRACING_ENABLED',
+      'PROMPTFOO_OTEL_ENABLED',
+      'PROMPTFOO_OTEL_LOCAL_EXPORT',
+      'PROMPTFOO_OTEL_DEBUG',
+      'PROMPTFOO_OTEL_SERVICE_NAME',
       'PROMPTFOO_DISABLE_ERROR_LOG',
       'PROMPTFOO_DISABLE_DEBUG_LOG',
       'PROMPTFOO_STRIP_GRADING_RESULT',
@@ -1966,7 +1971,7 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
-    test('should load safe config-declared envPath files before evaluation', async () => {
+    test('should preflight and mask config-declared envPath files without loading them before config resolution', async () => {
       mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
         const value = String(filePath);
         return (
@@ -1996,6 +2001,7 @@ describe('GitHub Action Main', () => {
           )
             ? {
                 CUSTOM_PROVIDER_SETTING: 'second',
+                APP_URL: 'https://capture.example',
                 OPENAI_API_KEY: 'config-openai-key',
                 DATABRICKS_TOKEN: 'config-databricks-token',
                 HF_TOKEN: 'config-hf-token',
@@ -2012,6 +2018,8 @@ describe('GitHub Action Main', () => {
         },
       );
 
+      const originalAppUrl = process.env.APP_URL;
+      process.env.APP_URL = 'https://trusted.example';
       try {
         await run();
 
@@ -2024,19 +2032,23 @@ describe('GitHub Action Main', () => {
             ],
           }),
         );
-        expect(mockExec.exec.mock.calls[0][2]?.env).toEqual(
-          expect.objectContaining({
-            CUSTOM_PROVIDER_SETTING: 'second',
-            OPENAI_API_KEY: 'config-openai-key',
-            DATABRICKS_TOKEN: 'config-databricks-token',
-            HF_TOKEN: 'config-hf-token',
-            GOOGLE_API_KEY: 'config-google-key',
-            GEMINI_API_KEY: 'config-gemini-key',
-            GOOGLE_GENERATIVE_AI_API_KEY: 'config-genai-key',
-            HUGGING_FACE_HUB_TOKEN: 'config-hf-hub-token',
-            REPLICATE_API_TOKEN: 'config-replicate-token',
-          }),
+        const childEnvironment = mockExec.exec.mock.calls[0][2]?.env;
+        expect(childEnvironment).toEqual(
+          expect.objectContaining({ APP_URL: 'https://trusted.example' }),
         );
+        for (const [name, value] of Object.entries({
+          CUSTOM_PROVIDER_SETTING: 'second',
+          OPENAI_API_KEY: 'config-openai-key',
+          DATABRICKS_TOKEN: 'config-databricks-token',
+          HF_TOKEN: 'config-hf-token',
+          GOOGLE_API_KEY: 'config-google-key',
+          GEMINI_API_KEY: 'config-gemini-key',
+          GOOGLE_GENERATIVE_AI_API_KEY: 'config-genai-key',
+          HUGGING_FACE_HUB_TOKEN: 'config-hf-hub-token',
+          REPLICATE_API_TOKEN: 'config-replicate-token',
+        })) {
+          expect(childEnvironment?.[name]).not.toBe(value);
+        }
         expect(mockCore.setSecret).toHaveBeenCalledWith('config-openai-key');
         expect(mockCore.setSecret).toHaveBeenCalledWith(
           'config-databricks-token',
@@ -2063,6 +2075,11 @@ describe('GitHub Action Main', () => {
         delete process.env.HUGGING_FACE_HUB_TOKEN;
         delete process.env.REPLICATE_API_TOKEN;
         delete process.env.OPENAI_MAX_TOKENS;
+        if (originalAppUrl === undefined) {
+          delete process.env.APP_URL;
+        } else {
+          process.env.APP_URL = originalAppUrl;
+        }
       }
     });
 

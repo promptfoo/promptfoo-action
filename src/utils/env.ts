@@ -267,7 +267,11 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PROMPTFOO_JKS_CERT_PATH',
   'PROMPTFOO_LOG_DIR',
   'PROMPTFOO_MEDIA_PATH',
+  'PROMPTFOO_OTEL_DEBUG',
+  'PROMPTFOO_OTEL_ENABLED',
   'PROMPTFOO_OTEL_ENDPOINT',
+  'PROMPTFOO_OTEL_LOCAL_EXPORT',
+  'PROMPTFOO_OTEL_SERVICE_NAME',
   'PROMPTFOO_PASS_RATE_THRESHOLD',
   'PROMPTFOO_PFX_CERT_PATH',
   'PROMPTFOO_PYTHON',
@@ -278,6 +282,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PROMPTFOO_SELF_HOSTED',
   'PROMPTFOO_SHARING_APP_BASE_URL',
   'PROMPTFOO_STRICT_FILES',
+  'PROMPTFOO_TRACING_ENABLED',
   'PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT',
   'PROTOTYPE',
   'PUPPETEER_CACHE_DIR',
@@ -405,7 +410,7 @@ export function loadEnvironmentFile(
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      'Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead.',
+      'Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, telemetry/tracing, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead.',
     );
   }
 
@@ -522,7 +527,9 @@ export function loadConfigEnvironmentFiles(
       }
       if (
         defaultConfigPath !== lexicalConfigPath &&
-        fs.realpathSync(defaultConfigPath) !== realSelectedConfigPath
+        (!/\.(?:ya?ml|json)$/i.test(defaultConfigPath) ||
+          !/\.(?:ya?ml|json)$/i.test(lexicalConfigPath) ||
+          fs.realpathSync(defaultConfigPath) !== realSelectedConfigPath)
       ) {
         throw new PromptfooActionError(
           `Implicit Promptfoo config ${defaultConfigPath} cannot be safely preflighted alongside ${configPath}`,
