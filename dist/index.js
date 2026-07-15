@@ -34512,17 +34512,37 @@ var seqTag = defineSequenceTag("tag:yaml.org,2002:seq", {
   },
   identify: Array.isArray
 });
+function isPlainObject3(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+  const prototype = Object.getPrototypeOf(data);
+  return prototype === null || prototype === Object.prototype;
+}
+function pick2(object, keys) {
+  const result = {};
+  for (const key of keys) if (object[key] !== void 0) result[key] = object[key];
+  return result;
+}
 var omapTag = defineSequenceTag("tag:yaml.org,2002:omap", {
-  create: () => [],
-  addItem: (container, item) => {
-    if (Object.prototype.toString.call(item) !== "[object Object]") return "cannot resolve an ordered map item";
-    const object = item;
-    const itemKeys = Object.keys(object);
-    if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
-    for (const existing of container) if (Object.prototype.hasOwnProperty.call(existing, itemKeys[0])) return "cannot resolve an ordered map item";
-    container.push(object);
+  create: () => ({
+    list: [],
+    seen: /* @__PURE__ */ new Set()
+  }),
+  addItem: (carrier, item) => {
+    let key;
+    if (item instanceof Map) {
+      if (item.size !== 1) return "cannot resolve an ordered map item";
+      key = item.keys().next().value;
+    } else if (isPlainObject3(item)) {
+      const itemKeys = Object.keys(item);
+      if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
+      key = itemKeys[0];
+    } else return "cannot resolve an ordered map item";
+    if (carrier.seen.has(key)) return "duplicate key in ordered map";
+    carrier.seen.add(key);
+    carrier.list.push(item);
     return "";
-  }
+  },
+  finalize: (carrier) => carrier.list
 });
 var pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
   create: () => [],
@@ -34540,16 +34560,6 @@ var pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
     return "";
   }
 });
-function isPlainObject3(data) {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
-  const prototype = Object.getPrototypeOf(data);
-  return prototype === null || prototype === Object.prototype;
-}
-function pick2(object, keys) {
-  const result = {};
-  for (const key of keys) if (object[key] !== void 0) result[key] = object[key];
-  return result;
-}
 var mapTag = defineMappingTag("tag:yaml.org,2002:map", {
   create: () => ({}),
   identify: isPlainObject3,
@@ -36439,38 +36449,152 @@ function extractFileDependencies(configPath) {
 // src/utils/env.ts
 var dotenv = __toESM(require_main());
 var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
+  "ABLIT_API_BASE_URL",
+  "AI21_API_BASE_URL",
   "ALL_PROXY",
+  "ANTHROPIC_BASE_URL",
+  "API_HOST",
   "APPDATA",
+  "AWS_CA_BUNDLE",
+  "AWS_CONFIG_FILE",
+  "AWS_ENDPOINT_URL",
+  "AWS_SHARED_CREDENTIALS_FILE",
+  "AZURE_AI_PROJECT_URL",
+  "AZURE_API_BASE_URL",
+  "AZURE_API_HOST",
+  "AZURE_AUTHORITY_HOST",
+  "AZURE_CONTENT_SAFETY_ENDPOINT",
+  "AZURE_OPENAI_API_BASE_URL",
+  "AZURE_OPENAI_API_HOST",
+  "AZURE_OPENAI_BASE_URL",
   "BASH_ENV",
+  "CC",
+  "CGO_CFLAGS",
+  "CGO_CPPFLAGS",
+  "CGO_CXXFLAGS",
+  "CGO_LDFLAGS",
+  "CLAUDE_CONFIG_DIR",
+  "CLAWDBOT_GATEWAY_URL",
+  "CLOUDFLARE_ACCOUNT_ID",
+  "CLOUDFLARE_GATEWAY_ID",
+  "CODEX_HOME",
   "COMSPEC",
-  "DYLD_FRAMEWORK_PATH",
-  "DYLD_INSERT_LIBRARIES",
-  "DYLD_LIBRARY_PATH",
+  "CURL_CA_BUNDLE",
+  "CXX",
+  "DATABRICKS_WORKSPACE_URL",
+  "DOCKER_MODEL_RUNNER_BASE_URL",
+  "ENVOY_API_BASE_URL",
   "ENV",
+  "FIREWORKS_API_BASE_URL",
+  "GOCACHE",
+  "GOENV",
+  "GOFLAGS",
+  "GOINSECURE",
+  "GOMODCACHE",
+  "GONOPROXY",
+  "GONOSUMDB",
+  "GOPATH",
+  "GOPRIVATE",
+  "GOPROXY",
+  "GOROOT",
+  "GOSUMDB",
+  "GOTOOLCHAIN",
+  "GOOGLE_API_BASE_URL",
+  "GOOGLE_API_HOST",
   "HOME",
   "HTTP_PROXY",
   "HTTPS_PROXY",
-  "LD_LIBRARY_PATH",
-  "LD_PRELOAD",
+  "LANGFUSE_HOST",
+  "LITELLM_API_BASE",
+  "LLAMA_BASE_URL",
   "LOCALAPPDATA",
+  "LOCALAI_BASE_URL",
+  "MISTRAL_API_BASE_URL",
+  "MISTRAL_API_HOST",
+  "MLFLOW_GATEWAY_URL",
+  "NVIDIA_API_BASE_URL",
   "NODE_EXTRA_CA_CERTS",
   "NODE_OPTIONS",
   "NODE_PATH",
+  "NODE_TLS_REJECT_UNAUTHORIZED",
   "NO_PROXY",
+  "OLLAMA_BASE_URL",
+  "OPENAI_API_BASE_URL",
+  "OPENAI_API_HOST",
+  "OPENAI_BASE_URL",
+  "OPENCLAW_CONFIG_PATH",
+  "OPENCLAW_GATEWAY_PORT",
+  "OPENCLAW_GATEWAY_URL",
+  "OPENCODE_CONFIG",
+  "OPENCODE_CONFIG_CONTENT",
+  "OPENCODE_CONFIG_DIR",
+  "OPENCODE_GIT_BASH_PATH",
+  "OTEL_EXPORTER_OTLP_ENDPOINT",
+  "PALM_API_HOST",
   "PATH",
   "PATHEXT",
+  "PKG_CONFIG",
+  "PERL5LIB",
   "PERL5OPT",
+  "PERLLIB",
+  "PLAYWRIGHT_BROWSERS_PATH",
+  "PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST",
+  "PLAYWRIGHT_DOWNLOAD_HOST",
+  "PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST",
+  "PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST",
+  "PORTKEY_API_BASE_URL",
+  "PROMPTFOO_CACHE_PATH",
+  "PROMPTFOO_CA_CERT_PATH",
+  "PROMPTFOO_CLOUD_API_URL",
+  "PROMPTFOO_CONFIG_DIR",
+  "PROMPTFOO_FAILED_TEST_EXIT_CODE",
+  "PROMPTFOO_INSECURE_SSL",
+  "PROMPTFOO_JKS_CERT_PATH",
+  "PROMPTFOO_LOG_DIR",
+  "PROMPTFOO_MEDIA_PATH",
+  "PROMPTFOO_OTEL_ENDPOINT",
+  "PROMPTFOO_PASS_RATE_THRESHOLD",
+  "PROMPTFOO_PFX_CERT_PATH",
+  "PROMPTFOO_PYTHON",
+  "PROMPTFOO_REMOTE_API_BASE_URL",
+  "PROMPTFOO_REMOTE_APP_BASE_URL",
+  "PROMPTFOO_REMOTE_GENERATION_URL",
+  "PROMPTFOO_RUBY",
+  "PROMPTFOO_SHARING_APP_BASE_URL",
+  "PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT",
+  "PUPPETEER_CACHE_DIR",
+  "PUPPETEER_CHROME_DOWNLOAD_BASE_URL",
+  "PUPPETEER_DOWNLOAD_BASE_URL",
+  "PUPPETEER_DOWNLOAD_HOST",
+  "PUPPETEER_EXECUTABLE_PATH",
   "PYTHONEXECUTABLE",
   "PYTHONHOME",
+  "PYTHONPATH",
   "PYTHONSTARTUP",
+  "PYTHONUSERBASE",
+  "REQUESTS_CA_BUNDLE",
+  "RUBYLIB",
   "RUBYOPT",
   "SHELL",
+  "SHAREPOINT_BASE_URL",
+  "SHAREPOINT_CERT_PATH",
   "SSL_CERT_DIR",
   "SSL_CERT_FILE",
+  "SNOWFLAKE_ACCOUNT_IDENTIFIER",
   "USERPROFILE",
+  "VERCEL_AI_GATEWAY_BASE_URL",
+  "VERTEX_API_HOST",
+  "VOYAGE_API_BASE_URL",
+  "XAI_API_BASE_URL",
   "XDG_CONFIG_HOME"
 ]);
-var FORBIDDEN_ENV_FILE_PREFIXES = ["GIT_", "NPM_CONFIG_"];
+var FORBIDDEN_ENV_FILE_PREFIXES = [
+  "AWS_ENDPOINT_URL_",
+  "DYLD_",
+  "GIT_",
+  "LD_",
+  "NPM_CONFIG_"
+];
 var FORBIDDEN_AUTH_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_API_KEY",
   "PROMPTFOO_REMOTE_API_BASE_URL"
@@ -36508,7 +36632,7 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      "Remove Node, npm, git, executable-resolution, dynamic-loader, and proxy control variables from repository environment files. Configure trusted process controls in the workflow environment instead."
+      "Remove process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead."
     );
   }
   const forbiddenAuthKey = findForbiddenAuthKey(fileEnvironment);

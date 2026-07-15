@@ -24,31 +24,100 @@ describe('findForbiddenEnvFileKey', () => {
     ).toBeUndefined();
   });
 
-  test('intentionally allows interpreter module-path variables', () => {
-    // PYTHONPATH/RUBYLIB/PERL5LIB are needed by real promptfoo providers and
-    // grant nothing beyond what such a provider already runs during evaluation.
-    expect(
-      findForbiddenEnvFileKey({
-        PYTHONPATH: '/repo/lib',
-        RUBYLIB: '/repo/rb',
-        PERL5LIB: '/repo/pl',
-      }),
-    ).toBeUndefined();
-  });
-
   test.each([
     'NODE_OPTIONS',
     'nOdE_oPtIoNs',
     'PATH',
     'LD_PRELOAD',
+    'LD_AUDIT',
+    'ld_debug_output',
     'DYLD_INSERT_LIBRARIES',
+    'dyld_image_suffix',
     'HTTPS_PROXY',
     'HOME',
     'XDG_CONFIG_HOME',
     'NODE_EXTRA_CA_CERTS',
+    'NODE_TLS_REJECT_UNAUTHORIZED',
+    'GOFLAGS',
+    'goenv',
+    'GOTOOLCHAIN',
+    'GOPROXY',
+    'GOSUMDB',
+    'GOINSECURE',
+    'GONOSUMDB',
+    'GONOPROXY',
+    'GOPRIVATE',
+    'GOMODCACHE',
+    'GOCACHE',
+    'GOPATH',
+    'GOROOT',
+    'CC',
+    'CXX',
+    'CGO_CFLAGS',
+    'CGO_CPPFLAGS',
+    'CGO_CXXFLAGS',
+    'CGO_LDFLAGS',
+    'PKG_CONFIG',
+    'AWS_CA_BUNDLE',
+    'CURL_CA_BUNDLE',
+    'requests_ca_bundle',
     'PERL5OPT',
+    'PERL5LIB',
     'PYTHONHOME',
+    'PYTHONPATH',
+    'pythonuserbase',
+    'PROMPTFOO_PYTHON',
     'RUBYOPT',
+    'RUBYLIB',
+    'PROMPTFOO_RUBY',
+    'playwright_browsers_path',
+    'PLAYWRIGHT_DOWNLOAD_HOST',
+    'PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST',
+    'PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST',
+    'PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST',
+    'PUPPETEER_EXECUTABLE_PATH',
+    'PUPPETEER_CACHE_DIR',
+    'PUPPETEER_DOWNLOAD_HOST',
+    'PUPPETEER_DOWNLOAD_BASE_URL',
+    'PUPPETEER_CHROME_DOWNLOAD_BASE_URL',
+    'OPENAI_BASE_URL',
+    'openai_api_base_url',
+    'OPENAI_API_HOST',
+    'ANTHROPIC_BASE_URL',
+    'aPi_HoSt',
+    'AWS_ENDPOINT_URL',
+    'aws_config_file',
+    'AWS_SHARED_CREDENTIALS_FILE',
+    'aws_endpoint_url_bedrock_runtime',
+    'AWS_ENDPOINT_URL_SAGEMAKER_RUNTIME',
+    'AZURE_OPENAI_API_HOST',
+    'AZURE_AI_PROJECT_URL',
+    'CLOUDFLARE_ACCOUNT_ID',
+    'CLAUDE_CONFIG_DIR',
+    'CODEX_HOME',
+    'CLOUDFLARE_GATEWAY_ID',
+    'SNOWFLAKE_ACCOUNT_IDENTIFIER',
+    'OPENCLAW_CONFIG_PATH',
+    'OPENCLAW_GATEWAY_PORT',
+    'opencode_config',
+    'OPENCODE_CONFIG_CONTENT',
+    'OPENCODE_CONFIG_DIR',
+    'OPENCODE_GIT_BASH_PATH',
+    'SHAREPOINT_CERT_PATH',
+    'PROMPTFOO_CLOUD_API_URL',
+    'promptfoo_remote_api_base_url',
+    'PROMPTFOO_REMOTE_GENERATION_URL',
+    'PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT',
+    'PROMPTFOO_OTEL_ENDPOINT',
+    'otel_exporter_otlp_endpoint',
+    'PROMPTFOO_REMOTE_APP_BASE_URL',
+    'PROMPTFOO_SHARING_APP_BASE_URL',
+    'PROMPTFOO_CACHE_PATH',
+    'PROMPTFOO_CONFIG_DIR',
+    'PROMPTFOO_PASS_RATE_THRESHOLD',
+    'PROMPTFOO_FAILED_TEST_EXIT_CODE',
+    'PROMPTFOO_LOG_DIR',
+    'PROMPTFOO_MEDIA_PATH',
     'GIT_SSH_COMMAND',
     'git_config_count',
     'GIT_EXTERNAL_DIFF',
@@ -176,6 +245,26 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
 
     expect(target.SETTING).toBe('second');
     expect(target.ONLY_FIRST).toBe('1');
+  });
+
+  test('preserves process controls that came from the trusted workflow environment', () => {
+    const target: NodeJS.ProcessEnv = {
+      PYTHONPATH: '/trusted/provider-lib',
+      OPENAI_BASE_URL: 'https://trusted.example/v1',
+      PROMPTFOO_CACHE_PATH: '/trusted/cache',
+      PROMPTFOO_PASS_RATE_THRESHOLD: '90',
+    };
+    const file = writeEnv('.env', 'CUSTOM_PROVIDER_SETTING=allowed\n');
+
+    loadEnvironmentFile(file, target);
+
+    expect(target).toEqual({
+      PYTHONPATH: '/trusted/provider-lib',
+      OPENAI_BASE_URL: 'https://trusted.example/v1',
+      PROMPTFOO_CACHE_PATH: '/trusted/cache',
+      PROMPTFOO_PASS_RATE_THRESHOLD: '90',
+      CUSTOM_PROVIDER_SETTING: 'allowed',
+    });
   });
 
   test('throws ENV_FILE_LOAD_ERROR when the file cannot be read', () => {

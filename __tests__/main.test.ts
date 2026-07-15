@@ -568,7 +568,10 @@ describe('GitHub Action Main', () => {
       'NPM_CONFIG_USERCONFIG',
       'npm_config_script_shell',
       'LD_PRELOAD',
+      'LD_AUDIT',
+      'ld_debug_output',
       'DYLD_INSERT_LIBRARIES',
+      'dyld_image_suffix',
       'HTTPS_PROXY',
       'HOME',
       'USERPROFILE',
@@ -580,6 +583,84 @@ describe('GitHub Action Main', () => {
       'GIT_CONFIG_COUNT',
       'RUBYOPT',
       'PYTHONHOME',
+      'PYTHONPATH',
+      'pythonuserbase',
+      'PERL5LIB',
+      'RUBYLIB',
+      'PROMPTFOO_PYTHON',
+      'PROMPTFOO_RUBY',
+      'playwright_browsers_path',
+      'PLAYWRIGHT_DOWNLOAD_HOST',
+      'PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST',
+      'PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST',
+      'PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST',
+      'PUPPETEER_EXECUTABLE_PATH',
+      'PUPPETEER_CACHE_DIR',
+      'PUPPETEER_DOWNLOAD_HOST',
+      'PUPPETEER_DOWNLOAD_BASE_URL',
+      'PUPPETEER_CHROME_DOWNLOAD_BASE_URL',
+      'NODE_TLS_REJECT_UNAUTHORIZED',
+      'GOFLAGS',
+      'goenv',
+      'GOTOOLCHAIN',
+      'GOPROXY',
+      'GOSUMDB',
+      'GOINSECURE',
+      'GONOSUMDB',
+      'GONOPROXY',
+      'GOPRIVATE',
+      'GOMODCACHE',
+      'GOCACHE',
+      'GOPATH',
+      'GOROOT',
+      'CC',
+      'CXX',
+      'CGO_CFLAGS',
+      'CGO_CPPFLAGS',
+      'CGO_CXXFLAGS',
+      'CGO_LDFLAGS',
+      'PKG_CONFIG',
+      'AWS_CA_BUNDLE',
+      'CURL_CA_BUNDLE',
+      'requests_ca_bundle',
+      'OPENAI_BASE_URL',
+      'openai_api_base_url',
+      'OPENAI_API_HOST',
+      'ANTHROPIC_BASE_URL',
+      'aPi_HoSt',
+      'AWS_ENDPOINT_URL',
+      'aws_config_file',
+      'AWS_SHARED_CREDENTIALS_FILE',
+      'aws_endpoint_url_bedrock_runtime',
+      'AWS_ENDPOINT_URL_SAGEMAKER_RUNTIME',
+      'AZURE_OPENAI_API_HOST',
+      'AZURE_AI_PROJECT_URL',
+      'CLOUDFLARE_ACCOUNT_ID',
+      'CLAUDE_CONFIG_DIR',
+      'CODEX_HOME',
+      'CLOUDFLARE_GATEWAY_ID',
+      'SNOWFLAKE_ACCOUNT_IDENTIFIER',
+      'OPENCLAW_CONFIG_PATH',
+      'OPENCLAW_GATEWAY_PORT',
+      'opencode_config',
+      'OPENCODE_CONFIG_CONTENT',
+      'OPENCODE_CONFIG_DIR',
+      'OPENCODE_GIT_BASH_PATH',
+      'SHAREPOINT_CERT_PATH',
+      'PROMPTFOO_CLOUD_API_URL',
+      'promptfoo_remote_api_base_url',
+      'PROMPTFOO_REMOTE_GENERATION_URL',
+      'PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT',
+      'PROMPTFOO_OTEL_ENDPOINT',
+      'otel_exporter_otlp_endpoint',
+      'PROMPTFOO_REMOTE_APP_BASE_URL',
+      'PROMPTFOO_SHARING_APP_BASE_URL',
+      'PROMPTFOO_CACHE_PATH',
+      'PROMPTFOO_CONFIG_DIR',
+      'PROMPTFOO_PASS_RATE_THRESHOLD',
+      'PROMPTFOO_FAILED_TEST_EXIT_CODE',
+      'PROMPTFOO_LOG_DIR',
+      'PROMPTFOO_MEDIA_PATH',
     ])('should reject process startup variable %s from environment files', async (variableName) => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
@@ -715,20 +796,19 @@ describe('GitHub Action Main', () => {
         } else {
           process.env[variableName] = originalValue;
         }
-        delete process.env.PROMPTFOO_API_KEY;
       }
     });
 
     test('should forward non-auth PROMPTFOO_ variables from environment files', async () => {
-      // The block list is exactly the two auth variables, not a PROMPTFOO_
-      // prefix — benign settings such as cache paths must still pass through.
+      // Auth and process controls are blocked individually, not by a broad
+      // PROMPTFOO_ prefix, so ordinary application settings still pass through.
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
 
       const dotenv = await import('dotenv');
       (dotenv.config as Mock).mockImplementation(
         (options?: { processEnv?: Record<string, string> }) => {
-          const parsed = { PROMPTFOO_CACHE_PATH: '/tmp/pf-cache' };
+          const parsed = { PROMPTFOO_CUSTOM_SETTING: 'allowed' };
           Object.assign(options?.processEnv ?? process.env, parsed);
           return { parsed };
         },
@@ -739,10 +819,10 @@ describe('GitHub Action Main', () => {
 
         expect(mockCore.setFailed).not.toHaveBeenCalled();
         expect(mockExec.exec.mock.calls[0][2]?.env).toEqual(
-          expect.objectContaining({ PROMPTFOO_CACHE_PATH: '/tmp/pf-cache' }),
+          expect.objectContaining({ PROMPTFOO_CUSTOM_SETTING: 'allowed' }),
         );
       } finally {
-        delete process.env.PROMPTFOO_CACHE_PATH;
+        delete process.env.PROMPTFOO_CUSTOM_SETTING;
       }
     });
 

@@ -1,55 +1,160 @@
 import * as dotenv from 'dotenv';
 import { ErrorCodes, PromptfooActionError } from './errors';
 
-// Process-control variables that let a repository-controlled env file run code
-// in, or redirect the trust of, the action's own process (`npx`/node, `git`) or
-// any interpreter promptfoo later spawns — before the reviewed config is graded.
-// Kept as an explicit, alphabetized blocklist so additions are easy to audit.
-//
-// Interpreter *option/relocation* controls (PERL5OPT, PYTHON{HOME,EXECUTABLE,
-// STARTUP}, RUBYOPT) are rejected because they inject code with no legitimate
-// reason to live in an application env file. Module *search-path* controls
-// (PYTHONPATH, RUBYLIB, PERL5LIB) are intentionally NOT rejected: real
-// promptfoo python/ruby providers rely on them, and pointing them at repo code
-// grants nothing beyond what such a provider already runs during evaluation.
+// Variables that let a repository-controlled env file execute code, redirect an
+// inherited provider credential, or change the action's pass/fail/filesystem
+// behavior. Keep this explicit and alphabetized so the trust boundary is easy
+// to audit. Legitimate overrides belong in the trusted workflow environment.
 const FORBIDDEN_ENV_FILE_KEYS = new Set([
+  'ABLIT_API_BASE_URL',
+  'AI21_API_BASE_URL',
   'ALL_PROXY',
+  'ANTHROPIC_BASE_URL',
+  'API_HOST',
   'APPDATA',
+  'AWS_CA_BUNDLE',
+  'AWS_CONFIG_FILE',
+  'AWS_ENDPOINT_URL',
+  'AWS_SHARED_CREDENTIALS_FILE',
+  'AZURE_AI_PROJECT_URL',
+  'AZURE_API_BASE_URL',
+  'AZURE_API_HOST',
+  'AZURE_AUTHORITY_HOST',
+  'AZURE_CONTENT_SAFETY_ENDPOINT',
+  'AZURE_OPENAI_API_BASE_URL',
+  'AZURE_OPENAI_API_HOST',
+  'AZURE_OPENAI_BASE_URL',
   'BASH_ENV',
+  'CC',
+  'CGO_CFLAGS',
+  'CGO_CPPFLAGS',
+  'CGO_CXXFLAGS',
+  'CGO_LDFLAGS',
+  'CLAUDE_CONFIG_DIR',
+  'CLAWDBOT_GATEWAY_URL',
+  'CLOUDFLARE_ACCOUNT_ID',
+  'CLOUDFLARE_GATEWAY_ID',
+  'CODEX_HOME',
   'COMSPEC',
-  'DYLD_FRAMEWORK_PATH',
-  'DYLD_INSERT_LIBRARIES',
-  'DYLD_LIBRARY_PATH',
+  'CURL_CA_BUNDLE',
+  'CXX',
+  'DATABRICKS_WORKSPACE_URL',
+  'DOCKER_MODEL_RUNNER_BASE_URL',
+  'ENVOY_API_BASE_URL',
   'ENV',
+  'FIREWORKS_API_BASE_URL',
+  'GOCACHE',
+  'GOENV',
+  'GOFLAGS',
+  'GOINSECURE',
+  'GOMODCACHE',
+  'GONOPROXY',
+  'GONOSUMDB',
+  'GOPATH',
+  'GOPRIVATE',
+  'GOPROXY',
+  'GOROOT',
+  'GOSUMDB',
+  'GOTOOLCHAIN',
+  'GOOGLE_API_BASE_URL',
+  'GOOGLE_API_HOST',
   'HOME',
   'HTTP_PROXY',
   'HTTPS_PROXY',
-  'LD_LIBRARY_PATH',
-  'LD_PRELOAD',
+  'LANGFUSE_HOST',
+  'LITELLM_API_BASE',
+  'LLAMA_BASE_URL',
   'LOCALAPPDATA',
+  'LOCALAI_BASE_URL',
+  'MISTRAL_API_BASE_URL',
+  'MISTRAL_API_HOST',
+  'MLFLOW_GATEWAY_URL',
+  'NVIDIA_API_BASE_URL',
   'NODE_EXTRA_CA_CERTS',
   'NODE_OPTIONS',
   'NODE_PATH',
+  'NODE_TLS_REJECT_UNAUTHORIZED',
   'NO_PROXY',
+  'OLLAMA_BASE_URL',
+  'OPENAI_API_BASE_URL',
+  'OPENAI_API_HOST',
+  'OPENAI_BASE_URL',
+  'OPENCLAW_CONFIG_PATH',
+  'OPENCLAW_GATEWAY_PORT',
+  'OPENCLAW_GATEWAY_URL',
+  'OPENCODE_CONFIG',
+  'OPENCODE_CONFIG_CONTENT',
+  'OPENCODE_CONFIG_DIR',
+  'OPENCODE_GIT_BASH_PATH',
+  'OTEL_EXPORTER_OTLP_ENDPOINT',
+  'PALM_API_HOST',
   'PATH',
   'PATHEXT',
+  'PKG_CONFIG',
+  'PERL5LIB',
   'PERL5OPT',
+  'PERLLIB',
+  'PLAYWRIGHT_BROWSERS_PATH',
+  'PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST',
+  'PLAYWRIGHT_DOWNLOAD_HOST',
+  'PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST',
+  'PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST',
+  'PORTKEY_API_BASE_URL',
+  'PROMPTFOO_CACHE_PATH',
+  'PROMPTFOO_CA_CERT_PATH',
+  'PROMPTFOO_CLOUD_API_URL',
+  'PROMPTFOO_CONFIG_DIR',
+  'PROMPTFOO_FAILED_TEST_EXIT_CODE',
+  'PROMPTFOO_INSECURE_SSL',
+  'PROMPTFOO_JKS_CERT_PATH',
+  'PROMPTFOO_LOG_DIR',
+  'PROMPTFOO_MEDIA_PATH',
+  'PROMPTFOO_OTEL_ENDPOINT',
+  'PROMPTFOO_PASS_RATE_THRESHOLD',
+  'PROMPTFOO_PFX_CERT_PATH',
+  'PROMPTFOO_PYTHON',
+  'PROMPTFOO_REMOTE_API_BASE_URL',
+  'PROMPTFOO_REMOTE_APP_BASE_URL',
+  'PROMPTFOO_REMOTE_GENERATION_URL',
+  'PROMPTFOO_RUBY',
+  'PROMPTFOO_SHARING_APP_BASE_URL',
+  'PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT',
+  'PUPPETEER_CACHE_DIR',
+  'PUPPETEER_CHROME_DOWNLOAD_BASE_URL',
+  'PUPPETEER_DOWNLOAD_BASE_URL',
+  'PUPPETEER_DOWNLOAD_HOST',
+  'PUPPETEER_EXECUTABLE_PATH',
   'PYTHONEXECUTABLE',
   'PYTHONHOME',
+  'PYTHONPATH',
   'PYTHONSTARTUP',
+  'PYTHONUSERBASE',
+  'REQUESTS_CA_BUNDLE',
+  'RUBYLIB',
   'RUBYOPT',
   'SHELL',
+  'SHAREPOINT_BASE_URL',
+  'SHAREPOINT_CERT_PATH',
   'SSL_CERT_DIR',
   'SSL_CERT_FILE',
+  'SNOWFLAKE_ACCOUNT_IDENTIFIER',
   'USERPROFILE',
+  'VERCEL_AI_GATEWAY_BASE_URL',
+  'VERTEX_API_HOST',
+  'VOYAGE_API_BASE_URL',
+  'XAI_API_BASE_URL',
   'XDG_CONFIG_HOME',
 ]);
 
-// `GIT_` covers git process controls (GIT_SSH_COMMAND, GIT_EXTERNAL_DIFF,
-// GIT_PROXY_COMMAND, GIT_CONFIG_COUNT/KEY_n/VALUE_n, ...). The action shells out
-// to `git` via simple-git after loading these files, and that child inherits
-// process.env, so git controls belong in the same trust boundary as Node/npm.
-const FORBIDDEN_ENV_FILE_PREFIXES = ['GIT_', 'NPM_CONFIG_'];
+// Cover AWS service endpoint overrides, all native-loader controls (including
+// LD_AUDIT), and all git/npm process controls inherited by child processes.
+const FORBIDDEN_ENV_FILE_PREFIXES = [
+  'AWS_ENDPOINT_URL_',
+  'DYLD_',
+  'GIT_',
+  'LD_',
+  'NPM_CONFIG_',
+];
 
 // Promptfoo authentication settings. A repository-controlled env file must not
 // be able to pair an inherited API key with an attacker-chosen host — the
@@ -110,7 +215,7 @@ export function loadEnvironmentFile(
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      'Remove Node, npm, git, executable-resolution, dynamic-loader, and proxy control variables from repository environment files. Configure trusted process controls in the workflow environment instead.',
+      'Remove process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead.',
     );
   }
 
@@ -125,12 +230,11 @@ export function loadEnvironmentFile(
 
   // Merge into the shared environment (process.env by default) only after the
   // file has fully passed the process-control and authentication checks. This
-  // is deliberate: the action itself reads env-file values such as cache paths,
-  // thresholds, and provider settings from process.env, and it also forwards
-  // process.env to the promptfoo child. Validation therefore has to happen
-  // here, at the untrusted-file boundary — not on the final child environment,
-  // which legitimately inherits the trusted runner's own PATH, NODE_OPTIONS,
-  // and workflow-set PROMPTFOO_API_KEY. Preserves later-file-wins ordering.
+  // action forwards process.env to the promptfoo child. Validation therefore
+  // has to happen here, at the untrusted-file boundary — not on the final child
+  // environment, which legitimately inherits the trusted runner's own PATH,
+  // provider endpoints, cache path, threshold, and workflow-set auth. Preserves
+  // the documented later-file-wins ordering for ordinary application variables.
   for (const [key, value] of Object.entries(fileEnvironment)) {
     targetEnvironment[key] = value;
   }
