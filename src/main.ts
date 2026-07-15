@@ -984,8 +984,11 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = evaluationPromptFiles.join(', ');
-      let body = `⚠️ LLM evaluation included these files: ${modifiedFiles}
+      const evaluatedPromptDescription =
+        !useConfigPrompts && evaluationPromptFiles.length > 0
+          ? `LLM evaluation included these files: ${evaluationPromptFiles.join(', ')}`
+          : 'LLM evaluation used prompts from the config file';
+      let body = `⚠️ ${evaluatedPromptDescription}
 
 | Success | Failure |
 |---------|---------|
@@ -1020,7 +1023,7 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (evaluationPromptFiles.length > 0) {
+      if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
         summary.addList(evaluationPromptFiles);
       }

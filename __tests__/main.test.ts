@@ -558,6 +558,42 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should describe config-prompt fallback accurately when no action prompt matches', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0]
+        .body as string;
+      expect(comment).toContain(
+        'LLM evaluation used prompts from the config file',
+      );
+      expect(comment).not.toContain('LLM evaluation included these files:');
+    });
+
+    test('should describe explicitly configured prompts accurately even when action prompts match', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0]
+        .body as string;
+      expect(comment).toContain(
+        'LLM evaluation used prompts from the config file',
+      );
+      expect(comment).not.toContain('LLM evaluation included these files:');
+    });
+
     test.each([
       {
         label: 'prompt-only change',
@@ -2469,7 +2505,10 @@ describe('GitHub Action Main', () => {
         },
         configurable: true,
       });
-      withInputs({ prompts: '' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
 
       await run();
 
@@ -2477,6 +2516,8 @@ describe('GitHub Action Main', () => {
         'Evaluated Files',
         3,
       );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
       expect(mockCore.summary.write).toHaveBeenCalled();
     });
 
