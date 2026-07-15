@@ -327,6 +327,29 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should reject an unchanged prompt filename before a dependency-triggered full evaluation', async () => {
+      const forgedAnnotation = 'UNCHANGED_PROMPT_CANARY_019F62C3';
+      const unsafePrompt = `prompts/prompt\n::error::${forgedAnnotation}.txt`;
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/current.py' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt', unsafePrompt]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/current.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths cannot contain carriage returns or line feeds.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        forgedAnnotation,
+      );
+    });
+
     test('should skip evaluation when no relevant files change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'README.md' },
@@ -951,7 +974,10 @@ describe('GitHub Action Main', () => {
         { filename: 'prompts/prompt1.txt' },
         { filename: 'providers/current.py' },
       ]);
-      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
       mockConfig.extractFileDependencies.mockReturnValue([
         'providers/current.py',
       ]);
@@ -959,7 +985,13 @@ describe('GitHub Action Main', () => {
       await run();
 
       const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args).not.toContain('--prompts');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
+      );
     });
 
     test.each([
@@ -1235,6 +1267,22 @@ describe('GitHub Action Main', () => {
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data/']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when the final file is deleted from a provider glob directory', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/deleted.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['providers/']);
+      mockFsUtils.isDirectory.mockReturnValue(false);
 
       await run();
 
@@ -1747,6 +1795,70 @@ describe('GitHub Action Main', () => {
       expect(mockCore.summary.addRaw).toHaveBeenCalledWith(
         'View eval results in CI console',
       );
+      expect(mockCore.summary.write).toHaveBeenCalled();
+    });
+
+    test('should list all evaluated prompts in a dependency-triggered push summary', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValue('providers/current.py\0');
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/current.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.summary.addHeading).toHaveBeenCalledWith(
+        'Evaluated Files',
+        3,
+      );
+      expect(mockCore.summary.addList).toHaveBeenCalledWith([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      expect(mockCore.summary.write).toHaveBeenCalled();
+    });
+
+    test('should omit action prompt globs from a dependency-triggered config-prompt summary', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockResolvedValue('providers/current.py\0');
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/current.py',
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(mockCore.summary.addHeading).not.toHaveBeenCalledWith(
+        'Evaluated Files',
+        3,
+      );
+      expect(mockCore.summary.addList).not.toHaveBeenCalled();
       expect(mockCore.summary.write).toHaveBeenCalled();
     });
 

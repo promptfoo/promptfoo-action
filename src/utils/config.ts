@@ -1049,9 +1049,12 @@ export function extractFileDependencies(configPath: string): string[] {
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
       const repositoryPath = relativePath.split(path.sep).join('/');
+      if (!repositoryPath) {
+        return './';
+      }
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
-        return repositoryPath ? `${repositoryPath}/` : './';
+        return `${repositoryPath}/`;
       }
       return repositoryPath;
     });

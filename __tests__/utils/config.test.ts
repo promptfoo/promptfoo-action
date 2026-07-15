@@ -63,6 +63,19 @@ providers:
     expect(deps).toContain('../config/another_provider.js');
   });
 
+  it('should preserve a repository-root directory dependency without a trailing slash', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.statSync.mockReturnValue({ isDirectory: () => true } as fs.Stats);
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - file://.
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
   it('should extract a function-qualified Python provider file', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
