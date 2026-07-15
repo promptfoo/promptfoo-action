@@ -36788,6 +36788,7 @@ var dotenv = __toESM(require_main());
 var fs7 = __toESM(require("fs"));
 var path6 = __toESM(require("path"));
 var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
+  "__PROTO__",
   "ABLIT_API_BASE_URL",
   "AI21_API_BASE_URL",
   "ALL_PROXY",
@@ -36869,6 +36870,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "CLAWDBOT_GATEWAY_URL",
   "CLOUDFLARE_ACCOUNT_ID",
   "CLOUDFLARE_GATEWAY_ID",
+  "CONSTRUCTOR",
   "COMPILER_PATH",
   "CODEX_HOME",
   "COMSPEC",
@@ -37045,6 +37047,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_SHARING_APP_BASE_URL",
   "PROMPTFOO_STRICT_FILES",
   "PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT",
+  "PROTOTYPE",
   "PUPPETEER_CACHE_DIR",
   "PUPPETEER_CHROME_DOWNLOAD_BASE_URL",
   "PUPPETEER_DOWNLOAD_BASE_URL",
@@ -37115,7 +37118,7 @@ function findForbiddenAuthKey(environment) {
   );
 }
 function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, override = true) {
-  const fileEnvironment = {};
+  const fileEnvironment = Object.create(null);
   const result = dotenv.config({
     path: envFilePath,
     override: true,
@@ -37142,7 +37145,7 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, overr
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      "Remove process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead."
+      "Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead."
     );
   }
   for (const [key, value] of Object.entries(fileEnvironment)) {

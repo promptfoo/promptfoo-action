@@ -1184,7 +1184,7 @@ describe('GitHub Action Main', () => {
         );
         expect(dotenv.config).toHaveBeenCalledWith(
           expect.objectContaining({
-            path: expect.stringMatching(/(?:^|[/\\\\])\.env\.vault$/),
+            path: expect.stringMatching(/(?:^|[\\/])\.env\.vault$/),
           }),
         );
         expect(mockCore.info).toHaveBeenCalledWith(
@@ -1261,6 +1261,44 @@ describe('GitHub Action Main', () => {
             process.env[key] = value;
           }
         }
+      }
+    });
+
+    test('should reject an own __proto__ key before merging an environment file', async () => {
+      withInputs({ 'env-files': '.env.local' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith('.env.local'),
+      );
+
+      const dotenv = await import('dotenv');
+      let parseTargetPrototype: object | null | undefined;
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parseTarget = options?.processEnv ?? process.env;
+          parseTargetPrototype = Object.getPrototypeOf(parseTarget);
+          Object.defineProperty(parseTarget, '__proto__', {
+            configurable: true,
+            enumerable: true,
+            value: 'polluted',
+            writable: true,
+          });
+          parseTarget.CUSTOM_PROVIDER_SETTING = 'value';
+          return { parsed: parseTarget };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(parseTargetPrototype).toBeNull();
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('__proto__'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.CUSTOM_PROVIDER_SETTING).toBeUndefined();
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        Reflect.deleteProperty(process.env, '__proto__');
       }
     });
 
