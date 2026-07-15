@@ -27,6 +27,7 @@ interface PromptfooTestConfig {
 
 export interface PromptfooConfig {
   providers?: string | Array<string | { id?: string; [key: string]: unknown }>;
+  targets?: string | Array<string | { id?: string; [key: string]: unknown }>;
   prompts?:
     | string
     | Record<string, string>
@@ -367,10 +368,11 @@ export function extractFileDependencies(
     };
 
     // Extract provider files
-    if (config.providers) {
-      const providers = Array.isArray(config.providers)
-        ? config.providers
-        : [config.providers];
+    const configuredProviders = config.targets ?? config.providers;
+    if (configuredProviders) {
+      const providers = Array.isArray(configuredProviders)
+        ? configuredProviders
+        : [configuredProviders];
       for (const provider of providers) {
         if (typeof provider === 'string') {
           processProviderFile(provider);
@@ -579,6 +581,18 @@ export function extractFileDependencies(
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
         if (key === 'provider' && includeFileUrls) {
+          const providerId =
+            typeof item === 'string'
+              ? item
+              : typeof item === 'object' &&
+                  item !== null &&
+                  'id' in item &&
+                  typeof item.id === 'string'
+                ? item.id
+                : undefined;
+          const isHttpProvider =
+            typeof providerId === 'string' &&
+            /^https?(?::|$)/i.test(providerId);
           const providerConfig =
             typeof item === 'object' &&
             item !== null &&
@@ -595,6 +609,7 @@ export function extractFileDependencies(
               ? providerConfig.auth
               : undefined;
           if (
+            isHttpProvider &&
             fileAuth &&
             'type' in fileAuth &&
             fileAuth.type === 'file' &&
@@ -603,7 +618,7 @@ export function extractFileDependencies(
           ) {
             processFileUrl(`file://${fileAuth.path}`, true);
           }
-          if (providerConfig) {
+          if (isHttpProvider && providerConfig) {
             const securityGroups: Array<[string, string[]]> = [
               [
                 'signatureAuth',
@@ -655,15 +670,6 @@ export function extractFileDependencies(
               }
             }
           }
-          const providerId =
-            typeof item === 'string'
-              ? item
-              : typeof item === 'object' &&
-                  item !== null &&
-                  'id' in item &&
-                  typeof item.id === 'string'
-                ? item.id
-                : undefined;
           const localProvider = providerId?.match(
             /^(?:file:\/\/|python:(?=[\s\S]+\.py(?::[^/\\]+)?$)|golang:(?=[\s\S]+\.go(?::[^/\\]+)?$)|ruby:(?=[\s\S]+\.rb(?::[^/\\]+)?$))([\s\S]+)$/i,
           );

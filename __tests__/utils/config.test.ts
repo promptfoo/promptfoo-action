@@ -208,6 +208,50 @@ providers:
     ).toEqual(['../config/providers/custom.py']);
   });
 
+  it('should extract a scalar file-backed target alias', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'targets: file://providers/custom.py:call_api',
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/providers/custom.py']);
+  });
+
+  it('should extract HTTP target config dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: https://example.test/infer
+    config:
+      auth:
+        type: file
+        path: auth/get-token.js
+      tls:
+        caPath: credentials/ca.pem
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/auth/get-token.js', '../config/credentials/ca.pem']);
+  });
+
+  it('should not treat non-HTTP provider config as bare security paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    config:
+      auth:
+        type: file
+        path: payload/not-auth.js
+      tls:
+        caPath: payload/not-ca.pem
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
   it('should conservatively track a top-level executable provider', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
     mockFs.readFileSync.mockReturnValue(
@@ -696,6 +740,8 @@ tests:
               '      response_format:',
               '        type: json_schema',
               `        schema: "{{ 'file://schemas/' + env.SCHEMA }}"`,
+              '        json_schema:',
+              `          schema: "{{ 'file://schemas/' + env.SCHEMA }}"`,
               '      signatureAuth:',
               '        privateKeyPath: ./credentials/private.pem',
               '        keystorePath: ./credentials/signing.jks',
@@ -704,6 +750,12 @@ tests:
               '        certPath: ./credentials/client.crt',
               '        keyPath: ./credentials/client.key',
               '        caPath: ./credentials/ca.pem',
+              '- provider:',
+              '    id: http://example.test/infer',
+              '    config:',
+              '      responseFormat:',
+              '        type: json_schema',
+              '        json_schema: null',
               '- provider:',
               '    id: openai:gpt-4',
               '    config:',
