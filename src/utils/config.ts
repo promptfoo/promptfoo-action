@@ -596,7 +596,15 @@ export function extractFileDependencies(configPath: string): string[] {
               dynamicKind ||
               dynamicSourceType
             ) {
-              processRawReference(sourceRecord.path);
+              const sourcePath = sourceRecord.path;
+              if (
+                typeof sourcePath === 'string' &&
+                sourcePath.startsWith('file://')
+              ) {
+                processFileUrl(sourcePath);
+              } else {
+                processRawReference(sourcePath);
+              }
             }
           }
         }

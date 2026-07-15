@@ -1545,6 +1545,24 @@ providers:
     ]);
   });
 
+  it('should extract a file URL multipart upload dependency', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https
+    config:
+      multipart:
+        parts:
+          - kind: file
+            source:
+              type: path
+              path: file://fixtures/sample-report45.pdf
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['fixtures/sample-report45.pdf']);
+  });
+
   it('should extract HTTP validator, file auth, TLS, and signature paths from a provider map', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:

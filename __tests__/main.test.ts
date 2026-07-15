@@ -588,6 +588,34 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      ['config', 'evals/promptfooconfig.yaml'],
+      ['prompt', 'evals/prompts/first.txt'],
+    ])('should normalize an absolute prompt-glob match for a %s change', async (_reason, changedFile) => {
+      const absolutePrompt = path.join(
+        process.cwd(),
+        'evals',
+        'prompts',
+        'first.txt',
+      );
+      withInputs({
+        config: 'promptfooconfig.yaml',
+        prompts: path.join(process.cwd(), 'evals', 'prompts', '*.txt'),
+        'working-directory': 'evals',
+      });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/first.txt');
+      expect(args).not.toContain(absolutePrompt);
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain('prompts/first.txt');
+      expect(comment.body).not.toContain(absolutePrompt);
+    });
+
     test('should reject a full-evaluation prompt glob that lexically escapes the workspace', async () => {
       withInputs({ prompts: '../secrets/*.txt' });
       mockOctokit.paginate.mockResolvedValue([

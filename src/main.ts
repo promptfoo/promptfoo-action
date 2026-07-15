@@ -733,9 +733,12 @@ export async function run(): Promise<void> {
           continue;
         }
         seenPromptFiles.add(repositoryFile);
-        allPromptFiles.push(file);
+        const promptFile = toRepositoryPath(
+          path.relative(workingDirectory, resolvedPromptPath),
+        );
+        allPromptFiles.push(promptFile);
         if (changedFilesList.includes(repositoryFile)) {
-          changedPromptFiles.push(file);
+          changedPromptFiles.push(promptFile);
         }
       }
     }
