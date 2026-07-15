@@ -36291,7 +36291,7 @@ function providerFilePath(fileUrl, allowJavascript = false) {
   const scriptPath = rawPath.slice(0, functionSeparator);
   const functionName = rawPath.slice(functionSeparator + 1);
   const isSupportedScript = /\.py$/i.test(scriptPath) || (allowJavascript ? /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(scriptPath) : /\.(?:go|rb)$/i.test(scriptPath));
-  const isValidFunctionName = /^[^\\/:\0]+$/u.test(functionName);
+  const isValidFunctionName = /\.go$/i.test(scriptPath) ? /^(?:call_api|CallApi)$/.test(functionName) : /^[^\\/:\0]+$/u.test(functionName);
   if (functionSeparator > 1 && isSupportedScript && isValidFunctionName) {
     return scriptPath;
   }

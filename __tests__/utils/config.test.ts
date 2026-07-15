@@ -85,7 +85,7 @@ providers:
     expect(deps).toEqual(['../config/providers/provider.py']);
   });
 
-  it('should extract callable Unicode Python and Go provider selectors', () => {
+  it('should extract a callable Unicode Python selector and preserve an unsupported Go selector', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file://providers/provider.py:café
@@ -96,7 +96,7 @@ providers:
 
     expect(deps).toEqual([
       '../config/providers/provider.py',
-      '../config/providers/provider.go',
+      '../config/providers/provider.go:调用',
     ]);
   });
 
