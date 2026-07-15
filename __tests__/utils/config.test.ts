@@ -602,6 +602,28 @@ assert: &asserts
     ]);
   });
 
+  it('should preserve the config directory for a deleted root-level defaultTest glob', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: { context: file://gone*.txt }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/']);
+  });
+
   it('should reject a file-backed defaultTest outside the repository', () => {
     mockFs.readFileSync.mockReturnValue(`
 defaultTest: file://../secrets/default.yaml

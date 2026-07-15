@@ -36367,6 +36367,8 @@ function extractFileDependencies(configPath) {
           dependencies.add(
             matches.length === 0 ? `${absoluteBasePath}${path5.sep}` : absoluteBasePath
           );
+        } else if (matches.length === 0) {
+          dependencies.add(`${configDir}${path5.sep}`);
         }
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;

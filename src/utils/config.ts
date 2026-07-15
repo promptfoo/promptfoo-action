@@ -149,6 +149,8 @@ export function extractFileDependencies(configPath: string): string[] {
               ? `${absoluteBasePath}${path.sep}`
               : absoluteBasePath,
           );
+        } else if (matches.length === 0) {
+          dependencies.add(`${configDir}${path.sep}`);
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
