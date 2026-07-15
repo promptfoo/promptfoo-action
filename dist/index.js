@@ -39748,7 +39748,7 @@ function matchesDependencyGlob(dependency, changedFiles) {
       magicalBraces: true,
       braceExpandMax: 1025
     }) && changedFiles.some(
-      (changedFile) => path7.matchesGlob(
+      (changedFile) => path7.posix.matchesGlob(
         changedFile.replace(/\\/g, "/"),
         dependency.replace(/\\/g, "/")
       )

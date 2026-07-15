@@ -1624,6 +1624,28 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should use POSIX glob semantics for normalized dependency paths on Windows', async () => {
+      const posixMatchesGlob = vi.spyOn(path.posix, 'matchesGlob');
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/nested/deleted-provider.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/**/*.yaml',
+      ]);
+
+      await run();
+
+      expect(posixMatchesGlob).toHaveBeenCalledWith(
+        'providers/nested/deleted-provider.yaml',
+        'providers/**/*.yaml',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should skip when config dependencies do not match changed files', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);
