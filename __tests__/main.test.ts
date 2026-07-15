@@ -2464,6 +2464,12 @@ describe('GitHub Action Main', () => {
       // Should NOT have these
       expect(args).not.toContain('--share');
       expect(args).not.toContain('--prompts'); // because use-config-prompts is true
+      expect(
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body,
+      ).toContain('Evaluated config-defined prompts');
+      expect(
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body,
+      ).not.toContain('Evaluated prompt files');
     });
 
     test('should use console guidance in PR comments without a share URL', async () => {
@@ -2544,7 +2550,9 @@ describe('GitHub Action Main', () => {
         },
         configurable: true,
       });
-      withInputs({ prompts: '' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
 
       await run();
 
@@ -2552,6 +2560,7 @@ describe('GitHub Action Main', () => {
         'Evaluated Files',
         3,
       );
+      expect(mockCore.summary.addList).not.toHaveBeenCalled();
       expect(mockCore.summary.write).toHaveBeenCalled();
     });
 

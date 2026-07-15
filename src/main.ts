@@ -1024,9 +1024,10 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const evaluationDescription = evaluationPromptFiles.length
-        ? `⚠️ Evaluated prompt files: ${evaluationPromptFiles.join(', ')}`
-        : '⚠️ Evaluated config-defined prompts';
+      const evaluationDescription =
+        !useConfigPrompts && evaluationPromptFiles.length
+          ? `⚠️ Evaluated prompt files: ${evaluationPromptFiles.join(', ')}`
+          : '⚠️ Evaluated config-defined prompts';
       let body = `${evaluationDescription}
 
 | Success | Failure |
@@ -1062,7 +1063,7 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (evaluationPromptFiles.length > 0) {
+      if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
         summary.addList(evaluationPromptFiles);
       }
