@@ -39861,11 +39861,14 @@ async function run() {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
-    const promptsToEvaluate = [
-      ...new Set(
-        configChanged || dependencyChanged ? allPromptFiles : promptFiles
-      )
-    ];
+    const selectedPromptFiles = configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const seenPromptFiles = /* @__PURE__ */ new Set();
+    const promptsToEvaluate = selectedPromptFiles.filter((promptFile) => {
+      const absolutePrompt = path7.resolve(workingDirectory, promptFile);
+      if (seenPromptFiles.has(absolutePrompt)) return false;
+      seenPromptFiles.add(absolutePrompt);
+      return true;
+    });
     const evaluatedPromptFiles = useConfigPrompts ? [] : promptsToEvaluate;
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(

@@ -1272,6 +1272,31 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should deduplicate the same prompt matched by relative and absolute action globs', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts', 'prompt1.txt');
+      withInputs({
+        prompts: `prompts/*.txt\n${path.join(process.cwd(), 'prompts', 'prompt1.*')}`,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync
+        .mockReturnValueOnce(['prompts/prompt1.txt'])
+        .mockReturnValueOnce([absolutePrompt]);
+
+      await run();
+
+      const promptfooArgs = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(promptfooArgs).toContain('prompts/prompt1.txt');
+      expect(promptfooArgs).not.toContain(absolutePrompt);
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body;
+      expect(commentBody).toContain(
+        'Evaluated prompt files: prompts/prompt1.txt',
+      );
+      expect(commentBody).not.toContain(absolutePrompt);
+    });
+
     test('should run when the last file from an extension-style dependency directory is deleted', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers.v1/deleted.py', status: 'removed' },

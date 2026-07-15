@@ -609,11 +609,15 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const promptsToEvaluate = [
-      ...new Set(
-        configChanged || dependencyChanged ? allPromptFiles : promptFiles,
-      ),
-    ];
+    const selectedPromptFiles =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const seenPromptFiles = new Set<string>();
+    const promptsToEvaluate = selectedPromptFiles.filter((promptFile) => {
+      const absolutePrompt = path.resolve(workingDirectory, promptFile);
+      if (seenPromptFiles.has(absolutePrompt)) return false;
+      seenPromptFiles.add(absolutePrompt);
+      return true;
+    });
     const evaluatedPromptFiles = useConfigPrompts ? [] : promptsToEvaluate;
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
