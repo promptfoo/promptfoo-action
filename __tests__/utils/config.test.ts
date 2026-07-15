@@ -43,6 +43,8 @@ describe('extractFileDependencies', () => {
     mockFs.existsSync.mockReturnValue(false);
     mockFs.realpathSync.mockImplementation((filePath: string) => filePath);
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
+    delete process.env.PROVIDER_PATH;
+    delete process.env.PROVIDER_TOOLS_PATH;
   });
 
   it('should extract file:// providers', () => {
@@ -209,6 +211,64 @@ targets: file://targets/custom.py:call_api
     ]);
   });
 
+  it('should resolve an env-templated provider path inside the workspace', () => {
+    process.env.PROVIDER_PATH = '../providers/custom.py:call_api';
+    mockFs.readFileSync.mockReturnValue(
+      'providers: "file://{{ env.PROVIDER_PATH }}"',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/custom.py']);
+  });
+
+  it('should resolve env-templated nested provider dependencies', () => {
+    process.env.PROVIDER_TOOLS_PATH = '../shared/tools.js:getTools';
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'providers: file://providers.yaml'
+        : 'config:\n  tools: "file://{{ env.PROVIDER_TOOLS_PATH }}"',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers.yaml', 'shared/tools.js']);
+  });
+
+  it('should reject unsafe env-templated provider paths without leaking values', () => {
+    process.env.PROVIDER_PATH = '../../outside/SECRET_MARKER.py';
+    mockFs.readFileSync.mockReturnValue(
+      'providers: "file://{{ env.PROVIDER_PATH }}"',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
+  });
+
+  it('should conservatively watch the workspace for unresolved provider templates', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: "file://{{ env.PROVIDER_PATH }}"',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
   it('should extract nested references from matched provider config globs', () => {
     mockFs.readFileSync.mockImplementation((filePath: string) => {
       if (filePath.endsWith('promptfooconfig.yaml')) {
@@ -270,7 +330,7 @@ targets: file://targets/custom.py:call_api
     expect(deps).toEqual(['providers/']);
   });
 
-  it('should preserve the workspace sentinel for an empty root provider glob', () => {
+  it('should preserve the pattern for an empty root provider glob', () => {
     mockFs.readFileSync.mockReturnValue(
       'providers: file:///test/working/deleted_provider_*.yaml',
     );
@@ -283,7 +343,7 @@ targets: file://targets/custom.py:call_api
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['./']);
+    expect(deps).toEqual(['deleted_provider_*.yaml']);
   });
 
   it('should stop safely if a provider glob has no non-glob ancestor', () => {

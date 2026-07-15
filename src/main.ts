@@ -501,6 +501,15 @@ export async function run(): Promise<void> {
             return true;
           }
 
+          if (
+            glob.hasMagic(dep) &&
+            changedFilesList.some((changedFile) =>
+              path.matchesGlob(changedFile, dep),
+            )
+          ) {
+            return true;
+          }
+
           // Direct file match
           if (changedFilesList.includes(dep)) {
             return true;

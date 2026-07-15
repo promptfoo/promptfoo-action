@@ -76,6 +76,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const resolveConfigDependency = (
       filePath: string,
       source: string,
+      displayPath: string = filePath,
     ): string | undefined => {
       try {
         if (!filePath) {
@@ -95,7 +96,7 @@ export function extractFileDependencies(configPath: string): string[] {
         return absolutePath;
       } catch (error) {
         core.warning(
-          `Ignoring unsafe config dependency "${filePath}": ${String(
+          `Ignoring unsafe config dependency "${displayPath}": ${String(
             error,
           ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
         );
@@ -104,11 +105,16 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): string[] => {
+    const processFileUrl = (
+      fileUrl: string,
+      displayFileUrl: string = fileUrl,
+    ): string[] => {
       const filePath = fileUrl.replace('file://', '');
+      const displayPath = displayFileUrl.replace('file://', '');
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
+        displayPath,
       );
       if (!absolutePath) {
         return [];
@@ -127,7 +133,7 @@ export function extractFileDependencies(configPath: string): string[] {
             resolvedPaths.push(absoluteMatch);
           } else {
             core.warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+              'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
             );
           }
         }
@@ -143,7 +149,11 @@ export function extractFileDependencies(configPath: string): string[] {
           basePath = parentPath;
         }
         if (isSafeDependencyPath(basePath)) {
-          dependencies.add(`${basePath.replace(/[\\/]+$/, '')}${path.sep}`);
+          if (path.relative(cwd, basePath) === '') {
+            dependencies.add(absolutePath);
+          } else {
+            dependencies.add(`${basePath.replace(/[\\/]+$/, '')}${path.sep}`);
+          }
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
@@ -170,7 +180,26 @@ export function extractFileDependencies(configPath: string): string[] {
           return;
         }
 
-        const providerPath = value.slice('file://'.length);
+        const rawProviderPath = value.slice('file://'.length);
+        let unresolvedTemplate = false;
+        const providerPath = rawProviderPath.replace(
+          /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g,
+          (template: string, key: string) => {
+            const envValue = process.env[key];
+            if (envValue === undefined) {
+              unresolvedTemplate = true;
+              return template;
+            }
+            return envValue;
+          },
+        );
+        if (unresolvedTemplate || /\{\{|\}\}/.test(providerPath)) {
+          dependencies.add(
+            `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
+          );
+          return;
+        }
+
         const selectorIndex = providerPath.lastIndexOf(':');
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
@@ -184,7 +213,7 @@ export function extractFileDependencies(configPath: string): string[] {
             ? candidatePath
             : providerPath;
 
-        const resolvedPaths = processFileUrl(`file://${cleanPath}`);
+        const resolvedPaths = processFileUrl(`file://${cleanPath}`, value);
         if (
           resolvedPaths.length === 0 &&
           cleanPath &&
@@ -216,7 +245,7 @@ export function extractFileDependencies(configPath: string): string[] {
             processProviderValue(providerConfig);
           } catch {
             core.warning(
-              `Failed to extract nested provider dependencies from "${cleanPath}"; tracking the provider config file only`,
+              `Failed to extract nested provider dependencies from "${rawProviderPath}"; tracking the provider config file only`,
             );
           }
         }

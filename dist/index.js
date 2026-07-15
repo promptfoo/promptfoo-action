@@ -36315,7 +36315,7 @@ function extractFileDependencies(configPath) {
         return code === "ENOENT" || code === "ENOTDIR";
       }
     };
-    const resolveConfigDependency = (filePath, source) => {
+    const resolveConfigDependency = (filePath, source, displayPath = filePath) => {
       try {
         if (!filePath) {
           throw new Error(`${source} is empty`);
@@ -36332,18 +36332,20 @@ function extractFileDependencies(configPath) {
         return absolutePath;
       } catch (error2) {
         warning(
-          `Ignoring unsafe config dependency "${filePath}": ${String(
+          `Ignoring unsafe config dependency "${displayPath}": ${String(
             error2
           ).replace(/^(?:[A-Za-z]+)?Error: /, "")}`
         );
         return void 0;
       }
     };
-    const processFileUrl = (fileUrl) => {
+    const processFileUrl = (fileUrl, displayFileUrl = fileUrl) => {
       const filePath = fileUrl.replace("file://", "");
+      const displayPath = displayFileUrl.replace("file://", "");
       const absolutePath = resolveConfigDependency(
         filePath,
-        "config file dependency"
+        "config file dependency",
+        displayPath
       );
       if (!absolutePath) {
         return [];
@@ -36358,7 +36360,7 @@ function extractFileDependencies(configPath) {
             resolvedPaths.push(absoluteMatch);
           } else {
             warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`
+              "Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace"
             );
           }
         }
@@ -36371,7 +36373,11 @@ function extractFileDependencies(configPath) {
           basePath = parentPath;
         }
         if (isSafeDependencyPath(basePath)) {
-          dependencies.add(`${basePath.replace(/[\\/]+$/, "")}${path5.sep}`);
+          if (path5.relative(cwd, basePath) === "") {
+            dependencies.add(absolutePath);
+          } else {
+            dependencies.add(`${basePath.replace(/[\\/]+$/, "")}${path5.sep}`);
+          }
         }
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
@@ -36390,13 +36396,31 @@ function extractFileDependencies(configPath) {
         if (!value.startsWith("file://")) {
           return;
         }
-        const providerPath = value.slice("file://".length);
+        const rawProviderPath = value.slice("file://".length);
+        let unresolvedTemplate = false;
+        const providerPath = rawProviderPath.replace(
+          /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g,
+          (template, key) => {
+            const envValue = process.env[key];
+            if (envValue === void 0) {
+              unresolvedTemplate = true;
+              return template;
+            }
+            return envValue;
+          }
+        );
+        if (unresolvedTemplate || /\{\{|\}\}/.test(providerPath)) {
+          dependencies.add(
+            `${dependencyRoot.replace(/[\\/]+$/, "")}${path5.sep}`
+          );
+          return;
+        }
         const selectorIndex = providerPath.lastIndexOf(":");
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
         const selectorPattern = /\.rb$/i.test(candidatePath) ? /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*[!?]?$/ : /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/;
         const cleanPath = selectorIndex > 1 && /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(candidatePath) && selectorPattern.test(selector) ? candidatePath : providerPath;
-        const resolvedPaths = processFileUrl(`file://${cleanPath}`);
+        const resolvedPaths = processFileUrl(`file://${cleanPath}`, value);
         if (resolvedPaths.length === 0 && cleanPath && !cleanPath.includes("\0") && !le(cleanPath)) {
           const lexicalPath = path5.resolve(configDir, cleanPath);
           if (isPathInside(dependencyRoot, lexicalPath)) {
@@ -36418,7 +36442,7 @@ function extractFileDependencies(configPath) {
             processProviderValue(providerConfig);
           } catch {
             warning(
-              `Failed to extract nested provider dependencies from "${cleanPath}"; tracking the provider config file only`
+              `Failed to extract nested provider dependencies from "${rawProviderPath}"; tracking the provider config file only`
             );
           }
         }
@@ -37196,6 +37220,11 @@ async function run() {
         );
         dependencyChanged = dependencies.some((dep) => {
           if (dep === "./") {
+            return true;
+          }
+          if (le(dep) && changedFilesList.some(
+            (changedFile) => path6.matchesGlob(changedFile, dep)
+          )) {
             return true;
           }
           if (changedFilesList.includes(dep)) {

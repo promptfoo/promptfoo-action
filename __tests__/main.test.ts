@@ -104,6 +104,7 @@ vi.mock('fs', async () => {
 });
 vi.mock('glob', () => ({
   sync: vi.fn(),
+  hasMagic: vi.fn(),
 }));
 vi.mock('dotenv');
 
@@ -137,6 +138,7 @@ import * as glob from 'glob';
 
 const mockGlob = glob as unknown as {
   sync: MockedFunction<typeof glob.sync>;
+  hasMagic: MockedFunction<typeof glob.hasMagic>;
 };
 
 const DEFAULT_INPUTS: Record<string, string> = {
@@ -251,6 +253,7 @@ function setupCommonMocks(): MockOctokit {
 
   // Setup glob mock - return files that will match changed files
   mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+  mockGlob.hasMagic.mockImplementation((value: string) => value.includes('*'));
 
   return mockOctokit;
 }
@@ -947,6 +950,38 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when a workspace-root dependency glob matches a change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'deleted_provider_one.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'deleted_provider_*.yaml',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should skip an unrelated change for a workspace-root dependency glob', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'docs/readme.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'deleted_provider_*.yaml',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should detect dependency directories without a trailing slash', async () => {
