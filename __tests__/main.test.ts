@@ -1601,6 +1601,23 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalledTimes(shouldRun ? 1 : 0);
     });
 
+    test('should use POSIX semantics when matching repository dependency globs', async () => {
+      const posixMatcher = vi.spyOn(path.posix, 'matchesGlob');
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'tests/fixtures/deleted.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['tests/**/*.yaml']);
+
+      await run();
+
+      expect(posixMatcher).toHaveBeenCalledWith(
+        'tests/fixtures/deleted.yaml',
+        'tests/**/*.yaml',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should match a deleted dependency from a brace-only glob', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'deleted_first.txt' },

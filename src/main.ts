@@ -575,7 +575,7 @@ export async function run(): Promise<void> {
                   braceExpandMax: 1024,
                 }) &&
                 changedFilesList.some((changedFile) =>
-                  path.matchesGlob(changedFile, dep),
+                  path.posix.matchesGlob(changedFile, dep),
                 )
               ) {
                 return true;
