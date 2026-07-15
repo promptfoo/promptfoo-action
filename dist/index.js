@@ -36646,22 +36646,25 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         if (next.context === "provider-list") {
           nestedFileUrls.push(...normalizeProviderFileUrls(next.value));
         } else if (next.value.startsWith("file://")) {
-          nestedFileUrls.push(
-            ...next.context === "general" ? [next.value] : normalizeFileUrlSelectors(
-              next.value,
-              /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/,
-              false,
-              true
-            )
+          const normalizedFileUrls = next.context === "general" ? [next.value] : normalizeFileUrlSelectors(
+            next.value,
+            /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/,
+            false,
+            true
           );
+          if (next.context === "assertion" && normalizedFileUrls.some((fileUrl) => fileUrl !== next.value)) {
+            normalizedSelectorUrls.add(next.value);
+          }
+          nestedFileUrls.push(...normalizedFileUrls);
         }
         continue;
       }
       if (typeof next.value !== "object" || next.value === null || !Array.isArray(next.value) && Object.getPrototypeOf(next.value) !== Object.prototype) {
         continue;
       }
-      const objectsForFile = inspectedObjects.get(next.file) ?? /* @__PURE__ */ new WeakSet();
-      inspectedObjects.set(next.file, objectsForFile);
+      const inspectionContext = `${next.file}\0${next.context}`;
+      const objectsForFile = inspectedObjects.get(inspectionContext) ?? /* @__PURE__ */ new WeakSet();
+      inspectedObjects.set(inspectionContext, objectsForFile);
       if (objectsForFile.has(next.value)) {
         continue;
       }
@@ -36841,7 +36844,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         if (typeof record.$ref !== "string") {
           throw new Error("Invalid Promptfoo config ref");
         }
-        const refKey = `${next.file}\0${record.$ref}`;
+        const refKey = `${next.file}\0${next.context}\0${record.$ref}`;
         if (!discoveredRefs.has(refKey)) {
           if (discoveredRefs.size >= maxConfigRefs) {
             throw new Error(
@@ -39033,9 +39036,7 @@ async function run() {
           }
           return file === trimmed2 ? [file] : [file, trimmed2];
         }).join("\0");
-        info(
-          `Using manually specified files: ${JSON.stringify(trimmedFiles)}`
-        );
+        info(`Using ${trimmedFiles.length} manually specified files`);
       } else {
         validateGitRevision(compareBase);
         try {
@@ -39095,7 +39096,10 @@ async function run() {
     }
     const promptFiles = [];
     const allPromptFiles = [];
-    const changedFilesList = changedFiles.split(changedFiles.includes("\0") ? "\0" : "\n").filter(Boolean);
+    const containsQuotedControlPath = !changedFiles.includes("\0") && /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
+      changedFiles
+    );
+    const changedFilesList = containsQuotedControlPath ? [] : changedFiles.split(changedFiles.includes("\0") ? "\0" : "\n").filter(Boolean);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
@@ -39122,16 +39126,14 @@ async function run() {
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
+    const dependencies = extractFileDependencies(
+      configAbsolutePath,
+      process.cwd(),
+      workingDirectory
+    ).map(toRepositoryPath);
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(
-        configAbsolutePath,
-        process.cwd(),
-        workingDirectory
-      ).map(toRepositoryPath);
       if (dependencies.length > 0) {
-        debug(
-          `Found ${dependencies.length} file dependencies in config: ${JSON.stringify(dependencies)}`
-        );
+        debug(`Found ${dependencies.length} file dependencies in config`);
         dependencyChanged = dependencies.some((dep) => {
           if (dep === "./" || dep === "." || /[\r\n\0]/.test(dep)) {
             return true;
@@ -39382,8 +39384,8 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = evaluatedPromptFiles.join(", ");
-      const description = useConfigPrompts ? "\u26A0\uFE0F Evaluation used prompts defined in the Promptfoo config." : forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? `\u26A0\uFE0F Evaluated prompt files: ${modifiedFiles}` : `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}`;
+      const evaluatedFiles = evaluatedPromptFiles.join(", ");
+      const description = evaluatedPromptFiles.length === 0 ? "Evaluated config-defined prompts" : forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? `Evaluated prompt files: ${evaluatedFiles}` : `\u26A0\uFE0F LLM prompt was modified in these files: ${evaluatedFiles}`;
       let body = `${description}
 
 | Success | Failure |
