@@ -36506,10 +36506,11 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
     };
     const inspectedTestFiles = /* @__PURE__ */ new Set();
     const inspectTestFile = (testFile, refBaseDir = refResolutionRoot, testBaseDir = path5.dirname(testFile)) => {
-      if (inspectedTestFiles.has(testFile) || !/\.(?:ya?ml|jsonl?)$/i.test(testFile) || !fs6.existsSync(testFile)) {
+      const inspectionKey = `${testFile}\0${testBaseDir}`;
+      if (inspectedTestFiles.has(inspectionKey) || !/\.(?:ya?ml|jsonl?)$/i.test(testFile) || !fs6.existsSync(testFile)) {
         return;
       }
-      inspectedTestFiles.add(testFile);
+      inspectedTestFiles.add(inspectionKey);
       try {
         const realDependencyRoot = fs6.realpathSync(dependencyRoot);
         const realTestFile = fs6.realpathSync(testFile);

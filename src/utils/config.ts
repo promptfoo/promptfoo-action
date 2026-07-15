@@ -346,14 +346,15 @@ export function extractFileDependencies(
       refBaseDir = refResolutionRoot,
       testBaseDir = path.dirname(testFile),
     ): void => {
+      const inspectionKey = `${testFile}\0${testBaseDir}`;
       if (
-        inspectedTestFiles.has(testFile) ||
+        inspectedTestFiles.has(inspectionKey) ||
         !/\.(?:ya?ml|jsonl?)$/i.test(testFile) ||
         !fs.existsSync(testFile)
       ) {
         return;
       }
-      inspectedTestFiles.add(testFile);
+      inspectedTestFiles.add(inspectionKey);
 
       try {
         const realDependencyRoot = fs.realpathSync(dependencyRoot);

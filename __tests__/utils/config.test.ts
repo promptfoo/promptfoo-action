@@ -389,6 +389,37 @@ tests:
     ]);
   });
 
+  it('should inspect a shared $ref for each outer test vars base', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        const target = String(filePath);
+        if (/\/tests\/[ab]\/cases\.yaml$/.test(target)) {
+          return '- $ref: data/common.yaml#/case';
+        }
+        if (target.endsWith('/data/common.yaml')) {
+          return 'case:\n  vars: vars/inputs.yaml';
+        }
+        return [
+          'tests:',
+          '  - file://tests/a/cases.yaml',
+          '  - file://tests/b/cases.yaml',
+        ].join('\n');
+      },
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      'tests/a/cases.yaml',
+      'data/common.yaml',
+      'tests/a/vars/inputs.yaml',
+      'tests/b/cases.yaml',
+      'tests/b/vars/inputs.yaml',
+    ]);
+  });
+
   it('should ignore fragment-only, remote, and outside-workspace test $refs', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
     mockFs.readFileSync.mockImplementation(
