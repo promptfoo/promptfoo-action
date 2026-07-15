@@ -2211,7 +2211,7 @@ tests:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/tests/cases.yaml', '../config/']);
+    ).toEqual(['../config/tests/cases.yaml', '../config/', '/']);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('Failed to inspect test file dependency'),
     );
@@ -2427,6 +2427,7 @@ tests:
     ).toEqual([
       `../config/tests/cases.${extension}`,
       '../config/',
+      '/',
       '../config/data/prod.txt',
       '../config/data/',
     ]);
@@ -2493,6 +2494,7 @@ tests:
     ).toEqual([
       '../config/tests/cases.yaml',
       '../config/',
+      '/',
       '../config/expected/prod/real.txt',
       '../config/expected/',
     ]);
@@ -2672,7 +2674,7 @@ tests:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/tests/cases.yaml', '../config/']);
+    ).toEqual(['../config/tests/cases.yaml', '../config/', '/']);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('Failed to inspect test file dependency'),
     );
@@ -2692,7 +2694,7 @@ tests:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual([`../config/tests/${fileName}`, '../config/']);
+    ).toEqual([`../config/tests/${fileName}`, '../config/', '/']);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('Failed to inspect test file dependency'),
     );
@@ -2708,7 +2710,7 @@ tests:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/tests/huge.yaml', '../config/']);
+    ).toEqual(['../config/tests/huge.yaml', '../config/', '/']);
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('exceeds the maximum inspection size'),
@@ -2727,7 +2729,7 @@ tests:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/tests/locked.yaml', '../config/']);
+    ).toEqual(['../config/tests/locked.yaml', '../config/', '/']);
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('could not be inspected safely'),
@@ -3059,6 +3061,7 @@ tests:
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual([
       '../config/',
+      '/',
       '../config/tests/active.yaml',
       '../config/tests/',
     ]);
@@ -3075,6 +3078,37 @@ tests:
     expect(
       extractFileDependencies('/test/workspace/evals/promptfooconfig.yaml'),
     ).toEqual(['/', 'evals/tests/active.yaml', 'evals/']);
+  });
+
+  it('should watch the checkout root for an env-templated dependency from an external config', () => {
+    mockFs.readFileSync.mockReturnValue('tests: "file://{{ env.TEST_FILE }}"');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['../shared/', '/']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/shared/**/*',
+      expect.objectContaining({ nodir: true }),
+    );
+  });
+
+  it('should watch both trusted roots when a structured dependency from an external config cannot be parsed', () => {
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath).endsWith('cases.jsonl')
+        ? '{not-json'
+        : 'tests: file://tests/cases.jsonl',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['../shared/tests/cases.jsonl', '../shared/', '/']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to inspect test file dependency'),
+    );
   });
 
   it('should expand a full Nunjucks env expression that renders nested paths', () => {
@@ -3359,7 +3393,7 @@ tests: file:///test/working/tests/*.yaml
 
     expect(
       extractFileDependencies('/test/shared/promptfooconfig.yaml'),
-    ).toEqual(['tests/generate.py', '/']);
+    ).toEqual(['tests/generate.py', '../shared/', '/']);
     expect(core.warning).not.toHaveBeenCalled();
   });
 
@@ -3709,7 +3743,7 @@ tests: "file://tests/\\0*.yaml"
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/providers/custom.py', '../config/']);
+    ).toEqual(['../config/providers/custom.py', '../config/', '/']);
     expect(mockGlob.hasMagic).toHaveBeenCalledTimes(1);
     expect(mockGlob.sync).not.toHaveBeenCalled();
     expect(core.warning).toHaveBeenCalledWith(
@@ -3736,7 +3770,7 @@ tests: file://${longGlob}
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/providers/custom.py', '../config/']);
+    ).toEqual(['../config/providers/custom.py', '../config/', '/']);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('Failed to parse config dependency glob'),
     );

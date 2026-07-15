@@ -190,6 +190,11 @@ export function extractFileDependencies(
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const isSafeDependency = (targetPath: string): boolean =>
     isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
+  const addConservativeWatchRoots = (): void => {
+    for (const root of new Set([dependencyRoot, cwd])) {
+      dependencies.add(`${root.replace(/[\\/]+$/, '')}${path.sep}`);
+    }
+  };
   let configParsed = false;
 
   try {
@@ -288,7 +293,7 @@ export function extractFileDependencies(
       const uncommentedPath = stripNunjucksComments(filePath);
       const expandedPath = expandEnvTemplates(filePath);
       if (expandedPath !== uncommentedPath) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        addConservativeWatchRoots();
       }
       return expandedPath;
     };
@@ -360,7 +365,7 @@ export function extractFileDependencies(
           useWindowsPathsNoEscape,
         )
       ) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        addConservativeWatchRoots();
         warnSafe(
           normalizedPath.length > MAX_PROVIDER_REFERENCE_LENGTH
             ? 'Failed to parse config dependency glob: pattern is invalid or exceeds the maximum expansion size; conservatively watching the dependency root'
@@ -383,14 +388,14 @@ export function extractFileDependencies(
             })
           : [normalizedPath];
       } catch (error) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        addConservativeWatchRoots();
         warnSafe(
           `Failed to parse config dependency glob (${source}): ${error instanceof Error ? error.message : String(error)}; conservatively watching the dependency root`,
         );
         return [];
       }
       if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        addConservativeWatchRoots();
         warnSafe(
           'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
         );
@@ -555,7 +560,7 @@ export function extractFileDependencies(
     const processProviderFile = (providerId: string): void => {
       const expandedProviderId = expandAndTrackEnvTemplates(providerId);
       if (expandedProviderId.startsWith('exec:')) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        addConservativeWatchRoots();
         return;
       }
       const providerPath = getLocalProviderPath(expandedProviderId);
@@ -811,7 +816,7 @@ export function extractFileDependencies(
       if (typeof nestedTest.$id === 'string') {
         // JSON-schema scopes can redirect relative refs beyond what this
         // static traversal can safely resolve. Avoid false-negative skips.
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        addConservativeWatchRoots();
       }
       extractVarFiles(nestedTest.vars, testBaseDir);
       extractAssertFiles(nestedTest.assert);
@@ -1061,7 +1066,6 @@ export function extractFileDependencies(
       }
       inspectedTestFiles.add(inspectionKey);
 
-      let inspectionRoot = dependencyRoot;
       try {
         const realTestFile = fs.realpathSync(testFile);
         const containingRoot = getRealDependencyRoots().find(({ real }) =>
@@ -1074,15 +1078,11 @@ export function extractFileDependencies(
           );
           return;
         }
-        inspectionRoot = containingRoot.lexical;
-
         if (/\.(?:xlsx?|py|[cm]?[jt]s)$/i.test(realTestFile)) {
           // Excel parsing is asynchronous and generators execute code in
           // Promptfoo. A workspace marker safely prevents skipping referenced
           // changes without loading an untrusted workbook or generator here.
-          dependencies.add(
-            `${containingRoot.lexical.replace(/[\\/]+$/, '')}${path.sep}`,
-          );
+          addConservativeWatchRoots();
           return;
         }
 
@@ -1090,18 +1090,14 @@ export function extractFileDependencies(
         try {
           fileSize = fs.statSync(realTestFile).size;
         } catch {
-          dependencies.add(
-            `${containingRoot.lexical.replace(/[\\/]+$/, '')}${path.sep}`,
-          );
+          addConservativeWatchRoots();
           warnSafe(
             `Skipping structured dependency "${testFile}": file could not be inspected safely; conservatively watching the dependency root`,
           );
           return;
         }
         if (fileSize > MAX_INSPECTED_FILE_SIZE) {
-          dependencies.add(
-            `${containingRoot.lexical.replace(/[\\/]+$/, '')}${path.sep}`,
-          );
+          addConservativeWatchRoots();
           warnSafe(
             `Skipping structured dependency "${testFile}": file exceeds the maximum inspection size; conservatively watching the dependency root`,
           );
@@ -1134,9 +1130,7 @@ export function extractFileDependencies(
                 warnSafe(
                   `Failed to inspect CSV assertion in test file dependency "${testFile}"`,
                 );
-                dependencies.add(
-                  `${containingRoot.lexical.replace(/[\\/]+$/, '')}${path.sep}`,
-                );
+                addConservativeWatchRoots();
                 continue;
               }
               for (const assertionValue of values) {
@@ -1224,7 +1218,7 @@ export function extractFileDependencies(
           );
         }
       } catch {
-        dependencies.add(`${inspectionRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        addConservativeWatchRoots();
         warnSafe(`Failed to inspect test file dependency "${testFile}"`);
       }
     };
@@ -1250,7 +1244,7 @@ export function extractFileDependencies(
         (fileName.length > MAX_PROVIDER_REFERENCE_LENGTH ||
           /[\0\r\n]/.test(fileName))
       ) {
-        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        addConservativeWatchRoots();
         warnSafe(
           'Skipping invalid or oversized test file reference; conservatively watching the dependency root',
         );
