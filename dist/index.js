@@ -38750,7 +38750,7 @@ async function run() {
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const evaluatedFiles = evaluatedPromptFiles.join(", ");
-      const description = evaluatedPromptFiles.length === 0 ? "Evaluated config-defined prompts" : forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? `Evaluated prompt files: ${evaluatedFiles}` : `\u26A0\uFE0F LLM prompt was modified in these files: ${evaluatedFiles}`;
+      const description = useConfigPrompts || evaluatedPromptFiles.length === 0 ? "Evaluated config-defined prompts" : forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? `Evaluated prompt files: ${evaluatedFiles}` : `\u26A0\uFE0F LLM prompt was modified in these files: ${evaluatedFiles}`;
       let body = `${description}
 
 | Success | Failure |
@@ -38781,7 +38781,7 @@ async function run() {
         ["Success", output.results.stats.successes.toString()],
         ["Failure", output.results.stats.failures.toString()]
       ]);
-      if (evaluatedPromptFiles.length > 0) {
+      if (!useConfigPrompts && evaluatedPromptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
         summary2.addList(evaluatedPromptFiles);
       }
