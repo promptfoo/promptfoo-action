@@ -1,3 +1,4 @@
+import { sync } from 'glob';
 import { describe, expect, it } from 'vitest';
 import {
   getGlobRangeError,
@@ -16,6 +17,20 @@ describe('glob safety helpers', () => {
     expect(normalizeGlobPattern('prompts/trailing\\', 'linux')).toBe(
       'prompts/trailing/',
     );
+  });
+
+  it('should enumerate a backslash-separated POSIX glob after normalization', () => {
+    if (process.platform === 'win32') {
+      return;
+    }
+
+    expect(
+      sync(normalizeGlobPattern(String.raw`__tests__\*.test.ts`, 'linux'), {
+        cwd: process.cwd(),
+        nodir: true,
+        braceExpandMax: 1024,
+      }),
+    ).toContain('__tests__/main.test.ts');
   });
 
   it.each([
