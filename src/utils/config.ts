@@ -11,6 +11,7 @@ import {
   setTag,
   timestampTag,
 } from 'js-yaml';
+import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
@@ -22,6 +23,16 @@ const CONFIG_SCHEMA = CORE_SCHEMA.withTags(
   pairsTag,
   setTag,
 );
+const MAX_BRACE_EXPANSIONS = 1024;
+const HTTP_PROVIDER_FILE_PATH_KEYS = new Set([
+  'privateKeyPath',
+  'keystorePath',
+  'pfxPath',
+  'certPath',
+  'keyPath',
+  'caPath',
+  'jksPath',
+]);
 
 export function normalizeConfigFilePath(
   filePath: string,
@@ -137,6 +148,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const globOptions = {
       windowsPathsNoEscape: true,
       magicalBraces: true,
+      braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
     };
 
     const hasDynamicFilePath = (filePath: string): boolean =>
@@ -155,19 +167,81 @@ export function extractFileDependencies(configPath: string): string[] {
     ): string[] => {
       const filePath = normalizeConfigFilePath(fileUrl.replace('file://', ''));
       if (watchDynamicFilePath(filePath)) return [];
-      const absolutePath =
-        resolvedPath ??
-        resolveConfigDependency(filePath, 'config file dependency');
-      if (!absolutePath) {
-        return [];
-      }
 
       // Check if the path contains glob patterns
       if (glob.hasMagic(filePath, globOptions)) {
+        const expandedPaths = braceExpand(filePath.replace(/\\/g, '/'), {
+          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+        });
+        if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+          core.warning(
+            'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+          );
+          return [];
+        }
+
+        const safePatterns: string[] = [];
+        let unsafeAlternative = false;
+        let realDependencyRoot: string;
+        try {
+          realDependencyRoot = fs.realpathSync(dependencyRoot);
+        } catch {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+          core.warning(
+            'Skipping config dependency glob whose workspace root cannot be resolved; conservatively watching the dependency root',
+          );
+          return [];
+        }
+        for (const expandedPath of expandedPaths) {
+          const absolutePattern = path.resolve(
+            configDir,
+            expandedPath.replace(/[\\/]/g, path.sep),
+          );
+          if (!isPathInside(dependencyRoot, absolutePattern)) {
+            unsafeAlternative = true;
+            continue;
+          }
+
+          let existingPath = absolutePattern;
+          while (true) {
+            try {
+              if (
+                isPathInside(realDependencyRoot, fs.realpathSync(existingPath))
+              ) {
+                safePatterns.push(absolutePattern);
+              } else {
+                unsafeAlternative = true;
+              }
+              break;
+            } catch (error) {
+              const code = (error as NodeJS.ErrnoException).code;
+              if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+                unsafeAlternative = true;
+                break;
+              }
+              const parentPath = path.dirname(existingPath);
+              if (parentPath === existingPath) {
+                unsafeAlternative = true;
+                break;
+              }
+              existingPath = parentPath;
+            }
+          }
+        }
+        if (unsafeAlternative) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+          core.warning(
+            'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
+          );
+        }
+        if (safePatterns.length === 0) return [];
+
         // It's a glob pattern, expand it
-        const matches = glob.sync(absolutePath, {
+        const matches = glob.sync(safePatterns, {
           nodir: true,
           ...globOptions,
+          braceExpandMax: MAX_BRACE_EXPANSIONS,
         });
         const safeMatches: string[] = [];
         for (const match of matches) {
@@ -184,20 +258,25 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathRoot = path.parse(filePath).root;
-        const pathParts = filePath.slice(pathRoot.length).split(/[\\/]/);
-        let basePath = pathRoot;
-        for (const part of pathParts) {
-          if (glob.hasMagic(part, globOptions)) {
-            break;
+        for (const safePattern of safePatterns) {
+          const relativePattern = path.relative(configDir, safePattern);
+          const pathRoot = path.parse(relativePattern).root;
+          const pathParts = relativePattern
+            .slice(pathRoot.length)
+            .split(/[\\/]/);
+          let basePath = glob.hasMagic(relativePattern, globOptions)
+            ? pathRoot
+            : path.dirname(relativePattern);
+          if (glob.hasMagic(relativePattern, globOptions)) {
+            for (const part of pathParts) {
+              if (glob.hasMagic(part, globOptions)) break;
+              basePath = basePath ? path.join(basePath, part) : part;
+            }
           }
-          basePath = basePath ? path.join(basePath, part) : part;
-        }
-        if (basePath) {
-          const absoluteBasePath = path.resolve(configDir, basePath);
-          if (isPathInside(dependencyRoot, absoluteBasePath)) {
+          if (basePath) {
+            const absoluteBasePath = path.resolve(configDir, basePath);
             if (path.relative(cwd, absoluteBasePath) === '') {
-              dependencies.add(absolutePath);
+              dependencies.add(safePattern);
             } else {
               dependencies.add(
                 matches.length === 0
@@ -206,20 +285,21 @@ export function extractFileDependencies(configPath: string): string[] {
               );
             }
           } else {
-            core.warning(
-              'Ignoring unsafe config dependency glob base: config file dependency glob base must stay within the repository workspace',
+            dependencies.add(
+              path.relative(cwd, configDir) === ''
+                ? safePattern
+                : `${configDir}${path.sep}`,
             );
-            dependencies.add(`${configDir}${path.sep}`);
           }
-        } else {
-          dependencies.add(
-            path.relative(cwd, configDir) === ''
-              ? absolutePath
-              : `${configDir}${path.sep}`,
-          );
         }
         return safeMatches;
-      } else if (isDirectory(absolutePath)) {
+      }
+
+      const absolutePath =
+        resolvedPath ??
+        resolveConfigDependency(filePath, 'config file dependency');
+      if (!absolutePath) return [];
+      if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = fileUrl.endsWith('/')
           ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
@@ -264,49 +344,67 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     }
 
+    type ProviderReferenceContext = 'provider' | 'config';
     const visitedFileValues = new WeakSet<object>();
     const visitedNestedFileValues = new WeakSet<object>();
+    const visitedProviderValues = new WeakSet<object>();
+    const visitedProviderConfigValues = new WeakSet<object>();
     const inspectedNestedFiles = new Set<string>();
     const extractFileReferences = (
       value: unknown,
       inspectNestedFiles = false,
+      providerContext?: ProviderReferenceContext,
     ): void => {
-      if (typeof value === 'string' && value.startsWith('file://')) {
+      if (
+        typeof value === 'string' &&
+        hasDynamicFilePath(value) &&
+        value.includes('file://')
+      ) {
+        dependencies.add(`${dependencyRoot}${path.sep}`);
+      } else if (typeof value === 'string' && value.startsWith('file://')) {
         const fileUrl = value.replace(
           /(\.(?:[cm]?[jt]s|py|rb|go)):[^/\\:]+$/i,
           '$1',
         );
         if (inspectNestedFiles && /\.(?:json|ya?ml)$/i.test(fileUrl)) {
-          inspectNestedConfigFile(fileUrl);
+          inspectNestedConfigFile(fileUrl, providerContext);
         } else {
           processFileUrl(fileUrl);
         }
       } else if (Array.isArray(value)) {
-        const visitedValues = inspectNestedFiles
-          ? visitedNestedFileValues
-          : visitedFileValues;
+        const visitedValues = !inspectNestedFiles
+          ? visitedFileValues
+          : providerContext === 'provider'
+            ? visitedProviderValues
+            : visitedNestedFileValues;
         if (visitedValues.has(value)) return;
         visitedValues.add(value);
         for (const item of value) {
-          extractFileReferences(item, inspectNestedFiles);
+          extractFileReferences(item, inspectNestedFiles, providerContext);
         }
       } else if (
         typeof value === 'object' &&
         value !== null &&
         !ArrayBuffer.isView(value)
       ) {
-        const visitedValues = inspectNestedFiles
-          ? visitedNestedFileValues
-          : visitedFileValues;
+        const visitedValues = !inspectNestedFiles
+          ? visitedFileValues
+          : providerContext === 'provider'
+            ? visitedProviderValues
+            : providerContext === 'config'
+              ? visitedProviderConfigValues
+              : visitedNestedFileValues;
         if (visitedValues.has(value)) return;
         visitedValues.add(value);
         if ('file' in value && typeof value.file === 'string') {
-          const absolutePath = resolveConfigDependency(
-            value.file,
-            'config file dependency',
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
+          if (!watchDynamicFilePath(value.file)) {
+            const absolutePath = resolveConfigDependency(
+              value.file,
+              'config file dependency',
+            );
+            if (absolutePath) {
+              dependencies.add(absolutePath);
+            }
           }
         }
         if (
@@ -319,59 +417,97 @@ export function extractFileDependencies(configPath: string): string[] {
             '$1',
           );
           if (inspectNestedFiles && /\.(?:json|ya?ml)$/i.test(fileUrl)) {
-            inspectNestedConfigFile(fileUrl);
+            inspectNestedConfigFile(fileUrl, 'provider');
           } else {
             processFileUrl(fileUrl);
           }
         }
-        const isFileAuth =
-          inspectNestedFiles &&
-          'type' in value &&
-          value.type === 'file' &&
-          'path' in value &&
-          typeof value.path === 'string';
-        if (isFileAuth) {
-          const authPath = value.path as string;
-          const fileUrl = authPath.startsWith('file://')
-            ? authPath
-            : `file://${authPath}`;
-          processFileUrl(
-            fileUrl.replace(/(\.(?:[cm]?[jt]s|py|rb|go)):[^/\\:]+$/i, '$1'),
-          );
-        }
+        const isProviderDefinition =
+          providerContext === 'provider' &&
+          ('id' in value || 'config' in value);
         for (const [key, item] of Object.entries(value)) {
+          if (
+            providerContext === 'config' &&
+            (key === 'signatureAuth' || key === 'tls') &&
+            item &&
+            typeof item === 'object'
+          ) {
+            for (const [pathKey, pathValue] of Object.entries(item)) {
+              if (
+                HTTP_PROVIDER_FILE_PATH_KEYS.has(pathKey) &&
+                typeof pathValue === 'string'
+              ) {
+                processFileUrl(
+                  pathValue.startsWith('file://')
+                    ? pathValue
+                    : `file://${pathValue}`,
+                );
+              }
+            }
+          }
+          if (
+            providerContext === 'config' &&
+            key === 'auth' &&
+            item &&
+            typeof item === 'object' &&
+            'type' in item &&
+            item.type === 'file' &&
+            'path' in item &&
+            typeof item.path === 'string'
+          ) {
+            const fileUrl = item.path.startsWith('file://')
+              ? item.path
+              : `file://${item.path}`;
+            processFileUrl(
+              fileUrl.replace(/(\.(?:[cm]?[jt]s|py|rb|go)):[^/\\:]+$/i, '$1'),
+            );
+            continue;
+          }
           if (inspectNestedFiles && key.startsWith('file://')) {
             const fileUrl = key.replace(
               /(\.(?:[cm]?[jt]s|py|rb|go)):[^/\\:]+$/i,
               '$1',
             );
             if (/\.(?:json|ya?ml)$/i.test(fileUrl)) {
-              inspectNestedConfigFile(fileUrl);
+              inspectNestedConfigFile(fileUrl, 'provider');
             } else {
               processFileUrl(fileUrl);
             }
           }
-          if (
-            key !== 'file' &&
-            key !== 'id' &&
-            !(isFileAuth && key === 'path')
-          ) {
-            extractFileReferences(item, inspectNestedFiles);
+          if (key !== 'file' && key !== 'id') {
+            const nextProviderContext =
+              providerContext !== 'provider'
+                ? undefined
+                : key === 'config'
+                  ? 'config'
+                  : isProviderDefinition
+                    ? undefined
+                    : 'provider';
+            extractFileReferences(
+              item,
+              inspectNestedFiles,
+              nextProviderContext,
+            );
           }
         }
       }
     };
 
-    const inspectNestedConfigFile = (fileUrl: string): void => {
+    const inspectNestedConfigFile = (
+      fileUrl: string,
+      providerContext?: ProviderReferenceContext,
+    ): void => {
       const filePath = normalizeConfigFilePath(fileUrl.slice('file://'.length));
-      if (watchDynamicFilePath(filePath)) return;
+      if (glob.hasMagic(filePath, globOptions)) {
+        processFileUrl(fileUrl);
+        return;
+      }
       const absolutePath = resolveConfigDependency(
         filePath,
         'nested config file dependency',
       );
       if (!absolutePath) return;
       processFileUrl(fileUrl, absolutePath);
-      if (glob.hasMagic(filePath, globOptions)) return;
 
       try {
         const realDependencyRoot = fs.realpathSync(dependencyRoot);
@@ -382,13 +518,15 @@ export function extractFileDependencies(configPath: string): string[] {
           );
           return;
         }
-        if (inspectedNestedFiles.has(realFilePath)) return;
-        inspectedNestedFiles.add(realFilePath);
+        const inspectedFileKey = `${realFilePath}:${providerContext ?? 'nested'}`;
+        if (inspectedNestedFiles.has(inspectedFileKey)) return;
+        inspectedNestedFiles.add(inspectedFileKey);
         extractFileReferences(
           loadYaml(fs.readFileSync(realFilePath, 'utf8'), {
             schema: CONFIG_SCHEMA,
           }),
           true,
+          providerContext,
         );
       } catch {
         core.warning(
@@ -412,16 +550,15 @@ export function extractFileDependencies(configPath: string): string[] {
         .replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, '$1')
         .replace(/(\.xlsx?)#.*$/i, '$1');
       const fileUrl = `file://${filePath}`;
-      const absolutePath = resolveConfigDependency(
-        filePath,
-        'test variable file dependency',
-      );
+      const absolutePath = glob.hasMagic(filePath, globOptions)
+        ? path.resolve(configDir, filePath)
+        : resolveConfigDependency(filePath, 'test variable file dependency');
       if (!absolutePath) return;
       if (inspectedVarPaths.has(absolutePath)) return;
       inspectedVarPaths.add(absolutePath);
       const varFiles = processFileUrl(fileUrl, absolutePath);
-      if (/\.(?:[cm]?[jt]s|py|xlsx?)$/i.test(filePath)) return;
       for (const varFile of varFiles) {
+        if (!/\.(?:json|ya?ml)$/i.test(varFile)) continue;
         if (inspectedVarFiles.has(varFile)) continue;
         inspectedVarFiles.add(varFile);
         try {
@@ -471,7 +608,7 @@ export function extractFileDependencies(configPath: string): string[] {
       for (const assert of asserts) {
         if (!assert || typeof assert !== 'object') continue;
         extractFileReferences(assert.value);
-        extractFileReferences(assert.provider, true);
+        extractFileReferences(assert.provider, true, 'provider');
         extractFileReferences(assert.config);
         extractFileReferences(assert.rubricPrompt);
         extractFileReferences(assert.transform);
@@ -485,7 +622,11 @@ export function extractFileDependencies(configPath: string): string[] {
     ): void => {
       if (!options || typeof options !== 'object') return;
       for (const [key, value] of Object.entries(options)) {
-        extractFileReferences(value, key === 'provider');
+        extractFileReferences(
+          value,
+          key === 'provider',
+          key === 'provider' ? 'provider' : undefined,
+        );
       }
     };
 
@@ -495,19 +636,21 @@ export function extractFileDependencies(configPath: string): string[] {
         if (config.defaultTest.startsWith('file://')) {
           const defaultTestFile = config.defaultTest.slice('file://'.length);
           const hasDynamicDefaultTestPath = hasDynamicFilePath(defaultTestFile);
-          const defaultTestPath = hasDynamicDefaultTestPath
-            ? undefined
-            : resolveConfigDependency(
-                defaultTestFile,
-                'defaultTest file dependency',
-              );
+          const isDefaultTestGlob = glob.hasMagic(defaultTestFile, globOptions);
+          const defaultTestPath =
+            hasDynamicDefaultTestPath || isDefaultTestGlob
+              ? undefined
+              : resolveConfigDependency(
+                  defaultTestFile,
+                  'defaultTest file dependency',
+                );
           if (hasDynamicDefaultTestPath) {
             dependencies.add(`${dependencyRoot}${path.sep}`);
           }
-          if (defaultTestPath) {
+          if (!hasDynamicDefaultTestPath) {
             processFileUrl(config.defaultTest);
           }
-          if (defaultTestPath && !glob.hasMagic(defaultTestFile, globOptions)) {
+          if (defaultTestPath && !isDefaultTestGlob) {
             try {
               const realDependencyRoot = fs.realpathSync(dependencyRoot);
               const realDefaultTestPath = fs.realpathSync(defaultTestPath);
@@ -528,7 +671,7 @@ export function extractFileDependencies(configPath: string): string[] {
                   extractVarFiles(defaultTest.vars);
                   extractAssertFiles(defaultTest.assert);
                   extractFileReferences(defaultTest.assertScoringFunction);
-                  extractFileReferences(defaultTest.provider, true);
+                  extractFileReferences(defaultTest.provider, true, 'provider');
                   extractOptionsFiles(defaultTest.options);
                 }
               }
@@ -546,7 +689,7 @@ export function extractFileDependencies(configPath: string): string[] {
         extractVarFiles(config.defaultTest.vars);
         extractAssertFiles(config.defaultTest.assert);
         extractFileReferences(config.defaultTest.assertScoringFunction);
-        extractFileReferences(config.defaultTest.provider, true);
+        extractFileReferences(config.defaultTest.provider, true, 'provider');
         extractOptionsFiles(config.defaultTest.options);
       }
     }

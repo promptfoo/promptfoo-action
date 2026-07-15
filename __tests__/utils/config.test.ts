@@ -344,9 +344,15 @@ defaultTest: file://defaults/default.yaml
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/']);
+    expect(deps).toEqual([
+      './',
+      'evals/defaults/default.yaml',
+      'evals/defaults',
+    ]);
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('glob match must stay within the repository'),
+      expect.stringContaining(
+        'glob alternative must stay within the repository',
+      ),
     );
   });
 
@@ -377,9 +383,210 @@ defaultTest: file://defaults/default.yaml
       'evals/defaults/two.yaml',
       'evals/defaults',
     ]);
-    expect(mockFs.realpathSync).not.toHaveBeenCalled();
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
     expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should retain safe sibling brace alternatives before glob enumeration', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: { context: "file://{../shared,tests}/*.yaml" }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/shared/shared.yaml',
+      '/test/working/evals/tests/test.yaml',
+    ]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    expect(mockGlob.sync.mock.calls[0]?.[0]).toEqual([
+      '/test/working/shared/*.yaml',
+      '/test/working/evals/tests/*.yaml',
+    ]);
+    expect(deps).toEqual(
+      expect.arrayContaining([
+        'evals/defaults/default.yaml',
+        'shared/shared.yaml',
+        'evals/tests/test.yaml',
+      ]),
+    );
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should reject escaping brace alternatives before glob enumeration', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: { context: "file://{../../../../secrets,tests}/*.yaml" }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/evals/tests/test.yaml']);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    expect(mockGlob.sync.mock.calls[0]?.[0]).toEqual([
+      '/test/working/evals/tests/*.yaml',
+    ]);
+    expect(deps).toEqual(
+      expect.arrayContaining([
+        'evals/defaults/default.yaml',
+        'evals/tests/test.yaml',
+        './',
+      ]),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'glob alternative must stay within the repository',
+      ),
+    );
+  });
+
+  it('should bound brace expansion before glob enumeration', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: { context: "file://tests/test_{1..1025}.yaml" }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', './']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('too many brace alternatives'),
+    );
+  });
+
+  it('should skip glob enumeration when the workspace root cannot be resolved', () => {
+    mockFs.readFileSync.mockReturnValue('providers: [file://providers/*.py]');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockFs.realpathSync.mockImplementation(() => {
+      throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('workspace root cannot be resolved'),
+    );
+  });
+
+  it('should validate real paths and missing ancestors before glob enumeration', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: ["file://{linked,denied,missing}/*.py"]',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const value = String(filePath);
+      if (value === '/test/working') return value;
+      if (value.includes('/linked/')) return '/test/secrets';
+      if (value.includes('/denied/')) {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      if (value.includes('/missing/')) {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      if (value.endsWith('/missing')) {
+        throw Object.assign(new Error('not a directory'), {
+          code: 'ENOTDIR',
+        });
+      }
+      return value;
+    });
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(mockGlob.sync.mock.calls[0]?.[0]).toEqual([
+      '/test/working/evals/missing/*.py',
+    ]);
+    expect(deps).toEqual(['./', 'evals/missing/']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'glob alternative must stay within the repository',
+      ),
+    );
+  });
+
+  it('should stop validating a missing glob ancestor at the filesystem root', () => {
+    mockFs.readFileSync.mockReturnValue('providers: [file://missing/*.py]');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    let rootReads = 0;
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath) === '/test/working' && rootReads++ === 0) {
+        return '/test/working';
+      }
+      throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'glob alternative must stay within the repository',
+      ),
+    );
+  });
+
+  it('should preserve a workspace-root glob when its base resolves to cwd', () => {
+    mockFs.readFileSync.mockReturnValue('providers: ["file://../*.py"]');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['*.py']);
   });
 
   it('should reject nested defaultTest dependencies outside the repository', () => {
@@ -541,6 +748,35 @@ documents:
       './',
     ]);
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(3);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should conservatively watch the repository for templated object-form references', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+vars:
+  context:
+    file: '{{ env.CTX_FILE }}'
+assert:
+  - type: javascript
+    value:
+      file: '{{ env.CHECK_FILE }}'
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', './']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
     expect(mockGlob.sync).not.toHaveBeenCalled();
     expect(core.warning).not.toHaveBeenCalled();
   });
@@ -1331,6 +1567,180 @@ options:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should track HTTP file-auth paths in external provider config maps', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+options:
+  provider:
+    text:
+      id: https://example.com/grade
+      config: file://providers/http-config.yaml
+`;
+      }
+      if (String(filePath).endsWith('evals/providers/http-config.yaml')) {
+        return `
+auth:
+  type: file
+  path: ./auth/get-token.ts
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/providers/http-config.yaml',
+      'evals/auth/get-token.ts',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should track plain HTTP credential and TLS paths in nested provider configs', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+provider:
+  id: https://example.com/grade
+  label: grading
+  config:
+    signatureAuth:
+      privateKeyPath: ./credentials/signing.key
+      keystorePath: ./credentials/signing.jks
+      pfxPath: ./credentials/signing.pfx
+      certPath: ./credentials/signing.crt
+      keyPath: ./credentials/signing-key.pem
+      jksPath: null
+      keyAlias: signing
+    tls:
+      caPath: ./tls/ca.pem
+      certPath: file://tls/client.crt
+      keyPath: ./tls/client.key
+      pfxPath: ./tls/client.pfx
+      jksPath: ./tls/client.jks
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/credentials/signing.key',
+      'evals/credentials/signing.jks',
+      'evals/credentials/signing.pfx',
+      'evals/credentials/signing.crt',
+      'evals/credentials/signing-key.pem',
+      'evals/tls/ca.pem',
+      'evals/tls/client.crt',
+      'evals/tls/client.key',
+      'evals/tls/client.pfx',
+      'evals/tls/client.jks',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should conservatively watch computed provider-file templates', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+provider:
+  id: https://example.com/grade
+  config:
+    response_format:
+      type: json_schema
+      json_schema:
+        schema: "{{ 'file://schemas/' + env.SCHEMA_FILE }}"
+    settings: "{{ 'file://settings/' + env.SETTINGS_FILE }}"
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', './']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should track a file-auth YAML alias first traversed outside auth', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+provider:
+  id: https://example.com/grade
+  config:
+    body:
+      attachment: &auth
+        type: file
+        path: ./auth/get-token.ts
+    auth: *auth
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/auth/get-token.ts',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should retain files when nested provider references are arrays', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+provider:
+  - id: https://example.com/grade
+    config:
+      tools: file://tools/grading.py:get_tools
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/tools/grading.py',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should safely handle templated and escaping nested HTTP file-auth paths', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
@@ -1367,6 +1777,52 @@ options:
       expect.stringContaining('must stay within the repository workspace'),
     );
     expect(core.warning).toHaveBeenCalledTimes(1);
+  });
+
+  it('should not treat arbitrary provider payload or assertion objects as file auth', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+options:
+  provider:
+    text:
+      id: https://example.com/grade
+      config:
+        body:
+          upload:
+            type: file
+            path: ./payload/body.json
+          config:
+            auth:
+              type: file
+              path: ./payload/body-auth.json
+        tools:
+          - type: file
+            path: ./payload/tool.json
+          - config:
+              auth:
+                type: file
+                path: ./payload/tool-auth.json
+assert:
+  - type: llm-rubric
+    config:
+      attachment:
+        type: file
+        path: ./payload/assert.json
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml']);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should track assertion config references inside defaultTest assert sets', () => {
@@ -1447,7 +1903,7 @@ tests:
       'evals/providers/second.yaml',
       'evals/tools/cyclic-tools.json',
     ]);
-    expect(mockFs.readFileSync).toHaveBeenCalledTimes(5);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(7);
   });
 
   it('should not inspect a nested provider-config symlink outside the workspace', () => {
@@ -1689,6 +2145,48 @@ vars:
     expect(mockGlob.sync).toHaveBeenCalledTimes(1);
   });
 
+  it('should inspect only YAML and JSON maps in a mixed external vars glob', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: data/*';
+      }
+      if (String(filePath).endsWith('evals/data/context.yaml')) {
+        return 'context: file://fixtures/native-context.txt';
+      }
+      throw new Error(`Unexpected file read: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/evals/data/context.yaml',
+      '/test/working/evals/data/context.pdf',
+      '/test/working/evals/data/context.csv',
+      '/test/working/evals/data/context.jsonl',
+      '/test/working/evals/data/context.txt',
+    ]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/context.yaml',
+      'evals/data/context.pdf',
+      'evals/data/context.csv',
+      'evals/data/context.jsonl',
+      'evals/data/context.txt',
+      'evals/data',
+      'evals/fixtures/native-context.txt',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(3);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should inspect overlapping external vars-glob matches only once', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
@@ -1888,14 +2386,15 @@ vars:
         (value.includes('*') &&
           (!value.includes('\\') || options?.windowsPathsNoEscape === true)),
     );
-    mockGlob.sync.mockImplementation((pattern: string) => {
-      if (pattern.includes('{one,two}')) {
+    mockGlob.sync.mockImplementation((patterns: string | string[]) => {
+      const pattern = Array.isArray(patterns) ? patterns.join('|') : patterns;
+      if (pattern.includes('fixtures/one.txt')) {
         return [
           '/test/working/evals/fixtures/one.txt',
           '/test/working/evals/fixtures/two.txt',
         ];
       }
-      if (pattern.includes('fixtures\\*.txt')) {
+      if (pattern.includes('fixtures/*.txt')) {
         return ['/test/working/evals/fixtures/windows.txt'];
       }
       return [];
@@ -1913,7 +2412,10 @@ vars:
       'evals/fixtures/windows.txt',
     ]);
     expect(mockGlob.sync).toHaveBeenCalledWith(
-      expect.stringContaining('{one,two}'),
+      expect.arrayContaining([
+        expect.stringContaining('fixtures/one.txt'),
+        expect.stringContaining('fixtures/two.txt'),
+      ]),
       expect.objectContaining({
         magicalBraces: true,
         windowsPathsNoEscape: true,
@@ -1940,9 +2442,12 @@ vars:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/']);
+    expect(deps).toEqual(['evals/defaults/default.yaml', './']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('glob base must stay within the repository'),
+      expect.stringContaining(
+        'glob alternative must stay within the repository',
+      ),
     );
   });
 
@@ -2347,7 +2852,11 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py', '../config/']);
+    expect(deps).toEqual([
+      '../config/',
+      '../config/providers/custom.py',
+      '../config/providers',
+    ]);
   });
 
   it('should extract all file types from complex config', () => {
