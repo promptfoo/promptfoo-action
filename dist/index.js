@@ -38526,6 +38526,7 @@ function extractFileDependencies(configPath) {
       }
       return true;
     };
+    let warnedForeignWindowsPath = false;
     const resolveConfigDependency = (filePath, source) => {
       try {
         if (!filePath) {
@@ -38535,6 +38536,8 @@ function extractFileDependencies(configPath) {
           throw new Error(`${source} contains an invalid null byte`);
         }
         if (isForeignWindowsPath(filePath)) {
+          if (warnedForeignWindowsPath) return void 0;
+          warnedForeignWindowsPath = true;
           throw new Error(
             `${source} must stay within the repository workspace`
           );
@@ -40002,6 +40005,16 @@ async function run() {
     }
     const promptFiles = [];
     const allPromptFiles = [];
+    const promptFileSet = /* @__PURE__ */ new Set();
+    const allPromptFileSet = /* @__PURE__ */ new Set();
+    const appendUniquePromptFiles = (target, seen, files) => {
+      for (const file of files) {
+        const absoluteFile = path7.resolve(workingDirectory, file);
+        if (seen.has(absoluteFile)) continue;
+        seen.add(absoluteFile);
+        target.push(file);
+      }
+    };
     const changedFilesList = changedFiles.split("\0").filter((file) => file);
     for (const globPattern of promptFilesGlobs) {
       if (globPattern.length > MAX_GLOB_PATTERN_LENGTH2 || !hasBalancedGlobDelimiters(globPattern)) {
@@ -40056,7 +40069,7 @@ async function run() {
         );
         return repositoryFile !== configRepositoryPath;
       });
-      allPromptFiles.push(...allMatches);
+      appendUniquePromptFiles(allPromptFiles, allPromptFileSet, allMatches);
       if (changedFilesList.length > 0) {
         const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
@@ -40064,9 +40077,9 @@ async function run() {
           );
           return changedFilesList.includes(repositoryFile);
         });
-        promptFiles.push(...changedMatches);
+        appendUniquePromptFiles(promptFiles, promptFileSet, changedMatches);
       } else {
-        promptFiles.push(...allMatches);
+        appendUniquePromptFiles(promptFiles, promptFileSet, allMatches);
       }
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
