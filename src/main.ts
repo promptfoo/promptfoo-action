@@ -242,7 +242,16 @@ export async function run(): Promise<void> {
     });
     const promptsInput = core.getInput('prompts', { required: false });
     const promptFilesGlobs: string[] = promptsInput
-      ? promptsInput.split('\n').filter((line) => line.trim())
+      ? promptsInput
+          .split('\n')
+          .filter((line) => line.trim())
+          .map((pattern) =>
+            process.platform === 'win32' &&
+            !pattern.includes('/') &&
+            path.win32.isAbsolute(pattern)
+              ? pattern.split('\\').join('/')
+              : pattern,
+          )
       : [];
     const configPath: string = core.getInput('config', {
       required: true,
@@ -278,7 +287,7 @@ export async function run(): Promise<void> {
           ? pattern
           : `${toRepositoryPath(workingDirectory)}/${pattern}`;
         const traversalPatterns = braceExpand(absolutePattern, {
-          braceExpandMax: 10_000,
+          braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
         });
 
         for (const traversalPattern of traversalPatterns) {
