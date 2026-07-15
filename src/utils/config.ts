@@ -530,7 +530,7 @@ export function extractFileDependencies(configPath: string): string[] {
       if (filePath.includes('\0')) {
         addDependencyRootWatchers();
         core.warning(
-          'Skipping invalid config dependency glob pattern with mismatched or unclosed delimiters; conservatively watching the dependency root',
+          'Skipping invalid config dependency glob pattern containing a NUL byte; conservatively watching the dependency root',
         );
         return undefined;
       }

@@ -2235,7 +2235,7 @@ defaultTest: file://defaults/default.yaml
     expect(minimatch.braceExpand).not.toHaveBeenCalled();
     expect(mockGlob.sync).not.toHaveBeenCalled();
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('mismatched or unclosed delimiters'),
+      'Skipping invalid config dependency glob pattern containing a NUL byte; conservatively watching the dependency root',
     );
   });
 
