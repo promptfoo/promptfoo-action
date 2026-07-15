@@ -327,6 +327,23 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      { filename: 'docs/readme.md\0prompts/fake.txt' },
+      {
+        filename: 'docs/readme.md',
+        previous_filename: 'docs/old.md\0prompts/fake.txt',
+      },
+    ])('should reject a NUL-delimited pull request filename', async (file) => {
+      mockOctokit.paginate.mockResolvedValue([file]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Pull request file paths containing null bytes are not supported',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should process all matching prompts when PR file list hits GitHub cap', async () => {
       mockOctokit.paginate.mockResolvedValue(
         Array.from({ length: 3000 }, (_, index) => ({
@@ -1073,6 +1090,40 @@ describe('GitHub Action Main', () => {
         'Using manually specified files: prompts/file1.txt\\nprompts/file2.txt',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'payload',
+      'action',
+    ])('should reject a NUL-delimited manual file list from the %s input', async (inputSource) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs:
+            inputSource === 'payload'
+              ? { files: 'docs/readme.md\0prompts/fake.txt' }
+              : {},
+        },
+        configurable: true,
+      });
+      if (inputSource === 'action') {
+        withInputs({
+          'workflow-files': 'docs/readme.md\0prompts/fake.txt',
+        });
+      }
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Workflow file paths containing null bytes are not supported',
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('prompts/fake.txt'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should handle workflow_dispatch with custom base comparison', async () => {

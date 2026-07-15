@@ -381,6 +381,17 @@ export async function run(): Promise<void> {
           per_page: 100,
         },
       );
+      if (
+        pullRequestFiles.some(
+          (file) =>
+            file.filename.includes('\0') ||
+            file.previous_filename?.includes('\0'),
+        )
+      ) {
+        throw new Error(
+          'Pull request file paths containing null bytes are not supported',
+        );
+      }
       if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
         core.warning(
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
@@ -409,6 +420,11 @@ export async function run(): Promise<void> {
         workflowBase || github.context.payload.inputs?.base || 'HEAD~1';
 
       if (filesInput) {
+        if (filesInput.includes('\0')) {
+          throw new Error(
+            'Workflow file paths containing null bytes are not supported',
+          );
+        }
         // Option 1: Use provided file list
         changedFiles = filesInput
           .split(/\r?\n/)
