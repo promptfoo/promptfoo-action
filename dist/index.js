@@ -36999,7 +36999,7 @@ function findForbiddenEnvFileKey(environment) {
   });
 }
 function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, override = true) {
-  const fileEnvironment = Object.create(null);
+  const fileEnvironment = /* @__PURE__ */ Object.create(null);
   const result = dotenv.config({
     path: envFilePath,
     override: true,
