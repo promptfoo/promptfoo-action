@@ -46,6 +46,16 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function normalizeWindowsPromptGlob(pattern: string): string {
+  if (process.platform !== 'win32' || !path.win32.isAbsolute(pattern)) {
+    return pattern;
+  }
+
+  return pattern.includes('/')
+    ? pattern.replace(/\\(?![?*()[\]{}+@!])/g, '/')
+    : pattern.split('\\').join('/');
+}
+
 function parseGitDiffFiles(diff: string): ChangedFile[] {
   if (diff && !diff.endsWith('\0')) {
     return [];
@@ -245,11 +255,7 @@ export async function run(): Promise<void> {
       ? promptsInput
           .split('\n')
           .filter((line) => line.trim())
-          .map((pattern) =>
-            process.platform === 'win32' && path.win32.isAbsolute(pattern)
-              ? pattern.split('\\').join('/')
-              : pattern,
-          )
+          .map(normalizeWindowsPromptGlob)
       : [];
     const configPath: string = core.getInput('config', {
       required: true,
@@ -281,7 +287,7 @@ export async function run(): Promise<void> {
         const traversalPatterns = braceExpand(pattern, {
           braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
         }).map((traversalPattern) =>
-          path.isAbsolute(pattern)
+          path.isAbsolute(traversalPattern)
             ? traversalPattern
             : `${workingDirectoryPattern}/${traversalPattern}`,
         );

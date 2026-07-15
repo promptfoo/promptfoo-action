@@ -500,6 +500,42 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test('should preserve escaped magic in an absolute Windows glob', async () => {
+      const currentPlatform = process.platform;
+      const promptPattern = `${path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('/')}/\\[team\\]/*.txt`;
+
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'prompts/[team]/removed.txt', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/[team]/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(promptPattern, {
+          cwd: process.cwd(),
+          nodir: true,
+        });
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
     test('should detect a removed prompt under an escaped directory glob', async () => {
       withInputs({ prompts: 'prompts/\\[team\\]/*.txt' });
       mockOctokit.paginate.mockResolvedValue([
@@ -615,6 +651,27 @@ describe('GitHub Action Main', () => {
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/sub/deep/remaining.txt']),
+      );
+    });
+
+    test('should detect a removed prompt in an absolute brace alternative', async () => {
+      const absolutePromptDirectory = path.join(process.cwd(), 'prompts');
+      withInputs({
+        prompts: `{${absolutePromptDirectory},archive}/*.txt`,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
       );
     });
 
