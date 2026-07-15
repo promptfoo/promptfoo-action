@@ -608,16 +608,22 @@ export function extractFileDependencies(
         if (next.context === 'provider-list') {
           nestedFileUrls.push(...normalizeProviderFileUrls(next.value));
         } else if (next.value.startsWith('file://')) {
-          nestedFileUrls.push(
-            ...(next.context === 'general'
+          const normalizedFileUrls =
+            next.context === 'general'
               ? [next.value]
               : normalizeFileUrlSelectors(
                   next.value,
                   /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/,
                   false,
                   true,
-                )),
-          );
+                );
+          if (
+            next.context === 'assertion' &&
+            normalizedFileUrls.some((fileUrl) => fileUrl !== next.value)
+          ) {
+            normalizedSelectorUrls.add(next.value);
+          }
+          nestedFileUrls.push(...normalizedFileUrls);
         }
         continue;
       }
@@ -629,9 +635,10 @@ export function extractFileDependencies(
       ) {
         continue;
       }
+      const inspectionContext = `${next.file}\0${next.context}`;
       const objectsForFile =
-        inspectedObjects.get(next.file) ?? new WeakSet<object>();
-      inspectedObjects.set(next.file, objectsForFile);
+        inspectedObjects.get(inspectionContext) ?? new WeakSet<object>();
+      inspectedObjects.set(inspectionContext, objectsForFile);
       if (objectsForFile.has(next.value)) {
         continue;
       }
@@ -853,7 +860,7 @@ export function extractFileDependencies(
         if (typeof record.$ref !== 'string') {
           throw new Error('Invalid Promptfoo config ref');
         }
-        const refKey = `${next.file}\0${record.$ref}`;
+        const refKey = `${next.file}\0${next.context}\0${record.$ref}`;
         if (!discoveredRefs.has(refKey)) {
           if (discoveredRefs.size >= maxConfigRefs) {
             throw new Error(

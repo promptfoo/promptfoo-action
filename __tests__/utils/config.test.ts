@@ -2900,6 +2900,36 @@ tests:
     ]);
   });
 
+  it('fails closed for a templated top-level file URL prompt', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml':
+        "prompts:\n  - 'file://{{ env.PROMPT_DIR }}/main.txt'\n",
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('keeps provider context when a shared config ref is first visited as vars', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'shared: &provider',
+        "  $ref: './provider.yaml'",
+        'providers:',
+        '  - *provider',
+        'tests:',
+        '  - vars:',
+        '      context: *provider',
+      ].join('\n'),
+      '/test/working/provider.yaml': 'python:providers/custom.py:run',
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(expect.arrayContaining(['provider.yaml', 'providers/custom.py']));
+  });
+
   it.each([
     'vars: vars/shared.yaml',
     'providers:\n  - id: python:providers/custom.py:run',
@@ -2909,6 +2939,22 @@ tests:
   ])('fails closed for a nested raw dependency in an external config: %s', (nested) => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': 'tests: test-data/cases.yaml',
+      '/test/working/test-data/cases.yaml': nested,
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it.each([
+    ['tests', '  - provider: python:providers/custom.py:run'],
+    ['tests', '  - provider:\n      providers/custom.js: {}'],
+    ['scenarios', '  - provider: python:providers/custom.py:run'],
+    ['scenarios', '  - provider:\n      providers/custom.js: {}'],
+  ])('fails closed for an external %s config containing an executable provider', (section, nested) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': `${section}: test-data/cases.yaml`,
       '/test/working/test-data/cases.yaml': nested,
     });
 

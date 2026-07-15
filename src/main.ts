@@ -571,9 +571,7 @@ export async function run(): Promise<void> {
             return file === trimmed ? [file] : [file, trimmed];
           })
           .join('\0');
-        core.info(
-          `Using manually specified files: ${JSON.stringify(trimmedFiles)}`,
-        );
+        core.info(`Using ${trimmedFiles.length} manually specified files`);
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
@@ -645,9 +643,16 @@ export async function run(): Promise<void> {
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
     const allPromptFiles: string[] = [];
-    const changedFilesList = changedFiles
-      .split(changedFiles.includes('\0') ? '\0' : '\n')
-      .filter(Boolean);
+    const containsQuotedControlPath =
+      !changedFiles.includes('\0') &&
+      /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
+        changedFiles,
+      );
+    const changedFilesList = containsQuotedControlPath
+      ? []
+      : changedFiles
+          .split(changedFiles.includes('\0') ? '\0' : '\n')
+          .filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -683,16 +688,14 @@ export async function run(): Promise<void> {
 
     // Extract dependencies from config file
     let dependencyChanged = false;
+    const dependencies = extractFileDependencies(
+      configAbsolutePath,
+      process.cwd(),
+      workingDirectory,
+    ).map(toRepositoryPath);
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(
-        configAbsolutePath,
-        process.cwd(),
-        workingDirectory,
-      ).map(toRepositoryPath);
       if (dependencies.length > 0) {
-        core.debug(
-          `Found ${dependencies.length} file dependencies in config: ${JSON.stringify(dependencies)}`,
-        );
+        core.debug(`Found ${dependencies.length} file dependencies in config`);
 
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
@@ -1046,15 +1049,16 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = evaluatedPromptFiles.join(', ');
-      const description = useConfigPrompts
-        ? '⚠️ Evaluation used prompts defined in the Promptfoo config.'
-        : forceRun ||
-            configChanged ||
-            dependencyChanged ||
-            changedFilesList.length === 0
-          ? `⚠️ Evaluated prompt files: ${modifiedFiles}`
-          : `⚠️ LLM prompt was modified in these files: ${modifiedFiles}`;
+      const evaluatedFiles = evaluatedPromptFiles.join(', ');
+      const description =
+        evaluatedPromptFiles.length === 0
+          ? 'Evaluated config-defined prompts'
+          : forceRun ||
+              configChanged ||
+              dependencyChanged ||
+              changedFilesList.length === 0
+            ? `Evaluated prompt files: ${evaluatedFiles}`
+            : `⚠️ LLM prompt was modified in these files: ${evaluatedFiles}`;
       let body = `${description}
 
 | Success | Failure |
