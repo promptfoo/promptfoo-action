@@ -766,10 +766,9 @@ export async function run(): Promise<void> {
         : changedFiles.split('\n').filter((f) => f));
 
     for (const configuredGlobPattern of promptFilesGlobs) {
-      const globPattern =
-        process.platform === 'win32'
-          ? configuredGlobPattern.replace(/\\/g, '/')
-          : configuredGlobPattern;
+      const isWindows = process.platform === 'win32';
+      const normalizedPattern = configuredGlobPattern.replace(/\\/g, '/');
+      const globPattern = isWindows ? normalizedPattern : configuredGlobPattern;
       validatePromptGlob(globPattern);
       let matches: string[];
       try {
@@ -778,6 +777,19 @@ export async function run(): Promise<void> {
           nodir: true,
           braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT,
         });
+        if (
+          matches.length === 0 &&
+          !isWindows &&
+          configuredGlobPattern.startsWith('./') &&
+          normalizedPattern !== globPattern
+        ) {
+          validatePromptGlob(normalizedPattern);
+          matches = glob.sync(normalizedPattern, {
+            cwd: workingDirectory,
+            nodir: true,
+            braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT,
+          });
+        }
       } catch {
         throw invalidPromptGlobError();
       }

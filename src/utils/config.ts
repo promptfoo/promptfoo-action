@@ -74,6 +74,7 @@ const ASSERT_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/;
 const AUTH_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py)$/;
 const HTTP_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
 const JS_EXTENSION_CASE_INSENSITIVE = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
+const TRANSITIVE_FILE_REFERENCE = /file:(?:\/|\\\/|\\u002f){2}/i;
 
 function hasGlobMagic(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
@@ -510,9 +511,14 @@ export function extractFileDependencies(configPath: string): string[] {
           markUnsafeDependency();
           return;
         }
+        const canonicalContents = contents.replace(
+          /\\u([0-9a-f]{4})|\\\//gi,
+          (_match, code: string | undefined) =>
+            code ? String.fromCharCode(Number.parseInt(code, 16)) : '/',
+        );
         if (
-          contents.includes('file://') ||
-          hasTransitiveNestedReference(contents)
+          TRANSITIVE_FILE_REFERENCE.test(canonicalContents) ||
+          hasTransitiveNestedReference(canonicalContents)
         ) {
           markUnsafeDependency();
         }
@@ -913,20 +919,22 @@ export function extractFileDependencies(configPath: string): string[] {
           markUnsafeDependency();
           continue;
         }
-        if (
-          typeof assert.value === 'string' &&
-          assert.value.startsWith('file://')
-        ) {
-          processFileUrl(assert.value, 'assert');
-        } else if (
-          typeof assert.value === 'object' &&
-          assert.value !== null &&
-          'file' in assert.value &&
-          typeof assert.value.file === 'string'
-        ) {
-          const absolutePath = resolveConfigDependency(assert.value.file);
-          if (absolutePath) {
-            dependencies.add(absolutePath);
+        const values = Array.isArray(assert.value)
+          ? assert.value
+          : [assert.value];
+        for (const value of values) {
+          if (typeof value === 'string' && value.startsWith('file://')) {
+            processFileUrl(value, 'assert');
+          } else if (
+            typeof value === 'object' &&
+            value !== null &&
+            'file' in value &&
+            typeof value.file === 'string'
+          ) {
+            const absolutePath = resolveConfigDependency(value.file);
+            if (absolutePath) {
+              dependencies.add(absolutePath);
+            }
           }
         }
         if ('assert' in assert && assert.assert !== undefined) {

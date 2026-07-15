@@ -1359,6 +1359,80 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test('should match a mixed-separator relative prompt glob on POSIX', async () => {
+      withInputs({ prompts: './prompts\\*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === './prompts/*.txt' ? ['prompts/changed.txt'] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync.mock.calls.map(([pattern]) => pattern)).toEqual([
+        './prompts\\*.txt',
+        './prompts/*.txt',
+      ]);
+      expect(mockGlob.sync.mock.calls).toEqual(
+        expect.arrayContaining([
+          [
+            './prompts/*.txt',
+            expect.objectContaining({ braceExpandMax: 1024 }),
+          ],
+        ]),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+        expect.any(Object),
+      );
+    });
+
+    test('should preserve an escaped-brace relative prompt glob on POSIX', async () => {
+      const globPattern = './prompts/\\{literal\\}.txt';
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/{literal}.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === globPattern ? ['prompts/{literal}.txt'] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['--prompts', 'prompts/{literal}.txt']),
+        expect.any(Object),
+      );
+    });
+
+    test('should validate a normalized POSIX fallback before expanding it', async () => {
+      withInputs({ prompts: './prompts/\\{1..1025\\}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        './prompts/\\{1..1025\\}.txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should skip unrelated changes before validating an implicit .env', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
@@ -3130,6 +3204,20 @@ describe('GitHub Action Main', () => {
       const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
       expect(comment.body).toContain('Evaluated config-defined prompts');
       expect(comment.body).not.toContain('LLM prompt was modified');
+    });
+
+    test('should run when a literal-backslash config dependency changes on POSIX', async () => {
+      const dependency = 'data/context\\literal.json';
+      mockOctokit.paginate.mockResolvedValue([{ filename: dependency }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should run when a file inside a dependency directory changes', async () => {

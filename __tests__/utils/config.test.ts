@@ -1390,6 +1390,57 @@ prompts:
     ).toEqual([]);
   });
 
+  it('should fail closed for a templated generic file reference with a static directory prefix', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4.1
+    config:
+      response_format: 'file://schemas/{{ env.SCHEMA }}.json'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should fail closed for nested references in an external defaultTest', () => {
+    const configPath = '/test/working/evals/promptfooconfig.yaml';
+    const defaultPath = '/test/working/evals/defaults/base.yaml';
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
+      filePath.toString() === configPath
+        ? 'defaultTest: file://defaults/base.yaml'
+        : 'vars:\n  context: file://data/context.json',
+    );
+
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledWith(defaultPath, 'utf8');
+  });
+
+  it('should track tests and scenarios directories as durable sentinels', () => {
+    const configPath = '/test/working/evals/promptfooconfig.yaml';
+    const directories = new Set([
+      '/test/working/evals/tests-dir',
+      '/test/working/evals/scenarios-dir',
+    ]);
+    mockFs.readFileSync.mockReturnValue(`
+tests: tests-dir
+scenarios: scenarios-dir
+`);
+    mockFs.statSync.mockImplementation(
+      (filePath: fs.PathLike) =>
+        ({
+          isDirectory: () => directories.has(filePath.toString()),
+          isFile: () => !directories.has(filePath.toString()),
+          size: 0,
+        }) as fs.Stats,
+    );
+
+    expect(extractFileDependencies(configPath)).toEqual([
+      'evals/tests-dir/',
+      'evals/scenarios-dir/',
+    ]);
+  });
+
   it.each([
     ['tests: file://cases.py:generate', ['cases.py']],
     ['tests: cases.js:build', ['cases.js']],
@@ -2073,6 +2124,14 @@ providers:
     ).toEqual(['evals/prompt-generator']);
   });
 
+  it('should track an executable .bash prompt', () => {
+    mockFs.readFileSync.mockReturnValue(`prompts:\n  - prompts/generate.bash`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/generate.bash']);
+  });
+
   it('should track TLS paths from map-style test and scenario providers', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
@@ -2422,6 +2481,55 @@ tests:
       filePath.toString().endsWith('promptfooconfig.yaml')
         ? config
         : 'nested: file://validators/check.py:run',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it.each([
+    ['jsonl', '\\u002f'],
+    ['json', '\\u002f'],
+    ['jsonl', '\\/'],
+  ])('should conservatively detect JSON-escaped file references in external .%s tests', (extension, escapedSlash) => {
+    const row = `{"vars":{"context":"file:${escapedSlash}${escapedSlash}payloads/context.txt"}}`;
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
+      filePath.toString().endsWith('promptfooconfig.yaml')
+        ? `tests: test-data/cases.${extension}`
+        : extension === 'jsonl'
+          ? row
+          : `[${row}]`,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it.each([
+    ['jsonl', '\\u0066ile://payloads/context.txt'],
+    ['json', 'file\\u003a//payloads/context.txt'],
+  ])('should conservatively detect an escaped JSON scheme in external .%s tests', (extension, reference) => {
+    const row = `{"vars":{"context":"${reference}"}}`;
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
+      filePath.toString().endsWith('promptfooconfig.yaml')
+        ? `tests: test-data/cases.${extension}`
+        : extension === 'jsonl'
+          ? row
+          : `[${row}]`,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should conservatively detect a file reference in a quoted-comma CSV value', () => {
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
+      filePath.toString().endsWith('promptfooconfig.yaml')
+        ? 'tests: test-data/cases(1).csv'
+        : 'description,context\n"quoted, literal (value)","file://payloads/context.txt"',
     );
 
     expect(
@@ -3064,5 +3172,21 @@ tests:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual([]);
+  });
+
+  it('should extract file references from assertion value arrays', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert:
+      - type: llm-rubric
+        value:
+          - file://rubrics/expected.json
+          - file://validators/check.py:validate
+          - ordinary inline value
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/rubrics/expected.json', 'evals/validators/check.py']);
   });
 });
