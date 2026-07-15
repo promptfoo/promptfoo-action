@@ -18,6 +18,7 @@ import { isDirectory } from './fs';
 
 const MAX_BRACE_EXPANSIONS = 1024;
 const MAX_PROVIDER_REFERENCE_LENGTH = 65_536;
+const MAX_INSPECTED_FILE_SIZE = 10 * 1024 * 1024;
 
 interface PromptfooTestConfig {
   path?: string;
@@ -468,7 +469,7 @@ export function extractFileDependencies(
       preserveGlobRoot = false,
       baseDir = configDir,
       selectorMode: FileUrlSelectorMode = 'assertion',
-    ): void => {
+    ): string[] => {
       let filePath = fileUrl.replace(/^file:\/\//, '');
       const expandedPath = expandAndTrackEnvTemplates(filePath);
       const hasEnvTemplate = expandedPath !== filePath;
@@ -490,18 +491,22 @@ export function extractFileDependencies(
         : uppercaseJsSelector
           ? [filePath, uppercaseJsSelector[1]]
           : [filePath];
+      const resolvedFiles: string[] = [];
       for (const candidatePath of filePaths) {
         const relativePath =
           baseDir === configDir
             ? candidatePath
             : path.relative(configDir, path.resolve(baseDir, candidatePath));
-        processFilePath(
-          relativePath,
-          'config file dependency',
-          preserveGlobRoot || hasEnvTemplate,
-          preserveGlobRoot || hasEnvTemplate,
+        resolvedFiles.push(
+          ...processFilePath(
+            relativePath,
+            'config file dependency',
+            preserveGlobRoot || hasEnvTemplate,
+            preserveGlobRoot || hasEnvTemplate,
+          ),
         );
       }
+      return resolvedFiles;
     };
 
     const providerConfigFiles = new Set<string>();
@@ -556,6 +561,7 @@ export function extractFileDependencies(
     }
 
     // Extract prompt files
+    const structuredPromptFiles = new Set<string>();
     if (config.prompts) {
       const prompts = Array.isArray(config.prompts)
         ? config.prompts
@@ -576,6 +582,25 @@ export function extractFileDependencies(
         if (!promptPath) {
           continue;
         }
+        const literalPromptPath = stripNunjucksComments(promptPath)
+          .replace(/\{%(?:[^%]|%(?!\}))*%\}/g, '')
+          .replace(/\{\{(?:[^}]|\}(?!\}))*\}\}/g, '')
+          .trim();
+        if (
+          literalPromptPath &&
+          !(
+            literalPromptPath.includes('file://') ||
+            literalPromptPath.startsWith('exec:') ||
+            /\.(?:cjs|cts|j2|js|jsonl?|md|mjs|mts|py|ts|txt|ya?ml)(?::[^/\\]+)?$/i.test(
+              literalPromptPath,
+            ) ||
+            /[*/\\]/.test(literalPromptPath) ||
+            literalPromptPath.charAt(literalPromptPath.length - 3) === '.' ||
+            literalPromptPath.charAt(literalPromptPath.length - 4) === '.'
+          )
+        ) {
+          continue;
+        }
         const expandedPromptPath = expandAndTrackEnvTemplates(promptPath);
         if (
           expandedPromptPath === '**/*' ||
@@ -594,9 +619,16 @@ export function extractFileDependencies(
         ) {
           continue;
         }
-        processFileUrl(
-          `file://${expandedPromptPath.replace(/^(?:file:\/\/|exec:)/, '')}`,
+        const promptFiles = processFileUrl(
+          `file://${expandedPromptPath
+            .replace(/^exec:/, '')
+            .replace(/^file:\/\//, '')}`,
         );
+        for (const promptFile of promptFiles) {
+          if (/\.(?:ya?ml|jsonl?)$/i.test(promptFile)) {
+            structuredPromptFiles.add(promptFile);
+          }
+        }
       }
     }
 
@@ -769,17 +801,56 @@ export function extractFileDependencies(
             providerConfig.auth !== null
               ? providerConfig.auth
               : undefined;
+          const literalOrEnv = (value: unknown, expected: string): boolean =>
+            value === expected ||
+            (typeof value === 'string' &&
+              value.includes('{{') &&
+              /\benv(?:\.|\[)/.test(value));
           if (
             isHttpProvider &&
             fileAuth &&
             'type' in fileAuth &&
-            fileAuth.type === 'file' &&
+            literalOrEnv(fileAuth.type, 'file') &&
             'path' in fileAuth &&
             typeof fileAuth.path === 'string'
           ) {
-            processFileUrl(`file://${fileAuth.path}`, true);
+            processFileUrl(
+              `file://${fileAuth.path.replace(/^file:\/\//, '')}`,
+              true,
+            );
           }
           if (isHttpProvider && providerConfig) {
+            const multipart =
+              'multipart' in providerConfig &&
+              typeof providerConfig.multipart === 'object' &&
+              providerConfig.multipart !== null &&
+              'parts' in providerConfig.multipart &&
+              Array.isArray(providerConfig.multipart.parts)
+                ? providerConfig.multipart.parts
+                : [];
+            for (const part of multipart) {
+              if (
+                typeof part !== 'object' ||
+                part === null ||
+                !('kind' in part) ||
+                !literalOrEnv(part.kind, 'file') ||
+                !('source' in part) ||
+                typeof part.source !== 'object' ||
+                part.source === null ||
+                !('type' in part.source) ||
+                !literalOrEnv(part.source.type, 'path') ||
+                !('path' in part.source) ||
+                typeof part.source.path !== 'string'
+              ) {
+                continue;
+              }
+              processFilePath(
+                expandAndTrackEnvTemplates(part.source.path),
+                'provider multipart file dependency',
+                true,
+                true,
+              );
+            }
             const securityGroups: Array<[string, string[]]> = [
               [
                 'signatureAuth',
@@ -945,6 +1016,7 @@ export function extractFileDependencies(
       }
       inspectedTestFiles.add(inspectionKey);
 
+      let inspectionRoot = dependencyRoot;
       try {
         const realTestFile = fs.realpathSync(testFile);
         const containingRoot = getRealDependencyRoots().find(({ real }) =>
@@ -957,6 +1029,7 @@ export function extractFileDependencies(
           );
           return;
         }
+        inspectionRoot = containingRoot.lexical;
 
         if (/\.(?:xlsx?|py|[cm]?[jt]s)$/i.test(realTestFile)) {
           // Excel parsing is asynchronous and generators execute code in
@@ -964,6 +1037,28 @@ export function extractFileDependencies(
           // changes without loading an untrusted workbook or generator here.
           dependencies.add(
             `${containingRoot.lexical.replace(/[\\/]+$/, '')}${path.sep}`,
+          );
+          return;
+        }
+
+        let fileSize: number;
+        try {
+          fileSize = fs.statSync(realTestFile).size;
+        } catch {
+          dependencies.add(
+            `${containingRoot.lexical.replace(/[\\/]+$/, '')}${path.sep}`,
+          );
+          warnSafe(
+            `Skipping structured dependency "${testFile}": file could not be inspected safely; conservatively watching the dependency root`,
+          );
+          return;
+        }
+        if (fileSize > MAX_INSPECTED_FILE_SIZE) {
+          dependencies.add(
+            `${containingRoot.lexical.replace(/[\\/]+$/, '')}${path.sep}`,
+          );
+          warnSafe(
+            `Skipping structured dependency "${testFile}": file exceeds the maximum inspection size; conservatively watching the dependency root`,
           );
           return;
         }
@@ -1084,6 +1179,7 @@ export function extractFileDependencies(
           );
         }
       } catch {
+        dependencies.add(`${inspectionRoot.replace(/[\\/]+$/, '')}${path.sep}`);
         warnSafe(`Failed to inspect test file dependency "${testFile}"`);
       }
     };
@@ -1104,6 +1200,17 @@ export function extractFileDependencies(
       // Drop an Excel sheet reference while preserving `#` in other filenames.
       const fileName = path.basename(filePath);
       const sheetIndex = fileName.indexOf('#');
+      if (
+        sheetIndex !== -1 &&
+        (fileName.length > MAX_PROVIDER_REFERENCE_LENGTH ||
+          /[\0\r\n]/.test(fileName))
+      ) {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        warnSafe(
+          'Skipping invalid or oversized test file reference; conservatively watching the dependency root',
+        );
+        return;
+      }
       if (
         sheetIndex !== -1 &&
         /\.xlsx?$/i.test(fileName.slice(0, sheetIndex))
@@ -1153,6 +1260,9 @@ export function extractFileDependencies(
       }
     };
 
+    for (const structuredPromptFile of structuredPromptFiles) {
+      inspectTestFile(structuredPromptFile, refResolutionRoot, configDir);
+    }
     for (const providerConfigFile of providerConfigFiles) {
       inspectTestFile(
         providerConfigFile,
