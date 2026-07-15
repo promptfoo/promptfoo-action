@@ -38970,7 +38970,7 @@ function extractFileDependencies(configPath) {
         const prompt = typeof configuredPrompt === "object" && (configuredPrompt.raw || configuredPrompt.id) ? configuredPrompt.raw || configuredPrompt.id : configuredPrompt;
         if (typeof prompt === "string" && prompt.startsWith("file://")) {
           for (const fileUrl of getFileReferenceCandidates(prompt, "generic")) {
-            if (/(?:json|ya?ml)/i.test(fileUrl)) {
+            if (/\.(?:json|ya?ml)$/i.test(fileUrl) || getGlobMagic(fileUrl.slice("file://".length)) === true) {
               inspectNestedConfigFile(fileUrl);
             } else {
               processFileUrl(fileUrl);
@@ -38987,7 +38987,7 @@ function extractFileDependencies(configPath) {
             promptFileUrl,
             "generic"
           )) {
-            if (/(?:json|ya?ml)/i.test(fileUrl)) {
+            if (/\.(?:json|ya?ml)$/i.test(fileUrl) || getGlobMagic(fileUrl.slice("file://".length)) === true) {
               inspectNestedConfigFile(fileUrl);
             } else {
               processFileUrl(fileUrl);
@@ -39104,7 +39104,7 @@ function extractFileDependencies(configPath) {
       }
     };
     const inspectedTestFiles = /* @__PURE__ */ new Set();
-    const inspectTestFile = (value) => {
+    const inspectTestFile = (value, rebaseNestedDependencies = true, inspectScenarios = false) => {
       if (/^(?:https?:\/\/|az:\/\/|huggingface:\/\/)/i.test(value)) return;
       const rawFilePath = normalizeConfigFilePath(
         value.startsWith("file://") ? value.slice("file://".length) : value
@@ -39142,7 +39142,8 @@ function extractFileDependencies(configPath) {
             );
             continue;
           }
-          if (inspectedTestFiles.has(realTestFile)) continue;
+          const inspectedTestFileKey = `${realTestFile}:${rebaseNestedDependencies}:${inspectScenarios}`;
+          if (inspectedTestFiles.has(inspectedTestFileKey)) continue;
           if (inspectedTestFiles.size >= MAX_NESTED_TEST_FILES) {
             addDependencyRootWatchers();
             warning(
@@ -39150,20 +39151,27 @@ function extractFileDependencies(configPath) {
             );
             return;
           }
-          inspectedTestFiles.add(realTestFile);
+          inspectedTestFiles.add(inspectedTestFileKey);
           if (!canReadStructuredFile(realTestFile)) continue;
           const previousBaseDir = dependencyBaseDir;
-          dependencyBaseDir = path6.dirname(testFile);
+          dependencyBaseDir = rebaseNestedDependencies ? path6.dirname(testFile) : previousBaseDir;
           try {
             const parsedTests = load(
               fs6.readFileSync(realTestFile, "utf8"),
               { schema: CONFIG_SCHEMA }
             );
+            if (inspectScenarios) {
+              const scenarios = Array.isArray(parsedTests) ? parsedTests : [parsedTests];
+              for (const scenario of scenarios) processScenario(scenario);
+              continue;
+            }
             const nestedTests = parsedTests && typeof parsedTests === "object" && !Array.isArray(parsedTests) && "tests" in parsedTests ? parsedTests.tests : parsedTests;
             if (Array.isArray(nestedTests)) {
-              for (const test of nestedTests) processTestConfig(test);
+              for (const test of nestedTests) {
+                processTestConfig(test, rebaseNestedDependencies);
+              }
             } else {
-              processTestConfig(nestedTests);
+              processTestConfig(nestedTests, rebaseNestedDependencies);
             }
           } catch {
             addDependencyRootWatchers();
@@ -39176,14 +39184,14 @@ function extractFileDependencies(configPath) {
         }
       }
     };
-    const processTestConfig = (test) => {
+    const processTestConfig = (test, rebaseNestedDependencies = true) => {
       if (typeof test === "string") {
-        inspectTestFile(test);
+        inspectTestFile(test, rebaseNestedDependencies);
         return;
       }
       if (!test || typeof test !== "object" || ArrayBuffer.isView(test)) return;
       if ("path" in test && typeof test.path === "string") {
-        inspectTestFile(test.path);
+        inspectTestFile(test.path, rebaseNestedDependencies);
         if ("config" in test) extractFileReferences(test.config);
         return;
       }
@@ -39193,6 +39201,21 @@ function extractFileDependencies(configPath) {
       extractFileReferences(inlineTest.assertScoringFunction);
       extractFileReferences(inlineTest.provider, true, "provider");
       extractOptionsFiles(inlineTest.options);
+    };
+    const processScenario = (scenario) => {
+      if (typeof scenario === "string") {
+        inspectTestFile(scenario, false, true);
+        return;
+      }
+      if (!scenario || typeof scenario !== "object") return;
+      const scenarioConfig = scenario;
+      for (const entries of [scenarioConfig.tests, scenarioConfig.config]) {
+        if (Array.isArray(entries)) {
+          for (const entry of entries) processTestConfig(entry);
+        } else if (entries) {
+          processTestConfig(entries, false);
+        }
+      }
     };
     if (config2.defaultTest) {
       if (typeof config2.defaultTest === "string") {
@@ -39266,13 +39289,7 @@ function extractFileDependencies(configPath) {
     }
     if (Array.isArray(config2.scenarios)) {
       for (const scenario of config2.scenarios) {
-        for (const entries of [scenario.tests, scenario.config]) {
-          if (Array.isArray(entries)) {
-            for (const entry of entries) processTestConfig(entry);
-          } else if (entries) {
-            processTestConfig(entries);
-          }
-        }
+        processScenario(scenario);
       }
     }
     if (config2.nunjucksFilters) {
@@ -40311,7 +40328,8 @@ async function run() {
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const modifiedFiles = evaluationPromptFiles.join(", ");
-      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
+      const description = useConfigPrompts || evaluationPromptFiles.length === 0 ? "\u26A0\uFE0F Evaluation used prompts defined in the Promptfoo config." : configChanged || dependencyChanged || changedFilesList.length === 0 ? `\u26A0\uFE0F Evaluated prompt files: ${modifiedFiles}` : `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}`;
+      let body = `${description}
 
 | Success | Failure |
 |---------|---------|
