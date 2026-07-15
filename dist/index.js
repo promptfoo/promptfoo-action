@@ -38625,11 +38625,22 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         for (const match2 of matches) {
           const absoluteMatch = path6.resolve(match2);
-          if (isDependencyPathInside(absoluteMatch)) {
+          let physicalMatch = absoluteMatch;
+          try {
+            if (fs6.existsSync(absoluteMatch)) {
+              physicalMatch = fs6.realpathSync(absoluteMatch);
+            }
+          } catch {
+            warning(
+              `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`
+            );
+            continue;
+          }
+          if (isDependencyPathInside(absoluteMatch) && isDependencyPathInside(physicalMatch)) {
             dependencies.add(absoluteMatch);
           } else {
             warning(
-              `Ignoring unsafe config dependency match "${redactDisplayPath ? displayFilePath : displayFileUrl === fileUrl ? match2 : displayFilePath}": config file dependency glob match must stay within the repository workspace`
+              `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`
             );
           }
         }
