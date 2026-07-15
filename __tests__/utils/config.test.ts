@@ -355,6 +355,7 @@ providers:
   it.each([
     'C:\\outside\\provider.py',
     'C:/outside/provider.py',
+    '/C:/outside/provider.py',
     'C:relative-provider.py',
     '\\\\server\\share\\provider.py',
     '\\root-relative\\provider.py',
@@ -395,6 +396,7 @@ providers:
   it.each([
     'C:\\outside\\options.yaml',
     'C:/outside/options.yaml',
+    'file:///C:/outside/options.yaml',
     'C:relative-options.yaml',
     '\\\\server\\share\\options.yaml',
   ])('fails closed for a foreign Windows config ref %s', (refPath) => {
@@ -413,6 +415,7 @@ providers:
   it.each([
     'C:\\outside\\.env',
     'C:/outside/.env',
+    'file:///C:/outside/.env',
     'C:relative.env',
     '\\\\server\\share\\.env',
     '.env.safe, C:\\outside\\.env',

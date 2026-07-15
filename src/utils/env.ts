@@ -483,6 +483,7 @@ function assertWorkspacePath(
 function isUnsupportedWindowsPath(filePath: string): boolean {
   return (
     /^[A-Za-z]:(?![\\/])/.test(filePath) ||
+    /^(?:file:\/\/)?\/[A-Za-z]:[\\/]/i.test(filePath) ||
     (!path.isAbsolute(filePath) && path.win32.isAbsolute(filePath))
   );
 }

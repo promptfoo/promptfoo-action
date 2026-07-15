@@ -435,13 +435,18 @@ describe('GitHub Action Main', () => {
 
     test.each([
       ['oversized numeric range', 'prompts/{1..1000000000}.txt'],
+      ['over-limit numeric range', 'prompts/{1..1025}.txt'],
       ['unsafe integer range', 'prompts/{1..999999999999999999999999}.txt'],
       ['zero numeric step', 'prompts/{1..4..0}.txt'],
+      ['malformed numeric range', 'prompts/{1..many}.txt'],
+      ['oversized brace product', `prompts/${'{a,b}'.repeat(11)}.txt`],
       ['unbalanced brace', 'prompts/{first,second.txt'],
       ['nested brace', 'prompts/{{first,second},third}.txt'],
       ['unexpected closing brace', 'prompts/first}.txt'],
       ['unclosed character class', 'prompts/[first.txt'],
       ['null byte', 'prompts/first\0.txt'],
+      ['control byte', 'prompts/first\t.txt'],
+      ['trailing escape', 'prompts/first\\'],
       ['oversized pattern', `prompts/${'a'.repeat(65_537)}.txt`],
     ])('should reject an unsafe prompt glob before expansion: %s', async (_reason, promptGlob) => {
       withInputs({ prompts: promptGlob });
@@ -458,6 +463,9 @@ describe('GitHub Action Main', () => {
     test.each([
       'prompts/literal\\*.txt',
       'prompts/[ab].txt',
+      'prompts/[[:alpha:]].txt',
+      'prompts/[[:digit:]].txt',
+      'prompts/[]]*.txt',
       'prompts/{first,second}.txt',
     ])('should allow a bounded prompt glob before expansion: %s', async (promptGlob) => {
       withInputs({ prompts: promptGlob });
@@ -466,18 +474,18 @@ describe('GitHub Action Main', () => {
 
       expect(mockGlob.sync).toHaveBeenCalledWith(
         promptGlob,
-        expect.objectContaining({ braceExpandMax: 10_000 }),
+        expect.objectContaining({ braceExpandMax: 1024 }),
       );
     });
 
     test('should pass the bounded brace expansion limit to prompt globbing', async () => {
-      withInputs({ prompts: 'prompts/{1..10000}.txt' });
+      withInputs({ prompts: 'prompts/{1..1024}.txt' });
 
       await run();
 
       expect(mockGlob.sync).toHaveBeenCalledWith(
-        'prompts/{1..10000}.txt',
-        expect.objectContaining({ braceExpandMax: 10_000 }),
+        'prompts/{1..1024}.txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
       );
     });
 

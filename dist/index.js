@@ -36335,7 +36335,7 @@ function sanitizeLogText(value) {
   return value.replace(/\0/g, "\\0").replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
 function isUnsupportedWindowsPath(filePath) {
-  return /^[A-Za-z]:(?![\\/])/.test(filePath) || !path5.isAbsolute(filePath) && path5.win32.isAbsolute(filePath);
+  return /^[A-Za-z]:(?![\\/])/.test(filePath) || /^(?:file:\/\/)?\/[A-Za-z]:[\\/]/i.test(filePath) || !path5.isAbsolute(filePath) && path5.win32.isAbsolute(filePath);
 }
 function hasUnsafeGroupedGlob(value) {
   const closingDelimiters = [];
@@ -37961,7 +37961,7 @@ function assertWorkspacePath(filePath, workingDirectory, source) {
   return realPath;
 }
 function isUnsupportedWindowsPath2(filePath) {
-  return /^[A-Za-z]:(?![\\/])/.test(filePath) || !path6.isAbsolute(filePath) && path6.win32.isAbsolute(filePath);
+  return /^[A-Za-z]:(?![\\/])/.test(filePath) || /^(?:file:\/\/)?\/[A-Za-z]:[\\/]/i.test(filePath) || !path6.isAbsolute(filePath) && path6.win32.isAbsolute(filePath);
 }
 function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironment = process.env) {
   if (isUnsupportedWindowsPath2(configPath) || le(configPath, {
@@ -38662,7 +38662,7 @@ function formatRepeatCommentMarkdown(summary2) {
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 var MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
-var PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1e4;
+var PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
 function validatePromptGlob(pattern) {
   const invalidGlob = () => {
     throw new PromptfooActionError(
@@ -38671,7 +38671,11 @@ function validatePromptGlob(pattern) {
       "Use valid prompt glob patterns with bounded brace expansion."
     );
   };
-  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || /[\0\r\n]/.test(pattern)) {
+  const hasControlCharacter = [...pattern].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || hasControlCharacter) {
     invalidGlob();
   }
   let braceStart = -1;
@@ -38680,6 +38684,9 @@ function validatePromptGlob(pattern) {
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
     if (path7.sep === "/" && character === "\\") {
+      if (index + 1 >= pattern.length) {
+        invalidGlob();
+      }
       index++;
       continue;
     }
@@ -38709,6 +38716,10 @@ function validatePromptGlob(pattern) {
     const group = pattern.slice(braceStart + 1, index);
     const range = group.split("..");
     let expansionCount = group.split(",").length;
+    const hasNumericRange = range.length > 1 && range.some((entry) => /^-?\d/.test(entry));
+    if (hasNumericRange && !((range.length === 2 || range.length === 3) && range.every((entry) => /^-?\d+$/.test(entry)))) {
+      invalidGlob();
+    }
     if ((range.length === 2 || range.length === 3) && range.every((entry) => /^-?\d+$/.test(entry))) {
       const values = range.map(Number);
       const [start, end, rawStep = 1] = values;

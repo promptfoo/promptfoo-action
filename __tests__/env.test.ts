@@ -687,6 +687,7 @@ describe('loadConfigEnvironmentFiles', () => {
   test.each([
     'C:\\outside\\.env',
     'C:/outside/.env',
+    'file:///C:/outside/.env',
     'C:relative.env',
     '\\\\server\\share\\.env',
     '.env.safe, C:\\outside\\.env',

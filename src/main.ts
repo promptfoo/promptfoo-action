@@ -34,7 +34,7 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
-const PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 10_000;
+const PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
 
 function validatePromptGlob(pattern: string): void {
   const invalidGlob = (): never => {
@@ -45,7 +45,11 @@ function validatePromptGlob(pattern: string): void {
     );
   };
 
-  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || /[\0\r\n]/.test(pattern)) {
+  const hasControlCharacter = [...pattern].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || hasControlCharacter) {
     invalidGlob();
   }
 
@@ -55,6 +59,9 @@ function validatePromptGlob(pattern: string): void {
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
     if (path.sep === '/' && character === '\\') {
+      if (index + 1 >= pattern.length) {
+        invalidGlob();
+      }
       index++;
       continue;
     }
@@ -85,6 +92,17 @@ function validatePromptGlob(pattern: string): void {
     const group = pattern.slice(braceStart + 1, index);
     const range = group.split('..');
     let expansionCount = group.split(',').length;
+    const hasNumericRange =
+      range.length > 1 && range.some((entry) => /^-?\d/.test(entry));
+    if (
+      hasNumericRange &&
+      !(
+        (range.length === 2 || range.length === 3) &&
+        range.every((entry) => /^-?\d+$/.test(entry))
+      )
+    ) {
+      invalidGlob();
+    }
     if (
       (range.length === 2 || range.length === 3) &&
       range.every((entry) => /^-?\d+$/.test(entry))
