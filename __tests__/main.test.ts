@@ -776,6 +776,29 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should preserve significant whitespace in manual workflow file paths', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: ' data/context.json ',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' data/context.json ',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should handle workflow_dispatch with custom base comparison', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -1102,6 +1125,49 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should not narrow prompts when a fail-closed dependency and a prompt both change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'providers/dynamic-provider.py' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
+    test('should not narrow prompts when an ordinary dependency and a prompt both change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'providers/custom.py' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
+    test('should not narrow prompts when the config and a prompt both change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
     });
 
     test('should run when a repository-root directory sentinel is returned', async () => {

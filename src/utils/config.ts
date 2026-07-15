@@ -212,6 +212,8 @@ export function extractFileDependencies(
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const isDependencyPathInside = (targetPath: string): boolean =>
+    isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
 
   try {
     if (/\.(?:[cm]?[jt]s)$/i.test(configPath)) {
@@ -317,7 +319,7 @@ export function extractFileDependencies(
         }
 
         const absolutePath = path.resolve(configDir, filePath);
-        if (!isPathInside(dependencyRoot, absolutePath)) {
+        if (!isDependencyPathInside(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
           );
@@ -392,7 +394,7 @@ export function extractFileDependencies(
           core.warning(`Ignoring ${source}: pattern is too long`);
           continue;
         }
-        if (isPathInside(dependencyRoot, absolutePattern)) {
+        if (isDependencyPathInside(absolutePattern)) {
           safePatterns.push(absolutePattern);
         } else {
           unsafeAlternative = true;
@@ -452,7 +454,7 @@ export function extractFileDependencies(
         }
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
+          if (isDependencyPathInside(absoluteMatch)) {
             dependencies.add(absoluteMatch);
           } else {
             core.warning(
@@ -766,7 +768,7 @@ export function extractFileDependencies(
       for (const promptFile of promptFiles) {
         const absolutePromptFile = path.resolve(promptFile);
         if (
-          !isPathInside(dependencyRoot, absolutePromptFile) ||
+          !isDependencyPathInside(absolutePromptFile) ||
           !/\.(?:jsonl?|ya?ml)$/i.test(absolutePromptFile)
         ) {
           continue;
@@ -775,7 +777,7 @@ export function extractFileDependencies(
           const physicalPromptFile = fs.existsSync(absolutePromptFile)
             ? fs.realpathSync(absolutePromptFile)
             : absolutePromptFile;
-          if (!isPathInside(dependencyRoot, physicalPromptFile)) {
+          if (!isDependencyPathInside(physicalPromptFile)) {
             core.warning(
               `Ignoring unsafe prompt file dependency "${displayPromptPath}": resolved path must stay within the repository workspace`,
             );
@@ -850,6 +852,30 @@ export function extractFileDependencies(
         const renderedReference = renderEnvironmentTemplates(reference, env);
         if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedReference)) {
           hasDynamicPromptDependencies = true;
+          return;
+        }
+        if (renderedReference.startsWith('exec:')) {
+          const commandParts =
+            renderedReference
+              .slice('exec:'.length)
+              .match(/(?:\\.|[^\s"'\\]+|"[^"]*"|'[^']*')+/g) ?? [];
+          for (const rawPart of commandParts) {
+            const part = rawPart
+              .replace(/^['"]|['"]$/g, '')
+              .replace(/\\(?=\s)/g, '');
+            if (
+              part.startsWith('-') ||
+              (!/[\\/]/.test(part) && !/\.[A-Za-z0-9]{1,10}$/.test(part))
+            ) {
+              continue;
+            }
+            const absolutePath = resolveConfigDependency(
+              path.isAbsolute(part) ? part : path.resolve(configDir, part),
+              'executable provider dependency',
+              '[redacted]',
+            );
+            if (absolutePath) dependencies.add(absolutePath);
+          }
           return;
         }
         if (!renderedReference.startsWith('file://')) return;
@@ -1114,7 +1140,7 @@ export function extractFileDependencies(
             const argumentPath = path.isAbsolute(executableArgument)
               ? path.resolve(executableArgument)
               : path.resolve(promptExecutionCwd, executableArgument);
-            if (!isPathInside(dependencyRoot, argumentPath)) {
+            if (!isDependencyPathInside(argumentPath)) {
               continue;
             }
             if (!fs.existsSync(argumentPath)) {

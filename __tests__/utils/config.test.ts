@@ -2036,6 +2036,89 @@ providers:
     ).toEqual(['evals/providers/actual.py']);
   });
 
+  it('should extract scripts and file arguments from exec-backed providers', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: "exec: python providers/build.py --data data/context.json"\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/build.py', 'evals/data/context.json']);
+  });
+
+  it('should extract quoted file arguments from exec-backed providers', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: "exec: node \\"providers/build script.js\\" --config \\"data/input file.json\\" --verbose"\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/providers/build script.js',
+      'evals/data/input file.json',
+    ]);
+  });
+
+  it('should ignore empty exec providers and retain contained absolute script paths', () => {
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'providers:',
+        '  - "exec:"',
+        '  - "exec: node /test/working/providers/absolute.py"',
+      ].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['providers/absolute.py']);
+  });
+
+  it('should not broaden unsupported shell-provider paths or bare transforms', () => {
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'providers: file://$UNSUPPORTED_PROVIDER_FILE',
+        'tests:',
+        '  - options:',
+        '      transform: transforms/not-loaded.js:transform',
+      ].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/$UNSUPPORTED_PROVIDER_FILE']);
+  });
+
+  it('should retain absolute checkout dependencies when the config is outside the workspace', () => {
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'providers:',
+        '  - file:///test/working/providers/custom.py',
+        'prompts:',
+        '  - file:///test/working/prompts/chat.txt',
+        'tests:',
+        '  - file:///test/working/tests/cases.yaml',
+      ].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/tmp/external/promptfooconfig.yaml'),
+    ).toEqual(['providers/custom.py', 'prompts/chat.txt', 'tests/cases.yaml']);
+  });
+
+  it('should retain absolute checkout dependency globs when the config is outside the workspace', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file:///test/working/providers/*.py\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/providers/custom.py']);
+
+    expect(
+      extractFileDependencies('/tmp/external/promptfooconfig.yaml'),
+    ).toEqual(['providers/custom.py', 'providers']);
+  });
+
   it('should preserve sibling dependencies when provider and test glob patterns are too long', () => {
     const longPattern = `file://${'a'.repeat(70_000)}*.yaml`;
     mockFs.readFileSync.mockReturnValue(
