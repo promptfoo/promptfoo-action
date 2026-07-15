@@ -40072,8 +40072,9 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         providerConfigFiles.add(absolutePath);
       }
     };
-    if (config2.providers) {
-      const providers = Array.isArray(config2.providers) ? config2.providers : [config2.providers];
+    const configuredProviders = config2.targets ?? config2.providers;
+    if (configuredProviders) {
+      const providers = Array.isArray(configuredProviders) ? configuredProviders : [configuredProviders];
       for (const provider of providers) {
         if (typeof provider === "string") {
           processProviderFile(provider);
@@ -40212,12 +40213,14 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
         if (key === "provider" && includeFileUrls) {
+          const providerId = typeof item === "string" ? item : typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" ? item.id : void 0;
+          const isHttpProvider = typeof providerId === "string" && /^https?(?::|$)/i.test(providerId);
           const providerConfig = typeof item === "object" && item !== null && "config" in item && typeof item.config === "object" && item.config !== null ? item.config : void 0;
           const fileAuth = providerConfig && "auth" in providerConfig && typeof providerConfig.auth === "object" && providerConfig.auth !== null ? providerConfig.auth : void 0;
-          if (fileAuth && "type" in fileAuth && fileAuth.type === "file" && "path" in fileAuth && typeof fileAuth.path === "string") {
+          if (isHttpProvider && fileAuth && "type" in fileAuth && fileAuth.type === "file" && "path" in fileAuth && typeof fileAuth.path === "string") {
             processFileUrl(`file://${fileAuth.path}`, true);
           }
-          if (providerConfig) {
+          if (isHttpProvider && providerConfig) {
             const securityGroups = [
               [
                 "signatureAuth",
@@ -40259,7 +40262,6 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
               }
             }
           }
-          const providerId = typeof item === "string" ? item : typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" ? item.id : void 0;
           const localProvider = providerId?.match(
             /^(?:file:\/\/|python:(?=[\s\S]+\.py(?::[^/\\]+)?$)|golang:(?=[\s\S]+\.go(?::[^/\\]+)?$)|ruby:(?=[\s\S]+\.rb(?::[^/\\]+)?$))([\s\S]+)$/i
           );
