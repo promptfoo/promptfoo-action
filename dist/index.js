@@ -38802,6 +38802,18 @@ var MAX_PROMPT_GLOB_VARIANTS = 1e3;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
+function normalizeWindowsPromptGlob(pattern) {
+  if (process.platform !== "win32" || !pattern.split(/[{},]/).some((segment) => path7.win32.isAbsolute(segment))) {
+    return pattern;
+  }
+  const firstForwardSlash = pattern.indexOf("/");
+  if (firstForwardSlash === -1) {
+    return pattern.split("\\").join("/");
+  }
+  const nativePrefix = pattern.slice(0, firstForwardSlash);
+  const escapedSuffix = pattern.slice(firstForwardSlash);
+  return nativePrefix.replace(/\\(?![,\.\-|^])/g, "/") + escapedSuffix.replace(/\\(?![?*()[\]{}+@!,\.\-|^])/g, "/");
+}
 function parseGitDiffFiles(diff) {
   if (diff && !diff.endsWith("\0")) {
     return [];
@@ -38945,9 +38957,7 @@ async function run() {
       required: true
     });
     const promptsInput = getInput("prompts", { required: false });
-    const promptFilesGlobs = promptsInput ? promptsInput.split("\n").filter((line) => line.trim()).map(
-      (pattern) => process.platform === "win32" && !pattern.includes("/") && path7.win32.isAbsolute(pattern) ? pattern.split("\\").join("/") : pattern
-    ) : [];
+    const promptFilesGlobs = promptsInput ? promptsInput.split("\n").filter((line) => line.trim()).map(normalizeWindowsPromptGlob) : [];
     const configPath = getInput("config", {
       required: true
     });
@@ -38963,8 +38973,8 @@ async function run() {
     );
     const workingDirectoryPattern = escape(
       toRepositoryPath(workingDirectory),
-      { windowsPathsNoEscape: false }
-    ).replace(/[{}]/g, "\\$&");
+      { windowsPathsNoEscape: false, magicalBraces: true }
+    );
     let promptGlobMatchingCapped = false;
     let promptGlobMatchers;
     const getPromptGlobMatchers = () => {
@@ -38973,10 +38983,11 @@ async function run() {
       }
       const matchers = [];
       for (const pattern of promptFilesGlobs) {
-        const absolutePattern = path7.isAbsolute(pattern) ? pattern : `${workingDirectoryPattern}/${pattern}`;
-        const traversalPatterns = braceExpand(absolutePattern, {
+        const traversalPatterns = braceExpand(pattern, {
           braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1
-        });
+        }).map(
+          (traversalPattern) => path7.isAbsolute(traversalPattern) ? traversalPattern : `${workingDirectoryPattern}/${traversalPattern}`
+        );
         for (const traversalPattern of traversalPatterns) {
           if (traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS || matchers.length >= MAX_PROMPT_GLOB_VARIANTS) {
             promptGlobMatchingCapped = true;
@@ -39005,18 +39016,20 @@ async function run() {
             }
             continue;
           }
-          matchers.push(
-            new Minimatch(traversalPattern, {
-              nonegate: true,
-              nocomment: true,
-              nobrace: true,
-              nocase: ["darwin", "win32"].includes(process.platform),
-              nocaseMagicOnly: false,
-              optimizationLevel: 2,
-              platform: process.platform,
-              windowsPathsNoEscape: false
-            }).makeRe()
-          );
+          const matcher = new Minimatch(traversalPattern, {
+            nonegate: true,
+            nocomment: true,
+            nobrace: true,
+            nocase: ["darwin", "win32"].includes(process.platform),
+            nocaseMagicOnly: false,
+            optimizationLevel: 2,
+            platform: process.platform,
+            windowsPathsNoEscape: false
+          });
+          matchers.push({
+            matcher,
+            expression: traversalPattern.split("/").filter((segment) => segment === "**").length > 1 ? void 0 : matcher.makeRe()
+          });
         }
       }
       promptGlobMatchers = matchers;
@@ -39032,7 +39045,10 @@ async function run() {
         return false;
       }
       const matchers = getPromptGlobMatchers();
-      return promptGlobMatchingCapped || matchers.some((matcher) => matcher.test(toRepositoryPath(absolutePath)));
+      const repositoryPath = toRepositoryPath(absolutePath);
+      return promptGlobMatchingCapped || matchers.some(
+        ({ matcher, expression }) => (!expression || expression.test(repositoryPath)) && matcher.match(repositoryPath)
+      );
     };
     const selectChangedFiles = (files) => {
       const monitoredPromptRemovedOrRenamedOut = files.some(
