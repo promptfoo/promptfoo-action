@@ -38803,6 +38803,11 @@ var MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
+function formatFileListForDisplay(files) {
+  return files.map(
+    (file) => file.replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/\n/g, "\\n")
+  ).join(", ");
+}
 function normalizeWindowsPromptGlob(pattern) {
   if (process.platform !== "win32" || !pattern.split(/[{},]/).some((segment) => path7.win32.isAbsolute(segment))) {
     return pattern;
@@ -39059,15 +39064,15 @@ async function run() {
         warning(
           "Prompt glob matching exceeded its safety limits. Processing all remaining matching prompt files."
         );
-        return "";
+        return [];
       }
       if (monitoredPromptRemovedOrRenamedOut) {
         warning(
           "A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files."
         );
-        return "";
+        return [];
       }
-      return files.map((file) => file.filename).join("\n");
+      return files.map((file) => file.filename);
     };
     const configAbsolutePath = path7.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
@@ -39193,7 +39198,7 @@ async function run() {
     setSecret(githubToken);
     const octokit = getOctokit(githubToken);
     const event = context2.eventName;
-    let changedFiles = "";
+    let changedFilesList = [];
     let isPullRequest = false;
     let pullRequestNumber;
     if (event === "pull_request" || event === "pull_request_target") {
@@ -39216,7 +39221,7 @@ async function run() {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
         );
       } else {
-        changedFiles = selectChangedFiles(pullRequestFiles);
+        changedFilesList = selectChangedFiles(pullRequestFiles);
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
@@ -39227,8 +39232,10 @@ async function run() {
           filename: file,
           status: matchesPromptGlob(file) && !fs7.existsSync(path7.resolve(workspaceRoot, file)) ? "removed" : "modified"
         }));
-        changedFiles = selectChangedFiles(manualFiles);
-        info(`Using manually specified files: ${filesInput}`);
+        changedFilesList = selectChangedFiles(manualFiles);
+        info(
+          `Using manually specified files: ${formatFileListForDisplay(manualFiles.map((file) => file.filename))}`
+        );
       } else {
         validateGitRevision(compareBase);
         try {
@@ -39240,15 +39247,15 @@ async function run() {
             "HEAD",
             "--"
           ]);
-          changedFiles = selectChangedFiles(parseGitDiffFiles(diff));
+          changedFilesList = selectChangedFiles(parseGitDiffFiles(diff));
           info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`
+            `Comparing against ${compareBase}, found ${changedFilesList.length} changed file(s).`
           );
         } catch (error2) {
           warning(
             `Could not compare against ${compareBase}: ${error2}. Will process all matching prompt files.`
           );
-          changedFiles = "";
+          changedFilesList = [];
         }
       }
     } else if (event === "push") {
@@ -39267,21 +39274,21 @@ async function run() {
             afterSha,
             "--"
           ]);
-          changedFiles = selectChangedFiles(parseGitDiffFiles(diff));
+          changedFilesList = selectChangedFiles(parseGitDiffFiles(diff));
           info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`
+            `Comparing ${beforeSha}..${afterSha}, found ${changedFilesList.length} changed file(s).`
           );
         } catch (error2) {
           warning(
             `Could not compare commits: ${error2}. Will process all matching prompt files.`
           );
-          changedFiles = "";
+          changedFilesList = [];
         }
       } else {
         info(
           "Unable to determine changed files from push event. Will process all matching prompt files."
         );
-        changedFiles = "";
+        changedFilesList = [];
       }
     } else {
       warning(
@@ -39289,7 +39296,6 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const changedFilesList = changedFiles.split("\n").filter((f) => f);
     for (const globPattern of validPromptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
@@ -39312,6 +39318,12 @@ async function run() {
         });
         promptFiles.push(...allMatches);
       }
+    }
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new PromptfooActionError(
+        "Prompt filenames cannot contain carriage return or newline characters.",
+        ErrorCodes.INVALID_CONFIGURATION
+      );
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
@@ -39347,7 +39359,7 @@ async function run() {
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${promptFiles.join(", ")}`
+        `Processing all matching prompt files: ${formatFileListForDisplay(promptFiles)}`
       );
     }
     startGroup("Setting up cache");
@@ -39541,7 +39553,7 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(", ");
+      const modifiedFiles = formatFileListForDisplay(promptFiles);
       let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
