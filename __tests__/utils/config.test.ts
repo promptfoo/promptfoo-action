@@ -3155,6 +3155,16 @@ prompts: "file://{{ env.PROMPT_DIR }}/main.txt"
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['evals/prompts/current/main.txt']);
 
+    mockFs.readFileSync.mockReturnValueOnce(`
+env:
+  PROMPT_FILE: prompts/current/entire.txt
+prompts: "{{ env.PROMPT_FILE }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/current/entire.txt']);
+
     mockFs.readFileSync.mockReturnValueOnce(
       'prompts: "file://{{ env.MISSING_PROMPT_DIR }}/main.txt"',
     );
@@ -3420,6 +3430,25 @@ assert:
       'evals/validators/nested.cjs',
       'evals/tests/nested/generate.py',
       'evals/datasets/current.yaml',
+    ]);
+  });
+
+  it('should resolve vars and providers in scenario-loaded tests from the main config base', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('scenarios/cases.yaml'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'scenarios:\n  - tests: file://scenarios/cases.yaml'
+        : '- vars: vars/context.yaml\n  provider: python:providers/scenario.py:call_api',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/scenarios/cases.yaml',
+      'evals/providers/scenario.py',
+      'evals/vars/context.yaml',
     ]);
   });
 

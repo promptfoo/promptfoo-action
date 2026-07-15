@@ -1034,11 +1034,15 @@ export function extractFileDependencies(configPath: string): string[] {
           const promptPath = rawPrompt.startsWith('exec:')
             ? rawPrompt.slice('exec:'.length)
             : rawPrompt;
-          if (rawPrompt.startsWith('exec:') || isPromptFilePath(promptPath)) {
-            const renderedPromptPath = renderEnvTemplates(promptPath, {
-              ...process.env,
-              ...configEnv,
-            });
+          const renderedPromptPath = renderEnvTemplates(promptPath, {
+            ...process.env,
+            ...configEnv,
+          });
+          if (
+            rawPrompt.startsWith('exec:') ||
+            isPromptFilePath(renderedPromptPath) ||
+            /\benv(?:\.|\[)/.test(promptPath)
+          ) {
             if (/\{\{|\}\}|\{%|\{#/.test(renderedPromptPath)) {
               watchDependencyRoots();
               continue;
@@ -1237,6 +1241,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const extractTests = (
       tests?: string | TestEntry | Array<string | TestEntry>,
       testBaseDir: string = configDir,
+      keepTestBaseDir: boolean = false,
     ): void => {
       if (!tests) return;
       if (typeof tests === 'string') {
@@ -1292,6 +1297,7 @@ export function extractFileDependencies(configPath: string): string[] {
                   extractTests(
                     JSON.parse(line) as TestEntry,
                     path.dirname(testFile),
+                    keepTestBaseDir,
                   );
                 }
               }
@@ -1300,7 +1306,8 @@ export function extractFileDependencies(configPath: string): string[] {
                 loadYaml(testContent, {
                   schema: CORE_SCHEMA.withTags(mergeTag),
                 }) as TestEntry | TestEntry[],
-                path.dirname(testFile),
+                keepTestBaseDir ? testBaseDir : path.dirname(testFile),
+                keepTestBaseDir,
               );
             }
           } catch {
@@ -1329,7 +1336,7 @@ export function extractFileDependencies(configPath: string): string[] {
         visitedTestEntries.add(tests);
         try {
           for (const test of tests) {
-            extractTests(test, testBaseDir);
+            extractTests(test, testBaseDir, keepTestBaseDir);
           }
         } finally {
           activeTestEntries.delete(tests);
@@ -1338,7 +1345,7 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       if (tests.path) {
-        extractTests(tests.path, testBaseDir);
+        extractTests(tests.path, testBaseDir, keepTestBaseDir);
         extractGeneratorConfigReferences(tests.config);
       }
       if (typeof tests.$ref === 'string') {
@@ -1441,7 +1448,7 @@ export function extractFileDependencies(configPath: string): string[] {
           extractTests(scenario);
           continue;
         }
-        extractTests(scenario.tests);
+        extractTests(scenario.tests, configDir, true);
         if (scenario.config) {
           for (const test of scenario.config) {
             extractTests(test);

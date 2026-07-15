@@ -38734,11 +38734,11 @@ function extractFileDependencies(configPath) {
         const rawPrompt = typeof prompt === "string" ? prompt : typeof prompt.raw === "string" ? prompt.raw : typeof prompt.id === "string" ? prompt.id : void 0;
         if (rawPrompt !== void 0) {
           const promptPath = rawPrompt.startsWith("exec:") ? rawPrompt.slice("exec:".length) : rawPrompt;
-          if (rawPrompt.startsWith("exec:") || isPromptFilePath(promptPath)) {
-            const renderedPromptPath = renderEnvTemplates(promptPath, {
-              ...process.env,
-              ...configEnv
-            });
+          const renderedPromptPath = renderEnvTemplates(promptPath, {
+            ...process.env,
+            ...configEnv
+          });
+          if (rawPrompt.startsWith("exec:") || isPromptFilePath(renderedPromptPath) || /\benv(?:\.|\[)/.test(promptPath)) {
             if (/\{\{|\}\}|\{%|\{#/.test(renderedPromptPath)) {
               watchDependencyRoots();
               continue;
@@ -38894,7 +38894,7 @@ function extractFileDependencies(configPath) {
         );
       }
     }
-    const extractTests = (tests, testBaseDir = configDir) => {
+    const extractTests = (tests, testBaseDir = configDir, keepTestBaseDir = false) => {
       if (!tests) return;
       if (typeof tests === "string") {
         if (tests.length > MAX_TEST_PATH_LENGTH || /[\0\r\n]/.test(tests)) {
@@ -38937,7 +38937,8 @@ function extractFileDependencies(configPath) {
                 if (line.trim()) {
                   extractTests(
                     JSON.parse(line),
-                    path6.dirname(testFile)
+                    path6.dirname(testFile),
+                    keepTestBaseDir
                   );
                 }
               }
@@ -38946,7 +38947,8 @@ function extractFileDependencies(configPath) {
                 load(testContent, {
                   schema: CORE_SCHEMA.withTags(mergeTag)
                 }),
-                path6.dirname(testFile)
+                keepTestBaseDir ? testBaseDir : path6.dirname(testFile),
+                keepTestBaseDir
               );
             }
           } catch {
@@ -38975,7 +38977,7 @@ function extractFileDependencies(configPath) {
         visitedTestEntries.add(tests);
         try {
           for (const test of tests) {
-            extractTests(test, testBaseDir);
+            extractTests(test, testBaseDir, keepTestBaseDir);
           }
         } finally {
           activeTestEntries.delete(tests);
@@ -38983,7 +38985,7 @@ function extractFileDependencies(configPath) {
         return;
       }
       if (tests.path) {
-        extractTests(tests.path, testBaseDir);
+        extractTests(tests.path, testBaseDir, keepTestBaseDir);
         extractGeneratorConfigReferences(tests.config);
       }
       if (typeof tests.$ref === "string") {
@@ -39053,7 +39055,7 @@ function extractFileDependencies(configPath) {
           extractTests(scenario);
           continue;
         }
-        extractTests(scenario.tests);
+        extractTests(scenario.tests, configDir, true);
         if (scenario.config) {
           for (const test of scenario.config) {
             extractTests(test);
