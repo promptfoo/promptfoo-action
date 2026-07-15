@@ -4,6 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -45,6 +46,10 @@ function toRepositoryPath(filePath: string): string {
 }
 
 function parseGitDiffFiles(diff: string): ChangedFile[] {
+  if (diff && !diff.endsWith('\0')) {
+    return [];
+  }
+
   const tokens = diff.split('\0');
   const files: ChangedFile[] = [];
 
@@ -270,11 +275,19 @@ export async function run(): Promise<void> {
         path.relative(workingDirectory, absolutePath),
       );
       return promptFilesGlobs.some((pattern) => {
-        const normalizedPattern = toRepositoryPath(path.normalize(pattern));
+        const normalizedPattern = path.posix.normalize(pattern);
         const candidatePath = path.isAbsolute(pattern)
           ? toRepositoryPath(absolutePath)
           : workingDirectoryPath;
-        return path.matchesGlob(candidatePath, normalizedPattern);
+        return minimatch(candidatePath, normalizedPattern, {
+          nonegate: true,
+          nocomment: true,
+          nocase: ['darwin', 'win32'].includes(process.platform),
+          nocaseMagicOnly: true,
+          optimizationLevel: 2,
+          platform: process.platform,
+          windowsPathsNoEscape: false,
+        });
       });
     };
     const selectChangedFiles = (files: ChangedFile[]): string => {

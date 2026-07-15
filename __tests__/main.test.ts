@@ -426,6 +426,23 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should detect a removed prompt under an escaped directory glob', async () => {
+      withInputs({ prompts: 'prompts/\\[team\\]/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/[team]/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/[team]/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/[team]/remaining.txt']),
+      );
+    });
+
     test('should ignore a removed prompt path outside the workspace', async () => {
       withInputs({
         prompts: '../../../outside/*.txt',
@@ -950,6 +967,7 @@ describe('GitHub Action Main', () => {
         'a truncated rename after a valid prefix',
         'M\0docs/readme.md\0R100\0prompts/old.txt\0',
       ],
+      ['a dangling final status after a valid prefix', 'M\0docs/readme.md\0D'],
     ])('should process all prompts when a push diff contains %s', async (_case, diff) => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',
