@@ -781,6 +781,40 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test.each([
+      {
+        field: 'filename',
+        file: { filename: 'prompts/changed\0::error::forged.txt' },
+      },
+      {
+        field: 'previous_filename',
+        file: {
+          filename: 'prompts/changed.txt',
+          previous_filename: 'prompts/old\0::error::forged.txt',
+        },
+      },
+    ])('should reject a PR $field containing a null byte before evaluation', async ({
+      file,
+    }) => {
+      mockOctokit.paginate.mockResolvedValue([file]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid pull request file list: null bytes are not allowed.\n\nHelp: Remove null bytes from the pull request file list.',
+      );
+      const output = [
+        ...mockCore.info.mock.calls,
+        ...mockCore.warning.mock.calls,
+        ...mockCore.setFailed.mock.calls,
+      ]
+        .flat()
+        .join('\n');
+      expect(output).not.toContain('::error::forged');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
     test('should conservatively reject an LF prompt represented by a quoted git diff path', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',

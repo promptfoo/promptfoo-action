@@ -107,6 +107,20 @@ prompts:
     expect(deps).toContain('../config/prompts/prompt2.txt');
   });
 
+  it.each([
+    [
+      `prompts:\n  "file://prompts/customer.txt": customer`,
+      ['evals/prompts/customer.txt'],
+    ],
+    [`prompts:\n  customer: "file://prompts/customer.txt"`, []],
+  ])('should track prompt-map definitions from mapping keys', (config, expected) => {
+    mockFs.readFileSync.mockReturnValue(config);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(expected);
+  });
+
   it('should extract test variable files', () => {
     const configContent = `
 tests:

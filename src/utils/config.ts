@@ -781,7 +781,10 @@ export function extractFileDependencies(configPath: string): string[] {
     if (typeof config.prompts === 'string') {
       processPromptReference(config.prompts);
     } else if (config.prompts) {
-      for (const prompt of config.prompts) {
+      const configuredPrompts = Array.isArray(config.prompts)
+        ? config.prompts
+        : Object.keys(config.prompts);
+      for (const prompt of configuredPrompts) {
         if (typeof prompt === 'string') {
           if (isPromptReference(prompt)) {
             processPromptReference(prompt);

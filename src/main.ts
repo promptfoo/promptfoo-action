@@ -595,6 +595,19 @@ export async function run(): Promise<void> {
           per_page: 100,
         },
       );
+      if (
+        pullRequestFiles.some(
+          (file) =>
+            file.filename.includes('\0') ||
+            file.previous_filename?.includes('\0'),
+        )
+      ) {
+        throw new PromptfooActionError(
+          'Invalid pull request file list: null bytes are not allowed.',
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Remove null bytes from the pull request file list.',
+        );
+      }
       if (pullRequestFiles.length >= GITHUB_PULL_REQUEST_FILES_LIMIT) {
         core.warning(
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
