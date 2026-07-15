@@ -784,7 +784,9 @@ export function extractFileDependencies(
                   'id' in item &&
                   typeof item.id === 'string'
                 ? item.id
-                : undefined;
+                : typeof item === 'object' && item !== null
+                  ? Object.keys(item)[0]
+                  : undefined;
           const isHttpProvider =
             typeof providerId === 'string' &&
             /^https?(?::|$)/i.test(providerId);

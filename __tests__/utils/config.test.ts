@@ -994,6 +994,24 @@ tests:
     ]);
   });
 
+  it('should extract mapped providers from external tests and scenario config', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('tests/cases.yaml')
+          ? "- provider:\n    'file://providers/external-map.py:call_api':\n      label: external"
+          : "tests: file://tests/cases.yaml\nscenarios:\n  - config:\n      provider:\n        'python:providers/scenario-map.py:call_api':\n          label: scenario",
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      '../config/tests/providers/external-map.py',
+      '../config/providers/scenario-map.py',
+    ]);
+  });
+
   it('should preserve the generator-config glob directory when its last match is deleted', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
