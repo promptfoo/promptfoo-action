@@ -339,6 +339,14 @@ export async function run(): Promise<void> {
 
     const event = github.context.eventName;
     let changedFiles = '';
+    const encodeChangedFiles = (files: string[]): string =>
+      files.length > 0 ? `${files.join('\0')}\0` : '';
+    const formatChangedFilesForLog = (files: string): string =>
+      files
+        .split('\0')
+        .filter(Boolean)
+        .map((file) => JSON.stringify(file))
+        .join(', ');
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -364,15 +372,17 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = Array.from(
-          new Set(
-            pullRequestFiles.flatMap((file) =>
-              file.previous_filename
-                ? [file.filename, file.previous_filename]
-                : [file.filename],
+        changedFiles = encodeChangedFiles(
+          Array.from(
+            new Set(
+              pullRequestFiles.flatMap((file) =>
+                file.previous_filename
+                  ? [file.filename, file.previous_filename]
+                  : [file.filename],
+              ),
             ),
           ),
-        ).join('\n');
+        );
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -389,12 +399,15 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput
-          .split(/\r?\n/)
-          .map((file: string) => file.trim())
-          .filter(Boolean)
-          .join('\n');
-        core.info(`Using manually specified files: ${changedFiles}`);
+        changedFiles = encodeChangedFiles(
+          filesInput
+            .split(/\r?\n/)
+            .map((file: string) => file.trim())
+            .filter(Boolean),
+        );
+        core.info(
+          `Using manually specified files: ${formatChangedFilesForLog(changedFiles)}`,
+        );
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
@@ -402,12 +415,13 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -435,12 +449,13 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
           );
         } catch (error) {
           core.warning(
@@ -463,10 +478,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles
-      .split('\n')
-      .map((file) => (file.endsWith('\r') ? file.slice(0, -1) : file))
-      .filter(Boolean);
+    const changedFilesList = changedFiles.split('\0').filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -496,6 +508,13 @@ export async function run(): Promise<void> {
         });
         promptFiles.push(...allMatches);
       }
+    }
+
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new PromptfooActionError(
+        'Matched prompt file path contains a newline; refusing to evaluate unsafe path',
+        ErrorCodes.INVALID_CONFIGURATION,
+      );
     }
 
     const configChanged =

@@ -165,7 +165,7 @@ function setupCommonMocks(): MockOctokit {
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
-    'prompts/prompt1.txt\npromptfooconfig.yaml',
+    'prompts/prompt1.txt\0promptfooconfig.yaml\0',
   );
   mockCache.cleanupOldCache.mockResolvedValue(0);
   mockCache.createCacheManifest.mockResolvedValue();
@@ -623,6 +623,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -665,8 +666,8 @@ describe('GitHub Action Main', () => {
         configurable: true,
       });
       mockGitInterface.diff.mockImplementation(async (args: string[]) =>
-        args.includes('--no-renames')
-          ? 'fixtures/referenced-upload.pdf\nfixtures/renamed-upload.pdf'
+        args.includes('--no-renames') && args.includes('-z')
+          ? 'fixtures/referenced-upload.pdf\0fixtures/renamed-upload.pdf\0'
           : 'fixtures/renamed-upload.pdf',
       );
       mockGlob.sync.mockReturnValue([]);
@@ -682,7 +683,7 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
-    test('should preserve spaces in renamed push dependency filenames', async () => {
+    test('should preserve tabs and spaces in renamed push dependency filenames', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',
         configurable: true,
@@ -695,17 +696,20 @@ describe('GitHub Action Main', () => {
         configurable: true,
       });
       mockGitInterface.diff.mockResolvedValue(
-        'fixtures/ referenced-upload.pdf \r\nfixtures/ renamed-upload.pdf \r',
+        'fixtures/\treferenced-upload.pdf \0fixtures/\trenamed-upload.pdf \0',
       );
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue([
-        'fixtures/ referenced-upload.pdf ',
+        'fixtures/\treferenced-upload.pdf ',
       ]);
 
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        `Comparing ${'a'.repeat(40)}..${'b'.repeat(40)}, found changed files: "fixtures/\\treferenced-upload.pdf ", "fixtures/\\trenamed-upload.pdf "`,
       );
       expect(mockExec.exec).toHaveBeenCalled();
     });
@@ -753,6 +757,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -801,7 +806,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using manually specified files: "prompts/file1.txt", "prompts/file2.txt"',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
@@ -828,6 +833,27 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should treat a whitespace-only workflow files input as empty', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: { files: ' \r\n  \r\n' },
+        },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Using manually specified files: ',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
       expect(mockExec.exec).toHaveBeenCalled();
@@ -923,7 +949,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: action-input-file.txt',
+        'Using manually specified files: "action-input-file.txt"',
       );
       // Since we're providing files directly, diff shouldn't be called
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
@@ -973,6 +999,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -1007,8 +1034,8 @@ describe('GitHub Action Main', () => {
         configurable: true,
       });
       mockGitInterface.diff.mockImplementation(async (args: string[]) =>
-        args.includes('--no-renames')
-          ? 'fixtures/referenced-upload.pdf\nfixtures/renamed-upload.pdf'
+        args.includes('--no-renames') && args.includes('-z')
+          ? 'fixtures/referenced-upload.pdf\0fixtures/renamed-upload.pdf\0'
           : 'fixtures/renamed-upload.pdf',
       );
       mockGlob.sync.mockReturnValue([]);
@@ -1071,6 +1098,44 @@ describe('GitHub Action Main', () => {
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue([
         'fixtures/ referenced-upload.pdf ',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve newlines in renamed pull-request dependency filenames', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'fixtures/renamed\nupload.pdf',
+          previous_filename: 'fixtures/referenced\nupload.pdf',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced\nupload.pdf',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve a newline in a single pull-request dependency filename', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'fixtures/referenced\nupload.pdf' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced\nupload.pdf',
       ]);
 
       await run();
@@ -1695,6 +1760,28 @@ describe('GitHub Action Main', () => {
   });
 
   describe('security validation', () => {
+    test('should reject a matched prompt path that can forge a workflow annotation', async () => {
+      const forgedPrompt =
+        'prompts/unsafe\n::error::FORGED_ANNOTATION_SECRET_MARKER.txt';
+      mockOctokit.paginate.mockResolvedValue([{ filename: forgedPrompt }]);
+      mockGlob.sync.mockReturnValue([forgedPrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Matched prompt file path contains a newline; refusing to evaluate unsafe path',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) =>
+            String(call[0]).includes('FORGED_ANNOTATION_SECRET_MARKER'),
+          ),
+      ).toBe(false);
+    });
+
     test('should use the GitHub API instead of PR refs for changed files', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
@@ -1803,6 +1890,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',
