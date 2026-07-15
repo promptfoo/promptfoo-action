@@ -144,8 +144,14 @@ prompts:
     mockGlob.sync.mockReturnValue([`/test/working/${match}`]);
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+    const expectedPatterns = prompt.includes('{json,yaml}')
+      ? [
+          prompt.replace('{json,yaml}', 'json'),
+          prompt.replace('{json,yaml}', 'yaml'),
+        ]
+      : [prompt];
 
-    expect(deps).toEqual([match, prompt, 'nested/system.txt']);
+    expect(deps).toEqual([match, ...expectedPatterns, 'nested/system.txt']);
     expect(mockGlob.sync).toHaveBeenCalledTimes(2);
   });
 
@@ -273,10 +279,22 @@ prompts:
   });
 
   it.each([
-    'file://{team-a,team-b}/*.txt',
-    'file://{blue,green}/**/*.yaml',
-    'file://{1..3}/*.txt',
-  ])('should retain a watch sentinel for a deleted brace-directory prompt glob', (prompt) => {
+    {
+      prompt: 'file://{team-a,team-b}/*.txt',
+      expected: ['evals/team-a/', 'evals/team-b/'],
+    },
+    {
+      prompt: 'file://{blue,green}/**/*.yaml',
+      expected: ['evals/blue/', 'evals/green/'],
+    },
+    {
+      prompt: 'file://{1..3}/*.txt',
+      expected: ['evals/1/', 'evals/2/', 'evals/3/'],
+    },
+  ])('should retain a watch sentinel for a deleted brace-directory prompt glob', ({
+    prompt,
+    expected,
+  }) => {
     mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
     mockGlob.hasMagic.mockImplementation((value: string) =>
       value.includes('*'),
@@ -287,7 +305,140 @@ prompts:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['evals/']);
+    expect(deps).toEqual(expected);
+  });
+
+  it('should retain both safe watch roots for a brace prompt glob with a parent arm', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "prompts: 'file://{../shared,prompts}/*.txt'\n",
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['shared/', 'evals/prompts/']);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      ['/test/working/shared/*.txt', '/test/working/evals/prompts/*.txt'],
+      expect.any(Object),
+    );
+  });
+
+  it('should reject an escaped brace prompt-glob arm before scanning it', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "prompts: 'file://{../../outside,prompts}/*.txt'\n",
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/prompts/']);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/working/evals/prompts/*.txt',
+      expect.any(Object),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
+    );
+  });
+
+  it('should reject an escaped structured brace prompt-glob arm before nested inspection', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "prompts: 'file://{../../outside,prompts}/*.yaml'\n",
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/prompts/']);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(2);
+    expect(mockGlob.sync).toHaveBeenNthCalledWith(
+      1,
+      '/test/working/evals/prompts/*.yaml',
+      expect.any(Object),
+    );
+    expect(mockGlob.sync).toHaveBeenNthCalledWith(
+      2,
+      '/test/working/evals/prompts/*.yaml',
+      expect.any(Object),
+    );
+  });
+
+  it('should bound brace prompt-glob expansion and conservatively watch the workspace', () => {
+    mockFs.readFileSync.mockReturnValue("prompts: 'file://{1..2000}/*.txt'\n");
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
+  it('should not scan a structured brace prompt glob when every arm escapes', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "prompts: 'file://{../../outside,../../secret}/*.yaml'\n",
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
+    );
+  });
+
+  it.each([
+    "providers:\n  - 'file://{..\\..\\,providers}/LICE*'",
+    "tests:\n  - vars:\n      context: 'file://{..\\..\\,providers}/LICE*'",
+  ])('should reject a backslash-traversal brace glob arm before scanning it', (config) => {
+    mockFs.readFileSync.mockReturnValue(`${config}\n`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/']);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/working/evals/providers/LICE*',
+      expect.any(Object),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
+    );
   });
 
   it('should ignore an inline scalar prompt', () => {
@@ -1479,7 +1630,10 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py', '../config']);
+    expect(deps).toEqual([
+      '../config/providers/custom.py',
+      '../config/providers',
+    ]);
   });
 
   it('should extract all file types from complex config', () => {

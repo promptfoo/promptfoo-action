@@ -13,6 +13,7 @@ import {
   setTag,
   timestampTag,
 } from 'js-yaml';
+import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
@@ -21,6 +22,7 @@ type PromptEntry =
   | { file?: string; id?: string; raw?: string; [key: string]: unknown };
 
 type LegacyYamlSet = Record<string, unknown>;
+const MAX_BRACE_EXPANSIONS = 1024;
 
 const legacySetTag = defineMappingTag<LegacyYamlSet>('tag:yaml.org,2002:set', {
   ...legacyMapTag,
@@ -141,23 +143,55 @@ export function extractFileDependencies(
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): void => {
-      const filePath = fileUrl.replace('file://', '');
-      const absolutePath = resolveConfigDependency(
-        filePath,
-        'config file dependency',
-      );
-      if (!absolutePath) {
-        return;
-      }
+    const processFileUrl = (fileUrl: string): string[] | undefined => {
+      const filePath = fileUrl.replace('file://', '').replace(/\\/g, '/');
 
       // Check if the path contains glob patterns
-      if (glob.hasMagic(filePath)) {
-        // It's a glob pattern, expand it
-        const matches = glob.sync(absolutePath, {
-          nodir: true,
-          windowsPathsNoEscape: true,
+      if (
+        glob.hasMagic(filePath, {
+          magicalBraces: true,
+          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+        })
+      ) {
+        const expandedPaths = braceExpand(filePath, {
+          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
         });
+        if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
+          dependencies.add(
+            `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
+          );
+          core.warning(
+            'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+          );
+          return;
+        }
+
+        const safePatterns: string[] = [];
+        let unsafeAlternative = false;
+        for (const expandedPath of expandedPaths) {
+          const absolutePattern = path.resolve(configDir, expandedPath);
+          if (isPathInside(dependencyRoot, absolutePattern)) {
+            safePatterns.push(absolutePattern);
+          } else {
+            unsafeAlternative = true;
+          }
+        }
+        if (unsafeAlternative) {
+          core.warning(
+            'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
+          );
+        }
+        if (safePatterns.length === 0) {
+          return;
+        }
+
+        const matches = glob.sync(
+          safePatterns.length === 1 ? safePatterns[0] : safePatterns,
+          {
+            nodir: true,
+            windowsPathsNoEscape: true,
+          },
+        );
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
           if (isPathInside(dependencyRoot, absoluteMatch)) {
@@ -169,27 +203,38 @@ export function extractFileDependencies(
           }
         }
 
-        // Also add the base directory for watching
-        // Extract the non-glob part of the path
-        const absoluteRoot = path.parse(absolutePath).root;
-        const pathParts = path
-          .relative(absoluteRoot, absolutePath)
-          .split(path.sep);
-        let basePath = absoluteRoot;
-        for (const part of pathParts) {
-          if (glob.hasMagic(part) || /\{[^{}]*(?:,|\.\.)[^{}]*\}/.test(part)) {
-            break;
+        for (const absolutePattern of safePatterns) {
+          const absoluteRoot = path.parse(absolutePattern).root;
+          const pathParts = path
+            .relative(absoluteRoot, absolutePattern)
+            .split(path.sep);
+          let basePath = absoluteRoot;
+          for (const part of pathParts) {
+            if (glob.hasMagic(part)) {
+              break;
+            }
+            basePath = path.join(basePath, part);
           }
-          basePath = path.join(basePath, part);
+          dependencies.add(
+            path.relative(cwd, basePath) === ''
+              ? absolutePattern
+              : matches.length === 0
+                ? `${basePath.replace(/[\\/]+$/, '')}${path.sep}`
+                : basePath,
+          );
         }
-        dependencies.add(
-          path.relative(cwd, basePath) === ''
-            ? absolutePath
-            : matches.length === 0
-              ? `${basePath.replace(/[\\/]+$/, '')}${path.sep}`
-              : basePath,
-        );
-      } else if (isDirectory(absolutePath)) {
+        return safePatterns;
+      }
+
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        'config file dependency',
+      );
+      if (!absolutePath) {
+        return;
+      }
+
+      if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = fileUrl.endsWith('/')
           ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
@@ -199,6 +244,7 @@ export function extractFileDependencies(
         // It's a regular file path
         dependencies.add(absolutePath);
       }
+      return [absolutePath];
     };
 
     // Extract provider files
@@ -318,7 +364,7 @@ export function extractFileDependencies(
           .replace(/^file:\/\//, '')
           .replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, '$1')
           .replace(/\\/g, '/');
-        processFileUrl(`file://${promptPath}`);
+        const promptPatterns = processFileUrl(`file://${promptPath}`);
 
         for (const rawExecutableArgument of executableParts.slice(1)) {
           const equalsIndex = rawExecutableArgument.indexOf('=');
@@ -396,13 +442,21 @@ export function extractFileDependencies(
         if (!absolutePath) {
           return;
         }
-
-        const promptFiles = isPromptGlob
-          ? glob.sync(absolutePath, {
+        let promptFiles: string[];
+        if (isPromptGlob) {
+          if (!promptPatterns?.length) {
+            return;
+          }
+          promptFiles = glob.sync(
+            promptPatterns.length === 1 ? promptPatterns[0] : promptPatterns,
+            {
               nodir: true,
               windowsPathsNoEscape: true,
-            })
-          : [absolutePath];
+            },
+          );
+        } else {
+          promptFiles = [absolutePath];
+        }
         for (const promptFile of promptFiles) {
           const absolutePromptFile = path.resolve(promptFile);
           if (
