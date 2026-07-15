@@ -175,6 +175,37 @@ tests:
     expect(deps).toContain('../config/data/context.txt');
   });
 
+  it('should preserve the generator-config glob directory when its last match is deleted', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: file://generators/tests.py:generate_tests
+  config:
+    dataset: file://data/*.json
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toContain('../config/data/');
+  });
+
+  it('should preserve dependencies when generator config uses a cyclic YAML alias', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: file://generators/tests.py:generate_tests
+  config: &config
+    dataset: file://data/cases.json
+    self: *config
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/generators/tests.py', '../config/data/cases.json']);
+  });
+
   it('should extract dependencies nested in a file-backed YAML test', () => {
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) => {
@@ -238,6 +269,62 @@ tests:
     expect(deps).toContain('../config/data/vars.json');
     expect(deps).toContain('../config/data/extra.json');
     expect(deps).toContain('../config/expected/output.txt');
+  });
+
+  it('should extract arbitrary metadata and options references in a file-backed test', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? `
+- metadata:
+    dataset: file://data/metadata.json
+  options:
+    rubric:
+      - file://data/rubrics/*.txt
+`
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      '../config/data/metadata.json',
+      '../config/data/rubrics/',
+    ]);
+  });
+
+  it('should extract dependencies nested in a file-backed JSONL test', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.jsonl')
+          ? [
+              JSON.stringify({
+                metadata: { source: 'file://data/metadata.json' },
+              }),
+              '',
+              JSON.stringify({
+                assert: [
+                  { type: 'contains', value: 'file://expected/output.txt' },
+                ],
+              }),
+            ].join('\n')
+          : 'tests: file://tests/cases.jsonl',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.jsonl',
+      '../config/data/metadata.json',
+      '../config/expected/output.txt',
+    ]);
   });
 
   it('should ignore non-object entries in a file-backed test', () => {
@@ -421,6 +508,14 @@ tests: file://cases.xlsx#Safety
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/tests/cases#prod.yaml']);
+  });
+
+  it('should preserve a colon in a non-generator test filename', () => {
+    mockFs.readFileSync.mockReturnValue('tests: file://tests/cases:prod.yaml');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases:prod.yaml']);
   });
 
   it('should extract an absolute file-backed test path inside the repository', () => {

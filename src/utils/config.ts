@@ -153,8 +153,15 @@ export function extractFileDependencies(configPath: string): string[] {
       return [absolutePath];
     };
 
-    const processFileUrl = (fileUrl: string): void => {
-      processFilePath(fileUrl.replace(/^file:\/\//, ''));
+    const processFileUrl = (
+      fileUrl: string,
+      preserveGlobRoot = false,
+    ): void => {
+      processFilePath(
+        fileUrl.replace(/^file:\/\//, ''),
+        'config file dependency',
+        preserveGlobRoot,
+      );
     };
 
     // Extract provider files
@@ -262,23 +269,29 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
+    const inspectedNestedValues = new WeakSet<object>();
     const extractNestedFileUrls = (value: unknown): void => {
       if (typeof value === 'string') {
         if (value.startsWith('file://')) {
-          processFileUrl(value);
+          processFileUrl(value, true);
         }
         return;
       }
+      if (typeof value !== 'object' || value === null) {
+        return;
+      }
+      if (inspectedNestedValues.has(value)) {
+        return;
+      }
+      inspectedNestedValues.add(value);
       if (Array.isArray(value)) {
         for (const item of value) {
           extractNestedFileUrls(item);
         }
         return;
       }
-      if (typeof value === 'object' && value !== null) {
-        for (const item of Object.values(value)) {
-          extractNestedFileUrls(item);
-        }
+      for (const item of Object.values(value)) {
+        extractNestedFileUrls(item);
       }
     };
 
@@ -286,7 +299,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const inspectTestFile = (testFile: string): void => {
       if (
         inspectedTestFiles.has(testFile) ||
-        !/\.(?:ya?ml|json)$/i.test(testFile) ||
+        !/\.(?:ya?ml|jsonl?)$/i.test(testFile) ||
         !fs.existsSync(testFile)
       ) {
         return;
@@ -304,9 +317,16 @@ export function extractFileDependencies(configPath: string): string[] {
         }
 
         const testContent = fs.readFileSync(realTestFile, 'utf8');
-        const parsedTests = loadYaml(testContent, {
-          schema: CORE_SCHEMA.withTags(mergeTag),
-        }) as PromptfooTestConfig | PromptfooTestConfig[] | null;
+        const parsedTests = (
+          /\.jsonl$/i.test(realTestFile)
+            ? testContent
+                .split(/\r?\n/)
+                .filter((line) => line.trim())
+                .map((line) => JSON.parse(line))
+            : loadYaml(testContent, {
+                schema: CORE_SCHEMA.withTags(mergeTag),
+              })
+        ) as PromptfooTestConfig | PromptfooTestConfig[] | null;
         const nestedTests = Array.isArray(parsedTests)
           ? parsedTests
           : parsedTests
@@ -319,6 +339,7 @@ export function extractFileDependencies(configPath: string): string[] {
           }
           extractVarFiles(nestedTest.vars, path.dirname(testFile));
           extractAssertFiles(nestedTest.assert);
+          extractNestedFileUrls(nestedTest);
         }
       } catch {
         core.warning(`Failed to inspect test file dependency "${testFile}"`);
@@ -350,7 +371,10 @@ export function extractFileDependencies(configPath: string): string[] {
       // Drop a function qualifier, e.g. `tests.py:generate_tests`. Require the
       // colon past index 1 so a Windows drive letter (`C:\...`) is not stripped.
       const functionIndex = filePath.lastIndexOf(':');
-      if (functionIndex > 1) {
+      if (
+        functionIndex > 1 &&
+        /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex))
+      ) {
         filePath = filePath.slice(0, functionIndex);
       }
 
