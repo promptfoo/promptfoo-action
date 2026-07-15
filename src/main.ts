@@ -279,66 +279,88 @@ export async function run(): Promise<void> {
       }
     }
 
-    // Promptfoo also loads workingDirectory/.env implicitly during startup.
-    // Validate it first so selected env-files can still override application
-    // values while no repository-controlled process setting reaches the child.
-    const implicitEnvFilePath = path.join(workingDirectory, '.env');
-    const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
-    const implicitEnvExists = fs.existsSync(implicitEnvFilePath);
-    const implicitFilePath = implicitEnvExists
-      ? implicitEnvFilePath
-      : implicitVaultFilePath;
-    if (
-      implicitEnvExists ||
-      (process.env.DOTENV_KEY && fs.existsSync(implicitVaultFilePath))
-    ) {
-      core.info(`Loading environment variables from ${implicitFilePath}`);
-      loadEnvironmentFile(implicitFilePath, process.env, false);
-      core.info(`Successfully loaded ${implicitFilePath}`);
-    }
+    const loadEnvironmentFiles = (): void => {
+      // Promptfoo also loads workingDirectory/.env implicitly during startup.
+      // Validate it first so selected env-files can still override application
+      // values while no repository-controlled process setting reaches the child.
+      const implicitEnvFilePath = path.join(workingDirectory, '.env');
+      const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
+      const implicitEnvExists = fs.existsSync(implicitEnvFilePath);
+      const implicitFilePath = implicitEnvExists
+        ? implicitEnvFilePath
+        : implicitVaultFilePath;
+      if (
+        implicitEnvExists ||
+        (process.env.DOTENV_KEY && fs.existsSync(implicitVaultFilePath))
+      ) {
+        core.info(`Loading environment variables from ${implicitFilePath}`);
+        loadEnvironmentFile(implicitFilePath, process.env, false);
+        core.info(`Successfully loaded ${implicitFilePath}`);
+      }
 
-    // Load explicitly selected .env files after the implicit default.
-    if (envFiles) {
-      const envFileList = envFiles
-        .split(',')
-        .map((f) => f.trim())
-        .filter(Boolean);
-      for (const envFile of envFileList) {
-        const envFilePath = path.join(workingDirectory, envFile);
-        if (fs.existsSync(envFilePath)) {
-          core.info(`Loading environment variables from ${envFilePath}`);
-          loadEnvironmentFile(envFilePath);
-          core.info(`Successfully loaded ${envFilePath}`);
-        } else {
-          throw new PromptfooActionError(
-            `Environment file ${envFilePath} not found`,
-            ErrorCodes.ENV_FILE_NOT_FOUND,
-            `Make sure the file path is correct relative to ${workingDirectory}`,
-          );
+      // Load explicitly selected .env files after the implicit default.
+      if (envFiles) {
+        const envFileList = envFiles
+          .split(',')
+          .map((f) => f.trim())
+          .filter(Boolean);
+        for (const envFile of envFileList) {
+          const envFilePath = path.join(workingDirectory, envFile);
+          if (fs.existsSync(envFilePath)) {
+            core.info(`Loading environment variables from ${envFilePath}`);
+            loadEnvironmentFile(envFilePath);
+            core.info(`Successfully loaded ${envFilePath}`);
+          } else {
+            throw new PromptfooActionError(
+              `Environment file ${envFilePath} not found`,
+              ErrorCodes.ENV_FILE_NOT_FOUND,
+              `Make sure the file path is correct relative to ${workingDirectory}`,
+            );
+          }
         }
       }
-    }
+    };
 
-    const apiKeys = [
-      openaiApiKey,
-      azureApiKey,
-      anthropicApiKey,
-      huggingfaceApiKey,
-      awsAccessKeyId,
-      awsSecretAccessKey,
-      replicateApiKey,
-      palmApiKey,
-      vertexApiKey,
-      cohereApiKey,
-      mistralApiKey,
-      groqApiKey,
-      process.env.PROMPTFOO_API_KEY,
-    ];
-    for (const key of apiKeys) {
-      if (key) {
-        core.setSecret(key);
+    const maskProviderSecrets = (): void => {
+      const apiKeys = [
+        openaiApiKey,
+        azureApiKey,
+        anthropicApiKey,
+        huggingfaceApiKey,
+        awsAccessKeyId,
+        awsSecretAccessKey,
+        replicateApiKey,
+        palmApiKey,
+        vertexApiKey,
+        cohereApiKey,
+        mistralApiKey,
+        groqApiKey,
+        process.env.OPENAI_API_KEY,
+        process.env.AZURE_OPENAI_API_KEY,
+        process.env.ANTHROPIC_API_KEY,
+        process.env.HF_API_TOKEN,
+        process.env.AWS_ACCESS_KEY_ID,
+        process.env.AWS_SECRET_ACCESS_KEY,
+        process.env.REPLICATE_API_KEY,
+        process.env.PALM_API_KEY,
+        process.env.VERTEX_API_KEY,
+        process.env.COHERE_API_KEY,
+        process.env.MISTRAL_API_KEY,
+        process.env.GROQ_API_KEY,
+        process.env.DATABRICKS_TOKEN,
+        process.env.CLAWDBOT_GATEWAY_TOKEN,
+        process.env.CLAWDBOT_GATEWAY_PASSWORD,
+        process.env.OPENCLAW_GATEWAY_TOKEN,
+        process.env.OPENCLAW_GATEWAY_PASSWORD,
+        process.env.PROMPTFOO_API_KEY,
+      ];
+      for (const key of apiKeys) {
+        if (key) {
+          core.setSecret(key);
+        }
       }
-    }
+    };
+
     core.setSecret(githubToken);
     const octokit = github.getOctokit(githubToken);
 
@@ -493,8 +515,11 @@ export async function run(): Promise<void> {
     // Extract dependencies from config file
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies =
-        extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+      const dependencies = extractFileDependencies(
+        configAbsolutePath,
+        process.cwd(),
+        workingDirectory,
+      ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
@@ -502,6 +527,9 @@ export async function run(): Promise<void> {
 
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
+          if (dep === './' || dep === '.') {
+            return true;
+          }
           // Direct file match
           if (changedFilesList.includes(dep)) {
             return true;
@@ -538,6 +566,9 @@ export async function run(): Promise<void> {
       return;
     }
 
+    // Only parse repository environment files once an evaluation is required.
+    loadEnvironmentFiles();
+
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');
     }
@@ -549,6 +580,7 @@ export async function run(): Promise<void> {
     }
 
     loadConfigEnvironmentFiles(configAbsolutePath, workingDirectory);
+    maskProviderSecrets();
 
     // Set up caching environment for optimal performance
     core.startGroup('Setting up cache');
@@ -684,7 +716,12 @@ export async function run(): Promise<void> {
     // See: https://github.com/promptfoo/promptfoo-action/issues/786
     const exitCode = await exec.exec(
       'npx',
-      [`promptfoo@${version}`, ...promptfooArgs],
+      [
+        '--prefix',
+        path.resolve(__dirname, '..'),
+        `promptfoo@${version}`,
+        ...promptfooArgs,
+      ],
       { env, cwd: workingDirectory, ignoreReturnCode: true },
     );
 

@@ -94,6 +94,7 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     realpathSync: vi.fn(),
+    statSync: vi.fn(),
     existsSync: vi.fn(),
     unlinkSync: vi.fn(),
     promises: {
@@ -131,6 +132,7 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   realpathSync: MockedFunction<typeof fs.realpathSync>;
+  statSync: MockedFunction<typeof fs.statSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
@@ -253,6 +255,10 @@ function setupCommonMocks(): MockOctokit {
   mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
     String(filePath),
   );
+  mockFs.statSync.mockReturnValue({
+    isFile: () => true,
+    size: 0,
+  } as fs.Stats);
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -355,6 +361,43 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
       expect(mockAuth.validatePromptfooApiKey).not.toHaveBeenCalled();
       expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should skip unrelated changes before validating an implicit .env', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env`),
+      );
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { OPENAI_BASE_URL: 'http://attacker.invalid/v1' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(dotenv.config).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should isolate npx from a repository-controlled project .npmrc', async () => {
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledTimes(1);
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.slice(0, 2)).toEqual([
+        '--prefix',
+        path.resolve(__dirname, '..'),
+      ]);
     });
 
     test('should process all matching prompts when PR file list hits GitHub cap', async () => {
@@ -464,6 +507,8 @@ describe('GitHub Action Main', () => {
       );
       expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
         path.join(process.cwd(), 'evals', 'promptfooconfig.yaml'),
+        process.cwd(),
+        path.join(process.cwd(), 'evals'),
       );
     });
 
@@ -602,6 +647,11 @@ describe('GitHub Action Main', () => {
       'DOTENV_KEY',
       'dotenv_config_path',
       'DOTENV_CONFIG_OVERRIDE',
+      'GITHUB_STEP_SUMMARY',
+      'GITHUB_OUTPUT',
+      'GITHUB_ENV',
+      'GITHUB_PATH',
+      'GITHUB_STATE',
       'LD_PRELOAD',
       'LD_AUDIT',
       'ld_debug_output',
@@ -620,6 +670,8 @@ describe('GitHub Action Main', () => {
       'PYTHONHOME',
       'PYTHON',
       'PYTHONPATH',
+      'PYTHONWARNINGS',
+      '_PYTHON_SYSCONFIGDATA_NAME',
       'pythonuserbase',
       'PERL5LIB',
       'RUBYLIB',
@@ -632,6 +684,31 @@ describe('GitHub Action Main', () => {
       'GEM_SPEC_CACHE',
       'PROMPTFOO_PYTHON',
       'NODE_GYP_FORCE_PYTHON',
+      'MAKE',
+      'MAKEFLAGS',
+      'MAKEFILES',
+      'CFLAGS',
+      'CXXFLAGS',
+      'CPPFLAGS',
+      'LDFLAGS',
+      'CFLAGS_host',
+      'CXXFLAGS_host',
+      'CPPFLAGS_host',
+      'LDFLAGS_host',
+      'GYP_DEFINES',
+      'CC_TARGET',
+      'CXX_TARGET',
+      'AR_TARGET',
+      'LINK_TARGET',
+      'CC_HOST',
+      'CXX_HOST',
+      'AR_HOST',
+      'LINK_HOST',
+      'GYP_CONFIG_DIR',
+      'GYP_GENERATORS',
+      'GYP_GENERATOR_OUTPUT',
+      'GYP_MSVS_OVERRIDE_PATH',
+      'NODEJS_ORG_MIRROR',
       'PROMPTFOO_RUBY',
       'playwright_browsers_path',
       'PLAYWRIGHT_DOWNLOAD_HOST',
@@ -704,9 +781,24 @@ describe('GitHub Action Main', () => {
       'OPENAI_ORGANIZATION',
       'OPENAI_ORG_ID',
       'OPENAI_PROJECT_ID',
+      'OPENAI_CUSTOM_HEADERS',
       'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_AUTH_TOKEN',
+      'ANTHROPIC_CONFIG_DIR',
+      'ANTHROPIC_CUSTOM_HEADERS',
+      'ANTHROPIC_FEDERATION_RULE_ID',
+      'ANTHROPIC_IDENTITY_TOKEN',
+      'ANTHROPIC_IDENTITY_TOKEN_FILE',
+      'ANTHROPIC_ORGANIZATION_ID',
+      'ANTHROPIC_PROFILE',
+      'ANTHROPIC_SERVICE_ACCOUNT_ID',
+      'ANTHROPIC_WORKSPACE_ID',
+      'ANTHROPIC_SCOPE',
+      'ANTHROPIC_ENVIRONMENT_ID',
+      'ANTHROPIC_ENVIRONMENT_KEY',
       'aPi_HoSt',
       'AWS_ENDPOINT_URL',
+      'AWS_BEDROCK_BASE_URL',
       'AWS_PROFILE',
       'AWS_BEDROCK_REGION',
       'AWS_REGION',
@@ -726,6 +818,7 @@ describe('GitHub Action Main', () => {
       'aws_endpoint_url_bedrock_runtime',
       'AWS_ENDPOINT_URL_SAGEMAKER_RUNTIME',
       'AZURE_OPENAI_API_HOST',
+      'AZURE_OPENAI_ENDPOINT',
       'AZURE_POD_IDENTITY_AUTHORITY_HOST',
       'AZURE_STORAGE_CONNECTION_STRING',
       'AZURE_TOKEN_CREDENTIALS',
@@ -741,7 +834,9 @@ describe('GitHub Action Main', () => {
       'MSI_SECRET',
       'AZURE_FEDERATED_TOKEN_FILE',
       'AZURE_CLIENT_CERTIFICATE_PATH',
+      'AZURE_CLIENT_ID',
       'GOOGLE_APPLICATION_CREDENTIALS',
+      'GENAI_ENDPOINT',
       'GOOGLE_GENAI_USE_VERTEXAI',
       'GOOGLE_CLOUD_PROJECT',
       'GOOGLE_CLOUD_QUOTA_PROJECT',
@@ -758,7 +853,11 @@ describe('GitHub Action Main', () => {
       'VERTEX_REGION',
       'WATSONX_AI_PROJECT_ID',
       'VERTEX_PROJECT_ID',
+      'WATSONX_AI_PROJECT_ID',
+      'WATSONX_AI_AUTH_TYPE',
+      'WATSONX_AI_BEARER_TOKEN',
       'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
+      'GCLOUD_PROJECT',
       'cloudsdk_config',
       'CLOUDSDK_PYTHON',
       'AZURE_AI_PROJECT_URL',
@@ -766,9 +865,13 @@ describe('GitHub Action Main', () => {
       'CLAUDE_CODE_USE_BEDROCK',
       'CLAUDE_CODE_USE_VERTEX',
       'CLAUDE_CONFIG_DIR',
+      'CLAUDE_CODE_USE_BEDROCK',
+      'CLAUDE_CODE_USE_VERTEX',
       'CODEX_HOME',
       'CLOUDFLARE_GATEWAY_ID',
       'SNOWFLAKE_ACCOUNT_IDENTIFIER',
+      'DATABRICKS_WORKSPACE_URL',
+      'CLAWDBOT_GATEWAY_URL',
       'OPENCLAW_CONFIG_PATH',
       'OPENCLAW_GATEWAY_PORT',
       'opencode_config',
@@ -782,6 +885,11 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT',
       'PROMPTFOO_OTEL_ENDPOINT',
       'otel_exporter_otlp_endpoint',
+      'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
+      'OTEL_EXPORTER_OTLP_TRACES_HEADERS',
+      'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT',
+      'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',
+      'OTEL_EXPORTER_OTLP_METRICS_HEADERS',
       'PROMPTFOO_REMOTE_APP_BASE_URL',
       'PROMPTFOO_SHARING_APP_BASE_URL',
       'PROMPTFOO_CACHE_PATH',
@@ -789,8 +897,13 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_CACHE_MAX_SIZE',
       'PROMPTFOO_CONFIG_DIR',
       'PROMPTFOO_PASS_RATE_THRESHOLD',
+      'PROMPTFOO_API_KEY',
       'PROMPTFOO_CACHE_TTL',
+      'PROMPTFOO_AUTHOR',
+      'CI',
       'PROMPTFOO_DISABLE_SHARING',
+      'PROMPTFOO_DISABLE_ERROR_LOG',
+      'PROMPTFOO_DISABLE_DEBUG_LOG',
       'PROMPTFOO_STRIP_GRADING_RESULT',
       'PROMPTFOO_STRIP_RESPONSE_OUTPUT',
       'PROMPTFOO_STRIP_PROMPT_TEXT',
@@ -955,13 +1068,14 @@ describe('GitHub Action Main', () => {
       );
 
       const dotenv = await import('dotenv');
-      const originalPromptfooKey = process.env.PROMPTFOO_API_KEY;
+      const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
       const originalOpenaiKey = process.env.OPENAI_API_KEY;
-      process.env.PROMPTFOO_API_KEY = 'trusted-promptfoo-key';
+      process.env.ANTHROPIC_API_KEY = 'trusted-anthropic-key';
       process.env.OPENAI_API_KEY = 'trusted-openai-key';
       (dotenv.config as Mock).mockImplementation(
         (options?: { processEnv?: Record<string, string> }) => {
           const parsed = {
+            ANTHROPIC_API_KEY: 'attacker-key',
             OPENAI_API_KEY: 'attacker-key',
           };
           Object.assign(options?.processEnv ?? process.env, parsed);
@@ -975,15 +1089,15 @@ describe('GitHub Action Main', () => {
         const execOptions = mockExec.exec.mock.calls[0][2];
         expect(execOptions?.env).toEqual(
           expect.objectContaining({
-            PROMPTFOO_API_KEY: 'trusted-promptfoo-key',
+            ANTHROPIC_API_KEY: 'trusted-anthropic-key',
             OPENAI_API_KEY: 'trusted-openai-key',
           }),
         );
       } finally {
-        if (originalPromptfooKey === undefined) {
-          delete process.env.PROMPTFOO_API_KEY;
+        if (originalAnthropicKey === undefined) {
+          delete process.env.ANTHROPIC_API_KEY;
         } else {
-          process.env.PROMPTFOO_API_KEY = originalPromptfooKey;
+          process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
         }
         if (originalOpenaiKey === undefined) {
           delete process.env.OPENAI_API_KEY;
@@ -1267,7 +1381,11 @@ describe('GitHub Action Main', () => {
       (dotenv.config as Mock).mockImplementation(
         (options?: { path?: string; processEnv?: Record<string, string> }) => {
           const parsed = options?.path?.endsWith('.env.second')
-            ? { CUSTOM_PROVIDER_SETTING: 'second' }
+            ? {
+                CUSTOM_PROVIDER_SETTING: 'second',
+                OPENAI_API_KEY: 'config-openai-key',
+                DATABRICKS_TOKEN: 'config-databricks-token',
+              }
             : { CUSTOM_PROVIDER_SETTING: 'first' };
           Object.assign(options?.processEnv ?? process.env, parsed);
           return { parsed };
@@ -1279,10 +1397,20 @@ describe('GitHub Action Main', () => {
 
         expect(mockCore.setFailed).not.toHaveBeenCalled();
         expect(mockExec.exec.mock.calls[0][2]?.env).toEqual(
-          expect.objectContaining({ CUSTOM_PROVIDER_SETTING: 'second' }),
+          expect.objectContaining({
+            CUSTOM_PROVIDER_SETTING: 'second',
+            OPENAI_API_KEY: 'config-openai-key',
+            DATABRICKS_TOKEN: 'config-databricks-token',
+          }),
+        );
+        expect(mockCore.setSecret).toHaveBeenCalledWith('config-openai-key');
+        expect(mockCore.setSecret).toHaveBeenCalledWith(
+          'config-databricks-token',
         );
       } finally {
         delete process.env.CUSTOM_PROVIDER_SETTING;
+        delete process.env.OPENAI_API_KEY;
+        delete process.env.DATABRICKS_TOKEN;
       }
     });
 
@@ -1716,6 +1844,19 @@ describe('GitHub Action Main', () => {
         'No LLM prompt, config files, or dependencies were modified.',
       );
       expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed when config dependency extraction returns the workspace root', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should force evaluation when no relevant files changed', async () => {

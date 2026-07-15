@@ -1,11 +1,26 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
+import {
+  binaryTag,
+  CORE_SCHEMA,
+  load as loadYaml,
+  mergeTag,
+  omapTag,
+  pairsTag,
+  setTag,
+  timestampTag,
+} from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
+  $ref?: string;
+  commandLineOptions?: {
+    $ref?: string;
+    envPath?: string | string[];
+    [key: string]: unknown;
+  };
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
@@ -33,27 +48,459 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
  */
-export function extractFileDependencies(configPath: string): string[] {
+export function extractFileDependencies(
+  configPath: string,
+  workspaceRoot: string = process.cwd(),
+  workingDirectory: string = workspaceRoot,
+): string[] {
   const dependencies = new Set<string>();
-  const configDir = path.dirname(configPath);
-  const cwd = process.cwd();
+  const lexicalConfigPath = path.resolve(configPath);
+  const configDir = path.dirname(lexicalConfigPath);
+  const cwd = path.resolve(workspaceRoot);
+  const resolvedWorkingDirectory = path.resolve(workingDirectory);
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const maxConfigBytes = 2 * 1024 * 1024;
+  const maxConfigNodes = 10_000;
+  const maxConfigRefs = 100;
 
   try {
-    const configContent = fs.readFileSync(configPath, 'utf8');
-    if (!configContent.trim()) {
-      core.debug('Config file is empty or invalid');
-      return [];
+    if (!isPathInside(cwd, resolvedWorkingDirectory)) {
+      throw new Error(
+        'Promptfoo working directory must stay within the repository workspace',
+      );
+    }
+    if (
+      glob.hasMagic(configPath, {
+        magicalBraces: true,
+        windowsPathsNoEscape: true,
+      }) ||
+      configPath.includes('{{')
+    ) {
+      throw new Error('Dynamic Promptfoo configs cannot be safely inspected');
+    }
+    if (!/\.(?:ya?ml|json)$/i.test(lexicalConfigPath)) {
+      throw new Error(
+        'Executable Promptfoo configs cannot be safely inspected',
+      );
     }
 
-    const config = loadYaml(configContent, {
-      schema: CORE_SCHEMA.withTags(mergeTag),
-    }) as PromptfooConfig;
+    const addSafeDependency = (
+      filePath: string,
+      baseDir: string,
+      source: string,
+      trackLexicalPath = true,
+    ): string => {
+      if (!filePath || filePath.includes('\0')) {
+        throw new Error(`${source} is empty or contains an invalid null byte`);
+      }
+
+      const absolutePath = path.isAbsolute(filePath)
+        ? path.resolve(filePath)
+        : path.resolve(baseDir, filePath);
+      if (!isPathInside(dependencyRoot, absolutePath)) {
+        throw new Error(`${source} must stay within the repository workspace`);
+      }
+
+      if (trackLexicalPath) {
+        dependencies.add(absolutePath);
+      }
+
+      let existingPath = absolutePath;
+      while (existingPath !== dependencyRoot && !fs.existsSync(existingPath)) {
+        existingPath = path.dirname(existingPath);
+      }
+      if (fs.existsSync(existingPath)) {
+        const realRoot = fs.existsSync(dependencyRoot)
+          ? fs.realpathSync(dependencyRoot)
+          : dependencyRoot;
+        const realExistingPath = fs.realpathSync(existingPath);
+        if (!isPathInside(realRoot, realExistingPath)) {
+          throw new Error(
+            `${source} must stay within the repository workspace`,
+          );
+        }
+        if (
+          existingPath === absolutePath &&
+          realExistingPath !== absolutePath
+        ) {
+          dependencies.add(realExistingPath);
+        }
+      }
+
+      return absolutePath;
+    };
+
+    const excludedParameters = new WeakSet<object>();
+    const readConfig = (filePath: string): unknown => {
+      const lexicalStats = fs.lstatSync(filePath);
+      const configStats = lexicalStats.isSymbolicLink()
+        ? fs.statSync(filePath)
+        : lexicalStats;
+      if (!configStats.isFile()) {
+        throw new Error('Promptfoo config must be a regular file');
+      }
+      if (configStats.size > maxConfigBytes) {
+        throw new Error('Promptfoo config exceeds the dependency size limit');
+      }
+      const realConfigPath = fs.realpathSync(filePath);
+      if (!/\.(?:ya?ml|json)$/i.test(realConfigPath)) {
+        throw new Error(
+          'Executable Promptfoo configs cannot be safely inspected',
+        );
+      }
+
+      const content = fs.readFileSync(filePath, 'utf8');
+      if (Buffer.byteLength(content, 'utf8') > maxConfigBytes) {
+        throw new Error('Promptfoo config exceeds the dependency size limit');
+      }
+      if (!content.trim()) {
+        return null;
+      }
+
+      const parsed = loadYaml(content, {
+        schema: CORE_SCHEMA.withTags(
+          mergeTag,
+          binaryTag,
+          timestampTag,
+          omapTag,
+          pairsTag,
+          setTag,
+        ),
+      }) as unknown;
+      if (
+        filePath === lexicalConfigPath &&
+        typeof parsed === 'object' &&
+        parsed !== null &&
+        'providers' in parsed &&
+        Array.isArray(parsed.providers)
+      ) {
+        for (const entry of parsed.providers) {
+          if (typeof entry !== 'object' || entry === null) {
+            continue;
+          }
+          let provider = entry as Record<string, unknown>;
+          if (!('config' in provider)) {
+            const mappedProvider = Object.values(provider)[0];
+            if (typeof mappedProvider !== 'object' || mappedProvider === null) {
+              continue;
+            }
+            provider = mappedProvider as Record<string, unknown>;
+          }
+          if (typeof provider.config !== 'object' || provider.config === null) {
+            continue;
+          }
+          const providerConfig = provider.config as Record<string, unknown>;
+          if (Array.isArray(providerConfig.functions)) {
+            for (const functionConfig of providerConfig.functions) {
+              if (
+                typeof functionConfig === 'object' &&
+                functionConfig !== null &&
+                'parameters' in functionConfig &&
+                typeof functionConfig.parameters === 'object' &&
+                functionConfig.parameters !== null
+              ) {
+                excludedParameters.add(functionConfig.parameters);
+              }
+            }
+          }
+          if (Array.isArray(providerConfig.tools)) {
+            for (const tool of providerConfig.tools) {
+              if (
+                typeof tool !== 'object' ||
+                tool === null ||
+                !('function' in tool) ||
+                typeof tool.function !== 'object' ||
+                tool.function === null ||
+                !('parameters' in tool.function) ||
+                typeof tool.function.parameters !== 'object' ||
+                tool.function.parameters === null
+              ) {
+                continue;
+              }
+              excludedParameters.add(tool.function.parameters);
+            }
+          }
+        }
+      }
+      const inspected = new WeakSet<object>();
+      const pending: unknown[] = [parsed];
+      let nodeCount = 0;
+      while (pending.length > 0) {
+        const value = pending.pop();
+        if (
+          typeof value !== 'object' ||
+          value === null ||
+          inspected.has(value)
+        ) {
+          continue;
+        }
+        inspected.add(value);
+        nodeCount++;
+        if (nodeCount > maxConfigNodes) {
+          throw new Error(
+            'Promptfoo config exceeds the dependency traversal limit',
+          );
+        }
+        pending.push(...Object.values(value));
+      }
+      return parsed;
+    };
+
+    const loadedConfigs = new Map<string, unknown>();
+    const loadConfig = (filePath: string): unknown => {
+      if (loadedConfigs.has(filePath)) {
+        return loadedConfigs.get(filePath);
+      }
+      const parsed = readConfig(filePath);
+      loadedConfigs.set(filePath, parsed);
+      return parsed;
+    };
+
+    addSafeDependency(lexicalConfigPath, configDir, 'Promptfoo config', false);
+    const config = loadConfig(lexicalConfigPath) as PromptfooConfig;
 
     if (!config) {
       core.debug('Config file is empty or invalid');
       return [];
     }
+
+    const inspectedRefs = new Set<string>();
+    const resolveConfigRef = (
+      ref: string,
+      sourceFile: string,
+    ): { config: unknown; file: string; fragment: string } => {
+      const hashIndex = ref.indexOf('#');
+      const refPath = hashIndex === -1 ? ref : ref.slice(0, hashIndex);
+      const fragment = hashIndex === -1 ? '' : ref.slice(hashIndex);
+      const hasControlCharacters = [...(refPath + fragment)].some(
+        (character) => {
+          const code = character.charCodeAt(0);
+          return code < 32 || code === 127;
+        },
+      );
+      const hasOuterWhitespace =
+        refPath.length > 0 &&
+        (refPath.charCodeAt(0) <= 32 ||
+          refPath.charCodeAt(refPath.length - 1) <= 32);
+      if (
+        !ref ||
+        ref.includes('\0') ||
+        ref.includes('{{') ||
+        refPath.includes('\\') ||
+        fragment.includes('\\') ||
+        refPath.includes('%') ||
+        fragment.includes('%') ||
+        hasControlCharacters ||
+        hasOuterWhitespace ||
+        /^[a-z][a-z\d+.-]*:/i.test(refPath)
+      ) {
+        throw new Error(
+          'Dynamic or unsafe Promptfoo config refs are unsupported',
+        );
+      }
+
+      const refBase =
+        sourceFile === lexicalConfigPath
+          ? resolvedWorkingDirectory
+          : path.dirname(sourceFile);
+      const refFile = refPath
+        ? addSafeDependency(refPath, refBase, 'Promptfoo config ref')
+        : sourceFile;
+      if (!/\.(?:ya?ml|json)$/i.test(refFile)) {
+        throw new Error(
+          'Executable Promptfoo config refs cannot be safely inspected',
+        );
+      }
+
+      let selectedConfig: unknown = loadConfig(refFile);
+      if (!fragment || fragment === '#') {
+        return { config: selectedConfig, file: refFile, fragment };
+      }
+      const pointer = fragment.slice(1);
+      if (!pointer.startsWith('/')) {
+        throw new Error('Unsupported Promptfoo config ref fragment');
+      }
+      for (const encodedPart of pointer.slice(1).split('/')) {
+        if (/~(?![01])/.test(encodedPart)) {
+          throw new Error('Invalid Promptfoo config ref fragment');
+        }
+        const part = encodedPart.replace(/~1/g, '/').replace(/~0/g, '~');
+        if (
+          typeof selectedConfig !== 'object' ||
+          selectedConfig === null ||
+          '$id' in selectedConfig ||
+          !(part in selectedConfig)
+        ) {
+          throw new Error('Unsafe or missing Promptfoo config ref fragment');
+        }
+        selectedConfig = (selectedConfig as Record<string, unknown>)[part];
+      }
+      return { config: selectedConfig, file: refFile, fragment };
+    };
+
+    const discoveredRefs = new Set<string>();
+    const inspectedObjects = new Map<string, WeakSet<object>>();
+    const nestedFileUrls: string[] = [];
+    const nestedFilePaths: string[] = [];
+    const pending: Array<{ value: unknown; file: string }> = [
+      { value: config, file: lexicalConfigPath },
+    ];
+    let inspectedNodeCount = 0;
+    while (pending.length > 0) {
+      const next = pending.pop() as {
+        value: unknown;
+        file: string;
+      };
+      if (typeof next.value === 'string') {
+        if (next.value.startsWith('file://')) {
+          nestedFileUrls.push(next.value);
+        }
+        continue;
+      }
+      if (typeof next.value !== 'object' || next.value === null) {
+        continue;
+      }
+      if (excludedParameters.has(next.value)) {
+        continue;
+      }
+      const objectsForFile =
+        inspectedObjects.get(next.file) ?? new WeakSet<object>();
+      inspectedObjects.set(next.file, objectsForFile);
+      if (objectsForFile.has(next.value)) {
+        continue;
+      }
+      objectsForFile.add(next.value);
+      inspectedNodeCount++;
+      if (inspectedNodeCount > maxConfigNodes) {
+        throw new Error(
+          'Promptfoo config exceeds the dependency traversal limit',
+        );
+      }
+
+      const record = next.value as Record<string, unknown>;
+      if (typeof record.file === 'string') {
+        nestedFilePaths.push(record.file);
+      }
+      if ('$id' in record) {
+        throw new Error('Promptfoo config refs using $id are unsupported');
+      }
+      if ('$ref' in record) {
+        if (typeof record.$ref !== 'string') {
+          throw new Error('Invalid Promptfoo config ref');
+        }
+        const refKey = `${next.file}\0${record.$ref}`;
+        if (!discoveredRefs.has(refKey)) {
+          if (discoveredRefs.size >= maxConfigRefs) {
+            throw new Error(
+              'Promptfoo config exceeds the dependency ref limit',
+            );
+          }
+          discoveredRefs.add(refKey);
+          const referenced = resolveConfigRef(record.$ref, next.file);
+          pending.push({
+            value: referenced.config,
+            file: referenced.file,
+          });
+        }
+      }
+      pending.push(
+        ...Object.values(record).map((value) => ({
+          value,
+          file: next.file,
+        })),
+      );
+    }
+
+    const inspectEnvironmentDependencies = (
+      value: unknown,
+      sourceFile: string,
+      isCommandLineOptions: boolean,
+      depth: number,
+    ): boolean => {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return false;
+      }
+      const record = value as Record<string, unknown>;
+      if (
+        !isCommandLineOptions &&
+        typeof record.$ref === 'string' &&
+        typeof record.commandLineOptions === 'object' &&
+        record.commandLineOptions !== null &&
+        ('$ref' in record.commandLineOptions ||
+          'envPath' in record.commandLineOptions)
+      ) {
+        throw new Error('Ambiguous extended Promptfoo config envPath refs');
+      }
+
+      if (isCommandLineOptions && 'envPath' in record) {
+        if ('$ref' in record) {
+          throw new Error('Ambiguous extended Promptfoo config envPath refs');
+        }
+        const envPath = record.envPath;
+        if (
+          typeof envPath !== 'string' &&
+          (!Array.isArray(envPath) ||
+            envPath.some((entry) => typeof entry !== 'string'))
+        ) {
+          throw new Error('Invalid commandLineOptions.envPath');
+        }
+        const rawEntries: string[] = Array.isArray(envPath)
+          ? envPath
+          : [envPath];
+        for (const rawEntry of rawEntries) {
+          if (rawEntry.includes('{{')) {
+            throw new Error(
+              'Dynamic commandLineOptions.envPath cannot be safely inspected',
+            );
+          }
+          const resolvedEntry = path.isAbsolute(rawEntry)
+            ? rawEntry
+            : path.resolve(configDir, rawEntry);
+          for (const entry of resolvedEntry
+            .split(',')
+            .map((part) => part.trim())
+            .filter(Boolean)) {
+            addSafeDependency(
+              entry,
+              resolvedWorkingDirectory,
+              'commandLineOptions.envPath',
+            );
+          }
+        }
+        return true;
+      }
+
+      if (
+        !isCommandLineOptions &&
+        'commandLineOptions' in record &&
+        inspectEnvironmentDependencies(
+          record.commandLineOptions,
+          sourceFile,
+          true,
+          depth + 1,
+        )
+      ) {
+        return true;
+      }
+
+      if (typeof record.$ref === 'string') {
+        const inspectionKey = `${sourceFile}\0${record.$ref}\0${isCommandLineOptions}`;
+        if (inspectedRefs.has(inspectionKey)) {
+          return false;
+        }
+        inspectedRefs.add(inspectionKey);
+        const referenced = resolveConfigRef(record.$ref, sourceFile);
+        return inspectEnvironmentDependencies(
+          referenced.config,
+          referenced.file,
+          isCommandLineOptions,
+          depth + 1,
+        );
+      }
+      return false;
+    };
+
+    inspectEnvironmentDependencies(config, lexicalConfigPath, false, 0);
 
     const resolveConfigDependency = (
       filePath: string,
@@ -232,7 +679,49 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     }
 
+    for (const fileUrl of nestedFileUrls) {
+      processFileUrl(fileUrl);
+    }
+    for (const filePath of nestedFilePaths) {
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        'referenced file dependency',
+      );
+      if (absolutePath) {
+        dependencies.add(absolutePath);
+      }
+    }
+
     // Convert absolute paths back to relative paths from working directory
+    if (isPathInside(cwd, configDir)) {
+      for (const configName of ['promptfooconfig', 'redteam']) {
+        for (const extension of [
+          'yaml',
+          'yml',
+          'json',
+          'cjs',
+          'cts',
+          'js',
+          'mjs',
+          'mts',
+          'ts',
+        ]) {
+          const implicitConfig = path.resolve(
+            resolvedWorkingDirectory,
+            `${configName}.${extension}`,
+          );
+          if (implicitConfig !== lexicalConfigPath) {
+            addSafeDependency(
+              implicitConfig,
+              resolvedWorkingDirectory,
+              'Implicit Promptfoo config',
+            );
+          }
+        }
+      }
+    }
+
+    // Convert absolute paths back to repository-relative paths.
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
       const repositoryPath = relativePath.split(path.sep).join('/');
@@ -246,6 +735,6 @@ export function extractFileDependencies(configPath: string): string[] {
     core.warning(
       `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
     );
-    return [];
+    return ['./'];
   }
 }

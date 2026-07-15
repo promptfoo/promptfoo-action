@@ -22,10 +22,24 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'ABLIT_API_BASE_URL',
   'AI21_API_BASE_URL',
   'ALL_PROXY',
+  'ANTHROPIC_AUTH_TOKEN',
   'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_CONFIG_DIR',
+  'ANTHROPIC_CUSTOM_HEADERS',
+  'ANTHROPIC_ENVIRONMENT_ID',
+  'ANTHROPIC_ENVIRONMENT_KEY',
+  'ANTHROPIC_FEDERATION_RULE_ID',
+  'ANTHROPIC_IDENTITY_TOKEN',
+  'ANTHROPIC_IDENTITY_TOKEN_FILE',
+  'ANTHROPIC_ORGANIZATION_ID',
+  'ANTHROPIC_PROFILE',
+  'ANTHROPIC_SCOPE',
+  'ANTHROPIC_SERVICE_ACCOUNT_ID',
+  'ANTHROPIC_WORKSPACE_ID',
   'API_HOST',
   'APPDATA',
   'AWS_BEARER_TOKEN_BEDROCK',
+  'AWS_BEDROCK_BASE_URL',
   'AWS_BEDROCK_REGION',
   'AWS_CA_BUNDLE',
   'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE',
@@ -50,11 +64,13 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'AZURE_API_HOST',
   'AZURE_AUTHORITY_HOST',
   'AZURE_CLIENT_CERTIFICATE_PATH',
+  'AZURE_CLIENT_ID',
   'AZURE_CONTENT_SAFETY_ENDPOINT',
   'AZURE_FEDERATED_TOKEN_FILE',
   'AZURE_OPENAI_API_BASE_URL',
   'AZURE_OPENAI_API_HOST',
   'AZURE_OPENAI_BASE_URL',
+  'AZURE_OPENAI_ENDPOINT',
   'AZURE_POD_IDENTITY_AUTHORITY_HOST',
   'AZURE_REGIONAL_AUTHORITY_NAME',
   'AZURE_STORAGE_CONNECTION_STRING',
@@ -62,13 +78,22 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'AZURE_TOKEN_CREDENTIALS',
   'AZURE_TOKEN_SCOPE',
   'AR',
+  'AR_HOST',
+  'AR_TARGET',
   'BASH_ENV',
   'CDP_DOMAIN',
   'CC',
+  'CC_HOST',
+  'CC_TARGET',
   'CGO_CFLAGS',
   'CGO_CPPFLAGS',
   'CGO_CXXFLAGS',
   'CGO_LDFLAGS',
+  'CI',
+  'CFLAGS',
+  'CFLAGS_HOST',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
   'CLAUDE_CONFIG_DIR',
   'CLAUDE_CODE_USE_BEDROCK',
   'CLAUDE_CODE_USE_VERTEX',
@@ -80,9 +105,15 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'COMSPEC',
   'CURL_CA_BUNDLE',
   'CPATH',
+  'CPPFLAGS',
+  'CPPFLAGS_HOST',
   'CPLUS_INCLUDE_PATH',
   'C_INCLUDE_PATH',
   'CXX',
+  'CXX_HOST',
+  'CXX_TARGET',
+  'CXXFLAGS',
+  'CXXFLAGS_HOST',
   'DATABRICKS_WORKSPACE_URL',
   'DOCKER_MODEL_RUNNER_BASE_URL',
   'DOTENV_KEY',
@@ -93,12 +124,14 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'GCCGO',
   'GCCGOTOOLDIR',
   'GCC_EXEC_PREFIX',
+  'GCLOUD_PROJECT',
   'GCE_METADATA_HOST',
   'GCE_METADATA_IP',
   'GCLOUD_PROJECT',
   'GEM_HOME',
   'GEM_PATH',
   'GEM_SPEC_CACHE',
+  'GENAI_ENDPOINT',
   'GOAUTH',
   'GOBIN',
   'GOCACHE',
@@ -122,6 +155,11 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'GOTOOLCHAIN',
   'GOVCS',
   'GOWORK',
+  'GYP_DEFINES',
+  'GYP_CONFIG_DIR',
+  'GYP_GENERATORS',
+  'GYP_GENERATOR_OUTPUT',
+  'GYP_MSVS_OVERRIDE_PATH',
   'GOOGLE_API_BASE_URL',
   'GOOGLE_API_HOST',
   'GOOGLE_API_CERTIFICATE_CONFIG',
@@ -142,11 +180,18 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'IDENTITY_SERVER_THUMBPRINT',
   'IMDS_ENDPOINT',
   'LANGFUSE_HOST',
+  'LDFLAGS',
+  'LDFLAGS_HOST',
   'LITELLM_API_BASE',
+  'LINK_HOST',
+  'LINK_TARGET',
   'LIBRARY_PATH',
   'LLAMA_BASE_URL',
   'LOCALAPPDATA',
   'LOCALAI_BASE_URL',
+  'MAKE',
+  'MAKEFLAGS',
+  'MAKEFILES',
   'MISTRAL_API_BASE_URL',
   'MISTRAL_API_HOST',
   'METADATA_SERVER_DETECTION',
@@ -157,6 +202,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'NODE_DEBUG',
   'NODE_DEBUG_NATIVE',
   'NODE_GYP_FORCE_PYTHON',
+  'NODEJS_ORG_MIRROR',
   'NODE_EXTRA_CA_CERTS',
   'NODE_OPTIONS',
   'NODE_PATH',
@@ -167,6 +213,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'OPENAI_API_BASE_URL',
   'OPENAI_API_HOST',
   'OPENAI_BASE_URL',
+  'OPENAI_CUSTOM_HEADERS',
   'OPENAI_ORGANIZATION',
   'OPENAI_ORG_ID',
   'OPENAI_PROJECT_ID',
@@ -194,14 +241,18 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST',
   'PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST',
   'PORTKEY_API_BASE_URL',
-  'PROMPTFOO_CACHE_PATH',
+  'PROMPTFOO_API_KEY',
+  'PROMPTFOO_AUTHOR',
   'PROMPTFOO_CACHE_MAX_FILE_COUNT',
   'PROMPTFOO_CACHE_MAX_SIZE',
+  'PROMPTFOO_CACHE_PATH',
   'PROMPTFOO_CACHE_TTL',
   'PROMPTFOO_CA_CERT_PATH',
   'PROMPTFOO_CLOUD_API_URL',
   'PROMPTFOO_CONFIG_DIR',
   'PROMPTFOO_DISABLE_CONVERSATION_VAR',
+  'PROMPTFOO_DISABLE_DEBUG_LOG',
+  'PROMPTFOO_DISABLE_ERROR_LOG',
   'PROMPTFOO_DISABLE_OBJECT_STRINGIFY',
   'PROMPTFOO_DISABLE_REF_PARSER',
   'PROMPTFOO_DISABLE_SHARING',
@@ -236,6 +287,8 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PYTHONPATH',
   'PYTHONSTARTUP',
   'PYTHONUSERBASE',
+  'PYTHONWARNINGS',
+  '_PYTHON_SYSCONFIGDATA_NAME',
   'REQUESTS_CA_BUNDLE',
   'RUBYGEMS_GEMDEPS',
   'RUBYLIB',
@@ -254,6 +307,9 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'VERTEX_REGION',
   'WATSONX_AI_PROJECT_ID',
   'VERTEX_PROJECT_ID',
+  'WATSONX_AI_AUTH_TYPE',
+  'WATSONX_AI_BEARER_TOKEN',
+  'WATSONX_AI_PROJECT_ID',
   'VOYAGE_API_BASE_URL',
   'XAI_API_BASE_URL',
   'XDG_CONFIG_HOME',
@@ -267,10 +323,12 @@ const FORBIDDEN_ENV_FILE_PREFIXES = [
   'CGO_',
   'CLOUDSDK_',
   'DOTENV_CONFIG_',
+  'GITHUB_',
   'DYLD_',
   'GIT_',
   'LD_',
   'NPM_CONFIG_',
+  'OTEL_EXPORTER_OTLP_',
   'PROMPTFOO_STRIP_',
 ];
 
@@ -504,6 +562,21 @@ export function loadConfigEnvironmentFiles(
     if (cachedConfig !== undefined) {
       return cachedConfig;
     }
+    const configStats = fs.statSync(filePath);
+    if (!configStats.isFile()) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${filePath} must be a regular file`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use a regular YAML or JSON Promptfoo config file.',
+      );
+    }
+    if (configStats.size > maxConfigBytes) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${filePath} exceeds the envPath preflight size limit`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Reduce the Promptfoo config or referenced config size.',
+      );
+    }
     const content = fs.readFileSync(filePath, 'utf8');
     if (Buffer.byteLength(content, 'utf8') > maxConfigBytes) {
       throw new PromptfooActionError(
@@ -565,6 +638,21 @@ export function loadConfigEnvironmentFiles(
         'Use forward slashes in repository-local Promptfoo config refs.',
       );
     }
+    const hasControlCharacters = [...(refPath + fragment)].some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127;
+    });
+    const hasOuterWhitespace =
+      refPath.length > 0 &&
+      (refPath.charCodeAt(0) <= 32 ||
+        refPath.charCodeAt(refPath.length - 1) <= 32);
+    if (hasControlCharacters || hasOuterWhitespace) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${ref} uses control characters and cannot be safely preflighted`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use a repository-local Promptfoo config ref without control characters.',
+      );
+    }
     if (refPath.includes('%')) {
       throw new PromptfooActionError(
         `Promptfoo config $ref ${refPath} uses an encoded path and cannot be safely preflighted`,
@@ -572,14 +660,20 @@ export function loadConfigEnvironmentFiles(
         'Use an unencoded repository-local Promptfoo config ref path.',
       );
     }
-    if (refPath && /^[a-z][a-z\d+.-]*:/i.test(refPath)) {
+    if (fragment.includes('%')) {
       throw new PromptfooActionError(
-        `Promptfoo config $ref ${refPath} must stay within the working directory`,
+        `Promptfoo config $ref ${fragment} uses an encoded fragment and cannot be safely preflighted`,
         ErrorCodes.INVALID_CONFIGURATION,
-        'Use a repository-local Promptfoo config $ref.',
+        'Use an unencoded JSON pointer fragment in the Promptfoo config ref.',
       );
     }
-
+    if (fragment.includes('\\')) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${fragment} uses backslashes in a fragment and cannot be safely preflighted`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use forward slashes in the Promptfoo config JSON pointer fragment.',
+      );
+    }
     const refBase =
       sourceFile === lexicalConfigPath
         ? path.resolve(workingDirectory)
@@ -603,16 +697,7 @@ export function loadConfigEnvironmentFiles(
     if (!fragment || fragment === '#') {
       return { config: referencedConfig, file: lexicalRefFile, fragment };
     }
-    let pointer: string;
-    try {
-      pointer = decodeURIComponent(fragment.slice(1));
-    } catch {
-      throw new PromptfooActionError(
-        `Invalid Promptfoo config $ref fragment ${fragment}`,
-        ErrorCodes.INVALID_CONFIGURATION,
-        'Use a valid JSON pointer fragment in the Promptfoo config $ref.',
-      );
-    }
+    const pointer = fragment.slice(1);
     if (!pointer.startsWith('/')) {
       throw new PromptfooActionError(
         `Unsupported Promptfoo config $ref fragment ${fragment}`,
@@ -686,7 +771,8 @@ export function loadConfigEnvironmentFiles(
       typeof record.$ref === 'string' &&
       typeof record.commandLineOptions === 'object' &&
       record.commandLineOptions !== null &&
-      '$ref' in record.commandLineOptions
+      ('$ref' in record.commandLineOptions ||
+        'envPath' in record.commandLineOptions)
     ) {
       throw new PromptfooActionError(
         `Promptfoo config ${configPath} combines root and commandLineOptions refs and cannot be safely preflighted for commandLineOptions.envPath`,
@@ -696,6 +782,13 @@ export function loadConfigEnvironmentFiles(
     }
     if (isCommandLineOptions && 'envPath' in record) {
       const envPath = record.envPath;
+      if (typeof record.$ref === 'string') {
+        throw new PromptfooActionError(
+          `Promptfoo config ${configPath} combines a commandLineOptions ref with a local envPath and cannot be safely preflighted`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Resolve commandLineOptions into a static YAML or JSON config before using a local envPath.',
+        );
+      }
       if (
         typeof envPath !== 'string' &&
         (!Array.isArray(envPath) ||
@@ -765,6 +858,21 @@ export function loadConfigEnvironmentFiles(
       workingDirectory,
       'Config environment file',
     );
+    const envFileStats = fs.statSync(envFilePath);
+    if (!envFileStats.isFile()) {
+      throw new PromptfooActionError(
+        `Config environment file ${envFilePath} must be a regular file`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use a regular repository-local environment file.',
+      );
+    }
+    if (envFileStats.size > maxConfigBytes) {
+      throw new PromptfooActionError(
+        `Config environment file ${envFilePath} exceeds the envPath preflight size limit`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Reduce the configured environment-file size.',
+      );
+    }
     loadEnvironmentFile(envFilePath, targetEnvironment);
   }
 }
