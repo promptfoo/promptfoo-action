@@ -7,6 +7,21 @@ import { describe, expect, test } from 'vitest';
 import { validateGlobPattern } from '../../src/utils/glob';
 
 describe('validateGlobPattern', () => {
+  test('should reject excessive extglob operators and nesting before compilation', () => {
+    expect(() =>
+      validateGlobPattern(
+        `prompts/${'@(x)'.repeat(15_000)}.txt`,
+        'prompt glob',
+      ),
+    ).toThrow('prompt glob contains too many extglob operators.');
+    expect(() =>
+      validateGlobPattern(
+        `prompts/${'@('.repeat(65)}x${')'.repeat(65)}.txt`,
+        'prompt glob',
+      ),
+    ).toThrow('prompt glob exceeds the safe extglob depth.');
+  });
+
   test('should match minimatch and filesystem behavior for odd and even POSIX escapes', () => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'pf983-glob-parity-'));
     const promptsDir = path.join(cwd, 'prompts');

@@ -3,7 +3,7 @@ import { parse as parseCsv } from 'csv-parse/sync';
 import * as fs from 'fs';
 import * as glob from 'glob';
 import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
-import { braceExpand } from 'minimatch';
+import { braceExpand, Minimatch } from 'minimatch';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { isDirectory } from './fs';
@@ -50,6 +50,32 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function isSameFileSnapshot(first: fs.Stats, second: fs.Stats): boolean {
+  return (
+    first.size === second.size &&
+    first.dev === second.dev &&
+    first.ino === second.ino &&
+    first.mtimeMs === second.mtimeMs &&
+    first.ctimeMs === second.ctimeMs
+  );
+}
+
+function hasConfigReference(
+  value: unknown,
+  visited = new WeakSet<object>(),
+): boolean {
+  if (value === null || typeof value !== 'object' || visited.has(value)) {
+    return false;
+  }
+  if ('$ref' in value) {
+    return true;
+  }
+  visited.add(value);
+  return Object.values(value).some((childValue) =>
+    hasConfigReference(childValue, visited),
+  );
+}
+
 function readBoundedRegularFile(
   filePath: string,
   allowedRoots: string[],
@@ -74,9 +100,7 @@ function readBoundedRegularFile(
     if (
       !openedFile.isFile() ||
       openedFile.size > MAX_STRUCTURED_DEPENDENCY_SIZE ||
-      openedFile.size !== beforeOpen.size ||
-      openedFile.dev !== beforeOpen.dev ||
-      openedFile.ino !== beforeOpen.ino
+      !isSameFileSnapshot(beforeOpen, openedFile)
     ) {
       return undefined;
     }
@@ -85,12 +109,7 @@ function readBoundedRegularFile(
       return undefined;
     }
     const postOpen = fs.statSync(postOpenPath);
-    if (
-      !postOpen.isFile() ||
-      postOpen.size !== openedFile.size ||
-      postOpen.dev !== openedFile.dev ||
-      postOpen.ino !== openedFile.ino
-    ) {
+    if (!postOpen.isFile() || !isSameFileSnapshot(openedFile, postOpen)) {
       return undefined;
     }
 
@@ -110,6 +129,10 @@ function readBoundedRegularFile(
       offset += bytesRead;
     }
     if (offset > MAX_STRUCTURED_DEPENDENCY_SIZE) {
+      return undefined;
+    }
+    const postRead = fs.fstatSync(fileDescriptor);
+    if (!postRead.isFile() || !isSameFileSnapshot(openedFile, postRead)) {
       return undefined;
     }
     return buffer.toString('utf8', 0, offset);
@@ -218,7 +241,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     const warnUnsafeDependency = (message: string): void => {
       if (unsafeDependencyWarnings < MAX_UNSAFE_DEPENDENCY_WARNINGS) {
-        core.warning(message);
+        core.warning(message.replace(/[\r\n]+/g, ' '));
       } else if (unsafeDependencyWarnings === MAX_UNSAFE_DEPENDENCY_WARNINGS) {
         core.warning('Suppressing further unsafe config dependency warnings.');
       }
@@ -401,7 +424,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }) ||
           hasOptimizedCharacterClass(filePath, windowsPathsNoEscape))
       ) {
-        const safePatterns: string[] = [];
+        const safeBases: string[] = [];
         const expandedPatterns = braceExpand(filePath, {
           braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS + 1,
         });
@@ -423,7 +446,75 @@ export function extractFileDependencies(configPath: string): string[] {
             );
             return [];
           }
-          safePatterns.push(pattern);
+
+          const filePathRoot = path.parse(pattern).root;
+          const pathParts = pattern
+            .slice(filePathRoot.length)
+            .split(windowsPathsNoEscape ? /[\\/]/ : /\//);
+          let basePath = filePathRoot;
+          let foundMagic = false;
+          for (const part of pathParts) {
+            if (!part) {
+              continue;
+            }
+            const matcher = new Minimatch(part, {
+              dot: true,
+              nobrace: true,
+              nonegate: true,
+              windowsPathsNoEscape,
+            });
+            const partHasMagic =
+              matcher.hasMagic() ||
+              hasOptimizedCharacterClass(part, windowsPathsNoEscape) ||
+              /(?:^|[^\\])(?:\\\\)*[@+?!*]\(/.test(part);
+            if (matcher.match('..') && (part !== '..' || foundMagic)) {
+              warnUnsafeDependency(
+                `Ignoring unsafe config dependency glob pattern ${JSON.stringify(
+                  pattern,
+                )}: config dependency must stay within the checkout or config directory`,
+              );
+              return [];
+            }
+            if (partHasMagic) {
+              foundMagic = true;
+              continue;
+            }
+            if (!foundMagic) {
+              basePath = basePath ? path.join(basePath, part) : part;
+            }
+          }
+          basePath = foundMagic ? basePath || '.' : path.dirname(pattern);
+          let baseCandidate = path.resolve(configDir, basePath);
+          while (true) {
+            let resolvedBase: string;
+            try {
+              resolvedBase = fs.realpathSync(baseCandidate);
+            } catch (error) {
+              const code = (error as NodeJS.ErrnoException).code;
+              if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+                warnUnsafeDependency(
+                  'Unable to resolve a config dependency glob base. Ignoring this pattern.',
+                );
+                return [];
+              }
+              baseCandidate = path.dirname(baseCandidate);
+              continue;
+            }
+            if (
+              !getResolvedDependencyRoots().some((root) =>
+                isPathInside(root, resolvedBase),
+              )
+            ) {
+              warnUnsafeDependency(
+                `Ignoring unsafe config dependency glob pattern ${JSON.stringify(
+                  pattern,
+                )}: config dependency must stay within the checkout or config directory`,
+              );
+              return [];
+            }
+            break;
+          }
+          safeBases.push(basePath);
           return glob.sync(absolutePattern, {
             nodir: true,
             braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
@@ -459,29 +550,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        for (const pattern of safePatterns) {
-          const filePathRoot = path.parse(pattern).root;
-          const pathParts = pattern.slice(filePathRoot.length).split(/[\\/]/);
-          let basePath = filePathRoot;
-          let foundMagic = false;
-          for (const part of pathParts) {
-            if (
-              glob.hasMagic(part, {
-                magicalBraces,
-                windowsPathsNoEscape,
-              })
-            ) {
-              foundMagic = true;
-              break;
-            }
-            basePath = basePath ? path.join(basePath, part) : part;
-          }
-          if (!foundMagic) {
-            basePath = path.dirname(pattern);
-          }
-          if (!basePath) {
-            basePath = '.';
-          }
+        for (const basePath of safeBases) {
           const absoluteBase = path.resolve(configDir, basePath);
           dependencies.add(
             absoluteBase.endsWith(path.sep)
@@ -516,6 +585,27 @@ export function extractFileDependencies(configPath: string): string[] {
       provider: unknown,
       baseDir = configDir,
     ): void => {
+      if (
+        provider !== null &&
+        typeof provider === 'object' &&
+        !('id' in provider)
+      ) {
+        const typedProviderKeys = [
+          'text',
+          'embedding',
+          'classification',
+          'moderation',
+        ].filter((key) => key in provider);
+        if (typedProviderKeys.length > 0) {
+          for (const key of typedProviderKeys) {
+            processProviderReference(
+              provider[key as keyof typeof provider],
+              baseDir,
+            );
+          }
+          return;
+        }
+      }
       let providerPath =
         typeof provider === 'string'
           ? provider
@@ -549,9 +639,16 @@ export function extractFileDependencies(configPath: string): string[] {
       }
       const filePath = providerPath?.startsWith('file://')
         ? providerPath.slice('file://'.length)
-        : providerPath?.match(/^(?:python|golang|ruby):([\s\S]*)$/)?.[1];
+        : providerPath?.match(/^(?:python|golang|ruby):([\s\S]*)$/)?.[1] ||
+          (providerPath &&
+          /\.(?:[cm]?js|[cm]?ts)(?::[^:]*)?$/.test(providerPath)
+            ? providerPath
+            : undefined);
       if (!filePath) {
         return;
+      }
+      if (/\.(?:[cm]?js|[cm]?ts|py|go|rb)(?::[\s\S]*)?$/.test(filePath)) {
+        watchDynamicDependency = true;
       }
       const rebasedPath =
         baseDir === configDir ||
@@ -744,6 +841,14 @@ export function extractFileDependencies(configPath: string): string[] {
           selectorSeparator < fileUrl.length - 1 &&
           (hasJavascriptSelector ||
             (kind === 'auth' && candidateFileUrl.endsWith('.py')));
+        if (
+          kind === 'auth' &&
+          (hasJavascriptSelector ||
+            candidateFileUrl.endsWith('.py') ||
+            /\.(?:[cm]?js|[cm]?ts|py)$/i.test(fileUrl))
+        ) {
+          watchDynamicDependency = true;
+        }
         processFileUrl(
           hasSelector ? candidateFileUrl : fileUrl,
           kind === 'multipart',
@@ -807,24 +912,31 @@ export function extractFileDependencies(configPath: string): string[] {
           prompt.startsWith('file://') ||
           prompt.startsWith('exec:') ||
           /[\\/]/.test(promptPath) ||
-          /\.\{(?:[cm]?js|[cm]?ts|j2|jsonl?|md|py|rb|txt|ya?ml)(?:,(?:[cm]?js|[cm]?ts|j2|jsonl?|md|py|rb|txt|ya?ml))*\}$/i.test(
+          /\.\{(?:[cm]?js|[cm]?ts|csv|j2|jsonl?|md|py|rb|txt|ya?ml)(?:,(?:[cm]?js|[cm]?ts|csv|j2|jsonl?|md|py|rb|txt|ya?ml))*\}$/i.test(
             promptPath,
           ) ||
-          /\.(?:[cm]?js|[cm]?ts|j2|jsonl?|md|py|rb|txt|ya?ml)(?::[^:]*)?$/i.test(
+          /\.(?:[cm]?js|[cm]?ts|csv|j2|jsonl?|md|py|rb|sh|bash|exe|bat|cmd|ps1|pl|txt|ya?ml)(?::[^:]*)?$/i.test(
             promptPath,
           );
         if (!isPromptPath) {
           continue;
         }
         if (prompt.includes('{{') || prompt.includes('{%')) {
-          watchDynamicDependency = true;
+          if (
+            !/[ \t][\\/]|[\\/][ \t]/.test(promptPath) ||
+            /\.(?:csv|j2|jsonl?|md|txt|ya?ml)(?::[^:]*)?$/i.test(promptPath)
+          ) {
+            watchDynamicDependency = true;
+          }
           continue;
         }
         if (
           prompt.startsWith('exec:') ||
           /\.(?:[cm]?js|[cm]?ts|py|rb|sh|bash|exe|bat|cmd|ps1|pl)(?::[^:]*)?$/i.test(
             promptPath,
-          )
+          ) ||
+          (/[\\/]/.test(promptPath) &&
+            !/\.(?:csv|j2|jsonl?|md|txt|ya?ml)(?::[^:]*)?$/i.test(promptPath))
         ) {
           watchDynamicDependency = true;
         }
@@ -871,6 +983,9 @@ export function extractFileDependencies(configPath: string): string[] {
         selectorSeparator > 'file://'.length &&
         (hasJavascriptSelector || /\.(?:py|rb)$/.test(candidateFileUrl));
       const assertionFileUrl = hasSelector ? candidateFileUrl : fileUrl;
+      if (/\.(?:[cm]?js|[cm]?ts|py|rb)(?::[\s\S]*)?$/i.test(fileUrl)) {
+        watchDynamicDependency = true;
+      }
       const assertionHasGlobSyntax = hasGlobSyntax(assertionFileUrl);
       processFileUrl(
         assertionFileUrl,
@@ -928,6 +1043,13 @@ export function extractFileDependencies(configPath: string): string[] {
       const hasSelector =
         selectorSeparator > 'file://'.length &&
         (hasJavascriptSelector || candidateFileUrl.endsWith('.py'));
+      if (
+        hasJavascriptSelector ||
+        candidateFileUrl.endsWith('.py') ||
+        /\.(?:[cm]?js|[cm]?ts|py)$/i.test(fileUrl)
+      ) {
+        watchDynamicDependency = true;
+      }
       processFileUrl(
         hasSelector ? candidateFileUrl : fileUrl,
         false,
@@ -1123,6 +1245,23 @@ export function extractFileDependencies(configPath: string): string[] {
           for (const [key, childValue] of Object.entries(value)) {
             if (DIRECT_FUNCTION_FILE_KEYS.has(key)) {
               processDirectFunctionFile(childValue);
+            } else if (key === 'provider') {
+              const providerObjects =
+                childValue !== null && typeof childValue === 'object'
+                  ? [childValue, ...Object.values(childValue)]
+                  : [];
+              for (const providerObject of providerObjects) {
+                if (
+                  providerObject !== null &&
+                  typeof providerObject === 'object' &&
+                  'config' in providerObject
+                ) {
+                  optionValues.push({
+                    value: providerObject.config,
+                    globBacked: false,
+                  });
+                }
+              }
             } else {
               optionValues.push({
                 value: childValue,
@@ -1257,6 +1396,36 @@ export function extractFileDependencies(configPath: string): string[] {
       commandLineOptions && 'vars' in commandLineOptions
         ? commandLineOptions.vars
         : undefined;
+    const commandLineEnvPath =
+      commandLineOptions && 'envPath' in commandLineOptions
+        ? commandLineOptions.envPath
+        : undefined;
+    for (const configuredEnvPath of Array.isArray(commandLineEnvPath)
+      ? commandLineEnvPath
+      : [commandLineEnvPath]) {
+      if (typeof configuredEnvPath !== 'string') {
+        continue;
+      }
+      if (!configuredEnvPath.split(',').some((envPath) => envPath.trim())) {
+        continue;
+      }
+      const resolvedConfiguredEnvPath = path.isAbsolute(configuredEnvPath)
+        ? configuredEnvPath
+        : path.resolve(configDir, configuredEnvPath);
+      for (const envPath of resolvedConfiguredEnvPath.split(',')) {
+        const normalizedEnvPath = envPath.trim();
+        if (!normalizedEnvPath) {
+          continue;
+        }
+        const absoluteEnvPath = resolveConfigDependency(
+          path.resolve(cwd, normalizedEnvPath),
+          'config environment file dependency',
+        );
+        if (absoluteEnvPath) {
+          dependencies.add(absoluteEnvPath);
+        }
+      }
+    }
     for (const varsPath of Array.isArray(commandLineVars)
       ? commandLineVars
       : [commandLineVars]) {
@@ -1266,8 +1435,7 @@ export function extractFileDependencies(configPath: string): string[] {
     }
     let watchWorkspace =
       watchDynamicDependency ||
-      (typeof config === 'object' && '$ref' in config) ||
-      (commandLineOptions != null && '$ref' in commandLineOptions) ||
+      hasConfigReference(config) ||
       (config.scenarios != null &&
         (!Array.isArray(config.scenarios) || config.scenarios.length > 0));
     for (const extensionList of [
@@ -1292,7 +1460,12 @@ export function extractFileDependencies(configPath: string): string[] {
     ) {
       for (const filterPath of Object.values(config.nunjucksFilters)) {
         if (typeof filterPath === 'string') {
-          processFileUrl(`file://${filterPath}`, false, true);
+          watchWorkspace = true;
+          processFileUrl(
+            `file://${filterPath.replace(/^[\\/]+/, '')}`,
+            false,
+            true,
+          );
         }
       }
     }
@@ -1316,6 +1489,8 @@ export function extractFileDependencies(configPath: string): string[] {
       if (!extension.startsWith('file://')) {
         continue;
       }
+
+      watchWorkspace = true;
 
       const hookSeparator = extension.lastIndexOf(':');
       const windowsDrive = /^file:\/\/\/?[A-Za-z]:[\\/]/.test(extension);
@@ -1344,18 +1519,15 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     }
 
-    const scannedStructuredDependencies = new Set<string>();
     for (const dependency of dependencies) {
-      if (
-        scannedStructuredDependencies.has(dependency) ||
-        !['.csv', '.json', '.jsonl', '.yaml', '.yml'].includes(
-          path.extname(dependency).toLowerCase(),
-        )
-      ) {
+      const extension = path.extname(dependency).toLowerCase();
+      if (['.xls', '.xlsx'].includes(extension)) {
+        watchWorkspace = true;
         continue;
       }
-      scannedStructuredDependencies.add(dependency);
-
+      if (!['.csv', '.json', '.jsonl', '.yaml', '.yml'].includes(extension)) {
+        continue;
+      }
       let structuredConfig: unknown;
       try {
         if (typeof fs.statSync(dependency).size !== 'number') {
@@ -1369,7 +1541,6 @@ export function extractFileDependencies(configPath: string): string[] {
           watchWorkspace = true;
           continue;
         }
-        const extension = path.extname(dependency).toLowerCase();
         structuredConfig =
           extension === '.csv'
             ? parseCsv(structuredContent, { skip_empty_lines: true })
@@ -1381,6 +1552,31 @@ export function extractFileDependencies(configPath: string): string[] {
               : loadYaml(structuredContent, {
                   schema: CORE_SCHEMA.withTags(mergeTag),
                 });
+        if (extension === '.csv' && Array.isArray(structuredConfig)) {
+          const [header, ...rows] = structuredConfig as string[][];
+          const expectedColumns = header.flatMap((column, index) =>
+            column.trim().startsWith('__expected') ? [index] : [],
+          );
+          for (const row of rows) {
+            for (const index of expectedColumns) {
+              const assertion = row[index];
+              const fileUrlIndex = assertion.indexOf('file://');
+              if (fileUrlIndex < 0) {
+                continue;
+              }
+              const prefix = assertion.slice(0, fileUrlIndex).trim();
+              if (
+                prefix !== '' &&
+                !/^(?:javascript|fn|eval|python|grade|llm-rubric|(?:not-)?[a-z][a-z0-9-]*(?:\(\d+(?:\.\d+)?\))?):$/i.test(
+                  prefix,
+                )
+              ) {
+                continue;
+              }
+              processAssertionFileUrl(assertion.slice(fileUrlIndex).trim());
+            }
+          }
+        }
       } catch {
         watchWorkspace = true;
         continue;
@@ -1390,11 +1586,11 @@ export function extractFileDependencies(configPath: string): string[] {
       const visitedStructuredValues = new WeakSet<object>();
       for (const value of structuredValues) {
         if (typeof value === 'string') {
-          if (!value.startsWith('file://')) {
-            continue;
-          }
           if (value.includes('{{') || value.includes('{%')) {
             watchWorkspace = true;
+            continue;
+          }
+          if (!value.startsWith('file://')) {
             continue;
           }
           processTestFilePath(value, hasGlobSyntax(value));
@@ -1492,6 +1688,13 @@ export function extractFileDependencies(configPath: string): string[] {
               selectorSeparator > 'file://'.length &&
               selectorSeparator < authFileUrl.length - 1 &&
               (hasJavascriptSelector || candidateFileUrl.endsWith('.py'));
+            if (
+              hasJavascriptSelector ||
+              candidateFileUrl.endsWith('.py') ||
+              /\.(?:[cm]?js|[cm]?ts|py)$/i.test(authFileUrl)
+            ) {
+              watchWorkspace = true;
+            }
             processFileUrl(
               hasSelector ? candidateFileUrl : authFileUrl,
               false,
@@ -1528,6 +1731,7 @@ export function extractFileDependencies(configPath: string): string[] {
         if ('assert' in record) {
           extractAssertFiles(record.assert);
         }
+        processProviderReference(record.id);
         processTestRuntimeDependencies(record, path.dirname(dependency));
         const unprocessedMultipartValues = Array.isArray(multipartConfig?.parts)
           ? [
@@ -1587,18 +1791,22 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Convert absolute paths back to relative paths from working directory
-    return Array.from(dependencies).map((dep) => {
-      const relativePath = path.relative(cwd, dep);
-      if (relativePath === '') {
-        return './';
-      }
-      const repositoryPath = relativePath.split(path.sep).join('/');
-      // Preserve trailing slash for directories
-      if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
-        return `${repositoryPath}/`;
-      }
-      return repositoryPath;
-    });
+    return Array.from(
+      new Set(
+        Array.from(dependencies).map((dep) => {
+          const relativePath = path.relative(cwd, dep);
+          if (relativePath === '') {
+            return './';
+          }
+          const repositoryPath = relativePath.split(path.sep).join('/');
+          // Preserve trailing slash for directories
+          if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
+            return `${repositoryPath}/`;
+          }
+          return repositoryPath;
+        }),
+      ),
+    );
   } catch (error) {
     if (error instanceof UnsafeConfigDependencyError) {
       throw error;

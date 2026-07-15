@@ -5,6 +5,8 @@ export const MAX_GLOB_BRACE_EXPANSIONS = 1024;
 const MAX_GLOB_BRACE_DEPTH = 32;
 const MAX_GLOB_NUMERIC_RANGE_WIDTH = 64;
 const MAX_GLOB_EXPANDED_BYTES = 4 * 1024 * 1024;
+const MAX_GLOB_EXTGLOB_OPERATORS = 1024;
+const MAX_GLOB_EXTGLOB_DEPTH = 64;
 
 export function validateGlobPattern(
   globPattern: string,
@@ -24,6 +26,8 @@ export function validateGlobPattern(
   let escapedOpeningBraces = 0;
   let inCharacterClass = false;
   let braceExpansionCount = 1;
+  let extglobOperators = 0;
+  let extglobDepth = 0;
   const braceAlternativeCounts: number[] = [];
   const bracesStartedInCharacterClass: boolean[] = [];
   for (let index = 0; index < globPattern.length; index++) {
@@ -42,6 +46,22 @@ export function validateGlobPattern(
     if (character === ']' && inCharacterClass) {
       inCharacterClass = false;
       continue;
+    }
+    if (
+      !inCharacterClass &&
+      '*?+@!'.includes(character) &&
+      globPattern[index + 1] === '('
+    ) {
+      extglobOperators++;
+      extglobDepth++;
+      if (extglobOperators > MAX_GLOB_EXTGLOB_OPERATORS) {
+        throw new Error(`${description} contains too many extglob operators.`);
+      }
+      if (extglobDepth > MAX_GLOB_EXTGLOB_DEPTH) {
+        throw new Error(`${description} exceeds the safe extglob depth.`);
+      }
+    } else if (!inCharacterClass && character === ')' && extglobDepth > 0) {
+      extglobDepth--;
     }
     if (character === '{') {
       braceDepth++;

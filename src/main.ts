@@ -4,7 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { braceExpand } from 'minimatch';
+import { braceExpand, Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -47,6 +47,78 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
     !relativePath.startsWith(`..${path.sep}`) &&
     !path.isAbsolute(relativePath)
   );
+}
+
+function assertSafeInCheckoutGlobBase(
+  pattern: string,
+  workingDirectory: string,
+  workspaceRoot: string,
+  resolvedWorkspaceRoot: string,
+  windowsPathsNoEscape: boolean,
+  outsideMessage: string,
+  unresolvedMessage: string,
+): void {
+  if (
+    !path.isAbsolute(pattern) &&
+    !path.win32.isAbsolute(pattern) &&
+    !isPathInside(workspaceRoot, path.resolve(workingDirectory, pattern))
+  ) {
+    throw new Error(outsideMessage);
+  }
+  const patternRoot = path.parse(pattern).root;
+  const parts = pattern
+    .slice(patternRoot.length)
+    .split(windowsPathsNoEscape ? /[\\/]/ : /\//);
+  let staticBase = patternRoot;
+  let foundMagic = false;
+  for (const part of parts) {
+    if (!part) {
+      continue;
+    }
+    const matcher = new Minimatch(part, {
+      dot: true,
+      nobrace: true,
+      nonegate: true,
+      windowsPathsNoEscape,
+    });
+    const hasMagic =
+      matcher.hasMagic() ||
+      /(?:^|[^\\])(?:\\\\)*\[[^![\]\\]\]/.test(part) ||
+      /(?:^|[^\\])(?:\\\\)*[@+?!*]\(/.test(part);
+    const hasTraversal = matcher.match('..');
+    if (hasTraversal && (part !== '..' || foundMagic)) {
+      throw new Error(outsideMessage);
+    }
+    if (hasMagic) {
+      foundMagic = true;
+      continue;
+    }
+    if (!foundMagic) {
+      staticBase = staticBase ? path.join(staticBase, part) : part;
+    }
+  }
+
+  let candidate = path.resolve(workingDirectory, staticBase || '.');
+  if (!isPathInside(workspaceRoot, candidate)) {
+    return;
+  }
+  while (true) {
+    let resolvedCandidate: string;
+    try {
+      resolvedCandidate = fs.realpathSync(candidate);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+        throw new Error(unresolvedMessage);
+      }
+      candidate = path.dirname(candidate);
+      continue;
+    }
+    if (!isPathInside(resolvedWorkspaceRoot, resolvedCandidate)) {
+      throw new Error(outsideMessage);
+    }
+    return;
+  }
 }
 
 /**
@@ -233,8 +305,63 @@ export async function run(): Promise<void> {
       throw new Error('Working directory resolves outside the checkout.');
     }
     workingDirectory = resolvedWorkingDirectory;
-    const configAbsolutePath = path.resolve(workingDirectory, configPath);
-    if (isPathInside(workspaceRoot, configAbsolutePath)) {
+    const configWindowsPathsNoEscape =
+      process.platform === 'win32' ||
+      (!path.isAbsolute(configPath) && path.win32.isAbsolute(configPath));
+    const normalizedConfigPath = configWindowsPathsNoEscape
+      ? configPath.replace(/\\/g, '/')
+      : configPath;
+    validateGlobPattern(normalizedConfigPath, 'Config file glob');
+    const expandedConfigPatterns = braceExpand(normalizedConfigPath, {
+      braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS + 1,
+    });
+    if (expandedConfigPatterns.length > MAX_GLOB_BRACE_EXPANSIONS) {
+      throw new Error(
+        `Config file glob expands to more than ${MAX_GLOB_BRACE_EXPANSIONS} alternatives.`,
+      );
+    }
+    const configHasGlobSyntax =
+      new Minimatch(normalizedConfigPath, {
+        magicalBraces: true,
+        windowsPathsNoEscape: configWindowsPathsNoEscape,
+      }).hasMagic() ||
+      /(?:^|[^\\])(?:\\\\)*\[[^![\]\\]\]/.test(normalizedConfigPath);
+    if (configHasGlobSyntax) {
+      for (const pattern of expandedConfigPatterns) {
+        assertSafeInCheckoutGlobBase(
+          pattern,
+          workingDirectory,
+          workspaceRoot,
+          resolvedWorkspaceRoot,
+          configWindowsPathsNoEscape,
+          'In-checkout config glob base resolves outside the checkout.',
+          'Unable to resolve the in-checkout config glob base.',
+        );
+      }
+    }
+    const configAbsolutePaths = Array.from(
+      new Set(
+        configHasGlobSyntax
+          ? expandedConfigPatterns.flatMap((pattern) =>
+              glob
+                .sync(pattern, {
+                  cwd: workingDirectory,
+                  nodir: true,
+                  braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
+                  windowsPathsNoEscape: configWindowsPathsNoEscape,
+                })
+                .map((match) => path.resolve(workingDirectory, match)),
+            )
+          : [path.resolve(workingDirectory, configPath)],
+      ),
+    );
+    if (configAbsolutePaths.length === 0) {
+      throw new Error('No config files matched the configured path.');
+    }
+    for (const configAbsolutePath of configAbsolutePaths) {
+      if (!isPathInside(workspaceRoot, configAbsolutePath)) {
+        continue;
+      }
       let resolvedConfigPath: string;
       try {
         resolvedConfigPath = fs.realpathSync(configAbsolutePath);
@@ -247,9 +374,19 @@ export async function run(): Promise<void> {
         );
       }
     }
-    const configRepositoryPath = toRepositoryPath(
-      path.relative(workspaceRoot, configAbsolutePath),
+    const configRepositoryPaths = configAbsolutePaths.map(
+      (configAbsolutePath) =>
+        toRepositoryPath(path.relative(workspaceRoot, configAbsolutePath)),
     );
+    const configGlobMatchers = configHasGlobSyntax
+      ? expandedConfigPatterns.map(
+          (pattern) =>
+            new Minimatch(path.resolve(workingDirectory, pattern), {
+              nobrace: true,
+              windowsPathsNoEscape: configWindowsPathsNoEscape,
+            }),
+        )
+      : [];
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
     });
@@ -566,6 +703,15 @@ export async function run(): Promise<void> {
             'Prompt file paths must stay within the checkout or working directory.',
           );
         }
+        assertSafeInCheckoutGlobBase(
+          pattern,
+          workingDirectory,
+          workspaceRoot,
+          resolvedWorkspaceRoot,
+          windowsPathsNoEscape,
+          'Prompt file paths must stay within the checkout or working directory.',
+          'Unable to resolve an allowed prompt glob base.',
+        );
       }
       const matches = glob.sync(normalizedGlobPattern, {
         cwd: workingDirectory,
@@ -600,7 +746,7 @@ export async function run(): Promise<void> {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, absoluteFile),
           );
-          return repositoryFile !== configRepositoryPath;
+          return !configRepositoryPaths.includes(repositoryFile);
         })
         .map((file) =>
           toRepositoryPath(
@@ -644,13 +790,27 @@ export async function run(): Promise<void> {
 
     const configChanged =
       changedFilesList.length > 0 &&
-      changedFilesList.includes(configRepositoryPath);
+      (configRepositoryPaths.some((configRepositoryPath) =>
+        changedFilesList.includes(configRepositoryPath),
+      ) ||
+        configGlobMatchers.some((matcher) =>
+          changedFilesList.some((changedFile) => {
+            const absoluteChangedFile = path.resolve(
+              workspaceRoot,
+              changedFile,
+            );
+            return matcher.match(absoluteChangedFile);
+          }),
+        ));
 
     // Extract dependencies from config file
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies =
-        extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+      const dependencies = configAbsolutePaths
+        .flatMap((configAbsolutePath) =>
+          extractFileDependencies(configAbsolutePath),
+        )
+        .map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(
           `Found ${dependencies.length} file dependencies in config: ${JSON.stringify(dependencies)}`,
@@ -755,7 +915,10 @@ export async function run(): Promise<void> {
       workingDirectory,
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
-    let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
+    const configArguments = configHasGlobSyntax
+      ? configAbsolutePaths
+      : [configPath];
+    let promptfooArgs = ['eval', '-c', ...configArguments, '-o', outputFile];
     if (!useConfigPrompts && promptFilesToEvaluate.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         '--prompts',

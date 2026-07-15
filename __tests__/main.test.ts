@@ -667,6 +667,16 @@ describe('GitHub Action Main', () => {
         `prompts/${'a'.repeat(60_000)}-{${'x,'.repeat(1023)}x}.txt`,
         'exceeds the safe expansion size',
       ],
+      [
+        'excessive extglob operators',
+        `prompts/${'@(x)'.repeat(15_000)}.txt`,
+        'contains too many extglob operators',
+      ],
+      [
+        'excessive extglob depth',
+        `prompts/${'@('.repeat(65)}x${')'.repeat(65)}.txt`,
+        'exceeds the safe extglob depth',
+      ],
     ])('should reject an %s prompt glob during preflight', async (_kind, prompts, message) => {
       withInputs({ prompts });
 
@@ -764,6 +774,184 @@ describe('GitHub Action Main', () => {
       expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
         path.join(process.cwd(), 'evals', 'promptfooconfig.yaml'),
       );
+    });
+
+    test('should expand multiple config matches before dependency extraction and evaluation', async () => {
+      withInputs({
+        config: 'configs/*.yaml',
+        prompts: 'prompts/*.txt',
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'configs/*.yaml'
+          ? ['configs/one.yaml', 'configs/two.yaml']
+          : ['prompts/prompt1.txt'],
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'configs/two.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.join(process.cwd(), 'configs', 'one.yaml'),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.join(process.cwd(), 'configs', 'two.yaml'),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          'promptfoo@latest',
+          'eval',
+          '-c',
+          path.join(process.cwd(), 'configs', 'one.yaml'),
+          path.join(process.cwd(), 'configs', 'two.yaml'),
+        ]),
+        expect.any(Object),
+      );
+    });
+
+    test.each([
+      'configs/*.yaml',
+      './configs/*.yaml',
+      'configs/./*.yaml',
+    ])('should evaluate surviving %s config-glob matches when another match was deleted', async (config) => {
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === config ? ['configs/b.yaml'] : ['prompts/prompt1.txt'],
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'configs/a.yaml', status: 'removed' },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          path.join(process.cwd(), 'configs', 'b.yaml'),
+          '--prompts',
+          'prompts/prompt1.txt',
+        ]),
+        expect.any(Object),
+      );
+    });
+
+    test('should expand an extglob-only config pattern before dependency extraction and evaluation', async () => {
+      withInputs({ config: 'configs/@(one|two).yaml' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+      mockGlob.sync.mockReturnValue(['configs/one.yaml', 'configs/two.yaml']);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'configs/@(one|two).yaml',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.join(process.cwd(), 'configs', 'one.yaml'),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.join(process.cwd(), 'configs', 'two.yaml'),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          path.join(process.cwd(), 'configs', 'one.yaml'),
+          path.join(process.cwd(), 'configs', 'two.yaml'),
+        ]),
+        expect.any(Object),
+      );
+    });
+
+    test('should de-duplicate expanded config matches before evaluation', async () => {
+      withInputs({ config: 'configs/{one,one}*.yaml' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+      mockGlob.sync.mockReturnValue(['configs/one.yaml']);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledTimes(1);
+      const promptfooArgs = mockExec.exec.mock.calls[0][1] as string[];
+      expect(
+        promptfooArgs.filter((arg) =>
+          arg.endsWith(`${path.sep}configs${path.sep}one.yaml`),
+        ),
+      ).toHaveLength(1);
+    });
+
+    test('should preserve explicitly external config globs', async () => {
+      const configGlob = '/private/tmp/pf983-configs/*.yaml';
+      withInputs({ config: configGlob });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run' || name === 'use-config-prompts',
+      );
+      mockGlob.sync.mockReturnValue(['/private/tmp/pf983-configs/one.yaml']);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        configGlob,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        '/private/tmp/pf983-configs/one.yaml',
+      );
+    });
+
+    test('should fail clearly when a config glob has no matches', async () => {
+      withInputs({ config: 'configs/*.yaml' });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('No config files matched'),
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['unclosed class', 'configs/[safe*.yaml', 'is malformed'],
+      [
+        'excessive numeric range',
+        'configs/{1..1000000000}.yaml',
+        'expands to more than 1024 alternatives',
+      ],
+      [
+        'excessive brace alternatives',
+        `configs/{${'a,'.repeat(1024)}a}.yaml`,
+        'expands to more than 1024 alternatives',
+      ],
+      [
+        'excessive extglob operators',
+        `configs/${'@(x)'.repeat(15_000)}.yaml`,
+        'contains too many extglob operators',
+      ],
+    ])('should reject an %s config glob during preflight', async (_kind, config, message) => {
+      withInputs({ config });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining(message),
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should preserve legacy resolution for absolute working-directory inputs', async () => {
@@ -1696,6 +1884,121 @@ describe('GitHub Action Main', () => {
         'Error: Prompt file paths must stay within the checkout or working directory.',
       );
       expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['prompt', { prompts: 'shared-link/missing/*.txt' }],
+      ['config', { config: 'shared-link/missing/*.yaml' }],
+    ] as const)('should reject an escaped static %s glob prefix before enumeration', async (kind, inputs) => {
+      withInputs(inputs);
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        if (resolved.endsWith('/shared-link/missing')) {
+          throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+        }
+        if (resolved.endsWith('/shared-link')) {
+          return '/private/tmp/outside';
+        }
+        return resolved;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        kind === 'prompt'
+          ? 'Error: Prompt file paths must stay within the checkout or working directory.'
+          : 'Error: In-checkout config glob base resolves outside the checkout.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['globstar traversal', 'evals/**/../../outside/*.yaml'],
+      ['character-class traversal', 'evals/**/[.][.]/[.][.]/outside/*.yaml'],
+      ['escaped-dot traversal', 'evals/\\.\\./\\.\\./outside/*.yaml'],
+      ['leading escaped-dot traversal', 'evals/\\../\\../outside/*.yaml'],
+      ['trailing escaped-dot traversal', 'evals/.\\./.\\./outside/*.yaml'],
+      ['mixed character-class traversal', 'evals/**/[.]./outside/*.yaml'],
+      ['reversed character-class traversal', 'evals/**/.[.]/outside/*.yaml'],
+      ['brace traversal', 'evals/{safe,../../outside}/*.yaml'],
+      ['adjacent brace traversal', 'evals/**/{.,.}{.,.}/outside/*.yaml'],
+      ['single brace traversal', 'evals/**/{..,src}/outside/*.yaml'],
+      ['mixed brace traversal', 'evals/**/{.,x}{.,y}/outside/*.yaml'],
+      ['class-brace traversal', 'evals/**/[.]{.,x}/outside/*.yaml'],
+      ['brace-class traversal', 'evals/**/{.,x}[.]/outside/*.yaml'],
+      ['extglob traversal', 'evals/@(safe|../../outside)/*.yaml'],
+      ['leading negated extglob traversal', 'evals/!(safe)/*.yaml'],
+      ['negated extglob traversal', 'evals/**/!(safe)/outside/*.yaml'],
+    ] as const)('should reject %s in primary config and prompt globs before enumeration', async (_kind, pattern) => {
+      for (const inputs of [
+        { config: pattern },
+        { prompts: pattern },
+      ] as const) {
+        vi.clearAllMocks();
+        withInputs(inputs);
+        mockGlob.sync.mockReturnValue(['../outside/secret.yaml']);
+
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalled();
+        expect(mockGlob.sync).not.toHaveBeenCalled();
+        expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      }
+    });
+
+    test('should handle root-level and repeated-separator prompt glob prefixes', async () => {
+      withInputs({ prompts: '*.txt\nprompts//*.txt' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === '*.txt' ? ['root.txt'] : ['prompts/prompt1.txt'],
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        '*.txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts//*.txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+    });
+
+    test.each([
+      ['ENOTDIR', false],
+      ['EACCES', true],
+    ] as const)('should handle %s while resolving a prompt glob prefix', async (code, shouldFail) => {
+      withInputs({ prompts: 'future/*.txt' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        if (resolved.endsWith('/future')) {
+          throw Object.assign(new Error('resolution failed'), { code });
+        }
+        return resolved;
+      });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      if (shouldFail) {
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          'Error: Unable to resolve an allowed prompt glob base.',
+        );
+        expect(mockGlob.sync).not.toHaveBeenCalled();
+      } else {
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+        expect(mockGlob.sync).toHaveBeenCalled();
+      }
     });
 
     test('should reject a glob result that escapes the prompt roots', async () => {
