@@ -38320,6 +38320,69 @@ function isDirectory2(filePath) {
 
 // src/utils/config.ts
 var MAX_BRACE_EXPANSIONS = 1024;
+var MAX_DEPENDENCY_REFERENCE_LENGTH = 65536;
+var MAX_STRUCTURED_PROMPT_FILE_SIZE = 10 * 1024 * 1024;
+var PROVIDER_SELECTOR_EXTENSIONS = /* @__PURE__ */ new Set([
+  "cjs",
+  "cts",
+  "js",
+  "mjs",
+  "mts",
+  "py",
+  "ts",
+  "go",
+  "rb"
+]);
+var ASSERTION_SELECTOR_EXTENSIONS = /* @__PURE__ */ new Set([
+  "cjs",
+  "cts",
+  "js",
+  "mjs",
+  "mts",
+  "py",
+  "ts",
+  "rb"
+]);
+var JAVASCRIPT_SELECTOR_EXTENSIONS = /* @__PURE__ */ new Set([
+  "cjs",
+  "cts",
+  "js",
+  "mjs",
+  "mts",
+  "ts"
+]);
+var JAVASCRIPT_FILE_REFERENCE_FIELDS = /* @__PURE__ */ new Set([
+  "validateStatus",
+  "transformRequest",
+  "transformResponse",
+  "responseParser",
+  "sessionParser"
+]);
+var PROMPT_FILE_EXTENSIONS = /* @__PURE__ */ new Set([
+  "cjs",
+  "csv",
+  "cts",
+  "exe",
+  "js",
+  "json",
+  "jsonl",
+  "j2",
+  "md",
+  "mjs",
+  "mts",
+  "py",
+  "ts",
+  "txt",
+  "yml",
+  "yaml",
+  "sh",
+  "bash",
+  "bat",
+  "cmd",
+  "ps1",
+  "rb",
+  "pl"
+]);
 var GLOB_MAGIC_OPTIONS = {
   magicalBraces: true,
   nonegate: true,
@@ -38351,6 +38414,120 @@ function isPathInside(baseDir, targetPath) {
 function isTraversableRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value) && !ArrayBuffer.isView(value) && !(value instanceof Date) && !(value instanceof Map) && !(value instanceof Set);
 }
+function compactTemplateWhitespace(value) {
+  let result = "";
+  let cursor = 0;
+  while (cursor < value.length) {
+    const start = value.indexOf("{{", cursor);
+    if (start < 0) {
+      result += value.slice(cursor);
+      break;
+    }
+    const end = value.indexOf("}", start + 2);
+    if (end < 0) {
+      result += value.slice(cursor);
+      break;
+    }
+    if (value.charAt(end + 1) !== "}") {
+      result += value.slice(cursor, end + 1);
+      cursor = end + 1;
+      continue;
+    }
+    result += value.slice(cursor, start);
+    result += value.slice(start, end + 2).replace(/\s+/g, "");
+    cursor = end + 2;
+  }
+  return result;
+}
+function stripFunctionSelector(value, extensions, caseInsensitive = false) {
+  if (value.length > MAX_DEPENDENCY_REFERENCE_LENGTH || value.includes("\0") || value.includes("\r") || value.includes("\n")) {
+    return value;
+  }
+  let extensionIndex = -1;
+  let selectorIndex = -1;
+  for (let index = 0; index < value.length; index++) {
+    const character = value.charAt(index);
+    if (character === ".") {
+      extensionIndex = index;
+      continue;
+    }
+    if (character !== ":" || index === value.length - 1) {
+      continue;
+    }
+    const extensionLength = index - extensionIndex - 1;
+    if (extensionIndex < 0 || extensionLength < 1 || extensionLength > 5) {
+      continue;
+    }
+    const extension = value.slice(extensionIndex + 1, index);
+    const normalizedExtension = caseInsensitive ? extension.toLowerCase() : extension;
+    if (extensions.has(normalizedExtension)) {
+      selectorIndex = index;
+    }
+  }
+  return selectorIndex >= 0 ? value.slice(0, selectorIndex) : value;
+}
+function hasPromptFileExtension(value) {
+  if (value.length > MAX_DEPENDENCY_REFERENCE_LENGTH || value.includes("\0") || value.includes("\r") || value.includes("\n")) {
+    return false;
+  }
+  const separatorIndex = Math.max(
+    value.lastIndexOf("/"),
+    value.lastIndexOf("\\")
+  );
+  const candidate = stripFunctionSelector(value, PROMPT_FILE_EXTENSIONS, true);
+  const extensionIndex = candidate.lastIndexOf(".");
+  return extensionIndex > separatorIndex && PROMPT_FILE_EXTENSIONS.has(
+    candidate.slice(extensionIndex + 1).toLowerCase()
+  );
+}
+function stripSpreadsheetSheetSelector(value) {
+  const sheetIndex = value.indexOf("#");
+  if (sheetIndex < 0) return value;
+  const candidate = value.slice(0, sheetIndex);
+  const extensionIndex = candidate.lastIndexOf(".");
+  if (extensionIndex < 0) return value;
+  const extension = candidate.slice(extensionIndex + 1).toLowerCase();
+  return extension === "xlsx" || extension === "xls" ? candidate : value;
+}
+function hasBalancedGlobDelimiters(value) {
+  const expectedClosers = [];
+  for (let index = 0; index < value.length; index++) {
+    const character = value.charAt(index);
+    if (expectedClosers[expectedClosers.length - 1] === "]") {
+      if (character === "]") {
+        expectedClosers.pop();
+      }
+      continue;
+    }
+    if (character === "{") {
+      expectedClosers.push("}");
+      continue;
+    }
+    if (character === "[") {
+      expectedClosers.push("]");
+      continue;
+    }
+    if (character === "(" && index > 0 && "*+?@!".includes(value.charAt(index - 1))) {
+      expectedClosers.push(")");
+      continue;
+    }
+    if (!"}])".includes(character) || expectedClosers.length === 0) {
+      continue;
+    }
+    if (expectedClosers[expectedClosers.length - 1] !== character) {
+      return false;
+    }
+    expectedClosers.pop();
+  }
+  return expectedClosers.length === 0;
+}
+function isUnsupportedForeignPath(value) {
+  const driveLetter = value.charAt(0);
+  const hasDrivePrefix = value.charAt(1) === ":" && (driveLetter >= "A" && driveLetter <= "Z" || driveLetter >= "a" && driveLetter <= "z");
+  const isDriveAbsolute = hasDrivePrefix && (value.charAt(2) === "/" || value.charAt(2) === "\\");
+  const isUncPath = value.startsWith("\\\\") || value.startsWith("//") && value.indexOf("/", 2) > 2;
+  return path6.sep === "/" && (isDriveAbsolute || isUncPath);
+}
 function extractFileDependencies(configPath, executionCwd = process.cwd()) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path6.dirname(configPath);
@@ -38371,6 +38548,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     }
     return physicalDependencyRoots.some((root) => isPathInside(root, filePath));
   };
+  let parsedConfig = false;
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
     if (!configContent.trim()) {
@@ -38384,7 +38562,14 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       debug("Config file is empty or invalid");
       return [];
     }
+    parsedConfig = true;
     const resolveConfigDependency = (filePath, source) => {
+      if (isUnsupportedForeignPath(filePath)) {
+        warning(
+          "Ignoring unsafe config dependency: foreign absolute paths are not supported"
+        );
+        return void 0;
+      }
       try {
         if (!filePath) {
           throw new Error(`${source} is empty`);
@@ -38416,15 +38601,25 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         );
         return;
       }
+      if (filePath.length > MAX_DEPENDENCY_REFERENCE_LENGTH || filePath.includes("\r") || filePath.includes("\n") || isUnsupportedForeignPath(filePath)) {
+        warning(
+          "Ignoring invalid config dependency glob; preserving other dependencies"
+        );
+        return;
+      }
       try {
         if (le(filePath, GLOB_MAGIC_OPTIONS)) {
+          if (!hasBalancedGlobDelimiters(filePath)) {
+            warning(
+              "Ignoring invalid config dependency glob; preserving other dependencies"
+            );
+            return;
+          }
           const expandedPaths = braceExpand(filePath, {
             braceExpandMax: MAX_BRACE_EXPANSIONS + 1
           });
           if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-            dependencies.add(
-              `${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`
-            );
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
             warning(
               "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
             );
@@ -38518,36 +38713,72 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         );
       }
     };
-    const stripProviderFunctionSelector = (value) => value.replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, "$1");
+    const stripProviderFunctionSelector = (value) => stripFunctionSelector(value, PROVIDER_SELECTOR_EXTENSIONS);
+    const stripAssertionFunctionSelector = (value) => stripFunctionSelector(value, ASSERTION_SELECTOR_EXTENSIONS);
+    const stripJavascriptFunctionSelector = (value) => stripFunctionSelector(value, JAVASCRIPT_SELECTOR_EXTENSIONS);
+    const processCompatibleFileUrl = (value, stripReferenceSelector = stripProviderFunctionSelector) => {
+      const primary = stripReferenceSelector(value);
+      const patterns = processFileUrl(primary);
+      const selectorSuffix = value.slice(primary.length + 1);
+      if (stripReferenceSelector === stripProviderFunctionSelector && primary !== value && (/[\\/]/.test(selectorSuffix) || primary.endsWith(".rb") && selectorSuffix.includes(":"))) {
+        processFileUrl(value);
+      }
+      const latestJavascriptPath = primary === value ? stripFunctionSelector(value, JAVASCRIPT_SELECTOR_EXTENSIONS, true) : primary;
+      if (latestJavascriptPath !== value && latestJavascriptPath !== primary) {
+        processFileUrl(latestJavascriptPath);
+      }
+      return patterns;
+    };
+    const processFileBackedProviderReference = (value) => {
+      const prefix = ["python:", "golang:", "ruby:", "exec:"].find(
+        (candidate) => value.startsWith(candidate)
+      );
+      if (prefix) {
+        const providerPath = value.slice(prefix.length);
+        processCompatibleFileUrl(
+          providerPath.startsWith("file://") ? providerPath : `file://${providerPath}`
+        );
+      }
+    };
+    const watchExternalProviderConfig = (value) => {
+      if (value.length > MAX_DEPENDENCY_REFERENCE_LENGTH || value.includes("\0") || value.includes("\r") || value.includes("\n")) {
+        return;
+      }
+      if (/[.{,(|](?:ya?ml|jsonl?)(?=$|[},:#?|)])/i.test(value)) {
+        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+      }
+    };
     const visitedProviderValues = /* @__PURE__ */ new WeakSet();
-    const visitProviderReferences = (value) => {
+    const visitProviderReferences = (value, fieldName) => {
       if (typeof value === "string" && value.startsWith("file://")) {
-        processFileUrl(stripProviderFunctionSelector(value));
+        processCompatibleFileUrl(
+          value,
+          JAVASCRIPT_FILE_REFERENCE_FIELDS.has(fieldName ?? "") ? stripJavascriptFunctionSelector : stripProviderFunctionSelector
+        );
       } else if (Array.isArray(value)) {
         if (visitedProviderValues.has(value)) {
           return;
         }
         visitedProviderValues.add(value);
         for (const nestedValue of value) {
-          visitProviderReferences(nestedValue);
+          visitProviderReferences(nestedValue, fieldName);
         }
       } else if (isTraversableRecord(value)) {
         if (visitedProviderValues.has(value)) {
           return;
         }
         visitedProviderValues.add(value);
-        for (const nestedValue of Object.values(value)) {
-          visitProviderReferences(nestedValue);
+        for (const [nestedFieldName, nestedValue] of Object.entries(value)) {
+          visitProviderReferences(nestedValue, nestedFieldName);
         }
       }
     };
-    const addHttpProviderPath = (value) => {
+    const addHttpProviderPath = (value, stripFunctionSelector2 = stripProviderFunctionSelector) => {
       if (typeof value !== "string" || !value) {
         return;
       }
-      const filePath = stripProviderFunctionSelector(
-        value.replace(/^file:\/\//, "")
-      ).replace(/\\/g, "/");
+      const rawFilePath = value.replace(/^file:\/\//, "").replace(/\\/g, "/");
+      const filePath = stripFunctionSelector2(rawFilePath);
       const staticSegments = [];
       for (const segment of filePath.split("/")) {
         if (/\{[{%#]/.test(segment)) {
@@ -38558,7 +38789,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       const hasTemplate = staticSegments.length < filePath.split("/").length;
       const staticPath = hasTemplate ? staticSegments.length > 0 ? staticSegments.join("/") : "." : filePath;
       const absolutePath = path6.isAbsolute(staticPath) ? path6.resolve(staticPath) : path6.resolve(path6.join(configDir, staticPath));
-      if (filePath.includes("\0") || !isInsideDependencyRoots(absolutePath)) {
+      if (filePath.includes("\0") || isUnsupportedForeignPath(filePath) || !isInsideDependencyRoots(absolutePath)) {
         warning(
           "Ignoring unsafe HTTP provider file dependency: path must stay within the repository workspace"
         );
@@ -38568,26 +38799,38 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         dependencies.add(`${absolutePath.replace(/[\\/]+$/, "")}${path6.sep}`);
         return;
       }
-      processFileUrl(`file://${filePath}`);
+      processCompatibleFileUrl(`file://${rawFilePath}`, stripFunctionSelector2);
     };
     for (const providers of [config2.providers, config2.targets]) {
       const providerEntries = typeof providers === "string" ? [providers] : Array.isArray(providers) ? providers : isTraversableRecord(providers) ? [providers] : [];
       for (const provider of providerEntries) {
         visitProviderReferences(provider);
+        if (typeof provider === "string") {
+          processFileBackedProviderReference(provider);
+          watchExternalProviderConfig(provider);
+        }
         if (!isTraversableRecord(provider)) {
           continue;
         }
         const mappedProvider = Object.entries(provider);
         if (mappedProvider.length === 1 && mappedProvider[0][0].startsWith("file://")) {
-          processFileUrl(stripProviderFunctionSelector(mappedProvider[0][0]));
+          processCompatibleFileUrl(mappedProvider[0][0]);
+          watchExternalProviderConfig(mappedProvider[0][0]);
         }
         const providerId = typeof provider.id === "string" ? provider.id : mappedProvider.length === 1 ? mappedProvider[0][0] : void 0;
         const providerOptions = typeof provider.id === "string" ? provider : mappedProvider.length === 1 && isTraversableRecord(mappedProvider[0][1]) ? mappedProvider[0][1] : void 0;
-        if (!providerId || !/^https?(?::|$)/.test(providerId) || !providerOptions || !isTraversableRecord(providerOptions.config)) {
+        if (providerId) {
+          processFileBackedProviderReference(providerId);
+          watchExternalProviderConfig(providerId);
+        }
+        if (!providerId || !/^https?(?::|$)/.test(providerId) && !/\{[{%#]/.test(providerId) || !providerOptions || !isTraversableRecord(providerOptions.config)) {
           continue;
         }
-        const { auth: auth2, tls, signatureAuth } = providerOptions.config;
-        if (isTraversableRecord(auth2) && auth2.type === "file") {
+        const { auth: auth2, tls, signatureAuth, validateStatus, multipart } = providerOptions.config;
+        if (typeof validateStatus === "string" && validateStatus.startsWith("file://")) {
+          addHttpProviderPath(validateStatus, stripJavascriptFunctionSelector);
+        }
+        if (isTraversableRecord(auth2) && (auth2.type === "file" || typeof auth2.type === "string" && /\{[{%#]/.test(auth2.type))) {
           addHttpProviderPath(auth2.path);
         }
         if (isTraversableRecord(tls)) {
@@ -38612,13 +38855,22 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             addHttpProviderPath(signatureAuth[key]);
           }
         }
+        if (isTraversableRecord(multipart) && Array.isArray(multipart.parts)) {
+          for (const part of multipart.parts) {
+            if (!isTraversableRecord(part)) continue;
+            const isFilePart = part.kind === "file" || typeof part.kind === "string" && /\{[{%#]/.test(part.kind);
+            if (!isFilePart || !isTraversableRecord(part.source)) continue;
+            const isPathSource = part.source.type === "path" || typeof part.source.type === "string" && /\{[{%#]/.test(part.source.type);
+            if (isPathSource) addHttpProviderPath(part.source.path);
+          }
+        }
       }
     }
     if (config2.prompts) {
       const prompts = typeof config2.prompts === "string" ? [config2.prompts] : Array.isArray(config2.prompts) ? config2.prompts : isTraversableRecord(config2.prompts) ? Object.keys(config2.prompts) : [];
       const visitedPromptFiles = /* @__PURE__ */ new Set();
       const resolvePromptProbe = (filePath, baseDir = configDir) => {
-        if (!filePath || filePath.includes("\0")) {
+        if (!filePath || filePath.includes("\0") || isUnsupportedForeignPath(filePath)) {
           return void 0;
         }
         const absolutePath = path6.isAbsolute(filePath) ? path6.resolve(filePath) : path6.resolve(path6.join(baseDir, filePath));
@@ -38629,6 +38881,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         const isFileUrl = reference.startsWith("file://");
         const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
         const isEnvironmentTemplate = /^\s*\{\{-?\s*env(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(reference);
+        if (isTemplated && !isFileUrl && reference.includes("file://")) {
+          dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+          return;
+        }
         if (!declaredFile && !isExecutable && !isFileUrl && (reference.length > 65536 || ["\n", "portkey://", "langfuse://", "helicone://"].some(
           (value) => reference.includes(value)
         ))) {
@@ -38637,9 +38893,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (!declaredFile && !isExecutable && !isFileUrl && /\s/.test(reference) && /(?:^|\s)(?:\/|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reference) && !/^\s*(?:\/|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reference)) {
           return;
         }
-        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) || /^[^*]*\*+$/.test(reference) || !/\s/.test(reference) && /\*\([^/]*\)/.test(reference)) || !reference.includes("*") && !reference.includes("\0") && !/\s/.test(reference) && !isTemplated && le(reference, GLOB_MAGIC_OPTIONS) || /[\\/]/.test(reference) && !/\s/.test(reference) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
-          reference
-        );
+        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) || /^[^*]*\*+$/.test(reference) || !/\s/.test(reference) && /\*\([^/]*\)/.test(reference)) || !reference.includes("*") && !reference.includes("\0") && !/\s/.test(reference) && !isTemplated && le(reference, GLOB_MAGIC_OPTIONS) || /[\\/]/.test(reference) && !/\s/.test(reference) || hasPromptFileExtension(reference);
         if (!looksLikePath) {
           const candidatePath = resolvePromptProbe(reference);
           const hasShortExtension = reference.charAt(reference.length - 3) === "." || reference.charAt(reference.length - 4) === ".";
@@ -38661,12 +38915,17 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             }
           }
         }
-        const executableParts = isExecutable ? (reference.replace(/^exec:/, "").replace(
-          /\{\{[^}]*\}\}/g,
-          (template) => template.replace(/\s+/g, "")
-        ).match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? []).map((part) => part.replace(/^['"]|['"]$/g, "")) : [];
-        const promptPath = (isExecutable ? executableParts[0] ?? "" : reference).replace(/^file:\/\//, "").replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, "$1").replace(/\\/g, "/");
-        const promptPatterns = processFileUrl(`file://${promptPath}`);
+        const executableParts = isExecutable ? (compactTemplateWhitespace(reference.replace(/^exec:/, "")).match(
+          /[^\s"']+|"[^"]*"|'[^']*'/g
+        ) ?? []).map((part) => part.replace(/^['"]|['"]$/g, "")) : [];
+        const rawPromptPath = (isExecutable ? executableParts[0] ?? "" : reference).replace(/^file:\/\//, "").replace(/\\/g, "/");
+        const promptPath = stripFunctionSelector(
+          rawPromptPath,
+          PROVIDER_SELECTOR_EXTENSIONS
+        );
+        const promptPatterns = processCompatibleFileUrl(
+          `file://${rawPromptPath}`
+        );
         if (promptPath.includes("\0")) {
           return;
         }
@@ -38774,7 +39033,19 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             continue;
           }
           try {
-            const physicalPromptFile = isPromptGlob || fs6.existsSync(absolutePromptFile) ? fs6.realpathSync(absolutePromptFile) : absolutePromptFile;
+            let promptEntryExists = isPromptGlob || fs6.existsSync(absolutePromptFile);
+            if (!promptEntryExists) {
+              try {
+                fs6.lstatSync(absolutePromptFile);
+                promptEntryExists = true;
+              } catch (error2) {
+                if (error2.code === "ENOENT") {
+                  continue;
+                }
+                throw error2;
+              }
+            }
+            const physicalPromptFile = fs6.realpathSync(absolutePromptFile);
             if (!isInsidePhysicalDependencyRoots(physicalPromptFile)) {
               warning(
                 isPromptGlob ? "Ignoring unsafe prompt file dependency glob match: resolved path must stay within the repository workspace" : `Ignoring unsafe prompt file dependency "${promptPath}": resolved path must stay within the repository workspace`
@@ -38785,6 +39056,13 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
               continue;
             }
             visitedPromptFiles.add(physicalPromptFile);
+            if (fs6.statSync(physicalPromptFile).size > MAX_STRUCTURED_PROMPT_FILE_SIZE) {
+              dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+              warning(
+                "Skipping oversized structured prompt dependency; nested references will not be inspected"
+              );
+              continue;
+            }
             const nestedConfig = load(
               fs6.readFileSync(physicalPromptFile, "utf8"),
               { schema: CONFIG_YAML_SCHEMA }
@@ -38813,6 +39091,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             };
             visitNestedReferences(nestedConfig);
           } catch {
+            dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
             warning(
               isPromptGlob ? "Failed to inspect prompt file dependency glob match: unable to read or parse file" : `Failed to inspect prompt file dependency "${promptPath}": unable to read or parse file`
             );
@@ -38855,11 +39134,16 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
       }
     };
+    const visitedAssertValues = /* @__PURE__ */ new WeakSet();
     const extractAssertFiles = (asserts) => {
-      if (!Array.isArray(asserts)) return;
+      if (!Array.isArray(asserts) || visitedAssertValues.has(asserts)) return;
+      visitedAssertValues.add(asserts);
       for (const assert of asserts) {
         if (assert !== null && typeof assert === "object" && typeof assert.value === "string" && assert.value.startsWith("file://")) {
-          processFileUrl(assert.value);
+          processCompatibleFileUrl(
+            assert.value,
+            stripAssertionFunctionSelector
+          );
         } else if (assert !== null && typeof assert === "object" && typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
           const absolutePath = resolveConfigDependency(
             assert.value.file,
@@ -38869,17 +39153,65 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             dependencies.add(absolutePath);
           }
         }
+        extractAssertFiles(assert.assert);
       }
     };
     if (isTraversableRecord(config2.defaultTest)) {
       extractVarFiles(config2.defaultTest.vars);
       extractAssertFiles(config2.defaultTest.assert);
     }
-    if (Array.isArray(config2.tests)) {
-      for (const test of config2.tests) {
-        if (test === null || typeof test !== "object") continue;
-        extractVarFiles(test.vars);
-        extractAssertFiles(test.assert);
+    const visitedTestValues = /* @__PURE__ */ new WeakSet();
+    const extractTestPath = (testPath) => {
+      if (testPath.length > MAX_DEPENDENCY_REFERENCE_LENGTH || testPath.includes("\0") || testPath.includes("\r") || testPath.includes("\n")) {
+        warning(
+          "Ignoring invalid test file dependency; preserving other dependencies"
+        );
+        return;
+      }
+      const testsPath = stripSpreadsheetSheetSelector(testPath);
+      processCompatibleFileUrl(
+        testsPath.startsWith("file://") ? testsPath : `file://${testsPath}`
+      );
+      if (/[.{,(|](?:ya?ml|jsonl?|xlsx?|csv)(?=$|[},:#?|)])/i.test(testsPath)) {
+        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path6.sep}`);
+      }
+    };
+    const extractTestValues = (tests) => {
+      if (typeof tests === "string") {
+        extractTestPath(tests);
+        return;
+      }
+      if (Array.isArray(tests)) {
+        if (visitedTestValues.has(tests)) return;
+        visitedTestValues.add(tests);
+        for (const test of tests) {
+          extractTestValues(test);
+        }
+        return;
+      }
+      if (!isTraversableRecord(tests) || visitedTestValues.has(tests)) return;
+      visitedTestValues.add(tests);
+      if (typeof tests.path === "string") {
+        extractTestPath(tests.path);
+      }
+      extractVarFiles(tests.vars);
+      extractAssertFiles(tests.assert);
+      if ("tests" in tests) {
+        extractTestValues(tests.tests);
+      }
+      if ("config" in tests) {
+        extractTestValues(tests.config);
+      }
+    };
+    extractTestValues(config2.tests);
+    extractTestValues(config2.scenarios);
+    if (isTraversableRecord(config2.nunjucksFilters)) {
+      for (const filterPath of Object.values(config2.nunjucksFilters)) {
+        if (typeof filterPath === "string") {
+          processFileUrl(
+            filterPath.startsWith("file://") ? filterPath : `file://${filterPath}`
+          );
+        }
       }
     }
     return Array.from(dependencies).map((dep) => {
@@ -38897,7 +39229,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     warning(
       "Failed to extract dependencies from config: unable to read or parse config"
     );
-    return [];
+    return parsedConfig ? ["./"] : [];
   }
 }
 
@@ -39213,6 +39545,7 @@ function formatRepeatCommentMarkdown(summary2) {
 // src/main.ts
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
+var MAX_DEPENDENCY_GLOB_LENGTH = 65536;
 var DEPENDENCY_GLOB_MAGIC_OPTIONS = {
   magicalBraces: true,
   nonegate: true,
@@ -39220,6 +39553,10 @@ var DEPENDENCY_GLOB_MAGIC_OPTIONS = {
 };
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
+}
+function isPathInside2(baseDir, targetPath) {
+  const relativePath = path7.relative(baseDir, targetPath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relativePath);
 }
 function validateGitRevision(ref) {
   const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
@@ -39324,8 +39661,11 @@ async function run() {
     const githubToken = getInput("github-token", {
       required: true
     });
-    const promptsInput = getInput("prompts", { required: false });
-    const promptFilesGlobs = promptsInput ? promptsInput.split("\n").filter((line) => line.trim()) : [];
+    const promptsInput = getInput("prompts", {
+      required: false,
+      trimWhitespace: false
+    });
+    const promptFilesGlobs = promptsInput ? promptsInput.split(/\r?\n/).filter((line) => line.trim()) : [];
     const configPath = getInput("config", {
       required: true
     });
@@ -39372,7 +39712,8 @@ async function run() {
       required: false
     });
     const workflowFiles = getInput("workflow-files", {
-      required: false
+      required: false,
+      trimWhitespace: false
     });
     const workflowBase = getInput("workflow-base", {
       required: false
@@ -39561,34 +39902,54 @@ async function run() {
       );
     }
     const promptFiles = [];
+    const allPromptFiles = [];
+    let physicalWorkspaceRoot;
     const changedFilesList = changedFiles.split(changedFiles.includes("\0") ? "\0" : /\r?\n/).filter((file) => file);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
         nodir: true
       });
+      const allMatches = matches.filter((file) => {
+        const absoluteFile = path7.resolve(workingDirectory, file);
+        if (!isPathInside2(workspaceRoot, absoluteFile)) {
+          warning(
+            "Ignoring unsafe prompt glob match: path must stay within the repository workspace"
+          );
+          return false;
+        }
+        try {
+          physicalWorkspaceRoot ??= fs7.realpathSync(workspaceRoot);
+          const physicalFile = fs7.realpathSync(absoluteFile);
+          if (!isPathInside2(physicalWorkspaceRoot, physicalFile)) {
+            warning(
+              "Ignoring unsafe prompt glob match: resolved path must stay within the repository workspace"
+            );
+            return false;
+          }
+        } catch {
+          warning(
+            "Ignoring unreadable prompt glob match: unable to resolve path"
+          );
+          return false;
+        }
+        const repositoryFile = toRepositoryPath(
+          path7.relative(workspaceRoot, absoluteFile)
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...allMatches);
       if (changedFilesList.length > 0) {
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
           );
-          return repositoryFile !== configRepositoryPath && changedFilesList.includes(repositoryFile);
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
         promptFiles.push(...allMatches);
       }
-    }
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
-      throw new Error(
-        "Prompt file paths containing carriage returns or line feeds are not supported"
-      );
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
@@ -39598,17 +39959,23 @@ async function run() {
         workingDirectory
       ).map(toRepositoryPath);
       if (dependencies.length > 0) {
-        debug(
-          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
-        );
+        debug(`Found ${dependencies.length} file dependencies in config`);
         dependencyChanged = dependencies.some((dep) => {
           if (dep === "./") {
             return true;
           }
-          if (le(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS) && changedFilesList.some(
-            (changedFile) => path7.matchesGlob(changedFile, dep)
-          )) {
-            return true;
+          if (dep.length <= MAX_DEPENDENCY_GLOB_LENGTH) {
+            try {
+              if (le(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS) && changedFilesList.some(
+                (changedFile) => path7.matchesGlob(changedFile, dep)
+              )) {
+                return true;
+              }
+            } catch {
+              debug(
+                "Unable to match a config dependency glob; falling back to direct and directory matching"
+              );
+            }
           }
           if (changedFilesList.includes(dep)) {
             return true;
@@ -39623,9 +39990,15 @@ async function run() {
         }
       }
     }
+    const evaluationPromptFiles = configChanged || dependencyChanged ? allPromptFiles : promptFiles;
     if (!forceRun && promptFiles.length < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
+    }
+    if (evaluationPromptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error(
+        "Prompt file paths containing carriage returns or line feeds are not supported"
+      );
     }
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
@@ -39656,8 +40029,11 @@ async function run() {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
-    if (!useConfigPrompts && !configChanged && !dependencyChanged && promptFiles.length > 0) {
-      promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
+    if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
+      promptfooArgs = promptfooArgs.concat([
+        "--prompts",
+        ...evaluationPromptFiles
+      ]);
     }
     if (noShare) {
       promptfooArgs.push("--no-share");
@@ -39826,7 +40202,7 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(", ");
+      const modifiedFiles = evaluationPromptFiles.join(", ");
       let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
@@ -39857,9 +40233,9 @@ async function run() {
         ["Success", output.results.stats.successes.toString()],
         ["Failure", output.results.stats.failures.toString()]
       ]);
-      if (promptFiles.length > 0) {
+      if (evaluationPromptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
-        summary2.addList(promptFiles);
+        summary2.addList(evaluationPromptFiles);
       }
       if (repeatCheckResult) {
         summary2.addHeading("Repeat Check", 3);
