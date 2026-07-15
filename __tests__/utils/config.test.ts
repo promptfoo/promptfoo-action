@@ -388,6 +388,20 @@ providers:
       auth:
         type: file
         path: file://auth/named-token.ts:getToken
+  - https://example.test/mapped:
+      config:
+        method: GET
+        auth:
+          type: file
+          path: ./auth/mapped-token.ts
+  - id: "{{ env.HTTP_PROVIDER_ID }}"
+    env:
+      HTTP_PROVIDER_ID: https://example.test/templated
+    config:
+      method: GET
+      auth:
+        type: file
+        path: ./auth/templated-token.ts
 `);
 
     const deps = extractFileDependencies(
@@ -398,7 +412,73 @@ providers:
       'evals/auth/get-token.ts',
       'evals/auth/get-token.py',
       'evals/auth/named-token.ts',
+      'evals/auth/mapped-token.ts',
+      'evals/auth/templated-token.ts',
     ]);
+  });
+
+  it('should ignore HTTP-shaped plain file fields on non-HTTP providers', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    config:
+      auth:
+        type: file
+        path: ./auth/not-http.ts
+      tls:
+        caPath: ./credentials/not-http.pem
+      signatureAuth:
+        privateKeyPath: ./credentials/not-http.key
+      multipart:
+        parts:
+          - kind: file
+            name: not-http
+            source:
+              type: path
+              path: ./fixtures/not-http.pdf
+  - custom:provider:
+      config:
+        auth:
+          type: file
+          path: ./auth/not-http-map.ts
+        multipart:
+          parts:
+            - kind: file
+              name: not-http-map
+              source:
+                type: path
+                path: ./fixtures/not-http-map.pdf
+  - id: https://example.test/body
+    config:
+      method: POST
+      body:
+        nested_provider:
+          id: openai:gpt-4
+          config:
+            auth:
+              type: file
+              path: ./auth/body-false.ts
+            tls:
+              caPath: ./credentials/body-false.pem
+            multipart:
+              parts:
+                - kind: file
+                  name: body-false
+                  source:
+                    type: path
+                    path: ./fixtures/body-false.pdf
+        payload:
+          config:
+            auth:
+              type: file
+              path: ./auth/payload-false.ts
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
   });
 
   it('should honor provider env for an HTTP file-auth path', () => {
@@ -493,6 +573,7 @@ providers:
     config:
       method: GET
       signatureAuth:
+        id: customer-signing-key
         privateKeyPath: "{{ env.PRIVATE_KEY_PATH }}"
         keystorePath: ./credentials/keystore.jks
         pfxPath: ./credentials/signature.pfx

@@ -353,6 +353,16 @@ export function extractFileDependencies(configPath: string): string[] {
           (template: string, dotKey: string, bracketKey: string) =>
             String(activeEnv[dotKey || bracketKey] ?? template),
         );
+    const isHttpProviderId = (
+      providerId: string,
+      activeEnv: ProviderEnv,
+    ): boolean => {
+      const renderedProviderId = renderEnvTemplates(providerId, {
+        ...process.env,
+        ...activeEnv,
+      });
+      return /^(?:https?:|https?$)/.test(renderedProviderId);
+    };
     const withEnvOverrides = (
       baseEnv: ProviderEnv,
       overrides: unknown,
@@ -399,6 +409,7 @@ export function extractFileDependencies(configPath: string): string[] {
       parentKey?: string,
       grandparentKey?: string,
       greatGrandparentKey?: string,
+      httpProviderContext: boolean = false,
     ): void => {
       if (providerTraversalCount >= 1024) {
         stopProviderTraversal();
@@ -563,6 +574,7 @@ export function extractFileDependencies(configPath: string): string[] {
         parentKey,
         grandparentKey,
         greatGrandparentKey,
+        httpProviderContext,
       ]);
       const visitedContexts = visitedProviderValues.get(value);
       if (visitedContexts?.has(providerValueContextKey)) {
@@ -598,6 +610,7 @@ export function extractFileDependencies(configPath: string): string[] {
               parentKey,
               grandparentKey,
               greatGrandparentKey,
+              httpProviderContext,
             );
           }
           return;
@@ -614,7 +627,14 @@ export function extractFileDependencies(configPath: string): string[] {
           externalProviderConfig && referencedFromProviderObject
             ? { ...withEnvOverrides({}, valueEnv), ...activeEnv }
             : withEnvOverrides(activeEnv, valueEnv);
+        const isHttpProvider =
+          isProviderOptionsObject &&
+          'id' in value &&
+          typeof value.id === 'string'
+            ? isHttpProviderId(value.id, providerEnv)
+            : httpProviderContext;
         const fileAuthPath =
+          isHttpProvider &&
           parentKey === 'auth' &&
           grandparentKey === 'config' &&
           'type' in value &&
@@ -642,6 +662,7 @@ export function extractFileDependencies(configPath: string): string[] {
             continue;
           }
           if (
+            isHttpProvider &&
             parentKey === 'parts' &&
             grandparentKey === 'multipart' &&
             greatGrandparentKey === 'config' &&
@@ -671,6 +692,7 @@ export function extractFileDependencies(configPath: string): string[] {
             continue;
           }
           if (
+            isHttpProvider &&
             grandparentKey === 'config' &&
             (parentKey === 'signatureAuth' || parentKey === 'tls') &&
             HTTP_CREDENTIAL_PATH_KEYS.has(key) &&
@@ -709,6 +731,12 @@ export function extractFileDependencies(configPath: string): string[] {
               true,
             );
           }
+          const mappedProviderEnv =
+            typeof nestedValue === 'object' &&
+            nestedValue !== null &&
+            'env' in nestedValue
+              ? withEnvOverrides(providerEnv, nestedValue.env)
+              : providerEnv;
           processProviderValue(
             nestedValue,
             nestedReference || key !== 'id',
@@ -724,6 +752,13 @@ export function extractFileDependencies(configPath: string): string[] {
             key,
             parentKey,
             grandparentKey,
+            key !== 'body' &&
+              key !== 'header' &&
+              key !== 'headers' &&
+              key !== 'data' &&
+              key !== 'metadata' &&
+              (isHttpProvider ||
+                (isProviderMap && isHttpProviderId(key, mappedProviderEnv))),
           );
         }
       } finally {
