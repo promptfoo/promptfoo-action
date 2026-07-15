@@ -1513,6 +1513,40 @@ prompts:
     );
   });
 
+  it('should emit one sanitized warning for many foreign absolute dependencies', () => {
+    const vars = Array.from(
+      { length: 200 },
+      (_, index) =>
+        `      value${index}:\n        file: C:/SENSITIVE-REVIEW-TOKEN/${index}.txt`,
+    ).join('\n');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/safe.py
+  - file://C:/SENSITIVE-REVIEW-TOKEN/provider.py
+  - id: http
+    config:
+      auth:
+        type: file
+        path: C:/SENSITIVE-REVIEW-TOKEN/auth.ts
+tests:
+  - vars:
+${vars}
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/safe.py']);
+    const foreignWarnings = vi
+      .mocked(core.warning)
+      .mock.calls.filter(([message]) =>
+        String(message).includes('foreign absolute paths are not supported'),
+      );
+    expect(foreignWarnings).toHaveLength(1);
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
+  });
+
   it('should reject an escaped structured brace prompt-glob arm before nested inspection', () => {
     mockFs.readFileSync.mockReturnValue(
       "prompts: 'file://{../../outside,prompts}/*.yaml'\n",

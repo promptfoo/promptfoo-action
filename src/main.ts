@@ -489,6 +489,24 @@ export async function run(): Promise<void> {
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
     const allPromptFiles: string[] = [];
+    const seenPromptFiles = new Set<string>();
+    const seenAllPromptFiles = new Set<string>();
+    const appendUnique = (
+      target: string[],
+      seen: Set<string>,
+      files: string[],
+    ): void => {
+      for (const file of files) {
+        const resolvedFile = path.resolve(workingDirectory, file);
+        const fileKey =
+          process.platform === 'darwin' || process.platform === 'win32'
+            ? resolvedFile.toLowerCase()
+            : resolvedFile;
+        if (seen.has(fileKey)) continue;
+        seen.add(fileKey);
+        target.push(file);
+      }
+    };
     let physicalWorkspaceRoot: string | undefined;
     const changedFilesList = changedFiles
       .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
@@ -527,7 +545,7 @@ export async function run(): Promise<void> {
         );
         return repositoryFile !== configRepositoryPath;
       });
-      allPromptFiles.push(...allMatches);
+      appendUnique(allPromptFiles, seenAllPromptFiles, allMatches);
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
@@ -537,10 +555,10 @@ export async function run(): Promise<void> {
           );
           return changedFilesList.includes(repositoryFile);
         });
-        promptFiles.push(...changedMatches);
+        appendUnique(promptFiles, seenPromptFiles, changedMatches);
       } else {
         // No changed files info available, include all matches
-        promptFiles.push(...allMatches);
+        appendUnique(promptFiles, seenPromptFiles, allMatches);
       }
     }
 

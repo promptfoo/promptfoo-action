@@ -1108,6 +1108,130 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      {
+        changed: ['promptfooconfig.yaml'],
+        expected: ['prompts/one.txt', 'prompts/two.txt'],
+      },
+      {
+        changed: ['prompts/one.txt'],
+        expected: ['prompts/one.txt'],
+      },
+    ])('should deduplicate prompt matches from overlapping action globs', async ({
+      changed,
+      expected,
+    }) => {
+      withInputs({ prompts: 'prompts/*.txt\nprompts/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue(
+        changed.map((filename) => ({ filename })),
+      );
+      mockGlob.sync.mockReturnValue(['prompts/one.txt', 'prompts/two.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptIndex = args.indexOf('--prompts');
+      expect(
+        args.slice(promptIndex + 1, promptIndex + 1 + expected.length),
+      ).toEqual(expected);
+      for (const prompt of expected) {
+        expect(args.filter((value) => value === prompt)).toHaveLength(1);
+      }
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(commentBody).toContain(
+        `LLM evaluation included these files: ${expected.join(', ')}`,
+      );
+    });
+
+    test('should deduplicate relative and absolute spellings of the same prompt match', async () => {
+      withInputs({ prompts: 'prompts/*.txt\nprompts/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        String(pattern) === 'prompts/*.txt'
+          ? ['prompts/one.txt']
+          : [path.join(process.cwd(), 'prompts/one.txt')],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.filter((value) => value === 'prompts/one.txt')).toHaveLength(
+        1,
+      );
+      expect(args).not.toContain(path.join(process.cwd(), 'prompts/one.txt'));
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(commentBody).toContain(
+        'LLM evaluation included these files: prompts/one.txt',
+      );
+    });
+
+    test.runIf(process.platform === 'darwin' || process.platform === 'win32')(
+      'should deduplicate differently cased prompt matches on case-insensitive runners',
+      async () => {
+        withInputs({ prompts: 'prompts/*.txt\nPROMPTS/*.txt' });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'promptfooconfig.yaml' },
+        ]);
+        mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+          String(pattern) === 'prompts/*.txt'
+            ? ['prompts/one.txt']
+            : ['PROMPTS/one.txt'],
+        );
+
+        await run();
+
+        const args = mockExec.exec.mock.calls[0][1] as string[];
+        expect(
+          args.filter((value) => value === 'prompts/one.txt'),
+        ).toHaveLength(1);
+        expect(args).not.toContain('PROMPTS/one.txt');
+        const commentBody =
+          mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+        expect(commentBody).toContain(
+          'LLM evaluation included these files: prompts/one.txt',
+        );
+      },
+    );
+
+    test.each([
+      { platform: 'win32', expected: ['prompts/one.txt'] },
+      {
+        platform: 'linux',
+        expected: ['prompts/one.txt', 'PROMPTS/one.txt'],
+      },
+    ])('should apply platform-appropriate prompt dedupe casing', async ({
+      platform,
+      expected,
+    }) => {
+      const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+      Object.defineProperty(process, 'platform', { value: platform });
+      withInputs({ prompts: 'prompts/*.txt\nPROMPTS/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        String(pattern) === 'prompts/*.txt'
+          ? ['prompts/one.txt']
+          : ['PROMPTS/one.txt'],
+      );
+
+      try {
+        await run();
+      } finally {
+        if (descriptor) Object.defineProperty(process, 'platform', descriptor);
+      }
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptIndex = args.indexOf('--prompts');
+      expect(
+        args.slice(promptIndex + 1, promptIndex + 1 + expected.length),
+      ).toEqual(expected);
+    });
+
     test('should reject lexical and symlinked prompt-glob escapes while preserving safe full-eval prompts', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'promptfooconfig.yaml' },

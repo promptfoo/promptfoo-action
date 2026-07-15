@@ -346,6 +346,14 @@ export function extractFileDependencies(
     return physicalDependencyRoots.some((root) => isPathInside(root, filePath));
   };
   let parsedConfig = false;
+  let warnedForeignAbsoluteDependency = false;
+  const warnForeignAbsoluteDependency = (): void => {
+    if (warnedForeignAbsoluteDependency) return;
+    warnedForeignAbsoluteDependency = true;
+    core.warning(
+      'Ignoring unsafe config dependency: foreign absolute paths are not supported',
+    );
+  };
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -369,9 +377,7 @@ export function extractFileDependencies(
       source: string,
     ): string | undefined => {
       if (isUnsupportedForeignPath(filePath)) {
-        core.warning(
-          'Ignoring unsafe config dependency: foreign absolute paths are not supported',
-        );
+        warnForeignAbsoluteDependency();
         return undefined;
       }
       try {
@@ -411,11 +417,14 @@ export function extractFileDependencies(
         );
         return;
       }
+      if (isUnsupportedForeignPath(filePath)) {
+        warnForeignAbsoluteDependency();
+        return;
+      }
       if (
         filePath.length > MAX_DEPENDENCY_REFERENCE_LENGTH ||
         filePath.includes('\r') ||
-        filePath.includes('\n') ||
-        isUnsupportedForeignPath(filePath)
+        filePath.includes('\n')
       ) {
         core.warning(
           'Ignoring invalid config dependency glob; preserving other dependencies',
@@ -661,14 +670,14 @@ export function extractFileDependencies(
       const absolutePath = path.isAbsolute(staticPath)
         ? path.resolve(staticPath)
         : path.resolve(path.join(configDir, staticPath));
-      if (
-        filePath.includes('\0') ||
-        isUnsupportedForeignPath(filePath) ||
-        !isInsideDependencyRoots(absolutePath)
-      ) {
+      if (filePath.includes('\0') || !isInsideDependencyRoots(absolutePath)) {
         core.warning(
           'Ignoring unsafe HTTP provider file dependency: path must stay within the repository workspace',
         );
+        return;
+      }
+      if (isUnsupportedForeignPath(filePath)) {
+        warnForeignAbsoluteDependency();
         return;
       }
       if (hasTemplate) {
