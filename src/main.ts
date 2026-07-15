@@ -768,6 +768,7 @@ export async function run(): Promise<void> {
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
     const allPromptFiles: string[] = [];
+    let realWorkspaceRoot: string | undefined;
 
     for (const globPattern of validPromptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -776,8 +777,33 @@ export async function run(): Promise<void> {
       });
 
       const allMatches = matches.filter((file) => {
+        const absolutePrompt = path.resolve(workingDirectory, file);
+        if (!isPathInside(workspaceRoot, absolutePrompt)) {
+          throw new PromptfooActionError(
+            'Prompt file resolves outside the repository workspace.',
+            ErrorCodes.INVALID_CONFIGURATION,
+          );
+        }
+
+        let realPrompt: string;
+        try {
+          realWorkspaceRoot ??= fs.realpathSync(workspaceRoot);
+          realPrompt = fs.realpathSync(absolutePrompt);
+        } catch {
+          throw new PromptfooActionError(
+            'Prompt file resolves outside the repository workspace.',
+            ErrorCodes.INVALID_CONFIGURATION,
+          );
+        }
+        if (!isPathInside(realWorkspaceRoot, realPrompt)) {
+          throw new PromptfooActionError(
+            'Prompt file resolves outside the repository workspace.',
+            ErrorCodes.INVALID_CONFIGURATION,
+          );
+        }
+
         const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          path.relative(workspaceRoot, absolutePrompt),
         );
         return repositoryFile !== configRepositoryPath;
       });

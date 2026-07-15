@@ -18,6 +18,7 @@ const HTTP_FILE_CONFIG_KEYS = [
 const HTTP_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts)$/;
 const PROVIDER_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py|go|rb)$/;
 const ASSERT_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py|rb)$/;
+const TEST_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py)$/;
 const CASE_INSENSITIVE_JS_SELECTOR = /\.(?:[cm]?js|[cm]?ts)$/i;
 
 interface ConfigAssertion {
@@ -26,19 +27,30 @@ interface ConfigAssertion {
   assert?: ConfigAssertion[];
 }
 
+type ConfigProvider = string | { id?: string; [key: string]: unknown };
+type ConfigPrompt = string | { file?: string; [key: string]: unknown };
+
+interface ConfigTestCase {
+  vars?: { [key: string]: string | { file?: string } };
+  assert?: ConfigAssertion[];
+  provider?: ConfigProvider;
+  path?: string;
+  [key: string]: unknown;
+}
+
+interface ConfigScenario {
+  config?: ConfigTestCase[];
+  tests?: string | ConfigTestCase | Array<string | ConfigTestCase>;
+}
+
 export interface PromptfooConfig {
-  providers?: Array<string | { id?: string; [key: string]: unknown }>;
-  targets?: Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: Array<string | { file?: string; [key: string]: unknown }>;
-  tests?: Array<{
-    vars?: { [key: string]: string | { file?: string } };
-    assert?: ConfigAssertion[];
-    [key: string]: unknown;
-  }>;
-  defaultTest?: {
-    vars?: { [key: string]: string | { file?: string } };
-    assert?: ConfigAssertion[];
-  };
+  providers?: ConfigProvider | ConfigProvider[];
+  targets?: ConfigProvider | ConfigProvider[];
+  prompts?: ConfigPrompt | ConfigPrompt[] | Record<string, string>;
+  tests?: string | ConfigTestCase | Array<string | ConfigTestCase>;
+  defaultTest?: string | ConfigTestCase;
+  scenarios?: Array<string | ConfigScenario>;
+  nunjucksFilters?: Record<string, string>;
 }
 
 function isPathInside(baseDir: string, targetPath: string): boolean {
@@ -56,6 +68,50 @@ function sanitizeLogText(value: string): string {
     .replace(/\t/g, '\\t')
     .replace(/\r/g, '\\r')
     .replace(/\n/g, '\\n');
+}
+
+function hasMismatchedGlobDelimiters(pattern: string): boolean {
+  let braceDepth = 0;
+  let parenthesisDepth = 0;
+  let inCharacterClass = false;
+  let escaped = false;
+  for (const character of pattern) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (inCharacterClass) {
+      if (character === ']') inCharacterClass = false;
+      continue;
+    }
+    if (character === '[') {
+      inCharacterClass = true;
+      continue;
+    }
+    if (character === '{') {
+      braceDepth++;
+      continue;
+    }
+    if (character === '}' && braceDepth > 0) {
+      if (parenthesisDepth > 0) return true;
+      braceDepth--;
+      continue;
+    }
+    if (braceDepth === 0) continue;
+    if (character === '(') {
+      parenthesisDepth++;
+    } else if (character === ')') {
+      if (parenthesisDepth === 0) return true;
+      parenthesisDepth--;
+    } else if (character === ']') {
+      return true;
+    }
+  }
+  return braceDepth > 0 || parenthesisDepth > 0 || inCharacterClass;
 }
 
 /**
@@ -195,6 +251,14 @@ export function extractFileDependencies(configPath: string): string[] {
         watchWorkspace();
         core.warning(
           'Skipping an oversized config dependency glob; conservatively watching the repository workspace',
+        );
+        return;
+      }
+
+      if (filePath.includes('{') && hasMismatchedGlobDelimiters(filePath)) {
+        watchWorkspace();
+        core.warning(
+          'Skipping a malformed config dependency glob; conservatively watching the repository workspace',
         );
         return;
       }
@@ -377,51 +441,86 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Extract provider files
-    const providers = [...(config.providers ?? []), ...(config.targets ?? [])];
-    if (providers.length > 0) {
-      for (const provider of providers) {
-        if (typeof provider === 'string' && provider.startsWith('file://')) {
-          processFileSelector(provider, PROVIDER_FILE_SELECTOR);
-        } else if (
-          typeof provider === 'object' &&
-          provider.id?.startsWith('file://')
-        ) {
-          processFileSelector(provider.id, PROVIDER_FILE_SELECTOR);
-        } else if (typeof provider === 'object' && provider !== null) {
-          const httpProviders: Array<[string, unknown]> =
-            typeof provider.id === 'string'
-              ? [[provider.id, provider]]
-              : Object.entries(provider);
-          for (const [providerId, options] of httpProviders) {
-            if (
-              !/^(?:https?:|https?$)/i.test(providerId) ||
-              typeof options !== 'object' ||
-              options === null ||
-              !('config' in options) ||
-              typeof options.config !== 'object' ||
-              options.config === null
-            ) {
-              continue;
-            }
-            const providerConfig = options.config as Record<string, unknown>;
-            for (const key of HTTP_FILE_CONFIG_KEYS) {
-              const value = providerConfig[key];
-              if (typeof value === 'string' && value.startsWith('file://')) {
-                processFileSelector(value, HTTP_FILE_SELECTOR, {
-                  requireExport: true,
-                });
-              }
+    const providers = [config.providers, config.targets].flatMap((value) =>
+      Array.isArray(value) ? value : value ? [value] : [],
+    );
+    const processProviderId = (providerId: string): boolean => {
+      if (providerId.startsWith('file://')) {
+        processFileSelector(providerId, PROVIDER_FILE_SELECTOR);
+        return true;
+      }
+      const scriptProvider = /^(?:python|golang|ruby):(.+)$/.exec(providerId);
+      if (!scriptProvider) return false;
+      processFileSelector(
+        `file://${scriptProvider[1]}`,
+        PROVIDER_FILE_SELECTOR,
+      );
+      return true;
+    };
+    const processProvider = (provider: ConfigProvider): void => {
+      if (typeof provider === 'string') {
+        processProviderId(provider);
+      } else if (typeof provider === 'object' && provider !== null) {
+        if (typeof provider.id === 'string' && processProviderId(provider.id)) {
+          return;
+        }
+        const httpProviders: Array<[string, unknown]> =
+          typeof provider.id === 'string'
+            ? [[provider.id, provider]]
+            : Object.entries(provider);
+        for (const [providerId, options] of httpProviders) {
+          if (processProviderId(providerId)) continue;
+          if (
+            !/^(?:https?:|https?$)/i.test(providerId) ||
+            typeof options !== 'object' ||
+            options === null ||
+            !('config' in options) ||
+            typeof options.config !== 'object' ||
+            options.config === null
+          ) {
+            continue;
+          }
+          const providerConfig = options.config as Record<string, unknown>;
+          for (const key of HTTP_FILE_CONFIG_KEYS) {
+            const value = providerConfig[key];
+            if (typeof value === 'string' && value.startsWith('file://')) {
+              processFileSelector(value, HTTP_FILE_SELECTOR, {
+                requireExport: true,
+              });
             }
           }
         }
       }
+    };
+    for (const provider of providers) {
+      processProvider(provider);
     }
 
     // Extract prompt files
     if (config.prompts) {
-      for (const prompt of config.prompts) {
-        if (typeof prompt === 'string' && prompt.startsWith('file://')) {
-          processFileUrl(prompt);
+      const prompts = Array.isArray(config.prompts)
+        ? config.prompts
+        : typeof config.prompts === 'string' || 'file' in config.prompts
+          ? [config.prompts]
+          : Object.keys(config.prompts);
+      for (const prompt of prompts) {
+        const promptPath =
+          typeof prompt === 'string' && prompt.startsWith('exec:')
+            ? prompt.slice('exec:'.length)
+            : prompt;
+        if (
+          typeof promptPath === 'string' &&
+          !/[\r\n]|(?:portkey|langfuse|helicone):\/\//.test(promptPath) &&
+          (promptPath.startsWith('file://') ||
+            /[\\/*]/.test(promptPath) ||
+            /\.[A-Za-z0-9]{1,8}(?::[^/]*)?$/.test(promptPath))
+        ) {
+          processFileSelector(
+            promptPath.startsWith('file://')
+              ? promptPath
+              : `file://${promptPath}`,
+            PROVIDER_FILE_SELECTOR,
+          );
         } else if (typeof prompt === 'object' && prompt.file) {
           const absolutePath = resolveConfigDependency(
             prompt.file,
@@ -490,17 +589,53 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
+    const extractTestFiles = (
+      tests: string | ConfigTestCase | Array<string | ConfigTestCase>,
+    ): void => {
+      if (typeof tests === 'string') {
+        processFileSelector(
+          tests.startsWith('file://') ? tests : `file://${tests}`,
+          TEST_FILE_SELECTOR,
+        );
+        return;
+      }
+      if (Array.isArray(tests)) {
+        for (const test of tests) extractTestFiles(test);
+        return;
+      }
+      if (typeof tests.path === 'string') {
+        extractTestFiles(tests.path);
+        return;
+      }
+      extractVarFiles(tests.vars);
+      extractAssertFiles(tests.assert);
+      if (tests.provider) processProvider(tests.provider);
+    };
+
     // Process defaultTest
-    if (config.defaultTest) {
-      extractVarFiles(config.defaultTest.vars);
-      extractAssertFiles(config.defaultTest.assert);
-    }
+    if (config.defaultTest) extractTestFiles(config.defaultTest);
 
     // Process tests
     if (config.tests) {
-      for (const test of config.tests) {
-        extractVarFiles(test.vars);
-        extractAssertFiles(test.assert);
+      extractTestFiles(config.tests);
+    }
+
+    if (config.scenarios) {
+      for (const scenario of config.scenarios) {
+        if (typeof scenario === 'string') {
+          processFileUrl(scenario);
+          continue;
+        }
+        if (scenario.config) extractTestFiles(scenario.config);
+        if (scenario.tests) extractTestFiles(scenario.tests);
+      }
+    }
+
+    if (config.nunjucksFilters) {
+      for (const filter of Object.values(config.nunjucksFilters)) {
+        processFileUrl(
+          filter.startsWith('file://') ? filter : `file://${filter}`,
+        );
       }
     }
 

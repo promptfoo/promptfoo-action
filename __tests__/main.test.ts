@@ -2629,6 +2629,65 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should reject an out-of-workspace prompt selected for a dependency-triggered full evaluation', async () => {
+      withInputs({ prompts: '../secrets/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/context.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../secrets/leak.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file resolves outside the repository workspace.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an escaped prompt symlink during a removed-prompt full scan', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/link.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        String(filePath).endsWith(`${path.sep}prompts${path.sep}link.txt`)
+          ? '/outside/leak.txt'
+          : String(filePath),
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file resolves outside the repository workspace.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed when a matched prompt cannot be verified', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/unreadable.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (
+          String(filePath).endsWith(
+            `${path.sep}prompts${path.sep}unreadable.txt`,
+          )
+        ) {
+          throw new Error('EACCES');
+        }
+        return String(filePath);
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file resolves outside the repository workspace.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should accurately describe a dependency-triggered PR evaluation using config prompts', async () => {
       mockCore.getBooleanInput.mockImplementation(
         (name: string) => name === 'use-config-prompts',
