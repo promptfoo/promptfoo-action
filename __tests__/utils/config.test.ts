@@ -107,7 +107,8 @@ providers:
     mockFs.readFileSync.mockReturnValue(`
 env:
   PROMPTFOO_CONFIG_PROVIDER: config-provider
-  PROMPTFOO_IGNORED_VALUE: 42
+  PROMPTFOO_IGNORED_VALUE:
+    nested: ignored
 providers:
   - file://providers/{{ env.PROMPTFOO_CONFIG_PROVIDER }}.py:café
   - id: file://providers/{{ env['PROMPTFOO_LOCAL_PROVIDER'] }}.py:café
@@ -229,6 +230,27 @@ providers:
       '../config/providers/provider.rb',
       '../config/providers/check.rb',
       '../config/providers/provider.go',
+    ]);
+  });
+
+  it('should extract supported provider files with empty function selectors', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "file://providers/provider.py:"
+  - "file://providers/provider.rb:"
+  - "file://providers/provider.go:"
+  - id: openai:chat:gpt-4
+    config:
+      tools: "file://tools/tools.cjs:"
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.py',
+      '../config/providers/provider.rb',
+      '../config/providers/provider.go',
+      '../config/tools/tools.cjs',
     ]);
   });
 
@@ -374,6 +396,101 @@ providers:
       '../config/configs/schema.yaml',
       '../config/prompts/system.txt',
     ]);
+  });
+
+  it('should prefer an outer provider environment over the referenced provider YAML environment', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/provider-precedence.yaml')) {
+        return `
+env:
+  IMPL: fallback
+id: file://providers/{{ env.IMPL }}.py:café
+`;
+      }
+      return `
+providers:
+  - id: file://provider-precedence.yaml
+    env:
+      IMPL: primary
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['provider-precedence.yaml', 'providers/primary.py']);
+  });
+
+  it('should inspect a shared provider YAML for every rendering environment', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/provider-shared.yaml')) {
+        return 'id: file://providers/{{ env.IMPL }}.py:café';
+      }
+      return `
+providers:
+  - id: file://provider-shared.yaml
+    env:
+      IMPL: a
+  - id: file://provider-shared.yaml
+    env:
+      IMPL: b
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'provider-shared.yaml',
+      'providers/a.py',
+      'providers/b.py',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(3);
+  });
+
+  it('should inspect an aliased provider config for every rendering environment', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+shared: &shared
+  tools: file://{{ env.TOOL_FILE }}
+providers:
+  - id: openai:chat:gpt-4
+    env:
+      TOOL_FILE: tools/first.ts:getTools
+    config: *shared
+  - id: openai:chat:gpt-4
+    env:
+      TOOL_FILE: tools/second.ts:getTools
+    config: *shared
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['tools/first.ts', 'tools/second.ts']);
+  });
+
+  it('should render supported numeric and boolean config environment values in provider paths', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  VERSION: 2
+  ENABLED: true
+providers:
+  - file://providers/v{{ env.VERSION }}.py:café
+  - file://providers/enabled-{{ env.ENABLED }}.py:café
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/v2.py', 'providers/enabled-true.py']);
   });
 
   it('should extract supported JavaScript and TypeScript function references nested in provider config', () => {
@@ -770,6 +887,37 @@ providers:
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file://providers/provider.py
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'ROOT_REALPATH_SECRET_CANARY',
+    );
+  });
+
+  it('should conservatively watch non-provider dependencies when the workspace real path cannot be checked', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      if (String(value) === '/test/repository') {
+        throw Object.assign(new Error('ROOT_REALPATH_SECRET_CANARY'), {
+          code: 'EACCES',
+        });
+      }
+      return String(value);
+    });
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - file://prompts/prompt.txt
+tests:
+  - vars:
+      context: file://vars/context.txt
+    assert:
+      - type: javascript
+        value: file://assertions/check.js
 `);
 
     const deps = extractFileDependencies(

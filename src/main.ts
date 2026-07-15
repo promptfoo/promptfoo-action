@@ -491,9 +491,7 @@ export async function run(): Promise<void> {
       const dependencies =
         extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
       if (dependencies.length > 0) {
-        core.debug(
-          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
-        );
+        core.debug(`Found ${dependencies.length} file dependencies in config`);
 
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {

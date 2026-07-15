@@ -919,6 +919,26 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should not expose config dependency paths in debug logs', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/customer-secret.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/customer-secret.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        'Found 1 file dependencies in config',
+      );
+      expect(mockCore.debug.mock.calls.flat().join('\n')).not.toContain(
+        'customer-secret',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should run when a function-qualified provider file changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers/provider.py' },

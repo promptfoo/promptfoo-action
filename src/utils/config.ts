@@ -53,9 +53,11 @@ function providerFilePath(fileUrl: string, allowJavascript = false): string {
     (allowJavascript
       ? /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(scriptPath)
       : /\.(?:go|rb)$/i.test(scriptPath));
-  const isValidFunctionName = /\.go$/i.test(scriptPath)
-    ? /^(?:call_api|CallApi)$/.test(functionName)
-    : /^[^\\/:\0]+$/u.test(functionName);
+  const isValidFunctionName =
+    functionName.length === 0 ||
+    (/\.go$/i.test(scriptPath)
+      ? /^(?:call_api|CallApi)$/.test(functionName)
+      : /^[^\\/:\0]+$/u.test(functionName));
   if (functionSeparator > 1 && isSupportedScript && isValidFunctionName) {
     return scriptPath;
   }
@@ -82,11 +84,15 @@ function environmentValues(
   }
 
   return Object.fromEntries(
-    Object.entries(value).flatMap(([key, envValue]) =>
-      typeof envValue === 'string'
-        ? [[key, renderEnvTemplate(envValue, baseEnvironment)]]
-        : [],
-    ),
+    Object.entries(value).flatMap(([key, envValue]) => {
+      if (typeof envValue === 'string') {
+        return [[key, renderEnvTemplate(envValue, baseEnvironment)]];
+      }
+      if (typeof envValue === 'number' || typeof envValue === 'boolean') {
+        return [[key, String(envValue)]];
+      }
+      return [];
+    }),
   );
 }
 
@@ -174,6 +180,13 @@ export function extractFileDependencies(configPath: string): string[] {
 
         return absolutePath;
       } catch (error) {
+        if (
+          filePath.length > 0 &&
+          !filePath.includes('\0') &&
+          isPathInside(dependencyRoot, path.resolve(configDir, filePath))
+        ) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+        }
         core.warning(
           `Ignoring unsafe config dependency "${displayPath}": ${String(
             error,
@@ -256,7 +269,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Extract provider files
     const inspectedProviderFiles = new Set<string>();
-    const inspectedProviderObjects = new WeakSet<object>();
+    const activeProviderObjects = new WeakSet<object>();
 
     const processProviderValue = (
       value: unknown,
@@ -275,28 +288,32 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
-      if (inspectedProviderObjects.has(value)) {
+      if (activeProviderObjects.has(value)) {
         return;
       }
-      inspectedProviderObjects.add(value);
+      activeProviderObjects.add(value);
 
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          processProviderValue(item, isProviderReference, environment);
+      try {
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            processProviderValue(item, isProviderReference, environment);
+          }
+          return;
         }
-        return;
-      }
 
-      const providerEnvironment = {
-        ...environment,
-        ...environmentValues((value as { env?: unknown }).env, environment),
-      };
+        const providerEnvironment = {
+          ...environmentValues((value as { env?: unknown }).env, environment),
+          ...environment,
+        };
 
-      for (const [key, nestedValue] of Object.entries(value)) {
-        if (key.startsWith('file://')) {
-          processProviderReference(key, true, providerEnvironment);
+        for (const [key, nestedValue] of Object.entries(value)) {
+          if (key.startsWith('file://')) {
+            processProviderReference(key, true, providerEnvironment);
+          }
+          processProviderValue(nestedValue, key === 'id', providerEnvironment);
         }
-        processProviderValue(nestedValue, key === 'id', providerEnvironment);
+      } finally {
+        activeProviderObjects.delete(value);
       }
     };
 
@@ -334,14 +351,18 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       for (const absolutePath of providerPaths) {
+        const inspectionKey = `${absolutePath}\0${JSON.stringify(
+          environment,
+          Object.keys(environment).sort(),
+        )}`;
         if (
           !/\.(?:ya?ml|json)$/i.test(absolutePath) ||
-          inspectedProviderFiles.has(absolutePath)
+          inspectedProviderFiles.has(inspectionKey)
         ) {
           continue;
         }
 
-        inspectedProviderFiles.add(absolutePath);
+        inspectedProviderFiles.add(inspectionKey);
         try {
           const providerConfig = loadYaml(
             fs.readFileSync(absolutePath, 'utf8'),
