@@ -386,19 +386,35 @@ export function extractFileDependencies(configPath: string): string[] {
       providerTraversalCount += 1;
 
       if (typeof value === 'string') {
-        const renderedProvider = renderEnvTemplates(value, {
+        const templateEnv = {
           ...process.env,
           ...activeEnv,
-        });
+        };
+        const renderedProvider = renderEnvTemplates(value, templateEnv);
         const unresolvedLeadingEnvTemplate =
           /^\s*\{\{-?(?:[^}]|\}(?!\}))*\benv(?:\.|\[)/.test(renderedProvider);
         const unresolvedComputedFileTemplate =
           /^\s*\{\{-?(?:[^}]|\}(?!\}))*['"]file:\/\//.test(renderedProvider);
+        const unresolvedLeadingFileEnvTemplate =
+          unresolvedLeadingEnvTemplate &&
+          Array.from(
+            renderedProvider.matchAll(
+              /\benv(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])/g,
+            ),
+            (match) => match[1] || match[2],
+          ).some((key) => {
+            const envValue = templateEnv[key];
+            return (
+              typeof envValue === 'string' && envValue.startsWith('file://')
+            );
+          });
         if (!renderedProvider.startsWith('file://')) {
           if (
             (isProviderReference && /\{\{|\{%|\{#/.test(renderedProvider)) ||
+            (isFileBearingConfigValue && unresolvedLeadingEnvTemplate) ||
             ((grandparentKey === 'config' || isFileBearingConfigValue) &&
-              (unresolvedLeadingEnvTemplate || unresolvedComputedFileTemplate))
+              (unresolvedLeadingFileEnvTemplate ||
+                unresolvedComputedFileTemplate))
           ) {
             dependencies.add(
               `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,

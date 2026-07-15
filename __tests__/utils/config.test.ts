@@ -351,6 +351,12 @@ providers:
         metadata:
           type: file
           path: "{{ env.API_KEY | upper }}"
+  - id: https://example.test
+    env:
+      BASE_URL: https://api.example.test
+    config:
+      method: GET
+      url: "{{ env.BASE_URL + '/v1/chat' }}"
 `);
 
     const deps = extractFileDependencies(
@@ -794,6 +800,12 @@ providers:
       SETTINGS_FILE: settings.json
     config:
       settings: "{{ env.CONFIG_DIR + '/' + env.SETTINGS_FILE }}"
+  - id: custom:provider
+    env:
+      CONFIG_DIR: file://config
+      SETTINGS_FILE: bracket-settings.json
+    config:
+      settings: "{{ env['CONFIG_DIR'] + '/' + env['SETTINGS_FILE'] }}"
 `);
 
     const deps = extractFileDependencies(
