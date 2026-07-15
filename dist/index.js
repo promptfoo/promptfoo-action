@@ -36284,7 +36284,7 @@ function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
-function extractFileDependencies(configPath) {
+function extractFileDependencies(configPath, executionCwd = process.cwd()) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path5.dirname(configPath);
   const cwd = process.cwd();
@@ -36378,6 +36378,13 @@ function extractFileDependencies(configPath) {
     if (config2.prompts) {
       const prompts = typeof config2.prompts === "string" ? [config2.prompts] : Array.isArray(config2.prompts) ? config2.prompts : Object.keys(config2.prompts);
       const visitedPromptFiles = /* @__PURE__ */ new Set();
+      const resolvePromptProbe = (filePath, baseDir = configDir) => {
+        if (!filePath || filePath.includes("\0")) {
+          return void 0;
+        }
+        const absolutePath = path5.isAbsolute(filePath) ? path5.resolve(filePath) : path5.resolve(path5.join(baseDir, filePath));
+        return isPathInside(dependencyRoot, absolutePath) ? absolutePath : void 0;
+      };
       const processPromptReference = (reference, declaredFile = false) => {
         const isExecutable = reference.startsWith("exec:");
         const isFileUrl = reference.startsWith("file://");
@@ -36385,10 +36392,7 @@ function extractFileDependencies(configPath) {
           reference
         );
         if (!looksLikePath) {
-          const candidatePath = resolveConfigDependency(
-            reference,
-            "prompt file dependency"
-          );
+          const candidatePath = resolvePromptProbe(reference);
           if (!candidatePath || !fs6.existsSync(candidatePath)) {
             return;
           }
@@ -36405,9 +36409,9 @@ function extractFileDependencies(configPath) {
         const promptPath = (isExecutable ? executableParts[0] ?? "" : reference).replace(/^file:\/\//, "").replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, "$1");
         processFileUrl(`file://${promptPath}`);
         for (const executableArgument of executableParts.slice(1)) {
-          const argumentPath = resolveConfigDependency(
+          const argumentPath = resolvePromptProbe(
             executableArgument,
-            "executable prompt file argument"
+            executionCwd
           );
           if (!argumentPath || !fs6.existsSync(argumentPath)) {
             continue;
@@ -36548,6 +36552,9 @@ function extractFileDependencies(configPath) {
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
       const repositoryPath = relativePath.split(path5.sep).join("/");
+      if (repositoryPath === "") {
+        return "./";
+      }
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
         return `${repositoryPath}/`;
       }
@@ -37231,12 +37238,18 @@ async function run() {
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+      const dependencies = extractFileDependencies(
+        configAbsolutePath,
+        workingDirectory
+      ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
         );
         dependencyChanged = dependencies.some((dep) => {
+          if (dep === "./") {
+            return true;
+          }
           if (changedFilesList.includes(dep)) {
             return true;
           }

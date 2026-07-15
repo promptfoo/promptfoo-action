@@ -145,6 +145,30 @@ prompts:
     expect(deps).toEqual(['prompts/']);
   });
 
+  it('should serialize the repository-root prompt-glob watch directory explicitly', () => {
+    mockFs.readFileSync.mockReturnValue("prompts: '*.txt'\n");
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/existing.txt']);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['existing.txt', './']);
+  });
+
+  it('should retain a repository-root watch sentinel when the last prompt is deleted', () => {
+    mockFs.readFileSync.mockReturnValue("prompts: '*.txt'\n");
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+  });
+
   it('should ignore an inline scalar prompt', () => {
     mockFs.readFileSync.mockReturnValue('prompts: hello world\n');
 
@@ -241,11 +265,34 @@ prompts:
       mode: 0o644,
     } as fs.Stats);
 
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/scripts/generate.sh', 'templates/input.txt']);
+  });
+
+  it('should resolve executable file arguments from the action working directory', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: exec:./scripts/generate.sh ./templates/input.txt\n',
+    );
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('custom/templates/input.txt'),
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o644,
+    } as fs.Stats);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+      '/test/working/custom',
+    );
 
     expect(deps).toEqual([
-      '../config/scripts/generate.sh',
-      '../config/templates/input.txt',
+      'evals/scripts/generate.sh',
+      'custom/templates/input.txt',
     ]);
   });
 
@@ -262,9 +309,24 @@ prompts:
       mode: 0o755,
     } as fs.Stats);
 
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/scripts/generate.sh']);
+  });
+
+  it('should not disclose out-of-workspace executable arguments', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: exec:./scripts/generate.sh /private/tmp/SENSITIVE-REVIEW-TOKEN\n',
+    );
+
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/scripts/generate.sh']);
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
   });
 
   it('should extract a bare executable prompt with an uncommon extension', () => {
@@ -311,6 +373,19 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([]);
+  });
+
+  it('should not disclose inline prompt contents while probing an uncommon candidate', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: "Inline SENSITIVE-REVIEW-TOKEN \\0 content"\n',
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
   });
 
   it('should ignore an empty executable prompt', () => {

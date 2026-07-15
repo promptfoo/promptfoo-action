@@ -432,6 +432,7 @@ describe('GitHub Action Main', () => {
       );
       expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
         path.join(process.cwd(), 'evals', 'promptfooconfig.yaml'),
+        path.join(process.cwd(), 'evals'),
       );
     });
 
@@ -945,6 +946,19 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockFsUtils.isDirectory).toHaveBeenCalledWith('data');
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when a repository-root dependency watch detects a deletion', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'deleted.txt' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
       expect(mockExec.exec).toHaveBeenCalled();
     });
 

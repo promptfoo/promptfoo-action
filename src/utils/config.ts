@@ -37,7 +37,10 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
  */
-export function extractFileDependencies(configPath: string): string[] {
+export function extractFileDependencies(
+  configPath: string,
+  executionCwd = process.cwd(),
+): string[] {
   const dependencies = new Set<string>();
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
@@ -171,6 +174,20 @@ export function extractFileDependencies(configPath: string): string[] {
             : Object.keys(config.prompts);
 
       const visitedPromptFiles = new Set<string>();
+      const resolvePromptProbe = (
+        filePath: string,
+        baseDir = configDir,
+      ): string | undefined => {
+        if (!filePath || filePath.includes('\0')) {
+          return undefined;
+        }
+        const absolutePath = path.isAbsolute(filePath)
+          ? path.resolve(filePath)
+          : path.resolve(path.join(baseDir, filePath));
+        return isPathInside(dependencyRoot, absolutePath)
+          ? absolutePath
+          : undefined;
+      };
       const processPromptReference = (
         reference: string,
         declaredFile = false,
@@ -188,10 +205,7 @@ export function extractFileDependencies(configPath: string): string[] {
           );
 
         if (!looksLikePath) {
-          const candidatePath = resolveConfigDependency(
-            reference,
-            'prompt file dependency',
-          );
+          const candidatePath = resolvePromptProbe(reference);
           if (!candidatePath || !fs.existsSync(candidatePath)) {
             return;
           }
@@ -223,9 +237,9 @@ export function extractFileDependencies(configPath: string): string[] {
         processFileUrl(`file://${promptPath}`);
 
         for (const executableArgument of executableParts.slice(1)) {
-          const argumentPath = resolveConfigDependency(
+          const argumentPath = resolvePromptProbe(
             executableArgument,
-            'executable prompt file argument',
+            executionCwd,
           );
           if (!argumentPath || !fs.existsSync(argumentPath)) {
             continue;
@@ -406,6 +420,9 @@ export function extractFileDependencies(configPath: string): string[] {
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
       const repositoryPath = relativePath.split(path.sep).join('/');
+      if (repositoryPath === '') {
+        return './';
+      }
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
         return `${repositoryPath}/`;
