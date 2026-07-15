@@ -437,6 +437,40 @@ tests:
     );
   });
 
+  it.each([
+    {
+      label: 'FIFO',
+      stats: { size: 0, isFile: () => false, isFIFO: () => true },
+      warning:
+        'Skipping non-regular structured config dependency; conservatively watching the dependency root',
+    },
+    {
+      label: 'oversized file',
+      stats: { size: 11 * 1024 * 1024, isFile: () => true },
+      warning:
+        'Skipping oversized structured config dependency; conservatively watching the dependency root',
+    },
+  ])('should fail closed before reading a primary config $label', ({
+    stats,
+    warning,
+  }) => {
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      ...stats,
+    } as fs.Stats);
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      throw new Error(`Unexpected primary-config read: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockFs.readFileSync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(warning);
+  });
+
   it('should bound chains of nested structured config references', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       const value = String(filePath);
@@ -2924,7 +2958,10 @@ vars:
     '\\',
   ])('should preserve an explicit missing vars directory watcher ending in %s', (separator) => {
     mockFs.statSync.mockImplementation((filePath: unknown) => {
-      if (String(filePath).endsWith('/defaults/default.yaml')) {
+      if (
+        String(filePath).endsWith('/defaults/default.yaml') ||
+        String(filePath).endsWith('/promptfooconfig.yaml')
+      ) {
         return {
           size: 0,
           isDirectory: () => false,
@@ -5850,9 +5887,11 @@ providers:
     });
 
     mockFs.statSync.mockImplementation(
-      () =>
+      (filePath: unknown) =>
         ({
-          isDirectory: () => true,
+          isDirectory: () =>
+            !String(filePath).endsWith('/promptfooconfig.yaml'),
+          isFile: () => String(filePath).endsWith('/promptfooconfig.yaml'),
         }) as fs.Stats,
     );
 

@@ -403,6 +403,32 @@ export function extractFileDependencies(configPath: string): string[] {
       dependencies.add(`${root}${path.sep}`);
     }
   };
+  const canReadStructuredFile = (filePath: string): boolean => {
+    try {
+      const fileStats = fs.statSync(filePath);
+      if (!fileStats.isFile()) {
+        addDependencyRootWatchers();
+        core.warning(
+          'Skipping non-regular structured config dependency; conservatively watching the dependency root',
+        );
+        return false;
+      }
+      if (fileStats.size > MAX_STRUCTURED_FILE_SIZE) {
+        addDependencyRootWatchers();
+        core.warning(
+          'Skipping oversized structured config dependency; conservatively watching the dependency root',
+        );
+        return false;
+      }
+    } catch {
+      addDependencyRootWatchers();
+      core.warning(
+        'Skipping structured config dependency whose size cannot be verified; conservatively watching the dependency root',
+      );
+      return false;
+    }
+    return true;
+  };
   let parsedConfig = false;
   let dependencyBaseDir = configDir;
 
@@ -426,6 +452,7 @@ export function extractFileDependencies(configPath: string): string[] {
         return [];
       }
     }
+    if (!canReadStructuredFile(configPath)) return ['./'];
     const configContent = fs.readFileSync(configPath, 'utf8');
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
@@ -449,33 +476,6 @@ export function extractFileDependencies(configPath: string): string[] {
         return [];
       }
     });
-
-    const canReadStructuredFile = (filePath: string): boolean => {
-      try {
-        const fileStats = fs.statSync(filePath);
-        if (!fileStats.isFile()) {
-          addDependencyRootWatchers();
-          core.warning(
-            'Skipping non-regular structured config dependency; conservatively watching the dependency root',
-          );
-          return false;
-        }
-        if (fileStats.size > MAX_STRUCTURED_FILE_SIZE) {
-          addDependencyRootWatchers();
-          core.warning(
-            'Skipping oversized structured config dependency; conservatively watching the dependency root',
-          );
-          return false;
-        }
-      } catch {
-        addDependencyRootWatchers();
-        core.warning(
-          'Skipping structured config dependency whose size cannot be verified; conservatively watching the dependency root',
-        );
-        return false;
-      }
-      return true;
-    };
 
     let warnedForeignWindowsPath = false;
     const resolveConfigDependency = (
