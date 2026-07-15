@@ -169,6 +169,68 @@ prompts:
     expect(deps).toEqual(['./']);
   });
 
+  it.each([
+    {
+      prompt: 'file://prompts\\*.txt',
+      normalized: '/test/working/evals/prompts/*.txt',
+      matches: ['/test/working/evals/prompts/one.txt'],
+      expected: ['evals/prompts/one.txt', 'evals/prompts'],
+    },
+    {
+      prompt: 'file://prompts\\**\\*.txt',
+      normalized: '/test/working/evals/prompts/**/*.txt',
+      matches: ['/test/working/evals/prompts/nested/one.txt'],
+      expected: ['evals/prompts/nested/one.txt', 'evals/prompts'],
+    },
+    {
+      prompt: 'file://prompts\\*.txt',
+      normalized: '/test/working/evals/prompts/*.txt',
+      matches: [],
+      expected: ['evals/prompts/'],
+    },
+  ])('should normalize backslash prompt globs before expansion', ({
+    prompt,
+    normalized,
+    matches,
+    expected,
+  }) => {
+    mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => !value.includes('\\') && value.includes('*'),
+    );
+    mockGlob.sync.mockImplementation((value: string) =>
+      value === normalized ? matches : [],
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(expected);
+    expect(mockGlob.sync).toHaveBeenCalledWith(normalized, {
+      nodir: true,
+      windowsPathsNoEscape: true,
+    });
+  });
+
+  it.each([
+    'file://{team-a,team-b}/*.txt',
+    'file://{blue,green}/**/*.yaml',
+    'file://{1..3}/*.txt',
+  ])('should retain a watch sentinel for a deleted brace-directory prompt glob', (prompt) => {
+    mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/']);
+  });
+
   it('should ignore an inline scalar prompt', () => {
     mockFs.readFileSync.mockReturnValue('prompts: hello world\n');
 
@@ -180,13 +242,16 @@ prompts:
   it.each([
     'prompts: |\n  Return **bold** output for the user.\n',
     'prompts: |\n  Calculate price * discount_percent.\n',
+    'prompts: What is the capital of {{country}}?\n',
+    'prompts: Return [safe] output for {{user}}.\n',
+    'prompts: Which option (A or B)? Explain briefly.\n',
     'prompts: portkey://workspace/*\n',
     'prompts: langfuse://workspace/*\n',
     'prompts: helicone://workspace/*\n',
   ])('should not treat an inline prompt as a filesystem glob', (config) => {
     mockFs.readFileSync.mockReturnValue(config);
     mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
+      /[*?[\]]/.test(value),
     );
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
@@ -385,6 +450,79 @@ prompts:
     );
   });
 
+  it('should retain a deleted executable file argument from the action working directory', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: exec:./scripts/generate.sh ./templates/input.txt --tone formal\n',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/scripts/generate.sh', 'templates/input.txt']);
+  });
+
+  it('should retain a deleted executable prompt-object argument from config.basePath', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - label: Custom prompt
+    raw: exec:./scripts/generate.sh ./templates/input.txt --tone formal
+    config:
+      basePath: ./custom
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/scripts/generate.sh',
+      'custom/templates/input.txt',
+    ]);
+  });
+
+  it('should extract an existing executable file argument in equals form', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: exec:./scripts/generate.sh --template=./templates/input.txt --tone formal\n',
+    );
+    mockFs.existsSync.mockImplementation(
+      (filePath: unknown) =>
+        String(filePath) === '/test/working/templates/input.txt',
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o644,
+    } as fs.Stats);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/scripts/generate.sh', 'templates/input.txt']);
+  });
+
+  it.each([
+    { basePath: undefined, expected: 'templates/input.txt' },
+    { basePath: './custom', expected: 'custom/templates/input.txt' },
+  ])('should retain a deleted executable file argument in equals form', ({
+    basePath,
+    expected,
+  }) => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - label: Custom prompt
+    raw: exec:./scripts/generate.sh --template=./templates/input.txt --tone formal
+    ${basePath ? `config:\n      basePath: ${basePath}` : ''}
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/scripts/generate.sh', expected]);
+  });
+
   it('should ignore directory arguments passed to an executable prompt', () => {
     mockFs.readFileSync.mockReturnValue(
       'prompts: exec:./scripts/generate.sh ./templates\n',
@@ -432,6 +570,19 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/generate.zsh']);
+  });
+
+  it.each([
+    'generate.zsh',
+    'prompt.abc',
+  ])('should retain a deleted prompt with an uncommon short extension', (prompt) => {
+    mockFs.readFileSync.mockReturnValue(`prompts: ${prompt}\n`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([`evals/${prompt}`]);
   });
 
   it('should ignore an uncommon prompt file without executable permissions', () => {
@@ -512,6 +663,19 @@ prompts:
       '../config/prompts/from-id.txt',
       '../config/prompts/from-raw.sh',
     ]);
+  });
+
+  it('should prefer the runtime raw prompt over a stale file field', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - label: Actual prompt
+    file: ignored/stale.txt
+    raw: file://prompts/actual.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/actual.txt']);
   });
 
   it('should use a file-backed prompt id when raw is empty', () => {
@@ -630,6 +794,17 @@ prompts: file://configs/prompts.yaml
       '../config/defs',
       '../config/shared/nested.txt',
     ]);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(2);
+    expect(mockGlob.sync).toHaveBeenNthCalledWith(
+      1,
+      '/test/config/defs/*.yaml',
+      { nodir: true, windowsPathsNoEscape: true },
+    );
+    expect(mockGlob.sync).toHaveBeenNthCalledWith(
+      2,
+      '/test/config/defs/*.yaml',
+      { nodir: true, windowsPathsNoEscape: true },
+    );
   });
 
   it('should inspect prompt-file glob matches when the pattern has no fixed extension', () => {
@@ -691,6 +866,23 @@ prompts: file://configs/prompts.yaml
     ]);
   });
 
+  it('should conservatively watch a nested prompt path with a Nunjucks comment', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('defs/prompt.yaml')) {
+        return 'content: "file://shared/{# select default #}system.txt"\n';
+      }
+      return 'prompts: file://defs/prompt.yaml\n';
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'defs/prompt.yaml',
+      'shared/{# select default #}system.txt',
+      'shared/',
+    ]);
+  });
+
   it('should conservatively watch the config directory for a root templated prompt', () => {
     mockFs.readFileSync.mockReturnValue(
       'prompts: "file://{{ env.PF977_TARGET }}.txt"\n',
@@ -702,6 +894,20 @@ prompts: file://configs/prompts.yaml
       '../config/{{ env.PF977_TARGET }}.txt',
       '../config/',
     ]);
+  });
+
+  it.each([
+    '{{ env.PROMPT_FILE }}',
+    '{{ env.TEST_PROMPT_PATH }}/prompt.txt',
+    "{{ env.OPTIONAL_PATH | default('./shared/prompts') }}/prompt.txt",
+  ])('should watch the repository for a root-templated prompt path', (prompt) => {
+    mockFs.readFileSync.mockReturnValue(`prompts: "${prompt}"\n`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([`evals/${prompt}`, './']);
   });
 
   it('should not watch an unsafe templated prompt directory', () => {
@@ -826,6 +1032,43 @@ shared: &shared
     expect(deps).toEqual(['providers/inherited.py', 'prompts/inherited.txt']);
   });
 
+  it.each([
+    '!!binary SGVsbG8=',
+    '2024-01-02',
+    '!!omap [{a: 1}, {b: 2}]',
+    '!!pairs [{a: 1}, {b: 2}]',
+    '!!set {a: null, b: null}',
+  ])('should preserve dependencies when config uses a legacy YAML tag', (metadata) => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts: file://prompts/main.txt
+metadata: ${metadata}
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/main.txt']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '!!binary SGVsbG8=',
+    '!!omap [{a: 1}, {b: 2}]',
+    '!!pairs [{a: 1}, {b: 2}]',
+    '!!set {a: null, b: null}',
+  ])('should inspect nested prompt YAML that uses a legacy tag', (metadata) => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('prompts/prompts.yaml')) {
+        return `metadata: ${metadata}\ncontent: file://shared/system.txt\n`;
+      }
+      return 'prompts: file://prompts/prompts.yaml\n';
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/prompts.yaml', 'shared/system.txt']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should handle empty config', () => {
     mockFs.readFileSync.mockReturnValue('');
 
@@ -851,6 +1094,22 @@ shared: &shared
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toHaveLength(0);
+  });
+
+  it('should not disclose config contents in YAML parse warnings', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'token: SENSITIVE-REVIEW-TOKEN\ninvalid: [unterminated\n',
+    );
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract dependencies from config: unable to read or parse config',
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
   });
 
   it('should handle file read errors gracefully', () => {
