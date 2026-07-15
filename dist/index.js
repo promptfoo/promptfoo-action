@@ -38732,19 +38732,40 @@ async function run() {
       }
       return promptFilesGlobs.some((pattern) => {
         const absolutePattern = path7.isAbsolute(pattern) ? pattern : `${toRepositoryPath(workingDirectory)}/${pattern}`;
-        const traversalPattern = absolutePattern.replace(
-          /\/\*\*(?:\/\.\.)+(?=\/|$)/g,
-          "/**"
-        );
-        return minimatch(toRepositoryPath(absolutePath), traversalPattern, {
-          nonegate: true,
-          nocomment: true,
-          nocase: ["darwin", "win32"].includes(process.platform),
-          nocaseMagicOnly: false,
-          optimizationLevel: 2,
-          platform: process.platform,
-          windowsPathsNoEscape: false
+        const traversalPatterns = braceExpand(absolutePattern, {
+          braceExpandMax: 1e4
         });
+        for (const traversalPattern of traversalPatterns) {
+          const parentTraversal = /\/\*\*((?:\/\.\.)+)(?=\/|$)/.exec(
+            traversalPattern
+          );
+          if (parentTraversal) {
+            const prefix = traversalPattern.slice(0, parentTraversal.index);
+            const suffix = traversalPattern.slice(
+              parentTraversal.index + parentTraversal[0].length
+            );
+            const parentCount = parentTraversal[1].length / 3;
+            traversalPatterns.push(`${prefix}/**${suffix}`);
+            for (let index = 1; index <= parentCount; index += 1) {
+              traversalPatterns.push(
+                `${prefix}${"/..".repeat(index)}${suffix}`
+              );
+            }
+            continue;
+          }
+          if (minimatch(toRepositoryPath(absolutePath), traversalPattern, {
+            nonegate: true,
+            nocomment: true,
+            nocase: ["darwin", "win32"].includes(process.platform),
+            nocaseMagicOnly: false,
+            optimizationLevel: 2,
+            platform: process.platform,
+            windowsPathsNoEscape: false
+          })) {
+            return true;
+          }
+        }
+        return false;
       });
     };
     const selectChangedFiles = (files) => {

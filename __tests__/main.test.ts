@@ -464,6 +464,17 @@ describe('GitHub Action Main', () => {
         'packages/app/prompts/sub/removed.txt',
         'prompts/sub/remaining.txt',
       ],
+      ['prompts/**/../*.txt', 'packages/app/removed.txt', 'remaining.txt'],
+      [
+        'prompts/**/../../**/*.txt',
+        'packages/shared/prompts/removed.txt',
+        '../shared/prompts/remaining.txt',
+      ],
+      [
+        'prompts/{**,sub}/../*.txt',
+        'packages/app/removed.txt',
+        'remaining.txt',
+      ],
     ])('should preserve deletion matching for the working-directory-relative glob %s', async (promptPattern, removedPrompt, remainingPrompt) => {
       withInputs({
         prompts: promptPattern,

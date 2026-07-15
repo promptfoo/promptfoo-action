@@ -4,7 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { minimatch } from 'minimatch';
+import { braceExpand, minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -275,22 +275,49 @@ export async function run(): Promise<void> {
         const absolutePattern = path.isAbsolute(pattern)
           ? pattern
           : `${toRepositoryPath(workingDirectory)}/${pattern}`;
-        // glob can traverse into a child and back out for `**/..`, so a
-        // deleted path may have matched even though minimatch cannot replay
-        // that traversal. Conservatively preserve every possible match.
-        const traversalPattern = absolutePattern.replace(
-          /\/\*\*(?:\/\.\.)+(?=\/|$)/g,
-          '/**',
-        );
-        return minimatch(toRepositoryPath(absolutePath), traversalPattern, {
-          nonegate: true,
-          nocomment: true,
-          nocase: ['darwin', 'win32'].includes(process.platform),
-          nocaseMagicOnly: false,
-          optimizationLevel: 2,
-          platform: process.platform,
-          windowsPathsNoEscape: false,
+        const traversalPatterns = braceExpand(absolutePattern, {
+          braceExpandMax: 10_000,
         });
+
+        for (const traversalPattern of traversalPatterns) {
+          const parentTraversal = /\/\*\*((?:\/\.\.)+)(?=\/|$)/.exec(
+            traversalPattern,
+          );
+          if (parentTraversal) {
+            const prefix = traversalPattern.slice(0, parentTraversal.index);
+            const suffix = traversalPattern.slice(
+              parentTraversal.index + parentTraversal[0].length,
+            );
+            const parentCount = parentTraversal[1].length / 3;
+
+            // globstar may consume no segments before `..`, escaping the
+            // static prefix, or traverse deeper and back out. Keep every
+            // possible path so deleted prompts cannot be missed.
+            traversalPatterns.push(`${prefix}/**${suffix}`);
+            for (let index = 1; index <= parentCount; index += 1) {
+              traversalPatterns.push(
+                `${prefix}${'/..'.repeat(index)}${suffix}`,
+              );
+            }
+            continue;
+          }
+
+          if (
+            minimatch(toRepositoryPath(absolutePath), traversalPattern, {
+              nonegate: true,
+              nocomment: true,
+              nocase: ['darwin', 'win32'].includes(process.platform),
+              nocaseMagicOnly: false,
+              optimizationLevel: 2,
+              platform: process.platform,
+              windowsPathsNoEscape: false,
+            })
+          ) {
+            return true;
+          }
+        }
+
+        return false;
       });
     };
     const selectChangedFiles = (files: ChangedFile[]): string => {
