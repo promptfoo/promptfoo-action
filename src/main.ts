@@ -183,6 +183,47 @@ export async function run(): Promise<void> {
     const groqApiKey: string = core.getInput('groq-api-key', {
       required: false,
     });
+    const maskApiKeys = (): void => {
+      const apiKeys = [
+        openaiApiKey,
+        azureApiKey,
+        anthropicApiKey,
+        huggingfaceApiKey,
+        awsAccessKeyId,
+        awsSecretAccessKey,
+        replicateApiKey,
+        palmApiKey,
+        vertexApiKey,
+        cohereApiKey,
+        mistralApiKey,
+        groqApiKey,
+        process.env.OPENAI_API_KEY,
+        process.env.AZURE_OPENAI_API_KEY,
+        process.env.ANTHROPIC_API_KEY,
+        process.env.HF_API_TOKEN,
+        process.env.AWS_ACCESS_KEY_ID,
+        process.env.AWS_SECRET_ACCESS_KEY,
+        process.env.REPLICATE_API_KEY,
+        process.env.PALM_API_KEY,
+        process.env.VERTEX_API_KEY,
+        process.env.COHERE_API_KEY,
+        process.env.MISTRAL_API_KEY,
+        process.env.GROQ_API_KEY,
+        process.env.DATABRICKS_TOKEN,
+        process.env.CLAWDBOT_GATEWAY_TOKEN,
+        process.env.CLAWDBOT_GATEWAY_PASSWORD,
+        process.env.OPENCLAW_GATEWAY_TOKEN,
+        process.env.OPENCLAW_GATEWAY_PASSWORD,
+        process.env.PROMPTFOO_API_KEY,
+      ];
+      for (const key of apiKeys) {
+        if (key) {
+          core.setSecret(key);
+        }
+      }
+    };
+    maskApiKeys();
+
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
@@ -291,23 +332,38 @@ export async function run(): Promise<void> {
       const implicitFilePath = implicitVaultExists
         ? implicitVaultFilePath
         : implicitEnvFilePath;
-      if (implicitEnvExists || implicitVaultExists) {
+      const explicitEnvFiles = envFiles
+        .split(',')
+        .map((envFile) => envFile.trim())
+        .filter(Boolean)
+        .map((envFile) => path.resolve(path.join(workingDirectory, envFile)))
+        .map((envFilePath) => {
+          const vaultPath = envFilePath.endsWith('.vault')
+            ? envFilePath
+            : `${envFilePath}.vault`;
+          return process.env.DOTENV_KEY && fs.existsSync(vaultPath)
+            ? vaultPath
+            : envFilePath;
+        });
+      const implicitFileIsExplicit =
+        explicitEnvFiles.includes(implicitFilePath);
+      if (
+        (implicitEnvExists || implicitVaultExists) &&
+        !implicitFileIsExplicit
+      ) {
         core.info(`Loading environment variables from ${implicitFilePath}`);
         loadEnvironmentFile(implicitFilePath, process.env, false);
+        maskApiKeys();
         core.info(`Successfully loaded ${implicitFilePath}`);
       }
 
       // Load explicitly selected .env files after the implicit default.
-      if (envFiles) {
-        const envFileList = envFiles
-          .split(',')
-          .map((f) => f.trim())
-          .filter(Boolean);
-        for (const envFile of envFileList) {
-          const envFilePath = path.join(workingDirectory, envFile);
+      if (explicitEnvFiles.length > 0) {
+        for (const envFilePath of explicitEnvFiles) {
           if (fs.existsSync(envFilePath)) {
             core.info(`Loading environment variables from ${envFilePath}`);
             loadEnvironmentFile(envFilePath);
+            maskApiKeys();
             core.info(`Successfully loaded ${envFilePath}`);
           } else {
             throw new PromptfooActionError(
@@ -316,46 +372,6 @@ export async function run(): Promise<void> {
               `Make sure the file path is correct relative to ${workingDirectory}`,
             );
           }
-        }
-      }
-    };
-
-    const maskProviderSecrets = (): void => {
-      const apiKeys = [
-        openaiApiKey,
-        azureApiKey,
-        anthropicApiKey,
-        huggingfaceApiKey,
-        awsAccessKeyId,
-        awsSecretAccessKey,
-        replicateApiKey,
-        palmApiKey,
-        vertexApiKey,
-        cohereApiKey,
-        mistralApiKey,
-        groqApiKey,
-        process.env.OPENAI_API_KEY,
-        process.env.AZURE_OPENAI_API_KEY,
-        process.env.ANTHROPIC_API_KEY,
-        process.env.HF_API_TOKEN,
-        process.env.AWS_ACCESS_KEY_ID,
-        process.env.AWS_SECRET_ACCESS_KEY,
-        process.env.REPLICATE_API_KEY,
-        process.env.PALM_API_KEY,
-        process.env.VERTEX_API_KEY,
-        process.env.COHERE_API_KEY,
-        process.env.MISTRAL_API_KEY,
-        process.env.GROQ_API_KEY,
-        process.env.DATABRICKS_TOKEN,
-        process.env.CLAWDBOT_GATEWAY_TOKEN,
-        process.env.CLAWDBOT_GATEWAY_PASSWORD,
-        process.env.OPENCLAW_GATEWAY_TOKEN,
-        process.env.OPENCLAW_GATEWAY_PASSWORD,
-        process.env.PROMPTFOO_API_KEY,
-      ];
-      for (const key of apiKeys) {
-        if (key) {
-          core.setSecret(key);
         }
       }
     };
@@ -579,7 +595,7 @@ export async function run(): Promise<void> {
     }
 
     loadConfigEnvironmentFiles(configAbsolutePath, workingDirectory);
-    maskProviderSecrets();
+    maskApiKeys();
 
     // Set up caching environment for optimal performance
     core.startGroup('Setting up cache');
