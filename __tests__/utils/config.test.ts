@@ -255,6 +255,11 @@ providers:
             source:
               type: path
               path: file://LOCALHOST/test/working/fixtures/localhost%20document.pdf
+          - kind: file
+            name: relative-upload
+            source:
+              type: path
+              path: file://payload.blob
 `);
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
@@ -262,6 +267,95 @@ providers:
     expect(deps).toEqual([
       'fixtures/team document.pdf',
       'fixtures/localhost document.pdf',
+      'payload.blob',
+    ]);
+  });
+
+  it('should preserve literal percent escapes in provider and extension file URLs', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: file:///test/working/providers-percent/team%20provider.py:call_api
+extensions:
+  - file:///test/working/hooks/team%20policy.js:hook
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers-percent/team%20provider.py',
+      'hooks/team%20policy.js',
+    ]);
+  });
+
+  it('should decode multipart file URLs from an external provider file', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'providers: file://providers/http.yaml',
+      ],
+      [
+        '/test/working/providers/http.yaml',
+        `- id: https\n  config:\n    multipart:\n      note: file://assets/multipart-note.txt\n      parts:\n        - kind: file\n          metadata: file://assets/part-metadata.txt\n          source:\n            type: path\n            path: file:///test/working/fixtures/external%20document.pdf\n            description: file://assets/source-description.txt`,
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((value: string) => {
+      const contents = files.get(value);
+      if (contents === undefined) {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      return contents;
+    });
+    mockFs.statSync.mockImplementation(
+      (value: string) =>
+        ({
+          isDirectory: () => false,
+          size: Buffer.byteLength(files.get(value) ?? ''),
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/http.yaml',
+      'fixtures/external document.pdf',
+      'assets/multipart-note.txt',
+      'assets/part-metadata.txt',
+      'assets/source-description.txt',
+    ]);
+  });
+
+  it('should traverse unrelated multipart metadata for file dependencies', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'prompts: [prompts/main.txt]\ntests: file://tests/metadata.yaml',
+      ],
+      [
+        '/test/working/tests/metadata.yaml',
+        '- metadata:\n    multipart:\n      note: file://assets/metadata.txt',
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((value: string) => {
+      const contents = files.get(value);
+      if (contents === undefined) {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      return contents;
+    });
+    mockFs.statSync.mockImplementation(
+      (value: string) =>
+        ({
+          isDirectory: () => false,
+          size: Buffer.byteLength(files.get(value) ?? ''),
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'prompts/main.txt',
+      'tests/metadata.yaml',
+      'assets/metadata.txt',
     ]);
   });
 
@@ -1890,6 +1984,47 @@ commandLineOptions:
     );
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('C:/repo/hooks/cli-default.js'),
+    );
+  });
+
+  it('should cap warnings for many foreign Windows-absolute dependencies', () => {
+    const extensions = Array.from(
+      { length: 100 },
+      (_, index) => `  - file:///C:/repo/hooks/policy-${index}.js`,
+    ).join('\n');
+    mockFs.readFileSync.mockReturnValue(`extensions:\n${extensions}`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledTimes(11);
+    expect(core.warning).toHaveBeenLastCalledWith(
+      expect.stringContaining(
+        'Suppressing further unsafe config dependency warnings',
+      ),
+    );
+  });
+
+  it('should cap warnings for many unsafe brace alternatives', async () => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    const alternatives = Array.from(
+      { length: 100 },
+      (_, index) => `../outside-${index}`,
+    ).join(',');
+    mockFs.readFileSync.mockReturnValue(
+      `providers:\n  - file://{${alternatives}}/policy.py`,
+    );
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledTimes(11);
+    expect(core.warning).toHaveBeenLastCalledWith(
+      expect.stringContaining(
+        'Suppressing further unsafe config dependency warnings',
+      ),
     );
   });
 

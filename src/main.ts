@@ -499,8 +499,8 @@ export async function run(): Promise<void> {
     }
 
     // Resolve glob patterns to file paths
-    const promptFiles: string[] = [];
-    const allPromptFiles: string[] = [];
+    const promptFiles = new Map<string, string>();
+    const allPromptFiles = new Map<string, string>();
     const changedFilesList = changedFiles
       .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
       .filter((file) => file);
@@ -557,7 +557,12 @@ export async function run(): Promise<void> {
         );
         return repositoryFile !== configRepositoryPath;
       });
-      allPromptFiles.push(...eligibleMatches);
+      for (const file of eligibleMatches) {
+        const absoluteFile = path.resolve(workingDirectory, file);
+        if (!allPromptFiles.has(absoluteFile)) {
+          allPromptFiles.set(absoluteFile, file);
+        }
+      }
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
@@ -567,10 +572,20 @@ export async function run(): Promise<void> {
           );
           return changedFilesList.includes(repositoryFile);
         });
-        promptFiles.push(...changedMatches);
+        for (const file of changedMatches) {
+          const absoluteFile = path.resolve(workingDirectory, file);
+          if (!promptFiles.has(absoluteFile)) {
+            promptFiles.set(absoluteFile, file);
+          }
+        }
       } else {
         // No changed files info available, include all matches
-        promptFiles.push(...eligibleMatches);
+        for (const file of eligibleMatches) {
+          const absoluteFile = path.resolve(workingDirectory, file);
+          if (!promptFiles.has(absoluteFile)) {
+            promptFiles.set(absoluteFile, file);
+          }
+        }
       }
     }
 
@@ -618,7 +633,7 @@ export async function run(): Promise<void> {
 
     if (
       !forceRun &&
-      promptFiles.length < 1 &&
+      promptFiles.size < 1 &&
       !configChanged &&
       !dependencyChanged &&
       changedFilesList.length > 0 &&
@@ -630,8 +645,12 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const promptFilesToEvaluate =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const promptFilesToEvaluate = Array.from(
+      (configChanged || dependencyChanged
+        ? allPromptFiles
+        : promptFiles
+      ).values(),
+    );
     if (promptFilesToEvaluate.some((file) => /[\r\n]/.test(file))) {
       throw new Error('Prompt file paths must not contain newlines.');
     }
@@ -642,7 +661,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${Array.from(promptFiles.values()).join(', ')}`,
       );
     }
 

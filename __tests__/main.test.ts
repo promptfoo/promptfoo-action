@@ -1231,6 +1231,59 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should deduplicate overlapping prompt globs during dependency-triggered evaluation', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts/prompt1.txt');
+      withInputs({
+        prompts: `prompts/*.txt\n${absolutePrompt}`,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'hooks/policy.js' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/*.txt'
+          ? ['prompts/prompt1.txt', 'prompts/prompt2.txt']
+          : [absolutePrompt],
+      );
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/policy.js']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(
+        args.filter((arg) => arg.endsWith('prompts/prompt1.txt')),
+      ).toHaveLength(1);
+      expect(args).toContain('prompts/prompt2.txt');
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Promptfoo evaluated these prompt files: prompts/prompt1.txt, prompts/prompt2.txt',
+          ),
+        }),
+      );
+    });
+
+    test('should deduplicate overlapping prompt globs when no changed-file list is available', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts/prompt1.txt');
+      withInputs({
+        prompts: `prompts/*.txt\n${absolutePrompt}`,
+      });
+      mockOctokit.paginate.mockResolvedValue([]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/*.txt'
+          ? ['prompts/prompt1.txt', 'prompts/prompt2.txt']
+          : [absolutePrompt],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(
+        args.filter((arg) => arg.endsWith('prompts/prompt1.txt')),
+      ).toHaveLength(1);
+      expect(args).toContain('prompts/prompt2.txt');
+    });
+
     test('should reject an escaped prompt glob before dependency-triggered evaluation', async () => {
       withInputs({ prompts: '../secrets/*.txt' });
       mockOctokit.paginate.mockResolvedValue([

@@ -10,6 +10,7 @@ import { isDirectory } from './fs';
 
 const MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 const MAX_STRUCTURED_DEPENDENCY_SIZE = 10 * 1024 * 1024;
+const MAX_UNSAFE_DEPENDENCY_WARNINGS = 10;
 
 class UnsafeConfigDependencyError extends Error {}
 
@@ -49,6 +50,7 @@ export function extractFileDependencies(configPath: string): string[] {
     isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
   let configParsed = false;
   let watchDynamicDependency = false;
+  let unsafeDependencyWarnings = 0;
 
   try {
     if (/\.(?:[cm]?js|[cm]?ts)$/i.test(configPath)) {
@@ -113,6 +115,15 @@ export function extractFileDependencies(configPath: string): string[] {
       return resolvedDependencyRoots;
     };
 
+    const warnUnsafeDependency = (message: string): void => {
+      if (unsafeDependencyWarnings < MAX_UNSAFE_DEPENDENCY_WARNINGS) {
+        core.warning(message);
+      } else if (unsafeDependencyWarnings === MAX_UNSAFE_DEPENDENCY_WARNINGS) {
+        core.warning('Suppressing further unsafe config dependency warnings.');
+      }
+      unsafeDependencyWarnings++;
+    };
+
     const resolveConfigDependency = (
       filePath: string,
       source: string,
@@ -156,7 +167,7 @@ export function extractFileDependencies(configPath: string): string[] {
           if (code === 'ENOENT' || code === 'ENOTDIR') {
             return absolutePath;
           }
-          core.warning(
+          warnUnsafeDependency(
             'Unable to resolve an existing config dependency. Ignoring this dependency.',
           );
           return undefined;
@@ -166,7 +177,7 @@ export function extractFileDependencies(configPath: string): string[] {
         try {
           resolvedPath = fs.realpathSync(absolutePath);
         } catch {
-          core.warning(
+          warnUnsafeDependency(
             'Unable to resolve an existing config dependency. Ignoring this dependency.',
           );
           return undefined;
@@ -186,7 +197,7 @@ export function extractFileDependencies(configPath: string): string[] {
         if (error instanceof UnsafeConfigDependencyError) {
           throw error;
         }
-        core.warning(
+        warnUnsafeDependency(
           `Ignoring unsafe config dependency ${JSON.stringify(filePath)}: ${String(
             error,
           ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
@@ -196,35 +207,37 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): void => {
+    const processFileUrl = (fileUrl: string, decodeFileUrl = false): void => {
       let filePath = fileUrl.replace('file://', '');
-      const urlBody = fileUrl.slice('file://'.length);
-      const authoritySeparator = urlBody.search(/[\\/]/);
-      const lexicalFilePath =
-        authoritySeparator === -1
-          ? ''
-          : urlBody.slice(authoritySeparator).replace(/\\/g, path.sep);
-      const lexicalFilePathIsSafe =
-        lexicalFilePath !== '' &&
-        isSafeDependency(path.resolve(configDir, lexicalFilePath));
-      try {
-        const decodedFilePath = fileURLToPath(fileUrl);
-        if (lexicalFilePathIsSafe) {
-          filePath = decodedFilePath;
-          if (!isSafeDependency(path.resolve(configDir, filePath))) {
+      if (decodeFileUrl) {
+        const urlBody = fileUrl.slice('file://'.length);
+        const authoritySeparator = urlBody.search(/[\\/]/);
+        const lexicalFilePath =
+          authoritySeparator === -1
+            ? ''
+            : urlBody.slice(authoritySeparator).replace(/\\/g, path.sep);
+        const lexicalFilePathIsSafe =
+          lexicalFilePath !== '' &&
+          isSafeDependency(path.resolve(configDir, lexicalFilePath));
+        try {
+          const decodedFilePath = fileURLToPath(fileUrl);
+          if (lexicalFilePathIsSafe) {
+            filePath = decodedFilePath;
+            if (!isSafeDependency(path.resolve(configDir, filePath))) {
+              throw new UnsafeConfigDependencyError(
+                'An existing config dependency resolves outside an allowed dependency root.',
+              );
+            }
+          }
+        } catch (error) {
+          if (error instanceof UnsafeConfigDependencyError) {
+            throw error;
+          }
+          if (lexicalFilePathIsSafe && /%(?:2f|5c)/i.test(fileUrl)) {
             throw new UnsafeConfigDependencyError(
               'An existing config dependency resolves outside an allowed dependency root.',
             );
           }
-        }
-      } catch (error) {
-        if (error instanceof UnsafeConfigDependencyError) {
-          throw error;
-        }
-        if (lexicalFilePathIsSafe && /%(?:2f|5c)/i.test(fileUrl)) {
-          throw new UnsafeConfigDependencyError(
-            'An existing config dependency resolves outside an allowed dependency root.',
-          );
         }
       }
       if (/^\/[A-Za-z]:[\\/]/.test(filePath)) {
@@ -243,7 +256,7 @@ export function extractFileDependencies(configPath: string): string[] {
         absolutePath.length > MAX_GLOB_PATTERN_LENGTH
       ) {
         dependencies.add(cwd);
-        core.warning(
+        warnUnsafeDependency(
           'Unable to statically resolve an oversized config file dependency pattern. Watching the repository workspace for changes.',
         );
         return;
@@ -258,7 +271,7 @@ export function extractFileDependencies(configPath: string): string[] {
             (path.win32.isAbsolute(pattern) && !path.isAbsolute(pattern)) ||
             !isSafeDependency(absolutePattern)
           ) {
-            core.warning(
+            warnUnsafeDependency(
               `Ignoring unsafe config dependency glob pattern ${JSON.stringify(
                 pattern,
               )}: config dependency must stay within the checkout or config directory`,
@@ -289,7 +302,7 @@ export function extractFileDependencies(configPath: string): string[] {
             if (error instanceof UnsafeConfigDependencyError) {
               throw error;
             }
-            core.warning(
+            warnUnsafeDependency(
               'Unable to resolve a config dependency glob match. Ignoring this match.',
             );
           }
@@ -474,7 +487,7 @@ export function extractFileDependencies(configPath: string): string[] {
           : [];
       const httpFileReferences: Array<{
         value: unknown;
-        kind: 'transform' | 'auth' | 'file';
+        kind: 'transform' | 'auth' | 'file' | 'multipart';
       }> = [
         {
           value:
@@ -536,7 +549,10 @@ export function extractFileDependencies(configPath: string): string[] {
               : undefined,
           kind: 'file' as const,
         })),
-        ...multipartPaths.map((value) => ({ value, kind: 'file' as const })),
+        ...multipartPaths.map((value) => ({
+          value,
+          kind: 'multipart' as const,
+        })),
       ];
       for (const { value, kind } of httpFileReferences) {
         if (
@@ -562,13 +578,16 @@ export function extractFileDependencies(configPath: string): string[] {
           selectorSeparator < fileUrl.length - 1 &&
           (hasJavascriptSelector ||
             (kind === 'auth' && candidateFileUrl.endsWith('.py')));
-        processFileUrl(hasSelector ? candidateFileUrl : fileUrl);
+        processFileUrl(
+          hasSelector ? candidateFileUrl : fileUrl,
+          kind === 'multipart',
+        );
         if (
           hasSelector &&
           hasJavascriptSelector &&
           !/\.(?:[cm]?js|[cm]?ts)$/.test(candidateFileUrl)
         ) {
-          processFileUrl(fileUrl);
+          processFileUrl(fileUrl, kind === 'multipart');
         }
       }
     }
@@ -1128,28 +1147,34 @@ export function extractFileDependencies(configPath: string): string[] {
           record.multipart !== null && typeof record.multipart === 'object'
             ? (record.multipart as Record<string, unknown>)
             : undefined;
-        const rawPaths = [
-          ...['caPath', 'certPath', 'keyPath', 'pfxPath'].map(
-            (key) => tlsConfig?.[key],
-          ),
+        const rawPaths: Array<{ value: unknown; decodeFileUrl: boolean }> = [
+          ...['caPath', 'certPath', 'keyPath', 'pfxPath'].map((key) => ({
+            value: tlsConfig?.[key],
+            decodeFileUrl: false,
+          })),
           ...[
             'privateKeyPath',
             'keystorePath',
             'pfxPath',
             'certPath',
             'keyPath',
-          ].map((key) => signatureConfig?.[key]),
+          ].map((key) => ({
+            value: signatureConfig?.[key],
+            decodeFileUrl: false,
+          })),
           ...(Array.isArray(multipartConfig?.parts)
-            ? multipartConfig.parts.map((part) =>
-                part !== null &&
-                typeof part === 'object' &&
-                'source' in part &&
-                part.source !== null &&
-                typeof part.source === 'object' &&
-                'path' in part.source
-                  ? part.source.path
-                  : undefined,
-              )
+            ? multipartConfig.parts.map((part) => ({
+                value:
+                  part !== null &&
+                  typeof part === 'object' &&
+                  'source' in part &&
+                  part.source !== null &&
+                  typeof part.source === 'object' &&
+                  'path' in part.source
+                    ? part.source.path
+                    : undefined,
+                decodeFileUrl: true,
+              }))
             : []),
         ];
         const authPath = authConfig?.path;
@@ -1179,7 +1204,7 @@ export function extractFileDependencies(configPath: string): string[] {
             }
           }
         }
-        for (const rawPath of rawPaths) {
+        for (const { value: rawPath, decodeFileUrl } of rawPaths) {
           if (typeof rawPath !== 'string') {
             continue;
           }
@@ -1189,6 +1214,7 @@ export function extractFileDependencies(configPath: string): string[] {
           }
           processFileUrl(
             rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`,
+            decodeFileUrl,
           );
         }
         if ('vars' in record) {
@@ -1198,12 +1224,43 @@ export function extractFileDependencies(configPath: string): string[] {
           extractAssertFiles(record.assert);
         }
         processTestRuntimeDependencies(record, path.dirname(dependency));
+        const unprocessedMultipartValues = Array.isArray(multipartConfig?.parts)
+          ? [
+              ...Object.entries(multipartConfig)
+                .filter(([key]) => key !== 'parts')
+                .map(([, childValue]) => childValue),
+              ...multipartConfig.parts.flatMap((part): unknown[] => {
+                if (part === null || typeof part !== 'object') {
+                  return [part];
+                }
+                const source =
+                  'source' in part &&
+                  part.source !== null &&
+                  typeof part.source === 'object'
+                    ? part.source
+                    : undefined;
+                return [
+                  ...Object.entries(part)
+                    .filter(([key]) => key !== 'source')
+                    .map(([, childValue]) => childValue),
+                  ...(source
+                    ? Object.entries(source)
+                        .filter(([key]) => key !== 'path')
+                        .map(([, childValue]) => childValue)
+                    : []),
+                ];
+              }),
+            ]
+          : [];
         structuredValues.push(
+          ...unprocessedMultipartValues,
           ...Object.entries(record)
             .filter(
               ([key, childValue]) =>
                 key !== 'provider' &&
                 key !== 'assert' &&
+                (key !== 'multipart' ||
+                  !Array.isArray(multipartConfig?.parts)) &&
                 !runtimeFileKeys.has(key) &&
                 (key !== 'vars' ||
                   (typeof childValue !== 'string' &&
