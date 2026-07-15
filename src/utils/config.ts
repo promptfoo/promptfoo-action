@@ -141,6 +141,16 @@ function environmentValues(
   );
 }
 
+function mayRenderFileUrl(value: string): boolean {
+  if (/\{\{\s*env(?:\.|\[)|\{%[^%]*\benv(?:\.|\[)/.test(value)) {
+    return true;
+  }
+  return (
+    value.includes('{#') &&
+    value.replace(/\{#[\s\S]*?#\}/g, '').startsWith('file://')
+  );
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -276,6 +286,16 @@ export function extractFileDependencies(configPath: string): string[] {
           ? providerFilePath(fileUrl, allowJavascript)
           : fileUrl
         : fileUrl.slice('file://'.length);
+      if (
+        filePath.includes('{') &&
+        /(?:^|[\\/{,])\.\.(?:[\\/},]|$)/.test(filePath)
+      ) {
+        dependencies.add(`${dependencyRoot}${path.sep}`);
+        core.warning(
+          'Ignoring unsafe config dependency glob: brace traversal branches must stay within the repository workspace.',
+        );
+        return [];
+      }
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
@@ -289,7 +309,7 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       // Check if the path contains glob patterns
-      if (glob.hasMagic(filePath)) {
+      if (glob.hasMagic(filePath, { magicalBraces: true })) {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, { nodir: true });
         if (matches.length > MAX_GLOB_MATCHES) {
@@ -316,7 +336,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the absolute, non-glob prefix for watching deletions.
         let basePath = absolutePath;
-        while (glob.hasMagic(basePath)) {
+        while (glob.hasMagic(basePath, { magicalBraces: true })) {
           basePath = path.dirname(basePath);
         }
         dependencies.add(`${basePath.replace(/[\\/]+$/, '')}${path.sep}`);
@@ -368,7 +388,7 @@ export function extractFileDependencies(configPath: string): string[] {
           ...providerOverrides,
         };
         if (!renderEnvTemplate(value, environment).startsWith('file://')) {
-          if (/\{\{|\{%|\{#/.test(value)) {
+          if (mayRenderFileUrl(value)) {
             dependencies.add(`${dependencyRoot}${path.sep}`);
           }
           return;
@@ -445,7 +465,7 @@ export function extractFileDependencies(configPath: string): string[] {
           };
           if (renderEnvTemplate(key, environment).startsWith('file://')) {
             processProviderReference(key, true, mappedProviderOverrides, true);
-          } else if (/\{\{|\{%|\{#/.test(key)) {
+          } else if (mayRenderFileUrl(key)) {
             dependencies.add(`${dependencyRoot}${path.sep}`);
           }
           processProviderValue(
@@ -497,7 +517,7 @@ export function extractFileDependencies(configPath: string): string[] {
           (providerPath.length > 0 &&
             !providerPath.includes('\0') &&
             isContainedReference &&
-            !glob.hasMagic(providerPath))
+            !glob.hasMagic(providerPath, { magicalBraces: true }))
         ) {
           dependencies.add(`${dependencyRoot}${path.sep}`);
         }
@@ -561,7 +581,7 @@ export function extractFileDependencies(configPath: string): string[] {
       const renderedValue = renderEnvTemplate(value, configEnvironment);
       if (renderedValue.startsWith('file://')) {
         processFileUrl(value);
-      } else if (/\{#|\{\{\s*env(?:\.|\[)|\{%[^%]*\benv(?:\.|\[)/.test(value)) {
+      } else if (mayRenderFileUrl(value)) {
         dependencies.add(`${dependencyRoot}${path.sep}`);
       }
     };

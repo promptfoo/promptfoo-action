@@ -364,6 +364,23 @@ tests:
     expect(deps).toEqual(['./']);
   });
 
+  it('should not conservatively watch ordinary provider body templates', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:chat:gpt-4
+    config:
+      body: "{{ prompt }}"
+      instruction: "{# ordinary comment #}respond to {{ vars.input }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+  });
+
   it('should ignore non-file objects and primitives across config sections', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -563,6 +580,55 @@ providers:
     );
 
     expect(deps).toEqual(['providers/']);
+  });
+
+  it('should preserve the watch root for a brace-only provider glob', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{one,two}.py
+`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        Boolean(options?.magicalBraces && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/']);
+    expect(mockGlob.hasMagic).toHaveBeenCalledWith('providers/{one,two}.py', {
+      magicalBraces: true,
+    });
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/repository/providers/{one,two}.py',
+      { nodir: true },
+    );
+  });
+
+  it.each([
+    'file://{..,fixtures}/*.py',
+    'file://{nested/../../../outside,fixtures}/*.py',
+  ])('should reject a traversal branch in %s before scanning the host', (provider) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - ${provider}
+`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        Boolean(options?.magicalBraces && value.includes('{')),
+    );
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
   it('should preserve the workspace watch root for an absolute root-level provider glob', () => {
@@ -900,6 +966,43 @@ providers:
     vi.unstubAllEnvs();
   });
 
+  it('should render wrapped provider-file defaults with bare, object, and map caller environments', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/provider-wrapped.yaml')) {
+        return `
+env:
+  TOOL_FILE: "tools/{{ env.VARIANT }}.cjs:getTools"
+config:
+  tools: "file://{{ env.TOOL_FILE }}"
+`;
+      }
+      return `
+env:
+  VARIANT: suite
+providers:
+  - file://provider-wrapped.yaml
+  - id: file://provider-wrapped.yaml
+    env:
+      VARIANT: object
+  - file://provider-wrapped.yaml:
+      env:
+        VARIANT: mapped
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'provider-wrapped.yaml',
+      'tools/suite.cjs',
+      'tools/object.cjs',
+      'tools/mapped.cjs',
+    ]);
+  });
+
   it('should extract supported JavaScript and TypeScript function references nested in provider config', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('provider.yaml')) {
@@ -1122,6 +1225,58 @@ providers:
     expect(mockFs.realpathSync.mock.calls.length).toBeLessThan(10);
   });
 
+  it('should apply the glob cap before reading matched provider YAML files', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return `providers:\n  - file://providers/*.yaml\n`;
+      }
+      throw new Error('PROVIDER_GLOB_READ_SECRET_CANARY_019F62C3');
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(
+      Array.from(
+        { length: 4_097 },
+        (_, index) => `/test/repository/providers/provider-${index}.yaml`,
+      ),
+    );
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('should cap provider YAML inspection before reading every glob match', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return `providers:\n  - file://providers/*.yaml\n`;
+      }
+      return 'id: openai:chat:gpt-4';
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(
+      Array.from(
+        { length: 1_300 },
+        (_, index) => `/test/repository/providers/provider-${index}.yaml`,
+      ),
+    );
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toContain('./');
+    expect(mockFs.readFileSync.mock.calls.length).toBeLessThanOrEqual(129);
+  });
+
   it('should conservatively watch and redact unexpected dependency-extraction errors', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -1247,6 +1402,38 @@ providers:
     expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
       'SYMLINK_SECRET_CANARY_019F62C3',
     );
+  });
+
+  it('should conservatively watch symlinked prompt, variable, and assertion paths without external reads', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (
+        filePath.includes('/prompts/link.txt') ||
+        filePath.includes('/vars/link.txt') ||
+        filePath.includes('/assertions/link.js')
+      ) {
+        return '/test/outside/SECRET_SYMLINK_TARGET_019F62C3';
+      }
+      return filePath;
+    });
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - file: prompts/link.txt
+tests:
+  - vars:
+      context: file://vars/link.txt
+    assert:
+      - type: javascript
+        value: file://assertions/link.js
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -1788,7 +1975,32 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py', '../config/']);
+    expect(deps).toEqual(['../config/']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should ignore an unsafe expanded match from a contained provider glob', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/secrets/leaked.py',
+      '/test/config/providers/custom.py',
+    ]);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/custom.py',
+      '../config/providers/',
+    ]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('/test/secrets/leaked.py'),
+    );
   });
 
   it('should extract all file types from complex config', () => {

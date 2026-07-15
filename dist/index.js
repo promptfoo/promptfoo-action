@@ -36337,6 +36337,12 @@ function environmentValues(value, baseEnvironment) {
     })
   );
 }
+function mayRenderFileUrl(value) {
+  if (/\{\{\s*env(?:\.|\[)|\{%[^%]*\benv(?:\.|\[)/.test(value)) {
+    return true;
+  }
+  return value.includes("{#") && value.replace(/\{#[\s\S]*?#\}/g, "").startsWith("file://");
+}
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path5.dirname(configPath);
@@ -36431,6 +36437,13 @@ function extractFileDependencies(configPath) {
       }
       const filePath = isProvider ? providerFilePath(renderedFileUrl, allowJavascript) : renderedFileUrl.slice("file://".length);
       const displayPath = isProvider ? fileUrl.startsWith("file://") ? providerFilePath(fileUrl, allowJavascript) : fileUrl : fileUrl.slice("file://".length);
+      if (filePath.includes("{") && /(?:^|[\\/{,])\.\.(?:[\\/},]|$)/.test(filePath)) {
+        dependencies.add(`${dependencyRoot}${path5.sep}`);
+        warning(
+          "Ignoring unsafe config dependency glob: brace traversal branches must stay within the repository workspace."
+        );
+        return [];
+      }
       const absolutePath = resolveConfigDependency(
         filePath,
         "config file dependency",
@@ -36442,7 +36455,7 @@ function extractFileDependencies(configPath) {
         }
         return [];
       }
-      if (le(filePath)) {
+      if (le(filePath, { magicalBraces: true })) {
         const matches = Ui(absolutePath, { nodir: true });
         if (matches.length > MAX_GLOB_MATCHES) {
           dependencies.add(`${dependencyRoot}${path5.sep}`);
@@ -36464,7 +36477,7 @@ function extractFileDependencies(configPath) {
           }
         }
         let basePath = absolutePath;
-        while (le(basePath)) {
+        while (le(basePath, { magicalBraces: true })) {
           basePath = path5.dirname(basePath);
         }
         dependencies.add(`${basePath.replace(/[\\/]+$/, "")}${path5.sep}`);
@@ -36501,7 +36514,7 @@ function extractFileDependencies(configPath) {
           ...providerOverrides
         };
         if (!renderEnvTemplate(value, environment).startsWith("file://")) {
-          if (/\{\{|\{%|\{#/.test(value)) {
+          if (mayRenderFileUrl(value)) {
             dependencies.add(`${dependencyRoot}${path5.sep}`);
           }
           return;
@@ -36569,7 +36582,7 @@ function extractFileDependencies(configPath) {
           };
           if (renderEnvTemplate(key, environment).startsWith("file://")) {
             processProviderReference(key, true, mappedProviderOverrides, true);
-          } else if (/\{\{|\{%|\{#/.test(key)) {
+          } else if (mayRenderFileUrl(key)) {
             dependencies.add(`${dependencyRoot}${path5.sep}`);
           }
           processProviderValue(
@@ -36608,7 +36621,7 @@ function extractFileDependencies(configPath) {
           dependencyRoot,
           path5.resolve(configDir, providerPath)
         );
-        if (isProviderConfig || providerPath.length > 0 && !providerPath.includes("\0") && isContainedReference && !le(providerPath)) {
+        if (isProviderConfig || providerPath.length > 0 && !providerPath.includes("\0") && isContainedReference && !le(providerPath, { magicalBraces: true })) {
           dependencies.add(`${dependencyRoot}${path5.sep}`);
         }
         return;
@@ -36663,7 +36676,7 @@ function extractFileDependencies(configPath) {
       const renderedValue = renderEnvTemplate(value, configEnvironment);
       if (renderedValue.startsWith("file://")) {
         processFileUrl(value);
-      } else if (/\{#|\{\{\s*env(?:\.|\[)|\{%[^%]*\benv(?:\.|\[)/.test(value)) {
+      } else if (mayRenderFileUrl(value)) {
         dependencies.add(`${dependencyRoot}${path5.sep}`);
       }
     };
