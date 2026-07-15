@@ -39820,8 +39820,25 @@ function isPathInside(baseDir, targetPath) {
   const relativePath = path6.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
 }
+function stripNunjucksComments(value) {
+  let result = "";
+  let cursor = 0;
+  while (cursor < value.length) {
+    const start = value.indexOf("{#", cursor);
+    if (start === -1) {
+      break;
+    }
+    const end = value.indexOf("#}", start + 2);
+    if (end === -1) {
+      break;
+    }
+    result += value.slice(cursor, start);
+    cursor = end + 2;
+  }
+  return result + value.slice(cursor);
+}
 function expandEnvTemplates(filePath) {
-  return filePath.replace(/\{#(?:[^#]|#(?!\}))*#\}/g, "").replace(/\{%(?:[^%]|%(?!\}))*%\}/g, "**/*").replace(
+  return stripNunjucksComments(filePath).replace(/\{%(?:[^%]|%(?!\}))*%\}/g, "**/*").replace(
     /\{\{(?:[^}]|\}(?!\}))*\}\}/g,
     (template) => /\benv\.|env\[/.test(template) ? "**/*" : template
   );
@@ -39895,7 +39912,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       return [];
     }
     const expandAndTrackEnvTemplates = (filePath) => {
-      const uncommentedPath = filePath.replace(/\{#(?:[^#]|#(?!\}))*#\}/g, "");
+      const uncommentedPath = stripNunjucksComments(filePath);
       const expandedPath = expandEnvTemplates(filePath);
       if (expandedPath !== uncommentedPath) {
         dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
@@ -39907,16 +39924,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         if (!filePath) {
           throw new Error(`${source} is empty`);
         }
-        if (filePath.includes("\0")) {
-          throw new Error(`${source} contains an invalid null byte`);
-        }
-        const absolutePath = path6.resolve(configDir, filePath);
-        if (!isPathInside(dependencyRoot, absolutePath)) {
-          throw new Error(
-            `${source} must stay within the repository workspace`
-          );
-        }
-        return absolutePath;
+        return path6.resolve(configDir, filePath);
       } catch (error2) {
         warning(
           `Ignoring unsafe config dependency "${filePath}": ${String(
@@ -39927,16 +39935,32 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       }
     };
     const processFilePath = (filePath, source = "config file dependency", preserveGlobRoot = false, windowsPathsNoEscape = false) => {
+      if (filePath.includes("\0")) {
+        warning(
+          `Ignoring unsafe config dependency "${filePath}": ${source} contains an invalid null byte`
+        );
+        return [];
+      }
       const normalizedPath = windowsPathsNoEscape ? filePath.replace(/\\/g, path6.sep) : filePath;
       const globOptions = {
         magicalBraces: true,
         braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
         ...windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}
       };
-      const isGlob = le(normalizedPath, globOptions);
-      const expandedPaths = isGlob ? braceExpand(normalizedPath, {
-        braceExpandMax: MAX_BRACE_EXPANSIONS + 1
-      }) : [normalizedPath];
+      let isGlob;
+      let expandedPaths;
+      try {
+        isGlob = le(normalizedPath, globOptions);
+        expandedPaths = isGlob ? braceExpand(normalizedPath, {
+          braceExpandMax: MAX_BRACE_EXPANSIONS + 1
+        }) : [normalizedPath];
+      } catch (error2) {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        warning(
+          `Failed to parse config dependency glob (${source}): ${error2 instanceof Error ? error2.message : String(error2)}; conservatively watching the dependency root`
+        );
+        return [];
+      }
       if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
         dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
         warning(
@@ -40027,28 +40051,62 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         preserveGlobRoot || hasEnvTemplate
       );
     };
+    const providerConfigFiles = /* @__PURE__ */ new Set();
+    const providerConfigs = [];
+    const processProviderFile = (providerId) => {
+      const expandedProviderId = expandAndTrackEnvTemplates(providerId);
+      if (expandedProviderId.startsWith("exec:")) {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        return;
+      }
+      const localProvider = expandedProviderId.match(
+        /^(?:file:\/\/|python:(?=[\s\S]+\.py(?::[^/\\]+)?$)|golang:(?=[\s\S]+\.go(?::[^/\\]+)?$)|ruby:(?=[\s\S]+\.rb(?::[^/\\]+)?$))([\s\S]+)$/i
+      );
+      if (!localProvider) {
+        return;
+      }
+      const providerPath = localProvider[1];
+      processFileUrl(`file://${providerPath}`, false, configDir, true);
+      const absolutePath = path6.resolve(configDir, providerPath);
+      if (/\.(?:ya?ml|json)$/i.test(providerPath) && isPathInside(dependencyRoot, absolutePath)) {
+        providerConfigFiles.add(absolutePath);
+      }
+    };
     if (config2.providers) {
-      for (const provider of config2.providers) {
-        if (typeof provider === "string" && provider.startsWith("file://")) {
-          processFileUrl(provider);
-        } else if (typeof provider === "object" && provider.id?.startsWith("file://")) {
-          processFileUrl(provider.id);
+      const providers = Array.isArray(config2.providers) ? config2.providers : [config2.providers];
+      for (const provider of providers) {
+        if (typeof provider === "string") {
+          processProviderFile(provider);
+        } else if (typeof provider === "object" && provider !== null) {
+          const providerId = typeof provider.id === "string" ? provider.id : Object.keys(provider)[0];
+          if (typeof providerId === "string") {
+            processProviderFile(providerId);
+          }
+          const providerOptions = providerId ? provider[providerId] : void 0;
+          providerConfigs.push(
+            typeof provider.id === "string" || typeof providerOptions !== "object" || providerOptions === null ? provider : { ...providerOptions, id: providerId }
+          );
         }
       }
     }
     if (config2.prompts) {
-      for (const prompt of config2.prompts) {
-        if (typeof prompt === "string" && prompt.startsWith("file://")) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === "object" && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            "prompt file dependency"
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
+      const prompts = Array.isArray(config2.prompts) ? config2.prompts : typeof config2.prompts === "string" ? [config2.prompts] : Object.keys(config2.prompts);
+      for (const prompt of prompts) {
+        const promptPath = typeof prompt === "string" ? prompt : typeof prompt.raw === "string" ? prompt.raw : typeof prompt.id === "string" ? prompt.id : typeof prompt.file === "string" ? prompt.file : void 0;
+        if (!promptPath) {
+          continue;
         }
+        const expandedPromptPath = expandAndTrackEnvTemplates(promptPath);
+        if (expandedPromptPath === "**/*" || /(?:\n|portkey:\/\/|langfuse:\/\/|helicone:\/\/)/i.test(
+          expandedPromptPath
+        ) || !(expandedPromptPath.startsWith("file://") || /\.(?:cjs|cts|j2|js|jsonl?|md|mjs|mts|py|ts|txt|ya?ml)(?::[^/\\]+)?$/i.test(
+          expandedPromptPath
+        ) || /[*/\\]/.test(expandedPromptPath) || expandedPromptPath.charAt(expandedPromptPath.length - 3) === "." || expandedPromptPath.charAt(expandedPromptPath.length - 4) === ".")) {
+          continue;
+        }
+        processFileUrl(
+          `file://${expandedPromptPath.replace(/^file:\/\//, "")}`
+        );
       }
     }
     const extractVarFiles = (vars, baseDir = configDir) => {
@@ -40059,14 +40117,16 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           if (typeof varFile !== "string") {
             continue;
           }
+          let varBaseDir = baseDir;
           if (varFile.startsWith("file://")) {
             varFile = varFile.slice("file://".length);
+            varBaseDir = configDir;
           } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(varFile)) {
             continue;
           }
           const relativeVarFile = path6.relative(
             configDir,
-            path6.resolve(baseDir, varFile)
+            path6.resolve(varBaseDir, varFile)
           );
           for (const resolvedVarFile of processFilePath(
             expandAndTrackEnvTemplates(relativeVarFile),
@@ -40075,7 +40135,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
             true
           )) {
             if (!/\.(?:csv|jsonl)$/i.test(resolvedVarFile)) {
-              inspectTestFile(resolvedVarFile, refResolutionRoot, baseDir);
+              inspectTestFile(resolvedVarFile, refResolutionRoot, varBaseDir);
             }
           }
         }
@@ -40148,7 +40208,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       if (typeof nestedTest.$id === "string") {
         dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
       }
-      extractVarFiles(nestedTest.vars);
+      extractVarFiles(nestedTest.vars, testBaseDir);
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
         if (key === "provider" && includeFileUrls) {
@@ -40169,7 +40229,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
                   "keyPath"
                 ]
               ],
-              ["tls", ["certPath", "keyPath", "caPath", "pfxPath"]]
+              ["tls", ["certPath", "keyPath", "caPath", "pfxPath", "jksPath"]]
             ];
             for (const [groupKey, pathKeys] of securityGroups) {
               const securityGroup = providerConfig[groupKey];
@@ -40283,8 +40343,8 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       }
     };
     const inspectedTestFiles = /* @__PURE__ */ new Set();
-    const inspectTestFile = (testFile, refBaseDir = refResolutionRoot, testBaseDir = path6.dirname(testFile), fragment, allowBareTestPaths = false) => {
-      const inspectionKey = `${testFile}\0${refBaseDir}\0${testBaseDir}\0${fragment ?? ""}`;
+    const inspectTestFile = (testFile, refBaseDir = refResolutionRoot, testBaseDir = path6.dirname(testFile), fragment, allowBareTestPaths = false, asProviderConfig = false) => {
+      const inspectionKey = `${testFile}\0${refBaseDir}\0${testBaseDir}\0${fragment ?? ""}\0${allowBareTestPaths}\0${asProviderConfig}`;
       if (inspectedTestFiles.has(inspectionKey) || !/\.(?:ya?ml|jsonl?|csv|xlsx?|py|[cm]?[jt]s)$/i.test(testFile) || !fs6.existsSync(testFile)) {
         return;
       }
@@ -40379,10 +40439,10 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           if (typeof nestedTest.path === "string") {
             processTestFile(nestedTest.path);
           }
-          extractVarFiles(nestedTest.vars);
+          extractVarFiles(nestedTest.vars, testBaseDir);
           extractAssertFiles(nestedTest.assert);
           extractNestedFileUrls(
-            nestedTest,
+            asProviderConfig ? { provider: nestedTest } : nestedTest,
             refBaseDir,
             true,
             testBaseDir,
@@ -40393,7 +40453,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         warning(`Failed to inspect test file dependency "${testFile}"`);
       }
     };
-    const processTestFile = (testSource) => {
+    const processTestFile = (testSource, testBaseDir) => {
       let filePath = testSource;
       if (filePath.startsWith("file://")) {
         filePath = filePath.slice("file://".length);
@@ -40430,19 +40490,39 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
             }
           );
           for (const nestedTestFile of nestedTestFiles) {
-            inspectTestFile(path6.resolve(testFile, nestedTestFile));
+            inspectTestFile(
+              path6.resolve(testFile, nestedTestFile),
+              refResolutionRoot,
+              testBaseDir
+            );
           }
           continue;
         }
-        inspectTestFile(testFile);
+        inspectTestFile(testFile, refResolutionRoot, testBaseDir);
       }
     };
-    if (config2.defaultTest) {
+    for (const providerConfigFile of providerConfigFiles) {
+      inspectTestFile(
+        providerConfigFile,
+        refResolutionRoot,
+        configDir,
+        void 0,
+        false,
+        true
+      );
+    }
+    for (const providerConfig of providerConfigs) {
+      extractNestedFileUrls({ provider: providerConfig });
+    }
+    if (typeof config2.defaultTest === "string") {
+      processTestFile(config2.defaultTest, configDir);
+    } else if (config2.defaultTest) {
       extractVarFiles(config2.defaultTest.vars);
       extractAssertFiles(config2.defaultTest.assert);
+      extractNestedFileUrls(config2.defaultTest, refResolutionRoot, true);
     }
     if (config2.tests) {
-      extractNestedFileUrls(config2.tests, configDir, false);
+      extractNestedFileUrls(config2.tests, refResolutionRoot, false);
       const tests = Array.isArray(config2.tests) ? config2.tests : [config2.tests];
       for (const test of tests) {
         if (typeof test === "string") {
