@@ -23,6 +23,7 @@ type PromptEntry =
 
 const MAX_BRACE_EXPANSIONS = 1024;
 const MAX_GLOB_PATTERN_LENGTH = 65_536;
+const MAX_STRUCTURED_PROMPT_BYTES = 10_485_760;
 const JAVASCRIPT_EXTENSIONS = new Set(['cjs', 'cts', 'js', 'mjs', 'mts', 'ts']);
 const SCRIPT_EXTENSIONS = new Set(['py', 'go', 'rb']);
 const PROMPT_FILE_EXTENSIONS = new Set([
@@ -1066,6 +1067,23 @@ export function extractFileDependencies(
         try {
           if (visitedStructuredFiles.has(physicalPromptFile)) continue;
           visitedStructuredFiles.add(physicalPromptFile);
+          let promptSize: number;
+          try {
+            promptSize = fs.statSync(physicalPromptFile).size;
+          } catch {
+            hasDynamicPromptDependencies = true;
+            core.warning(
+              'Structured prompt file could not be inspected safely; watching all repository changes',
+            );
+            continue;
+          }
+          if (promptSize > MAX_STRUCTURED_PROMPT_BYTES) {
+            hasDynamicPromptDependencies = true;
+            core.warning(
+              'Structured prompt file is too large to scan safely; watching all repository changes',
+            );
+            continue;
+          }
           const promptContent = fs.readFileSync(physicalPromptFile, 'utf8');
           const parsed = absolutePromptFile.endsWith('.jsonl')
             ? promptContent
@@ -1492,6 +1510,7 @@ export function extractFileDependencies(
         );
         if (absolutePath) {
           dependencies.add(absolutePath);
+          extractNestedPromptFileUrls(`file://${absolutePath}`, prompt.file);
         }
       }
     };

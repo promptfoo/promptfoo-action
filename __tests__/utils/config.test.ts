@@ -189,6 +189,88 @@ prompts:
     expect(deps).toContain('../config/prompts/prompt2.txt');
   });
 
+  it.each([
+    ['yaml', 'system: file://partials/system.txt\n'],
+    ['json', '{"system":"file://partials/system.txt"}\n'],
+    ['jsonl', '{"system":"file://partials/system.txt"}\n'],
+  ])('should extract nested file references from object-form structured prompts: %s', (extension, promptContent) => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('promptfooconfig.yaml')
+        ? `prompts:\n  - file: prompts/chat.${extension}\n`
+        : promptContent,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([`evals/prompts/chat.${extension}`, 'evals/partials/system.txt']);
+  });
+
+  it('should tolerate self and shared aliases in object-form structured prompts', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('promptfooconfig.yaml')
+        ? 'prompts:\n  - file: prompts/chat.yaml\n'
+        : 'items: &items [*items, file://partials/system.txt]\nfirst: *items\nsecond: *items\nself: file://prompts/chat.yaml\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/chat.yaml', 'evals/partials/system.txt']);
+  });
+
+  it('should fail closed before reading an oversized object-form structured prompt', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  - file: prompts/large.yaml\n';
+      }
+      throw new Error('oversized prompt was read');
+    });
+    mockFs.statSync.mockReturnValue({ size: 10_485_761 } as fs.Stats);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('should fail closed before reading an inaccessible object-form structured prompt', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  - file: prompts/blocked.yaml\n';
+      }
+      throw new Error('inaccessible prompt was read');
+    });
+    mockFs.statSync.mockImplementation(() => {
+      throw new Error('EACCES: sensitive filesystem detail');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(core.warning).mock.calls.join('\n')).not.toContain(
+      'sensitive filesystem detail',
+    );
+  });
+
+  it('should not read an escaping object-form structured prompt symlink', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  - file: prompts/linked.yaml\n';
+      }
+      throw new Error('escaping prompt was read');
+    });
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('/prompts/linked.yaml')
+        ? '/tmp/outside/linked.yaml'
+        : filePath,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/linked.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+  });
+
   it('should preserve dependencies when prompts use the supported map form', () => {
     const configContent = `
 providers:
