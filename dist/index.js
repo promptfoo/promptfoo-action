@@ -36343,6 +36343,9 @@ function normalizeProviderFileUrls(providerPath) {
     /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
   ) : [];
 }
+function containsEnvTemplate(value) {
+  return typeof value === "string" && (value.includes("{{") || value.includes("{%")) && /\benv(?:\.|\[)/.test(value);
+}
 function extractFileDependencies(configPath, workspaceRoot = process.cwd(), workingDirectory = workspaceRoot) {
   const dependencies = /* @__PURE__ */ new Set();
   const lexicalConfigPath = path5.resolve(configPath);
@@ -36575,6 +36578,11 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
     while (pending.length > 0) {
       const next = pending.pop();
       if (typeof next.value === "string") {
+        if (next.value.includes("file://") && containsEnvTemplate(next.value)) {
+          throw new Error(
+            "Dynamic Promptfoo file references cannot be safely inspected"
+          );
+        }
         if (next.context === "provider-list") {
           nestedFileUrls.push(...normalizeProviderFileUrls(next.value));
         } else if (next.value.startsWith("file://")) {
@@ -36634,6 +36642,22 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
               providerIdParents.add(provider);
             }
           }
+          if (containsEnvTemplate(providerId) && typeof providerConfig === "object" && providerConfig !== null && [
+            "validateStatus",
+            "transformRequest",
+            "transformResponse",
+            "responseParser",
+            "sessionParser",
+            "session",
+            "auth",
+            "tls",
+            "signatureAuth",
+            "multipart"
+          ].some((field) => field in providerConfig)) {
+            throw new Error(
+              "Dynamic Promptfoo HTTP provider dependencies cannot be safely inspected"
+            );
+          }
           if (typeof providerId !== "string" || !/^https?(?::|$)/i.test(providerId) || typeof providerConfig !== "object" || providerConfig === null) {
             continue;
           }
@@ -36682,7 +36706,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
             }
           }
           const auth2 = configRecord.auth;
-          if (typeof auth2 === "object" && auth2 !== null && auth2.type === "file") {
+          if (typeof auth2 === "object" && auth2 !== null && (auth2.type === "file" || containsEnvTemplate(auth2.type))) {
             const authRecord = auth2;
             if (typeof authRecord.path === "string") {
               if (authRecord.path.startsWith("file://")) {
@@ -36695,6 +36719,26 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
                 httpFileAuthParents.add(authRecord);
               } else {
                 nestedFilePaths.push(authRecord.path);
+              }
+            }
+          }
+          const multipart = configRecord.multipart;
+          if (typeof multipart === "object" && multipart !== null) {
+            const parts = multipart.parts;
+            if (Array.isArray(parts)) {
+              for (const part of parts) {
+                if (typeof part !== "object" || part === null) {
+                  continue;
+                }
+                const partRecord = part;
+                const source = partRecord.source;
+                if ((partRecord.kind === "file" || containsEnvTemplate(partRecord.kind)) && typeof source === "object" && source !== null && (source.type === "path" || containsEnvTemplate(
+                  source.type
+                )) && typeof source.path === "string") {
+                  nestedFilePaths.push(
+                    source.path
+                  );
+                }
               }
             }
           }
@@ -37033,7 +37077,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         if (/\s/.test(executable)) {
           throw new Error("Command-style Promptfoo exec prompts are unsafe");
         }
-        fileUrl = `file://${executable}`;
+        fileUrl = executable.startsWith("file://") ? executable : `file://${executable}`;
       } else if (!reference.startsWith("file://")) {
         fileUrl = `file://${reference}`;
       }

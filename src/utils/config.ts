@@ -173,6 +173,14 @@ function normalizeProviderFileUrls(providerPath: string): string[] {
     : [];
 }
 
+function containsEnvTemplate(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    (value.includes('{{') || value.includes('{%')) &&
+    /\benv(?:\.|\[)/.test(value)
+  );
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -509,6 +517,11 @@ export function extractFileDependencies(
         context: 'general' | 'provider-list' | 'assertion';
       };
       if (typeof next.value === 'string') {
+        if (next.value.includes('file://') && containsEnvTemplate(next.value)) {
+          throw new Error(
+            'Dynamic Promptfoo file references cannot be safely inspected',
+          );
+        }
         if (next.context === 'provider-list') {
           nestedFileUrls.push(...normalizeProviderFileUrls(next.value));
         } else if (next.value.startsWith('file://')) {
@@ -583,6 +596,27 @@ export function extractFileDependencies(
             }
           }
           if (
+            containsEnvTemplate(providerId) &&
+            typeof providerConfig === 'object' &&
+            providerConfig !== null &&
+            [
+              'validateStatus',
+              'transformRequest',
+              'transformResponse',
+              'responseParser',
+              'sessionParser',
+              'session',
+              'auth',
+              'tls',
+              'signatureAuth',
+              'multipart',
+            ].some((field) => field in providerConfig)
+          ) {
+            throw new Error(
+              'Dynamic Promptfoo HTTP provider dependencies cannot be safely inspected',
+            );
+          }
+          if (
             typeof providerId !== 'string' ||
             !/^https?(?::|$)/i.test(providerId) ||
             typeof providerConfig !== 'object' ||
@@ -649,7 +683,8 @@ export function extractFileDependencies(
           if (
             typeof auth === 'object' &&
             auth !== null &&
-            (auth as Record<string, unknown>).type === 'file'
+            ((auth as Record<string, unknown>).type === 'file' ||
+              containsEnvTemplate((auth as Record<string, unknown>).type))
           ) {
             const authRecord = auth as Record<string, unknown>;
             if (typeof authRecord.path === 'string') {
@@ -663,6 +698,35 @@ export function extractFileDependencies(
                 httpFileAuthParents.add(authRecord);
               } else {
                 nestedFilePaths.push(authRecord.path);
+              }
+            }
+          }
+
+          const multipart = configRecord.multipart;
+          if (typeof multipart === 'object' && multipart !== null) {
+            const parts = (multipart as Record<string, unknown>).parts;
+            if (Array.isArray(parts)) {
+              for (const part of parts) {
+                if (typeof part !== 'object' || part === null) {
+                  continue;
+                }
+                const partRecord = part as Record<string, unknown>;
+                const source = partRecord.source;
+                if (
+                  (partRecord.kind === 'file' ||
+                    containsEnvTemplate(partRecord.kind)) &&
+                  typeof source === 'object' &&
+                  source !== null &&
+                  ((source as Record<string, unknown>).type === 'path' ||
+                    containsEnvTemplate(
+                      (source as Record<string, unknown>).type,
+                    )) &&
+                  typeof (source as Record<string, unknown>).path === 'string'
+                ) {
+                  nestedFilePaths.push(
+                    (source as Record<string, unknown>).path as string,
+                  );
+                }
               }
             }
           }
@@ -1118,7 +1182,9 @@ export function extractFileDependencies(
         if (/\s/.test(executable)) {
           throw new Error('Command-style Promptfoo exec prompts are unsafe');
         }
-        fileUrl = `file://${executable}`;
+        fileUrl = executable.startsWith('file://')
+          ? executable
+          : `file://${executable}`;
       } else if (!reference.startsWith('file://')) {
         fileUrl = `file://${reference}`;
       }

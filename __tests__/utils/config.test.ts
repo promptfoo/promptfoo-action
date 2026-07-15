@@ -1097,6 +1097,133 @@ providers:
     ]);
   });
 
+  it('fails closed when an environment-templated provider id can dispatch HTTP files', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: "{{ env.HTTP_PROVIDER | default(\'https\') }}"',
+        '    config:',
+        '      url: https://example.test/invoke',
+        '      tls:',
+        '        caPath: tls/ca.pem',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('tracks HTTP file-auth and multipart paths behind templated discriminators', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      url: https://example.test/invoke',
+        '      auth:',
+        '        type: "{{ env.AUTH_TYPE | default(\'file\') }}"',
+        '        path: auth/get-token.py',
+        '      multipart:',
+        '        parts:',
+        '          - kind: "{{ env.PART_KIND | default(\'file\') }}"',
+        '            name: attachment',
+        '            source:',
+        '              type: "{{ env.SOURCE_TYPE | default(\'path\') }}"',
+        '              path: uploads/input.bin',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'auth/get-token.py',
+      'uploads/input.bin',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('ignores non-file and malformed HTTP multipart entries safely', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      multipart:',
+        '        parts:',
+        '          - null',
+        '          - kind: field',
+        '            name: label',
+        '            value: inline',
+        '          - kind: file',
+        '            name: generated',
+        '            source:',
+        '              type: generated',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      multipart: {}',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+  });
+
+  it('fails closed for an env expression that can emit a file URL but ignores ordinary filtered env text', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      body:',
+        "        context: \"{{ 'file://' ~ (env.CONTEXT_FILE | default('data/context.json')) }}\"",
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      body:',
+        '        context: "{% if env.LOAD_CONTEXT %}file://data/context.json{% endif %}"',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      headers:',
+        '        x-label: "hello {{ env.LABEL | default(\'world\') | upper }}"',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+  });
+
   it('ignores an HTTP file-auth configuration without a path', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': [
@@ -1342,6 +1469,24 @@ providers:
       'targets/build.py',
       'targets/build.go',
       'targets/build.rb',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('tracks JavaScript provider selectors containing slashes and preserves namespaced Ruby provider paths', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - file://providers/build.js:policy/check',
+        '  - ruby:providers/build.rb:Policy::check',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'providers/build.js',
+      'providers/build.rb:Policy::check',
       ...implicitConfigDependencies('promptfooconfig.yaml'),
     ]);
   });
@@ -1617,6 +1762,7 @@ providers:
       '/test/working/promptfooconfig.yaml': [
         'prompts:',
         '  - exec:prompts/build.py:generate',
+        '  - exec:file://prompts/build-file-url.py:generate',
         '  - exec:prompts/build.sh',
         '  - raw: file://prompts/object.rb:render',
         '    id: prompts/object.js:render',
@@ -1627,6 +1773,7 @@ providers:
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([
       'prompts/build.py',
+      'prompts/build-file-url.py',
       'prompts/build.sh',
       'prompts/object.rb',
       'prompts/object.js',
@@ -1676,6 +1823,20 @@ providers:
       expect.stringContaining(
         'Command-style Promptfoo exec prompts are unsafe',
       ),
+    );
+  });
+
+  it('rejects an escaping executable file URL prompt dependency', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml':
+        "prompts:\n  - 'exec:file://../../outside.py:generate'\n",
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
     );
   });
 
