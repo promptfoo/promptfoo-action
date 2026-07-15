@@ -308,6 +308,52 @@ prompts:
     expect(deps).toEqual(expected);
   });
 
+  it('should retain concrete brace-expanded prompt files after deletion', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "prompts: 'file://prompts/{one,two}.txt'\n",
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/one.txt', 'prompts/two.txt']);
+  });
+
+  it('should inspect nested dependencies in brace-only structured prompt files', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('defs/one.yaml')) {
+        return 'content: file://shared/one.txt\n';
+      }
+      if (String(filePath).endsWith('defs/two.yaml')) {
+        return 'content: file://shared/two.txt\n';
+      }
+      return "prompts: 'file://defs/{one,two}.yaml'\n";
+    });
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/defs/one.yaml',
+      '/test/working/defs/two.yaml',
+    ]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'defs/one.yaml',
+      'defs/two.yaml',
+      'shared/one.txt',
+      'shared/two.txt',
+    ]);
+  });
+
   it('should retain both safe watch roots for a brace prompt glob with a parent arm', () => {
     mockFs.readFileSync.mockReturnValue(
       "prompts: 'file://{../shared,prompts}/*.txt'\n",
@@ -460,6 +506,8 @@ prompts:
     'prompts: "Solve 2*2."\n',
     'prompts: "Use *emphasis* sparingly."\n',
     'prompts: "Use **bold** text, not plain text."\n',
+    "prompts: 'Answer in {{ env.TONE }} tone'\n",
+    'prompts: \'Use {{- env["TONE"] -}} tone for this response\'\n',
     'prompts: What is the capital of {{country}}?\n',
     'prompts: Return [safe] output for {{user}}.\n',
     'prompts: Which option (A or B)? Explain briefly.\n',
@@ -1247,6 +1295,25 @@ tests:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/data/context.txt');
     expect(deps).toContain('../config/data/examples.json');
+  });
+
+  it('should extract file-backed test variables declared as strings or arrays', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  vars: file://data/default-cases.yaml
+tests:
+  - vars: file://data/scalar-cases.yaml
+  - vars:
+      - file://data/array-cases.yaml
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/data/default-cases.yaml',
+      '../config/data/scalar-cases.yaml',
+      '../config/data/array-cases.yaml',
+    ]);
   });
 
   it('should extract assert files', () => {

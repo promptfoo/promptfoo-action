@@ -20,6 +20,7 @@ import { isDirectory } from './fs';
 type PromptEntry =
   | string
   | { file?: string; id?: string; raw?: string; [key: string]: unknown };
+type TestVars = string | string[] | { [key: string]: unknown };
 
 type LegacyYamlSet = Record<string, unknown>;
 const MAX_BRACE_EXPANSIONS = 1024;
@@ -49,12 +50,12 @@ export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: string | PromptEntry[] | Record<string, string>;
   tests?: Array<{
-    vars?: { [key: string]: string | { file?: string } };
+    vars?: TestVars;
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
     [key: string]: unknown;
   }>;
   defaultTest?: {
-    vars?: { [key: string]: string | { file?: string } };
+    vars?: TestVars;
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
   };
 }
@@ -204,6 +205,10 @@ export function extractFileDependencies(
         }
 
         for (const absolutePattern of safePatterns) {
+          if (!glob.hasMagic(absolutePattern)) {
+            dependencies.add(absolutePattern);
+            continue;
+          }
           const absoluteRoot = path.parse(absolutePattern).root;
           const pathParts = path
             .relative(absoluteRoot, absolutePattern)
@@ -297,9 +302,8 @@ export function extractFileDependencies(
         const isExecutable = reference.startsWith('exec:');
         const isFileUrl = reference.startsWith('file://');
         const isTemplated = /\{[{%#]/.test(reference);
-        const isEnvironmentTemplate = /\{\{-?\s*env(?:\.|\s*\[)/.test(
-          reference,
-        );
+        const isEnvironmentTemplate =
+          /^\s*\{\{-?\s*env(?:\.|\s*\[)[\s\S]*?-?\}\}\s*$/.test(reference);
         if (
           !declaredFile &&
           !isExecutable &&
@@ -428,7 +432,10 @@ export function extractFileDependencies(
           return;
         }
 
-        const isPromptGlob = glob.hasMagic(promptPath);
+        const isPromptGlob = glob.hasMagic(promptPath, {
+          magicalBraces: true,
+          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+        });
         const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(promptPath);
         const hasFixedExtension = /\.[A-Za-z0-9_-]+$/.test(promptPath);
         if (!isStructuredPrompt && (!isPromptGlob || hasFixedExtension)) {
@@ -534,9 +541,16 @@ export function extractFileDependencies(
     }
 
     // Extract test variable files
-    const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
-      if (!isTraversableRecord(vars)) return;
-      for (const value of Object.values(vars)) {
+    const extractVarFiles = (vars?: TestVars): void => {
+      const values =
+        typeof vars === 'string'
+          ? [vars]
+          : Array.isArray(vars)
+            ? vars
+            : isTraversableRecord(vars)
+              ? Object.values(vars)
+              : [];
+      for (const value of values) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
         } else if (
