@@ -454,17 +454,25 @@ export function extractFileDependencies(
         }
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          if (isDependencyPathInside(absoluteMatch)) {
+          let physicalMatch = absoluteMatch;
+          try {
+            if (fs.existsSync(absoluteMatch)) {
+              physicalMatch = fs.realpathSync(absoluteMatch);
+            }
+          } catch {
+            core.warning(
+              `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`,
+            );
+            continue;
+          }
+          if (
+            isDependencyPathInside(absoluteMatch) &&
+            isDependencyPathInside(physicalMatch)
+          ) {
             dependencies.add(absoluteMatch);
           } else {
             core.warning(
-              `Ignoring unsafe config dependency match "${
-                redactDisplayPath
-                  ? displayFilePath
-                  : displayFileUrl === fileUrl
-                    ? match
-                    : displayFilePath
-              }": config file dependency glob match must stay within the repository workspace`,
+              `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`,
             );
           }
         }

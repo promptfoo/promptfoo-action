@@ -2119,6 +2119,37 @@ providers:
     ).toEqual(['providers/custom.py', 'providers']);
   });
 
+  it.each([
+    ['escape', '/tmp/outside/SENSITIVE-PROVIDER.py'],
+    ['EACCES', new Error('EACCES: SENSITIVE-REALPATH-DETAIL')],
+  ])('should ignore an unsafe globbed dependency symlink (%s) and preserve siblings', (_name, realpathResult) => {
+    mockFs.readFileSync.mockReturnValue('providers: file://providers/*.py\n');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/evals/providers/linked.py',
+      '/test/working/evals/providers/safe.py',
+    ]);
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('/linked.py')) {
+        if (realpathResult instanceof Error) throw realpathResult;
+        return realpathResult;
+      }
+      return candidate;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/safe.py', 'evals/providers']);
+    const warnings = vi.mocked(core.warning).mock.calls.join('\n');
+    expect(warnings).toContain('resolved path must stay within');
+    expect(warnings).not.toContain('SENSITIVE-PROVIDER');
+    expect(warnings).not.toContain('SENSITIVE-REALPATH-DETAIL');
+  });
+
   it('should preserve sibling dependencies when provider and test glob patterns are too long', () => {
     const longPattern = `file://${'a'.repeat(70_000)}*.yaml`;
     mockFs.readFileSync.mockReturnValue(
