@@ -129,6 +129,8 @@ export function extractFileDependencies(
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const isSafeDependency = (targetPath: string): boolean =>
+    isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -231,10 +233,7 @@ export function extractFileDependencies(
       if (
         expandedPaths.some((expandedPath) => {
           const traversalPath = expandedPath.replace(/\[\.\]/g, '.');
-          return !isPathInside(
-            dependencyRoot,
-            path.resolve(configDir, traversalPath),
-          );
+          return !isSafeDependency(path.resolve(configDir, traversalPath));
         })
       ) {
         core.warning(
@@ -258,7 +257,7 @@ export function extractFileDependencies(
         const safeMatches: string[] = [];
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
+          if (isSafeDependency(absoluteMatch)) {
             dependencies.add(absoluteMatch);
             safeMatches.push(absoluteMatch);
           } else {
@@ -361,7 +360,7 @@ export function extractFileDependencies(
       const absolutePath = path.resolve(configDir, providerPath);
       if (
         /\.(?:ya?ml|json)$/i.test(providerPath) &&
-        isPathInside(dependencyRoot, absolutePath)
+        isSafeDependency(absolutePath)
       ) {
         providerConfigFiles.add(absolutePath);
       }
@@ -782,8 +781,12 @@ export function extractFileDependencies(
 
       try {
         const realDependencyRoot = fs.realpathSync(dependencyRoot);
+        const realCwd = fs.realpathSync(cwd);
         const realTestFile = fs.realpathSync(testFile);
-        if (!isPathInside(realDependencyRoot, realTestFile)) {
+        if (
+          !isPathInside(realDependencyRoot, realTestFile) &&
+          !isPathInside(realCwd, realTestFile)
+        ) {
           core.warning(
             `Ignoring unsafe config dependency "${testFile}": test file dependency must stay within the repository workspace`,
           );

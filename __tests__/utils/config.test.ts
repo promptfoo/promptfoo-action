@@ -2315,6 +2315,64 @@ tests: file://cases.xlsx#Safety
     ).toEqual(['../config/tests/cases.yaml']);
   });
 
+  it('should preserve absolute checkout test and provider files from an external config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: file:///test/working/providers/custom.py:call_api
+tests: file:///test/working/tests/cases.yaml
+`);
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['providers/custom.py', 'tests/cases.yaml']);
+  });
+
+  it('should preserve absolute checkout test and provider glob matches from an external config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: file:///test/working/providers/*.py
+tests: file:///test/working/tests/*.yaml
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockImplementation((value: string) =>
+      value.includes('/providers/')
+        ? ['/test/working/providers/custom.py']
+        : ['/test/working/tests/cases.yaml'],
+    );
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual([
+      'providers/custom.py',
+      'providers',
+      'tests/cases.yaml',
+      'tests/',
+    ]);
+  });
+
+  it('should inspect an absolute checkout test file from an external config using real paths', () => {
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath).endsWith('cases.yaml')
+        ? 'vars: fixtures/context.txt'
+        : 'tests: file:///test/working/tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const value = String(filePath);
+      if (value === '/test/shared') {
+        return '/real/shared';
+      }
+      if (value.startsWith('/test/working')) {
+        return value.replace('/test/working', '/real/workspace');
+      }
+      return value;
+    });
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['tests/cases.yaml', 'tests/fixtures/context.txt']);
+  });
+
   it('should ignore remote file-backed tests', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests: https://docs.google.com/spreadsheets/d/example
