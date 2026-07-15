@@ -40072,7 +40072,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         providerConfigFiles.add(absolutePath);
       }
     };
-    const configuredProviders = config2.targets ?? config2.providers;
+    const configuredProviders = config2.targets || config2.providers;
     if (configuredProviders) {
       const providers = Array.isArray(configuredProviders) ? configuredProviders : [configuredProviders];
       for (const provider of providers) {
