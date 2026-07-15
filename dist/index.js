@@ -36455,6 +36455,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "ANTHROPIC_BASE_URL",
   "API_HOST",
   "APPDATA",
+  "AWS_BEARER_TOKEN_BEDROCK",
   "AWS_CA_BUNDLE",
   "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
   "AWS_CONTAINER_CREDENTIALS_FULL_URI",
@@ -36470,6 +36471,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "AWS_ROLE_SESSION_NAME",
   "AWS_SHARED_CREDENTIALS_FILE",
   "AWS_WEB_IDENTITY_TOKEN_FILE",
+  "AZURE_ADDITIONALLY_ALLOWED_TENANTS",
   "AZURE_AI_PROJECT_URL",
   "AZURE_API_BASE_URL",
   "AZURE_API_HOST",
@@ -36481,6 +36483,8 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "AZURE_OPENAI_API_HOST",
   "AZURE_OPENAI_BASE_URL",
   "AZURE_POD_IDENTITY_AUTHORITY_HOST",
+  "AZURE_STORAGE_CONNECTION_STRING",
+  "AZURE_TOKEN_CREDENTIALS",
   "AR",
   "BASH_ENV",
   "CDP_DOMAIN",
@@ -36543,8 +36547,10 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "GOOGLE_API_HOST",
   "GOOGLE_API_CERTIFICATE_CONFIG",
   "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_LOCATION",
   "GOOGLE_EXTERNAL_ACCOUNT_ALLOW_EXECUTABLES",
   "GOOGLE_GHA_CREDS_PATH",
+  "GOOGLE_LOCATION",
   "HOME",
   "HTTP_PROXY",
   "HTTPS_PROXY",
@@ -36651,6 +36657,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "USERPROFILE",
   "VERCEL_AI_GATEWAY_BASE_URL",
   "VERTEX_API_HOST",
+  "VERTEX_REGION",
   "VOYAGE_API_BASE_URL",
   "XAI_API_BASE_URL",
   "XDG_CONFIG_HOME"
@@ -36674,7 +36681,7 @@ function findForbiddenEnvFileKey(environment) {
     );
   });
 }
-function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
+function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, override = true) {
   const fileEnvironment = {};
   const result = dotenv.config({
     path: envFilePath,
@@ -36698,7 +36705,9 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
     );
   }
   for (const [key, value] of Object.entries(fileEnvironment)) {
-    targetEnvironment[key] = value;
+    if (override || targetEnvironment[key] === void 0) {
+      targetEnvironment[key] = value;
+    }
   }
 }
 
@@ -37208,9 +37217,10 @@ async function run() {
       }
     }
     const implicitEnvFilePath = path6.join(workingDirectory, ".env");
-    if (fs7.existsSync(implicitEnvFilePath)) {
+    const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
+    if (fs7.existsSync(implicitEnvFilePath) || process.env.DOTENV_KEY && fs7.existsSync(implicitVaultFilePath)) {
       info(`Loading environment variables from ${implicitEnvFilePath}`);
-      loadEnvironmentFile(implicitEnvFilePath);
+      loadEnvironmentFile(implicitEnvFilePath, process.env, false);
       info(`Successfully loaded ${implicitEnvFilePath}`);
     }
     if (envFiles) {
