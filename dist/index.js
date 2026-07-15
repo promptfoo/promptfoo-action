@@ -38436,6 +38436,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
   const configDir = path6.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const isDependencyPathInside = (targetPath) => isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
   try {
     if (/\.(?:[cm]?[jt]s)$/i.test(configPath)) {
       warning(
@@ -38522,7 +38523,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           throw new Error(`${source} contains an invalid null byte`);
         }
         const absolutePath = path6.resolve(configDir, filePath);
-        if (!isPathInside(dependencyRoot, absolutePath)) {
+        if (!isDependencyPathInside(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
           );
@@ -38583,7 +38584,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           warning(`Ignoring ${source}: pattern is too long`);
           continue;
         }
-        if (isPathInside(dependencyRoot, absolutePattern)) {
+        if (isDependencyPathInside(absolutePattern)) {
           safePatterns.push(absolutePattern);
         } else {
           unsafeAlternative = true;
@@ -38624,7 +38625,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         for (const match2 of matches) {
           const absoluteMatch = path6.resolve(match2);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
+          if (isDependencyPathInside(absoluteMatch)) {
             dependencies.add(absoluteMatch);
           } else {
             warning(
@@ -38840,12 +38841,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       };
       for (const promptFile of promptFiles) {
         const absolutePromptFile = path6.resolve(promptFile);
-        if (!isPathInside(dependencyRoot, absolutePromptFile) || !/\.(?:jsonl?|ya?ml)$/i.test(absolutePromptFile)) {
+        if (!isDependencyPathInside(absolutePromptFile) || !/\.(?:jsonl?|ya?ml)$/i.test(absolutePromptFile)) {
           continue;
         }
         try {
           const physicalPromptFile = fs6.existsSync(absolutePromptFile) ? fs6.realpathSync(absolutePromptFile) : absolutePromptFile;
-          if (!isPathInside(dependencyRoot, physicalPromptFile)) {
+          if (!isDependencyPathInside(physicalPromptFile)) {
             warning(
               `Ignoring unsafe prompt file dependency "${displayPromptPath}": resolved path must stay within the repository workspace`
             );
@@ -38898,6 +38899,22 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         const renderedReference = renderEnvironmentTemplates(reference, env);
         if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedReference)) {
           hasDynamicPromptDependencies = true;
+          return;
+        }
+        if (renderedReference.startsWith("exec:")) {
+          const commandParts = renderedReference.slice("exec:".length).match(/(?:\\.|[^\s"'\\]+|"[^"]*"|'[^']*')+/g) ?? [];
+          for (const rawPart of commandParts) {
+            const part = rawPart.replace(/^['"]|['"]$/g, "").replace(/\\(?=\s)/g, "");
+            if (part.startsWith("-") || !/[\\/]/.test(part) && !/\.[A-Za-z0-9]{1,10}$/.test(part)) {
+              continue;
+            }
+            const absolutePath = resolveConfigDependency(
+              path6.isAbsolute(part) ? part : path6.resolve(configDir, part),
+              "executable provider dependency",
+              "[redacted]"
+            );
+            if (absolutePath) dependencies.add(absolutePath);
+          }
           return;
         }
         if (!renderedReference.startsWith("file://")) return;
@@ -39079,7 +39096,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           );
           for (const executableArgument of executableParts.slice(1)) {
             const argumentPath = path6.isAbsolute(executableArgument) ? path6.resolve(executableArgument) : path6.resolve(promptExecutionCwd, executableArgument);
-            if (!isPathInside(dependencyRoot, argumentPath)) {
+            if (!isDependencyPathInside(argumentPath)) {
               continue;
             }
             if (!fs6.existsSync(argumentPath)) {
@@ -39862,9 +39879,15 @@ async function run() {
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        const manualFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter((file) => file);
+        const manualLines = filesInput.split(/\r?\n/).filter((file) => file.trim());
+        const manualFiles = manualLines.flatMap((file) => {
+          const trimmed2 = file.trim();
+          return file === trimmed2 ? [file] : [file, trimmed2];
+        });
         changedFiles = manualFiles.join("\0");
-        info(`Using manually specified files: ${manualFiles.join("\n")}`);
+        info(
+          `Using manually specified files: ${manualLines.map((file) => file.trim()).join("\n")}`
+        );
       } else {
         validateGitRevision(compareBase);
         try {
@@ -40023,7 +40046,7 @@ async function run() {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
-    if (!useConfigPrompts && promptFiles.length > 0) {
+    if (!useConfigPrompts && !configChanged && !dependencyChanged && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
     }
     if (noShare) {
