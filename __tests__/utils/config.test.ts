@@ -274,6 +274,27 @@ messages:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it.each([
+    [
+      'prompts: file://prompts/json_prompt.txt',
+      'evals/prompts/json_prompt.txt',
+    ],
+    ['prompts: prompts/yaml_prompt.txt', 'evals/prompts/yaml_prompt.txt'],
+  ])('should not inspect a non-structured prompt whose name contains JSON or YAML', (config, promptPath) => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) return config;
+      throw new Error(`Unexpected prompt read: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([promptPath]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should inspect every JSON or YAML match in a structured prompt glob', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('promptfooconfig.yaml')) {
@@ -1114,6 +1135,75 @@ nunjucksFilters:
       'evals/scenarios/check.rb',
       'evals/scenarios/provider.go',
       'evals/filters/allcaps.js',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should track templated prompts and rebased external test/scenario providers and vars', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return `
+prompts: 'file://{{ env.PROMPT_DIR }}/main.txt'
+sharedProvider: &shared
+  python:providers/shared.py:call_api:
+    config:
+      response_format: file://schemas/shared.json
+tests:
+  - vars: *shared
+    provider: *shared
+  - tests/cases.yaml
+scenarios:
+  - tests: file://scenarios/cases.yaml
+  - tests: file://tests/cases.yaml
+`;
+      }
+      if (String(filePath).endsWith('evals/tests/cases.yaml')) {
+        return `
+- vars: file://fixture.yaml
+  provider: exec:providers/run.py:call_api
+- vars:
+    - vars-a.yaml
+    - file://vars-b.yaml
+  provider:
+    file://providers/map.py:call_api:
+      config:
+        tools: file://schemas/tools.yaml
+`;
+      }
+      if (String(filePath).endsWith('evals/scenarios/cases.yaml')) {
+        return `
+- vars: fixture.yaml
+  provider: golang:providers/scenario.go:CallApi
+`;
+      }
+      if (/\/(?:fixture|vars-[ab])\.yaml$/.test(String(filePath))) return '{}';
+      if (/\/(?:shared\.json|tools\.yaml)$/.test(String(filePath))) return '{}';
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      './',
+      'evals/schemas/shared.json',
+      'evals/providers/shared.py',
+      'evals/tests/cases.yaml',
+      'evals/tests/fixture.yaml',
+      'evals/tests/providers/run.py',
+      'evals/tests/vars-a.yaml',
+      'evals/tests/vars-b.yaml',
+      'evals/tests/providers/map.py',
+      'evals/tests/schemas/tools.yaml',
+      'evals/scenarios/cases.yaml',
+      'evals/fixture.yaml',
+      'evals/providers/scenario.go',
+      'evals/providers/run.py',
+      'evals/vars-a.yaml',
+      'evals/vars-b.yaml',
+      'evals/providers/map.py',
+      'evals/schemas/tools.yaml',
     ]);
     expect(core.warning).not.toHaveBeenCalled();
   });

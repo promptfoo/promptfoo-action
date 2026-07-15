@@ -318,7 +318,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
     });
 
@@ -368,7 +368,9 @@ describe('GitHub Action Main', () => {
       );
       expect(
         mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body,
-      ).toContain('prompts/prompt1.txt, prompts/prompt2.txt');
+      ).toContain(
+        'Evaluated prompt files: prompts/prompt1.txt, prompts/prompt2.txt',
+      );
     });
 
     test('should handle empty prompts input', async () => {
@@ -1060,6 +1062,11 @@ describe('GitHub Action Main', () => {
           'prompts/prompt2.txt',
         ]),
       );
+      expect(
+        mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body,
+      ).toContain(
+        'Evaluated prompt files: prompts/prompt1.txt, prompts/prompt2.txt',
+      );
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
@@ -1087,6 +1094,11 @@ describe('GitHub Action Main', () => {
           'prompts/prompt1.txt',
           'prompts/prompt2.txt',
         ]),
+      );
+      expect(
+        mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body,
+      ).toContain(
+        'Evaluated prompt files: prompts/prompt1.txt, prompts/prompt2.txt',
       );
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
@@ -1707,7 +1719,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
 
       // Should still fail the action after posting the comment
@@ -1930,6 +1942,9 @@ describe('GitHub Action Main', () => {
       // Should NOT have these
       expect(args).not.toContain('--share');
       expect(args).not.toContain('--prompts'); // because use-config-prompts is true
+      expect(
+        mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body,
+      ).toContain('Evaluation used prompts defined in the Promptfoo config.');
     });
 
     test('should use console guidance in PR comments without a share URL', async () => {

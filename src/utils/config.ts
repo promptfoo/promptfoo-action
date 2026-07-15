@@ -979,7 +979,10 @@ export function extractFileDependencies(configPath: string): string[] {
             : configuredPrompt;
         if (typeof prompt === 'string' && prompt.startsWith('file://')) {
           for (const fileUrl of getFileReferenceCandidates(prompt, 'generic')) {
-            if (/(?:json|ya?ml)/i.test(fileUrl)) {
+            if (
+              /\.(?:json|ya?ml)$/i.test(fileUrl) ||
+              getGlobMagic(fileUrl.slice('file://'.length)) === true
+            ) {
               inspectNestedConfigFile(fileUrl);
             } else {
               processFileUrl(fileUrl);
@@ -1005,7 +1008,10 @@ export function extractFileDependencies(configPath: string): string[] {
             promptFileUrl,
             'generic',
           )) {
-            if (/(?:json|ya?ml)/i.test(fileUrl)) {
+            if (
+              /\.(?:json|ya?ml)$/i.test(fileUrl) ||
+              getGlobMagic(fileUrl.slice('file://'.length)) === true
+            ) {
               inspectNestedConfigFile(fileUrl);
             } else {
               processFileUrl(fileUrl);
@@ -1136,7 +1142,10 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     const inspectedTestFiles = new Set<string>();
-    const inspectTestFile = (value: string): void => {
+    const inspectTestFile = (
+      value: string,
+      rebaseNestedDependencies = true,
+    ): void => {
       if (/^(?:https?:\/\/|az:\/\/|huggingface:\/\/)/i.test(value)) return;
       const rawFilePath = normalizeConfigFilePath(
         value.startsWith('file://') ? value.slice('file://'.length) : value,
@@ -1177,7 +1186,8 @@ export function extractFileDependencies(configPath: string): string[] {
             );
             continue;
           }
-          if (inspectedTestFiles.has(realTestFile)) continue;
+          const inspectedTestFileKey = `${realTestFile}:${rebaseNestedDependencies}`;
+          if (inspectedTestFiles.has(inspectedTestFileKey)) continue;
           if (inspectedTestFiles.size >= MAX_NESTED_TEST_FILES) {
             addDependencyRootWatchers();
             core.warning(
@@ -1185,10 +1195,12 @@ export function extractFileDependencies(configPath: string): string[] {
             );
             return;
           }
-          inspectedTestFiles.add(realTestFile);
+          inspectedTestFiles.add(inspectedTestFileKey);
           if (!canReadStructuredFile(realTestFile)) continue;
           const previousBaseDir = dependencyBaseDir;
-          dependencyBaseDir = path.dirname(testFile);
+          dependencyBaseDir = rebaseNestedDependencies
+            ? path.dirname(testFile)
+            : previousBaseDir;
           try {
             const parsedTests = loadYaml(
               fs.readFileSync(realTestFile, 'utf8'),
@@ -1202,9 +1214,11 @@ export function extractFileDependencies(configPath: string): string[] {
                 ? parsedTests.tests
                 : parsedTests;
             if (Array.isArray(nestedTests)) {
-              for (const test of nestedTests) processTestConfig(test);
+              for (const test of nestedTests) {
+                processTestConfig(test, rebaseNestedDependencies);
+              }
             } else {
-              processTestConfig(nestedTests);
+              processTestConfig(nestedTests, rebaseNestedDependencies);
             }
           } catch {
             addDependencyRootWatchers();
@@ -1218,14 +1232,17 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
-    const processTestConfig = (test: unknown): void => {
+    const processTestConfig = (
+      test: unknown,
+      rebaseNestedDependencies = true,
+    ): void => {
       if (typeof test === 'string') {
-        inspectTestFile(test);
+        inspectTestFile(test, rebaseNestedDependencies);
         return;
       }
       if (!test || typeof test !== 'object' || ArrayBuffer.isView(test)) return;
       if ('path' in test && typeof test.path === 'string') {
-        inspectTestFile(test.path);
+        inspectTestFile(test.path, rebaseNestedDependencies);
         if ('config' in test) extractFileReferences(test.config);
         return;
       }
@@ -1342,9 +1359,9 @@ export function extractFileDependencies(configPath: string): string[] {
       for (const scenario of config.scenarios) {
         for (const entries of [scenario.tests, scenario.config]) {
           if (Array.isArray(entries)) {
-            for (const entry of entries) processTestConfig(entry);
+            for (const entry of entries) processTestConfig(entry, false);
           } else if (entries) {
-            processTestConfig(entries);
+            processTestConfig(entries, false);
           }
         }
       }
