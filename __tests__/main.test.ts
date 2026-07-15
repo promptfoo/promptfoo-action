@@ -2117,6 +2117,151 @@ describe('GitHub Action Main', () => {
       ).toBe(false);
     });
 
+    test('should ignore an unchanged newline prompt match when an unrelated change skips evaluation', async () => {
+      const forgedPrompt =
+        'prompts/unsafe\r\n::error::SKIPPED_PROMPT_SECRET_MARKER.txt';
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'unrelated/readme.md' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt', forgedPrompt]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) =>
+            String(call[0]).includes('SKIPPED_PROMPT_SECRET_MARKER'),
+          ),
+      ).toBe(false);
+    });
+
+    test('should reject an unchanged prompt glob match that escapes the workspace during a full dependency evaluation', async () => {
+      withInputs({ prompts: '../secrets/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'fixtures/referenced-upload.pdf' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        '../secrets/LEXICAL_PROMPT_ESCAPE_SECRET_MARKER.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced-upload.pdf',
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Matched prompt file path resolves outside the repository workspace or working directory; refusing to evaluate unsafe path',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) =>
+            String(call[0]).includes('LEXICAL_PROMPT_ESCAPE_SECRET_MARKER'),
+          ),
+      ).toBe(false);
+    });
+
+    test('should reject an unchanged prompt symlink match that escapes the workspace during a full dependency evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'fixtures/referenced-upload.pdf' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/linked-prompt.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced-upload.pdf',
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const resolvedPath = filePath.toString();
+        return resolvedPath.endsWith('prompts/linked-prompt.txt')
+          ? '/private/outside/SYMLINK_PROMPT_ESCAPE_SECRET_MARKER.txt'
+          : resolvedPath;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Matched prompt file path resolves outside the repository workspace or working directory; refusing to evaluate unsafe path',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) =>
+            String(call[0]).includes('SYMLINK_PROMPT_ESCAPE_SECRET_MARKER'),
+          ),
+      ).toBe(false);
+    });
+
+    test('should reject an unchanged prompt match outside the working directory during a full dependency evaluation', async () => {
+      withInputs({
+        'working-directory': 'evals',
+        prompts: '../secrets/*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/fixtures/referenced-upload.pdf' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        '../secrets/WORKDIR_PROMPT_ESCAPE_SECRET_MARKER.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/fixtures/referenced-upload.pdf',
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Matched prompt file path resolves outside the repository workspace or working directory; refusing to evaluate unsafe path',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) =>
+            String(call[0]).includes('WORKDIR_PROMPT_ESCAPE_SECRET_MARKER'),
+          ),
+      ).toBe(false);
+    });
+
+    test('should ignore unsafe unchanged action prompt matches when config prompts are evaluated', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'fixtures/referenced-upload.pdf' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        '../secrets/UNUSED_PROMPT_SECRET_MARKER.txt',
+        'prompts/unused\r\n::error::UNUSED_ANNOTATION_SECRET_MARKER.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'fixtures/referenced-upload.pdf',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.not.arrayContaining(['--prompts']),
+        expect.any(Object),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(
+        [mockCore.info, mockCore.warning, mockCore.debug, mockCore.setFailed]
+          .flatMap((mock) => mock.mock.calls)
+          .some((call) => String(call[0]).includes('SECRET_MARKER')),
+      ).toBe(false);
+    });
+
     test('should use the GitHub API instead of PR refs for changed files', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
