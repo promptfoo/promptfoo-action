@@ -38989,23 +38989,38 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           return;
         }
       }
-      const visited = /* @__PURE__ */ new WeakSet();
+      const visited = /* @__PURE__ */ new WeakMap();
       const walk = (root, sourcePath) => {
         const pending = [
           {
             value: root,
             env: initialEnv,
             providerContext: scanProviderPaths,
+            providerRoot: false,
             testVarsFileContext: false
           }
         ];
         while (pending.length > 0) {
           const current = pending[pending.length - 1];
           pending.length -= 1;
-          const { value, env, providerContext, testVarsFileContext } = current;
-          if (typeof value === "string" && value.startsWith("file://")) {
+          const {
+            value,
+            env,
+            providerContext,
+            providerRoot,
+            testVarsFileContext
+          } = current;
+          if (providerRoot) {
+            extractProviderDependencies(
+              value,
+              resolveNestedProviderPaths ? path6.dirname(sourcePath) : configDir,
+              env
+            );
+          }
+          if (typeof value === "string" && (value.startsWith("file://") || testVarsFileContext)) {
+            const fileReference = value.startsWith("file://") ? value : `file://${value}`;
             const renderedReference = stripNunjucksComments(
-              renderEnvironmentTemplates(value, env)
+              renderEnvironmentTemplates(fileReference, env)
             );
             if (hasNunjucksTemplate(renderedReference)) {
               hasDynamicPromptDependencies = true;
@@ -39017,10 +39032,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
               path6.dirname(sourcePath),
               renderedReference.replace(/^file:\/\//, "")
             )}` : renderedReference;
-            processFileUrl(providerReference, true, value);
+            processFileUrl(providerReference, true, fileReference);
             extractNestedPromptFileUrls(
               providerReference,
-              value,
+              fileReference,
               providerContext,
               false,
               false,
@@ -39029,8 +39044,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             );
           } else if (typeof value === "object" && value !== null) {
             if (ArrayBuffer.isView(value)) continue;
-            if (visited.has(value)) continue;
-            visited.add(value);
+            const visitBit = 1 << ((providerContext ? 1 : 0) | (testVarsFileContext ? 2 : 0));
+            const visitedContexts = visited.get(value) ?? 0;
+            if ((visitedContexts & visitBit) !== 0) continue;
+            visited.set(value, visitedContexts | visitBit);
             const record = value;
             if (failClosedOnRefs && Object.keys(record).includes("$ref")) {
               hasDynamicPromptDependencies = true;
@@ -39053,6 +39070,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
                 value: entry,
                 env: nestedEnv,
                 providerContext: providerContext || key === "provider",
+                providerRoot: key === "provider",
                 testVarsFileContext: testVarsFileContext || key === "vars" && (typeof entry === "string" || Array.isArray(entry))
               });
             }
@@ -39152,7 +39170,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
       }
     };
-    const extractProviderDependencies = (provider) => {
+    const extractProviderDependencies = (provider, providerBaseDir = configDir, initialEnv = templateEnv) => {
       const processProviderReference = (reference, env, knownHttpProvider = false) => {
         const renderedReference = renderEnvironmentTemplates(reference, env);
         if (hasNunjucksTemplate(renderedReference)) {
@@ -39167,7 +39185,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
               continue;
             }
             const absolutePath = resolveConfigDependency(
-              path6.isAbsolute(part) || isForeignWindowsAbsolutePath(part) ? part : path6.resolve(configDir, part),
+              path6.isAbsolute(part) || isForeignWindowsAbsolutePath(part) ? part : path6.resolve(providerBaseDir, part),
               "executable provider dependency",
               "[redacted]"
             );
@@ -39177,17 +39195,24 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         for (const prefix of ["python:", "golang:", "ruby:"]) {
           if (!renderedReference.startsWith(prefix)) continue;
+          const providerPath2 = renderedReference.slice(prefix.length);
           processFileUrl(
-            `file://${renderedReference.slice(prefix.length)}`,
+            `file://${path6.isAbsolute(providerPath2) || isForeignWindowsAbsolutePath(providerPath2) ? providerPath2 : path6.resolve(providerBaseDir, providerPath2)}`,
             true,
             `file://${reference.slice(prefix.length)}`
           );
           return;
         }
         if (!renderedReference.startsWith("file://")) return;
-        processFileUrl(renderedReference, true, reference);
+        const providerPath = renderedReference.slice("file://".length);
+        if (!providerPath || providerPath.includes("\0")) {
+          processFileUrl(renderedReference, true, reference);
+          return;
+        }
+        const resolvedReference = providerBaseDir === configDir || path6.isAbsolute(providerPath) || isForeignWindowsAbsolutePath(providerPath) ? renderedReference : `file://${path6.resolve(providerBaseDir, providerPath)}`;
+        processFileUrl(resolvedReference, true, reference);
         extractNestedPromptFileUrls(
-          renderedReference,
+          resolvedReference,
           reference,
           true,
           false,
@@ -39196,7 +39221,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         );
       };
       if (typeof provider === "string") {
-        processProviderReference(provider, templateEnv);
+        processProviderReference(provider, initialEnv);
         return;
       }
       if (typeof provider !== "object" || provider === null) return;
@@ -39213,7 +39238,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           if (!(type in providerEntry)) continue;
           foundGradingProvider = true;
           extractProviderDependencies(
-            providerEntry[type]
+            providerEntry[type],
+            providerBaseDir,
+            initialEnv
           );
         }
         if (foundGradingProvider) return;
@@ -39231,11 +39258,11 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         Object.entries(
           typeof providerRecord.env === "object" && providerRecord.env !== null ? providerRecord.env : {}
         ).flatMap(
-          ([name, value]) => typeof value === "string" ? [[name, renderEnvironmentTemplates(value, templateEnv)]] : []
+          ([name, value]) => typeof value === "string" ? [[name, renderEnvironmentTemplates(value, initialEnv)]] : []
         )
       );
       const mergedProviderEnv = {
-        ...templateEnv,
+        ...initialEnv,
         ...providerEnv
       };
       if (providerReference) {
@@ -39342,8 +39369,11 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           const promptExecutionCwd = typeof promptConfig?.basePath === "string" ? path6.resolve(executionCwd, promptConfig.basePath) : executionCwd;
           const rawPromptPath = isExecutable ? executableParts[0] ?? "" : reference;
           if (!rawPromptPath) return;
-          const renderedPromptPath = isExecutable ? rawPromptPath : renderPathEnvironmentVariables(rawPromptPath, templateEnv);
-          if (/\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/.test(
+          const renderedPromptPath = isExecutable ? rawPromptPath : renderEnvironmentTemplates(
+            renderPathEnvironmentVariables(rawPromptPath, templateEnv),
+            templateEnv
+          );
+          if (hasNunjucksTemplate(renderedPromptPath) || /\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/.test(
             renderedPromptPath
           )) {
             hasDynamicPromptDependencies = true;
@@ -39414,8 +39444,30 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       }
     }
     const extractVarFiles = (vars) => {
+      const isVarsFileList = typeof vars === "string" || Array.isArray(vars);
       const values = typeof vars === "string" ? [vars] : Array.isArray(vars) ? vars : vars ? Object.values(vars) : [];
       for (const value of values) {
+        if (typeof value === "string" && isVarsFileList) {
+          const renderedReference = renderEnvironmentTemplates(
+            value.startsWith("file://") ? value : `file://${value}`,
+            templateEnv
+          );
+          if (hasNunjucksTemplate(renderedReference)) {
+            hasDynamicPromptDependencies = true;
+            continue;
+          }
+          processFileUrl(renderedReference, true, value);
+          extractNestedPromptFileUrls(
+            renderedReference,
+            value,
+            false,
+            false,
+            false,
+            templateEnv,
+            true
+          );
+          continue;
+        }
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value);
           const selector = getFileFunctionSelector(value);
