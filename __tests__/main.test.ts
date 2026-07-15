@@ -776,7 +776,7 @@ describe('GitHub Action Main', () => {
         );
         expect(mockGlob.sync).toHaveBeenCalledWith(
           promptPattern.split('\\').join('/'),
-          { cwd: process.cwd(), nodir: true },
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
         );
       } finally {
         Object.defineProperty(process, 'platform', {
@@ -812,7 +812,7 @@ describe('GitHub Action Main', () => {
         );
         expect(mockGlob.sync).toHaveBeenCalledWith(
           promptPattern.split('\\').join('/'),
-          { cwd: process.cwd(), nodir: true },
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
         );
       } finally {
         Object.defineProperty(process, 'platform', {
@@ -849,6 +849,7 @@ describe('GitHub Action Main', () => {
         expect(mockGlob.sync).toHaveBeenCalledWith(`${promptRoot}/*.txt`, {
           cwd: process.cwd(),
           nodir: true,
+          braceExpandMax: 1000,
         });
       } finally {
         Object.defineProperty(process, 'platform', {
@@ -886,7 +887,7 @@ describe('GitHub Action Main', () => {
         );
         expect(mockGlob.sync).toHaveBeenCalledWith(
           `${process.cwd()}/${promptDirectory}/*.txt`,
-          { cwd: process.cwd(), nodir: true },
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
         );
       } finally {
         Object.defineProperty(process, 'platform', {
@@ -931,7 +932,7 @@ describe('GitHub Action Main', () => {
         );
         expect(mockGlob.sync).toHaveBeenCalledWith(
           `${promptRoot.split('\\').join('/')}/${globSegment}/*.txt`,
-          { cwd: process.cwd(), nodir: true },
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
         );
       } finally {
         Object.defineProperty(process, 'platform', {
@@ -968,6 +969,7 @@ describe('GitHub Action Main', () => {
         expect(mockGlob.sync).toHaveBeenCalledWith(promptPattern, {
           cwd: process.cwd(),
           nodir: true,
+          braceExpandMax: 1000,
         });
       } finally {
         Object.defineProperty(process, 'platform', {
@@ -1013,6 +1015,7 @@ describe('GitHub Action Main', () => {
         expect(mockGlob.sync).toHaveBeenCalledWith(promptPattern, {
           cwd: process.cwd(),
           nodir: true,
+          braceExpandMax: 1000,
         });
       } finally {
         Object.defineProperty(process, 'platform', {
@@ -1056,7 +1059,7 @@ describe('GitHub Action Main', () => {
         );
         expect(mockGlob.sync).toHaveBeenCalledWith(
           `${promptRoot.split('\\').join('/')}/${normalizedSegment}/*.txt`,
-          { cwd: process.cwd(), nodir: true },
+          { cwd: process.cwd(), nodir: true, braceExpandMax: 1000 },
         );
       } finally {
         Object.defineProperty(process, 'platform', {
@@ -1269,7 +1272,11 @@ describe('GitHub Action Main', () => {
         );
         expect(mockGlob.sync).toHaveBeenCalledWith(
           `{${absolutePromptDirectory.split('\\').join('/')},archive}/*.txt`,
-          { cwd: path.join(process.cwd(), 'packages/app'), nodir: true },
+          {
+            cwd: path.join(process.cwd(), 'packages/app'),
+            nodir: true,
+            braceExpandMax: 1000,
+          },
         );
       } finally {
         Object.defineProperty(process, 'platform', {
@@ -1395,6 +1402,7 @@ describe('GitHub Action Main', () => {
       expect(mockGlob.sync).toHaveBeenCalledWith('prompts/*.txt', {
         cwd: process.cwd(),
         nodir: true,
+        braceExpandMax: 1000,
       });
     });
 
@@ -1518,6 +1526,65 @@ describe('GitHub Action Main', () => {
       } finally {
         mockBraceExpand.mockReset();
       }
+    });
+
+    test.each([
+      ['an extreme numeric brace range', 'prompts/{1..1000000000}.txt'],
+      ['an oversized pattern', `prompts/${'a'.repeat(65_537)}.txt`],
+      ['a NUL-containing pattern', 'prompts/invalid\0name.txt'],
+      ['a malformed brace pattern', 'prompts/{broken/*.txt'],
+      ['an unmatched closing brace', 'prompts/broken}/*.txt'],
+      ['an unsafe long numeric range', `prompts/{1..${'9'.repeat(17)}}.txt`],
+    ])('should reject %s before brace expansion or filesystem globbing', async (_label, prompts) => {
+      mockBraceExpand.mockImplementation(() => {
+        throw new Error('unsafe brace expansion was invoked');
+      });
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+
+      await run();
+
+      expect(mockBraceExpand).not.toHaveBeenCalled();
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve an escaped numeric-brace literal in a POSIX prompt glob', async () => {
+      withInputs({ prompts: 'prompts/\\{1..1000000000\\}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/{1..1000000000}.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/\\{1..1000000000\\}.txt',
+        expect.objectContaining({ braceExpandMax: 1000 }),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should preserve a bounded zero-step numeric range in a prompt glob', async () => {
+      withInputs({ prompts: 'prompts/{1..3..0}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/2.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test.each([

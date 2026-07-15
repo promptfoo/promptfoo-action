@@ -35,6 +35,59 @@ const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const MAX_PROMPT_GLOB_VARIANTS = 1000;
 const MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
+const MAX_PROMPT_NUMERIC_RANGE = 100_000;
+
+function isSafePromptGlob(pattern: string): boolean {
+  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || pattern.includes('\0')) {
+    return false;
+  }
+
+  let braceDepth = 0;
+  let escaped = false;
+  let inCharacterClass = false;
+  for (const character of pattern) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === '[') {
+      inCharacterClass = true;
+      continue;
+    }
+    if (character === ']' && inCharacterClass) {
+      inCharacterClass = false;
+      continue;
+    }
+    if (inCharacterClass) continue;
+    if (character === '{') braceDepth++;
+    if (character === '}') {
+      if (braceDepth === 0) return false;
+      braceDepth--;
+    }
+  }
+  if (braceDepth > 0 || inCharacterClass) return false;
+
+  for (const range of pattern.matchAll(
+    /\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g,
+  )) {
+    if (range.slice(1).some((value) => value && value.length > 16))
+      return false;
+    const start = Number(range[1]);
+    const end = Number(range[2]);
+    const step = Math.abs(Number(range[3] ?? '1')) || 1;
+    if (
+      Math.floor(Math.abs(end - start) / step) + 1 >
+      MAX_PROMPT_NUMERIC_RANGE
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
 
 type ChangedFile = {
   filename: string;
@@ -307,9 +360,7 @@ export async function run(): Promise<void> {
       toRepositoryPath(workingDirectory),
       { windowsPathsNoEscape: false, magicalBraces: true },
     );
-    const validPromptFilesGlobs = promptFilesGlobs.filter(
-      (pattern) => pattern.length <= MAX_PROMPT_GLOB_LENGTH,
-    );
+    const validPromptFilesGlobs = promptFilesGlobs.filter(isSafePromptGlob);
     let promptGlobMatchingCapped =
       validPromptFilesGlobs.length !== promptFilesGlobs.length;
     let promptGlobMatchers:
@@ -786,6 +837,7 @@ export async function run(): Promise<void> {
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,
+        braceExpandMax: MAX_PROMPT_GLOB_VARIANTS,
       });
 
       const allMatches = matches.filter((file) => {

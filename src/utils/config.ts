@@ -8,6 +8,7 @@ import { isDirectory } from './fs';
 
 const MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 const MAX_BRACE_EXPANSIONS = 1024;
+const MAX_NUMERIC_BRACE_RANGE = 100_000;
 const MAX_STRUCTURED_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_STRUCTURED_FILES = 128;
 const MAX_STRUCTURED_NODES = 50_000;
@@ -127,6 +128,24 @@ function hasMismatchedGlobDelimiters(pattern: string): boolean {
     }
   }
   return braceDepth > 0 || parenthesisDepth > 0 || inCharacterClass;
+}
+
+function hasOversizedNumericBraceRange(pattern: string): boolean {
+  for (const range of pattern.matchAll(
+    /\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g,
+  )) {
+    if (range.slice(1).some((value) => value && value.length > 16)) return true;
+    const start = Number(range[1]);
+    const end = Number(range[2]);
+    const step = Math.abs(Number(range[3] ?? '1')) || 1;
+    if (
+      Math.floor(Math.abs(end - start) / step) + 1 >
+      MAX_NUMERIC_BRACE_RANGE
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -332,6 +351,14 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
+      if (filePath.includes('{') && hasOversizedNumericBraceRange(filePath)) {
+        watchWorkspace();
+        core.warning(
+          'Skipping an oversized numeric config dependency glob; conservatively watching the repository workspace',
+        );
+        return;
+      }
+
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
@@ -448,7 +475,9 @@ export function extractFileDependencies(configPath: string): string[] {
         // Also add the base directory for watching
         // Extract the non-glob part of the path
         const filePathRoot = path.parse(filePath).root;
-        const pathParts = filePath.slice(filePathRoot.length).split(/[\\/]/);
+        const pathParts = filePath
+          .slice(filePathRoot.length)
+          .split(process.platform === 'win32' ? /[\\/]/ : '/');
         let basePath = filePathRoot;
         for (const part of pathParts) {
           let partHasMagic: boolean;
@@ -468,7 +497,11 @@ export function extractFileDependencies(configPath: string): string[] {
           }
           basePath = basePath ? path.join(basePath, part) : part;
         }
-        dependencies.add(path.resolve(configDir, basePath || '.'));
+        const literalBasePath =
+          process.platform === 'win32'
+            ? basePath
+            : basePath.replace(/\\([{}[\](),])/g, '$1');
+        dependencies.add(path.resolve(configDir, literalBasePath || '.'));
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = fileUrl.endsWith('/')

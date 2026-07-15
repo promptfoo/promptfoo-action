@@ -835,6 +835,88 @@ metadata:
     );
   });
 
+  it('should reject an extreme numeric dependency glob before brace expansion or filesystem globbing', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{1..1000000000}/*.py
+`);
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error('unsafe glob parsing was invoked');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping an oversized numeric config dependency glob; conservatively watching the repository workspace',
+    );
+  });
+
+  it('should reject a dependency glob with an unsafe long numeric range', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{1..${'9'.repeat(17)}}/*.py
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should preserve an escaped numeric-brace literal in a POSIX dependency glob', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'file://providers/\\{1..1000000000\\}/*.py'
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/{1..1000000000}/current.py',
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'providers/{1..1000000000}/current.py',
+      'providers/{1..1000000000}',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalled();
+  });
+
+  it('should preserve a bounded zero-step numeric range in a Windows dependency glob', () => {
+    const currentPlatform = process.platform;
+    Object.defineProperty(process, 'platform', {
+      value: 'win32',
+      configurable: true,
+    });
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{1..3..0}/*.py
+`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => value.includes('*') || value.includes('{'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/providers/2/current.py']);
+
+    try {
+      const deps = extractFileDependencies(
+        '/test/working/promptfooconfig.yaml',
+      );
+      expect(deps).toContain('providers/2/current.py');
+      expect(mockGlob.sync).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, 'platform', {
+        value: currentPlatform,
+        configurable: true,
+      });
+    }
+  });
+
   it('should cap external provider and test callbacks before expanding their dependencies', () => {
     const providers = Array.from({ length: 1025 }, (_, index) => ({
       id: 'https',
