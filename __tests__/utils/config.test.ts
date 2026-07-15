@@ -2857,6 +2857,33 @@ providers:
     expect(deps).toEqual([]);
   });
 
+  it('should ignore a null-byte glob without dropping later dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - "file://providers/\\0*.py"
+  - file://providers/safe.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockImplementation((patterns: string | string[]) => {
+      if (String(patterns).includes('\0')) {
+        throw new TypeError('glob pattern cannot contain a null byte');
+      }
+      return [];
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/safe.py']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('contains an invalid null byte'),
+    );
+  });
+
   it('should ignore unsafe object-form variable and assertion dependencies', () => {
     const configContent = `
 tests:

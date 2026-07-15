@@ -982,6 +982,30 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should match normalized dependency globs with the POSIX path matcher', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/data/deleted.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('*'),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue(['evals/data/*.txt']);
+      const matchesGlob = vi.spyOn(path.posix, 'matchesGlob');
+
+      await run();
+
+      expect(matchesGlob).toHaveBeenCalledWith(
+        'evals/data/deleted.txt',
+        'evals/data/*.txt',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      matchesGlob.mockRestore();
+    });
+
     test('should detect dependency directories without a trailing slash', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },

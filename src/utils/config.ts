@@ -166,6 +166,10 @@ export function extractFileDependencies(configPath: string): string[] {
       resolvedPath?: string,
     ): string[] => {
       const filePath = normalizeConfigFilePath(fileUrl.replace('file://', ''));
+      if (!filePath || filePath.includes('\0')) {
+        resolveConfigDependency(filePath, 'config file dependency');
+        return [];
+      }
       if (watchDynamicFilePath(filePath)) return [];
 
       // Check if the path contains glob patterns
