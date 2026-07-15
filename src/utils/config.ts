@@ -236,10 +236,13 @@ export interface PromptfooConfig {
     | PromptfooTestGeneratorConfig
     | Array<string | PromptfooTestConfig | PromptfooTestGeneratorConfig>;
   defaultTest?: string | PromptfooTestConfig;
-  scenarios?: Array<{
-    tests?: unknown;
-    config?: unknown;
-  }>;
+  scenarios?: Array<
+    | string
+    | {
+        tests?: unknown;
+        config?: unknown;
+      }
+  >;
   nunjucksFilters?: Record<string, string>;
 }
 
@@ -1145,6 +1148,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const inspectTestFile = (
       value: string,
       rebaseNestedDependencies = true,
+      inspectScenarios = false,
     ): void => {
       if (/^(?:https?:\/\/|az:\/\/|huggingface:\/\/)/i.test(value)) return;
       const rawFilePath = normalizeConfigFilePath(
@@ -1186,7 +1190,7 @@ export function extractFileDependencies(configPath: string): string[] {
             );
             continue;
           }
-          const inspectedTestFileKey = `${realTestFile}:${rebaseNestedDependencies}`;
+          const inspectedTestFileKey = `${realTestFile}:${rebaseNestedDependencies}:${inspectScenarios}`;
           if (inspectedTestFiles.has(inspectedTestFileKey)) continue;
           if (inspectedTestFiles.size >= MAX_NESTED_TEST_FILES) {
             addDependencyRootWatchers();
@@ -1206,6 +1210,13 @@ export function extractFileDependencies(configPath: string): string[] {
               fs.readFileSync(realTestFile, 'utf8'),
               { schema: CONFIG_SCHEMA },
             );
+            if (inspectScenarios) {
+              const scenarios = Array.isArray(parsedTests)
+                ? parsedTests
+                : [parsedTests];
+              for (const scenario of scenarios) processScenario(scenario);
+              continue;
+            }
             const nestedTests =
               parsedTests &&
               typeof parsedTests === 'object' &&
@@ -1252,6 +1263,22 @@ export function extractFileDependencies(configPath: string): string[] {
       extractFileReferences(inlineTest.assertScoringFunction);
       extractFileReferences(inlineTest.provider, true, 'provider');
       extractOptionsFiles(inlineTest.options);
+    };
+
+    const processScenario = (scenario: unknown): void => {
+      if (typeof scenario === 'string') {
+        inspectTestFile(scenario, false, true);
+        return;
+      }
+      if (!scenario || typeof scenario !== 'object') return;
+      const scenarioConfig = scenario as { tests?: unknown; config?: unknown };
+      for (const entries of [scenarioConfig.tests, scenarioConfig.config]) {
+        if (Array.isArray(entries)) {
+          for (const entry of entries) processTestConfig(entry);
+        } else if (entries) {
+          processTestConfig(entries, false);
+        }
+      }
     };
 
     // Process defaultTest
@@ -1357,13 +1384,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     if (Array.isArray(config.scenarios)) {
       for (const scenario of config.scenarios) {
-        for (const entries of [scenario.tests, scenario.config]) {
-          if (Array.isArray(entries)) {
-            for (const entry of entries) processTestConfig(entry, false);
-          } else if (entries) {
-            processTestConfig(entries, false);
-          }
-        }
+        processScenario(scenario);
       }
     }
 

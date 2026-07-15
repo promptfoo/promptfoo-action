@@ -1155,6 +1155,10 @@ tests:
 scenarios:
   - tests: file://scenarios/cases.yaml
   - tests: file://tests/cases.yaml
+  - tests:
+      - scenarios/array-cases.yaml
+  - file://scenarios/scenario.yaml
+  - file://scenarios/invalid-scenarios.yaml
 `;
       }
       if (String(filePath).endsWith('evals/tests/cases.yaml')) {
@@ -1176,7 +1180,37 @@ scenarios:
   provider: golang:providers/scenario.go:CallApi
 `;
       }
-      if (/\/(?:fixture|vars-[ab])\.yaml$/.test(String(filePath))) return '{}';
+      if (String(filePath).endsWith('evals/scenarios/array-cases.yaml')) {
+        return `
+- vars: array-fixture.yaml
+  provider: golang:providers/array-case.go:CallApi
+`;
+      }
+      if (String(filePath).endsWith('evals/scenarios/scenario.yaml')) {
+        return `
+config:
+  - vars: scenario-config-fixture.yaml
+    provider: ruby:providers/scenario-config.rb:call_api
+tests:
+  - scenarios/entry-cases.yaml
+`;
+      }
+      if (String(filePath).endsWith('evals/scenarios/entry-cases.yaml')) {
+        return `
+- vars: entry-fixture.yaml
+  provider: golang:providers/entry-case.go:CallApi
+`;
+      }
+      if (String(filePath).endsWith('evals/scenarios/invalid-scenarios.yaml')) {
+        return '[null, 42]';
+      }
+      if (
+        /\/(?:(?:array|entry|scenario-config)-)?(?:fixture|vars-[ab])\.yaml$/.test(
+          String(filePath),
+        )
+      ) {
+        return '{}';
+      }
       if (/\/(?:shared\.json|tools\.yaml)$/.test(String(filePath))) return '{}';
       throw new Error(`Unexpected file: ${String(filePath)}`);
     });
@@ -1204,6 +1238,16 @@ scenarios:
       'evals/vars-b.yaml',
       'evals/providers/map.py',
       'evals/schemas/tools.yaml',
+      'evals/scenarios/array-cases.yaml',
+      'evals/scenarios/array-fixture.yaml',
+      'evals/scenarios/providers/array-case.go',
+      'evals/scenarios/scenario.yaml',
+      'evals/scenarios/entry-cases.yaml',
+      'evals/scenarios/entry-fixture.yaml',
+      'evals/scenarios/providers/entry-case.go',
+      'evals/scenario-config-fixture.yaml',
+      'evals/providers/scenario-config.rb',
+      'evals/scenarios/invalid-scenarios.yaml',
     ]);
     expect(core.warning).not.toHaveBeenCalled();
   });
