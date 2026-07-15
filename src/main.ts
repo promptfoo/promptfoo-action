@@ -55,15 +55,15 @@ function normalizeWindowsPromptGlob(pattern: string): string {
   }
 
   const firstForwardSlash = pattern.indexOf('/');
-  if (firstForwardSlash === -1) {
-    return pattern.split('\\').join('/');
-  }
-
-  const nativePrefix = pattern.slice(0, firstForwardSlash);
-  const escapedSuffix = pattern.slice(firstForwardSlash);
+  const nativePrefix =
+    firstForwardSlash === -1 ? pattern : pattern.slice(0, firstForwardSlash);
+  const escapedSuffix =
+    firstForwardSlash === -1 ? '' : pattern.slice(firstForwardSlash);
   return (
-    nativePrefix.replace(/\\(?![,\.\-|^])/g, '/') +
-    escapedSuffix.replace(/\\(?![?*()[\]{}+@!,\.\-|^])/g, '/')
+    nativePrefix
+      .replace(/\\(\[[^\\]*\\\])(?=\\|$)/g, '/\\$1')
+      .replace(/(?<!\/)\\(?![,.\-|^\]})])/g, '/') +
+    escapedSuffix.replace(/\\(?![?*()[\]{}+@!,.\-|^])/g, '/')
   );
 }
 
@@ -366,7 +366,7 @@ export async function run(): Promise<void> {
               traversalPattern.split('/').filter((segment) => segment === '**')
                 .length > 1
                 ? undefined
-                : (matcher.makeRe() as RegExp),
+                : matcher.makeRe() || undefined,
           });
         }
       }

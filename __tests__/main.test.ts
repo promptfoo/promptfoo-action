@@ -4,6 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
+import { Minimatch } from 'minimatch';
 import {
   afterEach,
   beforeEach,
@@ -626,6 +627,50 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test.each([
+      ['[team\\]', '[team]', '\\[team\\]'],
+      ['{red\\,blue,green}', 'red,blue', '{red\\,blue,green}'],
+    ])('should preserve escaped punctuation in a native Windows glob %s', async (nativeSegment, promptDirectory, normalizedSegment) => {
+      const currentPlatform = process.platform;
+      const promptRoot = path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('\\');
+      const promptPattern = `${promptRoot}\\${nativeSegment}\\*.txt`;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          {
+            filename: `prompts/${promptDirectory}/removed.txt`,
+            status: 'removed',
+          },
+        ]);
+        mockGlob.sync.mockReturnValue([
+          `prompts/${promptDirectory}/remaining.txt`,
+        ]);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          `${promptRoot.split('\\').join('/')}/${normalizedSegment}/*.txt`,
+          { cwd: process.cwd(), nodir: true },
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
     test('should detect a removed prompt under an escaped directory glob', async () => {
       withInputs({ prompts: 'prompts/\\[team\\]/*.txt' });
       mockOctokit.paginate.mockResolvedValue([
@@ -757,6 +802,27 @@ describe('GitHub Action Main', () => {
         expect.stringContaining('monitored prompt was removed or moved'),
       );
       expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should match a removed prompt when the regexp optimization is unavailable', async () => {
+      const makeRe = vi
+        .spyOn(Minimatch.prototype, 'makeRe')
+        .mockReturnValue(false);
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      try {
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+      } finally {
+        makeRe.mockRestore();
+      }
     });
 
     test('should detect a removed prompt in an absolute brace alternative', async () => {
