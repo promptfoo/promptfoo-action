@@ -102,13 +102,37 @@ export function extractFileDependencies(configPath: string): string[] {
       if (glob.hasMagic(filePath)) {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, { nodir: true });
+        const realDependencyRoots: string[] = [];
+        for (const root of new Set([dependencyRoot, cwd])) {
+          try {
+            realDependencyRoots.push(fs.realpathSync(root));
+          } catch {}
+        }
+
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          if (isSafeDependency(absoluteMatch)) {
-            dependencies.add(absoluteMatch);
-          } else {
+          if (!isSafeDependency(absoluteMatch)) {
             core.warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+              'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
+            );
+            continue;
+          }
+
+          try {
+            const realMatch = fs.realpathSync(absoluteMatch);
+            if (
+              !realDependencyRoots.some((root) => isPathInside(root, realMatch))
+            ) {
+              core.warning(
+                'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
+              );
+              continue;
+            }
+
+            dependencies.add(absoluteMatch);
+          } catch {
+            core.warning(
+              'Ignoring unsafe config dependency glob match: resolved path cannot be verified',
             );
           }
         }

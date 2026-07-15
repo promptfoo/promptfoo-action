@@ -10,6 +10,7 @@ vi.mock('fs', async () => {
   return {
     ...realFs,
     readFileSync: vi.fn(),
+    realpathSync: vi.fn(),
     existsSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
@@ -24,6 +25,7 @@ vi.mock('glob');
 describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
+    realpathSync: Mock;
     existsSync: Mock;
     statSync: Mock;
   };
@@ -39,6 +41,9 @@ describe('extractFileDependencies', () => {
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath),
+    );
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
 
@@ -297,6 +302,81 @@ providers:
     const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
 
     expect(deps).toEqual(['providers/shared.py', 'providers']);
+  });
+
+  it('should reject an external-config glob match that resolves outside both allowed roots', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/leak.py',
+      '/test/working/providers/shared.py',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath).endsWith('/providers/leak.py')
+        ? '/test/secrets/leak.py'
+        : String(filePath),
+    );
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/shared.py', 'providers']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
+    );
+  });
+
+  it('should ignore an unverifiable dependency glob match and preserve safe siblings', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/denied.py',
+      '/test/working/providers/shared.py',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (String(filePath).endsWith('/providers/denied.py')) {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      return String(filePath);
+    });
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/shared.py', 'providers']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring unsafe config dependency glob match: resolved path cannot be verified',
+    );
+  });
+
+  it('should preserve a checkout glob match when the unused external-config root is unverifiable', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/providers/shared.py']);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (String(filePath) === '/test/shared') {
+        throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+      }
+      return String(filePath);
+    });
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/shared.py', 'providers']);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should keep dependencies whose names begin with two dots', () => {
