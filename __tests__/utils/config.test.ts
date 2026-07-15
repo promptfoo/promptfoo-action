@@ -733,6 +733,254 @@ assert:
     ]);
   });
 
+  it('should track provider-specific options and grader type maps in a file-backed defaultTest', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+options:
+  response_format: file://native-schema.json
+  tools: file://native-tools.json
+  provider:
+    text:
+      id: file://native-text-grader.js
+    embedding:
+      id: file://native-embedding-grader.js
+    classification:
+      id: file://native-classification-grader.js
+    moderation:
+      id: file://native-moderation-grader.js
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/native-schema.json',
+      'evals/native-tools.json',
+      'evals/native-text-grader.js',
+      'evals/native-embedding-grader.js',
+      'evals/native-classification-grader.js',
+      'evals/native-moderation-grader.js',
+    ]);
+  });
+
+  it('should track object-form vars arrays in a file-backed defaultTest', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+vars:
+  prompts:
+    - file://native-a.txt
+    - file://native-b.txt
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/native-a.txt',
+      'evals/native-b.txt',
+    ]);
+  });
+
+  it('should inspect nested file references inside an external vars map', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: data/native-vars.yaml';
+      }
+      if (String(filePath).endsWith('evals/data/native-vars.yaml')) {
+        return 'context: file://fixtures/native-context.txt';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/native-vars.yaml',
+      'evals/fixtures/native-context.txt',
+    ]);
+  });
+
+  it('should inspect each external vars-glob match once and track nested references', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+vars:
+  - data/native-*.yaml
+  - data/native-*.yaml
+`;
+      }
+      if (String(filePath).endsWith('evals/data/native-vars.yaml')) {
+        return 'context: file://fixtures/native-context.txt';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/evals/data/native-vars.yaml',
+    ]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/native-vars.yaml',
+      'evals/data',
+      'evals/fixtures/native-context.txt',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledWith(
+      '/test/working/evals/data/native-vars.yaml',
+      'utf8',
+    );
+    expect(
+      mockFs.readFileSync.mock.calls.filter(
+        ([filePath]) =>
+          String(filePath) === '/test/working/evals/data/native-vars.yaml',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('should reject a lexically escaping external vars path before inspection', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: ../../secrets/external-vars.yaml';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
+  it('should reject an external vars-map symlink outside the workspace without reading or leaking it', () => {
+    const canary = 'EXTERNAL_VARS_SECRET_CANARY';
+    const linkedVars = '/test/working/evals/data/external-vars.yaml';
+    const externalVars = '/test/secrets/external-vars.yaml';
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath) === linkedVars ? externalVars : String(filePath),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: data/external-vars.yaml';
+      }
+      if (String(filePath) === linkedVars) {
+        return `secret: ${canary}`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/external-vars.yaml',
+    ]);
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(linkedVars, 'utf8');
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(externalVars, 'utf8');
+    expect(vi.mocked(core.warning).mock.calls.flat().join(' ')).not.toContain(
+      canary,
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('resolved path must stay within the repository'),
+    );
+  });
+
+  it('should bound recursive provider maps while retaining later grader dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+options:
+  provider: &providers
+    self: *providers
+    text:
+      id: file://native-text-grader.js
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/native-text-grader.js',
+    ]);
+  });
+
+  it('should inspect a literal defaultTest wrapper below a glob-like ancestor directory', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/[v2]/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/[v2]/defaults/default.yaml')) {
+        return 'vars: { context: file://native-context.txt }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('[v2]'),
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/[v2]/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/[v2]/defaults/default.yaml',
+      'evals/[v2]/native-context.txt',
+    ]);
+  });
+
   it('should track Ruby assertion selectors in a file-backed defaultTest', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
@@ -805,6 +1053,13 @@ vars:
       'evals/fixtures',
       'evals/fixtures/windows.txt',
     ]);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      expect.stringContaining('{one,two}'),
+      expect.objectContaining({
+        magicalBraces: true,
+        windowsPathsNoEscape: true,
+      }),
+    );
   });
 
   it('should reject an escaping Windows-style var-glob base and keep a safe watcher', () => {

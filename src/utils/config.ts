@@ -136,7 +136,7 @@ export function extractFileDependencies(configPath: string): string[] {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, {
           nodir: true,
-          windowsPathsNoEscape: true,
+          ...globOptions,
         });
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
@@ -220,90 +220,114 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     }
 
-    // Extract test variable files
+    const visitedFileValues = new WeakSet<object>();
+    const extractFileReferences = (value: unknown): void => {
+      if (typeof value === 'string' && value.startsWith('file://')) {
+        processFileUrl(
+          value.replace(/(\.(?:[cm]?[jt]s|py|rb)):[^/\\:]+$/i, '$1'),
+        );
+      } else if (Array.isArray(value)) {
+        if (visitedFileValues.has(value)) return;
+        visitedFileValues.add(value);
+        for (const item of value) {
+          extractFileReferences(item);
+        }
+      } else if (typeof value === 'object' && value !== null) {
+        if (visitedFileValues.has(value)) return;
+        visitedFileValues.add(value);
+        if ('file' in value && typeof value.file === 'string') {
+          const absolutePath = resolveConfigDependency(
+            value.file,
+            'config file dependency',
+          );
+          if (absolutePath) {
+            dependencies.add(absolutePath);
+          }
+        }
+        if (
+          'id' in value &&
+          typeof value.id === 'string' &&
+          value.id.startsWith('file://')
+        ) {
+          processFileUrl(value.id);
+        }
+        for (const [key, item] of Object.entries(value)) {
+          if (key !== 'file' && key !== 'id') {
+            extractFileReferences(item);
+          }
+        }
+      }
+    };
+
+    // Extract test variable files and inspect external variable maps.
+    const inspectedVarFiles = new Set<string>();
+    const inspectVarFile = (value: string): void => {
+      const fileUrl = value.startsWith('file://') ? value : `file://${value}`;
+      const filePath = normalizeConfigFilePath(fileUrl.slice('file://'.length));
+      processFileUrl(fileUrl);
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        'test variable file dependency',
+      );
+      if (!absolutePath) return;
+
+      const varFiles = glob.hasMagic(filePath, globOptions)
+        ? glob.sync(absolutePath, { nodir: true, ...globOptions })
+        : [absolutePath];
+      for (const varFile of varFiles) {
+        if (inspectedVarFiles.has(varFile)) continue;
+        inspectedVarFiles.add(varFile);
+        try {
+          const realDependencyRoot = fs.realpathSync(dependencyRoot);
+          const realVarFile = fs.realpathSync(varFile);
+          if (!isPathInside(realDependencyRoot, realVarFile)) {
+            core.warning(
+              'Ignoring unsafe external vars file: resolved path must stay within the repository workspace',
+            );
+            continue;
+          }
+          const vars = loadYaml(fs.readFileSync(realVarFile, 'utf8'), {
+            schema: CORE_SCHEMA.withTags(mergeTag),
+          });
+          extractFileReferences(vars);
+        } catch {
+          core.warning(
+            'Failed to inspect external vars file; nested file dependencies may be incomplete',
+          );
+        }
+      }
+    };
     const extractVarFiles = (vars?: unknown): void => {
       if (typeof vars === 'string') {
-        processFileUrl(vars.startsWith('file://') ? vars : `file://${vars}`);
+        inspectVarFile(vars);
         return;
       }
       if (Array.isArray(vars)) {
         for (const value of vars) {
           if (typeof value === 'string') {
-            processFileUrl(
-              value.startsWith('file://') ? value : `file://${value}`,
-            );
+            inspectVarFile(value);
           }
         }
         return;
       }
       if (!vars || typeof vars !== 'object') return;
       for (const value of Object.values(vars)) {
-        if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(value);
-        } else if (
-          typeof value === 'object' &&
-          value !== null &&
-          'file' in value &&
-          typeof value.file === 'string'
-        ) {
-          const absolutePath = resolveConfigDependency(
-            value.file,
-            'test variable file dependency',
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
-        }
+        extractFileReferences(value);
       }
     };
 
     // Extract assert files
     const visitedAssertSets = new WeakSet<PromptfooAssertion[]>();
-    const visitedAssertValues = new WeakSet<object>();
-    const extractAssertValueFiles = (value: unknown): void => {
-      if (typeof value === 'string' && value.startsWith('file://')) {
-        processFileUrl(
-          value.replace(/(\.(?:[cm]?[jt]s|py|rb)):[^/\\:]+$/i, '$1'),
-        );
-      } else if (Array.isArray(value)) {
-        if (visitedAssertValues.has(value)) return;
-        visitedAssertValues.add(value);
-        for (const item of value) {
-          extractAssertValueFiles(item);
-        }
-      } else if (
-        typeof value === 'object' &&
-        value !== null &&
-        'file' in value &&
-        typeof value.file === 'string'
-      ) {
-        const absolutePath = resolveConfigDependency(
-          value.file,
-          'assertion file dependency',
-        );
-        if (absolutePath) {
-          dependencies.add(absolutePath);
-        }
-      } else if (
-        typeof value === 'object' &&
-        value !== null &&
-        'id' in value &&
-        typeof value.id === 'string' &&
-        value.id.startsWith('file://')
-      ) {
-        processFileUrl(value.id);
-      }
-    };
     const extractAssertFiles = (asserts?: PromptfooAssertion[]): void => {
       if (!Array.isArray(asserts) || visitedAssertSets.has(asserts)) return;
       visitedAssertSets.add(asserts);
       for (const assert of asserts) {
         if (!assert || typeof assert !== 'object') continue;
-        extractAssertValueFiles(assert.value);
-        extractAssertValueFiles(assert.provider);
-        extractAssertValueFiles(assert.rubricPrompt);
-        extractAssertValueFiles(assert.transform);
-        extractAssertValueFiles(assert.contextTransform);
+        extractFileReferences(assert.value);
+        extractFileReferences(assert.provider);
+        extractFileReferences(assert.rubricPrompt);
+        extractFileReferences(assert.transform);
+        extractFileReferences(assert.contextTransform);
         extractAssertFiles(assert.assert);
       }
     };
@@ -329,7 +353,7 @@ export function extractFileDependencies(configPath: string): string[] {
           if (defaultTestPath) {
             processFileUrl(config.defaultTest);
           }
-          if (defaultTestPath && !glob.hasMagic(defaultTestPath, globOptions)) {
+          if (defaultTestPath && !glob.hasMagic(defaultTestFile, globOptions)) {
             try {
               const realDependencyRoot = fs.realpathSync(dependencyRoot);
               const realDefaultTestPath = fs.realpathSync(defaultTestPath);
@@ -349,13 +373,9 @@ export function extractFileDependencies(configPath: string): string[] {
                 ) {
                   extractVarFiles(defaultTest.vars);
                   extractAssertFiles(defaultTest.assert);
-                  extractAssertValueFiles(defaultTest.assertScoringFunction);
-                  extractAssertValueFiles(defaultTest.provider);
-                  extractAssertValueFiles(defaultTest.options?.provider);
-                  extractAssertValueFiles(defaultTest.options?.rubricPrompt);
-                  extractAssertValueFiles(defaultTest.options?.postprocess);
-                  extractAssertValueFiles(defaultTest.options?.transform);
-                  extractAssertValueFiles(defaultTest.options?.transformVars);
+                  extractFileReferences(defaultTest.assertScoringFunction);
+                  extractFileReferences(defaultTest.provider);
+                  extractFileReferences(defaultTest.options);
                 }
               }
             } catch {
@@ -371,13 +391,9 @@ export function extractFileDependencies(configPath: string): string[] {
       ) {
         extractVarFiles(config.defaultTest.vars);
         extractAssertFiles(config.defaultTest.assert);
-        extractAssertValueFiles(config.defaultTest.assertScoringFunction);
-        extractAssertValueFiles(config.defaultTest.provider);
-        extractAssertValueFiles(config.defaultTest.options?.provider);
-        extractAssertValueFiles(config.defaultTest.options?.rubricPrompt);
-        extractAssertValueFiles(config.defaultTest.options?.postprocess);
-        extractAssertValueFiles(config.defaultTest.options?.transform);
-        extractAssertValueFiles(config.defaultTest.options?.transformVars);
+        extractFileReferences(config.defaultTest.assertScoringFunction);
+        extractFileReferences(config.defaultTest.provider);
+        extractFileReferences(config.defaultTest.options);
       }
     }
 
