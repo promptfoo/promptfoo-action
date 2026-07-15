@@ -17,6 +17,7 @@ import * as path from 'path';
 import { isDirectory } from './fs';
 
 const MAX_BRACE_EXPANSIONS = 1024;
+const MAX_PROVIDER_REFERENCE_LENGTH = 65_536;
 
 interface PromptfooTestConfig {
   path?: string;
@@ -125,6 +126,44 @@ function splitCsvAssertionValues(value: string): string[] | undefined {
   }
   values.push(current.trim());
   return values;
+}
+
+function getLocalProviderPath(providerId?: string): string | undefined {
+  if (!providerId || providerId.length > MAX_PROVIDER_REFERENCE_LENGTH) {
+    return undefined;
+  }
+  const normalizedId = providerId.toLowerCase();
+  if (normalizedId.startsWith('file://')) {
+    return providerId.slice('file://'.length);
+  }
+  const schemeSeparator = providerId.indexOf(':');
+  if (schemeSeparator === -1) {
+    return undefined;
+  }
+  const extension =
+    normalizedId.slice(0, schemeSeparator) === 'python'
+      ? 'py'
+      : normalizedId.slice(0, schemeSeparator) === 'golang'
+        ? 'go'
+        : normalizedId.slice(0, schemeSeparator) === 'ruby'
+          ? 'rb'
+          : undefined;
+  if (!extension) {
+    return undefined;
+  }
+  const providerPath = providerId.slice(schemeSeparator + 1);
+  const normalizedPath = providerPath.toLowerCase();
+  if (normalizedPath.endsWith(`.${extension}`)) {
+    return providerPath;
+  }
+  const selectorIndex = normalizedPath.lastIndexOf(`.${extension}:`);
+  if (selectorIndex === -1) {
+    return undefined;
+  }
+  const selector = providerPath.slice(selectorIndex + extension.length + 2);
+  return selector && !selector.includes('/') && !selector.includes('\\')
+    ? providerPath
+    : undefined;
 }
 
 /**
@@ -408,31 +447,50 @@ export function extractFileDependencies(
       return [absolutePath];
     };
 
+    type FileUrlSelectorMode =
+      | 'literal'
+      | 'assertion'
+      | 'provider'
+      | 'javascript';
     const processFileUrl = (
       fileUrl: string,
       preserveGlobRoot = false,
       baseDir = configDir,
+      selectorMode: FileUrlSelectorMode = 'assertion',
     ): void => {
       let filePath = fileUrl.replace(/^file:\/\//, '');
       const expandedPath = expandAndTrackEnvTemplates(filePath);
       const hasEnvTemplate = expandedPath !== filePath;
       filePath = expandedPath;
-      const functionIndex = filePath.lastIndexOf(':');
-      if (
-        functionIndex > 1 &&
-        /\.(?:py|go|rb|[cm]?[jt]s)$/.test(filePath.slice(0, functionIndex))
-      ) {
-        filePath = filePath.slice(0, functionIndex);
+      const selectorMatch =
+        selectorMode === 'literal'
+          ? null
+          : selectorMode === 'provider'
+            ? filePath.match(/^([\s\S]+\.(?:py|go|rb|[cm]?[jt]s)):(.+)$/)
+            : selectorMode === 'javascript'
+              ? filePath.match(/^([\s\S]+\.(?:[cm]?[jt]s)):(.+)$/)
+              : filePath.match(/^([\s\S]+\.(?:py|rb|[cm]?[jt]s)):(.+)$/);
+      const uppercaseJsSelector =
+        !selectorMatch && selectorMode !== 'literal'
+          ? filePath.match(/^([\s\S]+\.(?:[cm]?[jt]s)):(.+)$/i)
+          : null;
+      const filePaths = selectorMatch
+        ? [selectorMatch[1]]
+        : uppercaseJsSelector
+          ? [filePath, uppercaseJsSelector[1]]
+          : [filePath];
+      for (const candidatePath of filePaths) {
+        const relativePath =
+          baseDir === configDir
+            ? candidatePath
+            : path.relative(configDir, path.resolve(baseDir, candidatePath));
+        processFilePath(
+          relativePath,
+          'config file dependency',
+          preserveGlobRoot || hasEnvTemplate,
+          preserveGlobRoot || hasEnvTemplate,
+        );
       }
-      if (baseDir !== configDir) {
-        filePath = path.relative(configDir, path.resolve(baseDir, filePath));
-      }
-      processFilePath(
-        filePath,
-        'config file dependency',
-        preserveGlobRoot || hasEnvTemplate,
-        preserveGlobRoot || hasEnvTemplate,
-      );
     };
 
     const providerConfigFiles = new Set<string>();
@@ -443,14 +501,11 @@ export function extractFileDependencies(
         dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
         return;
       }
-      const localProvider = expandedProviderId.match(
-        /^(?:file:\/\/|python:(?=[\s\S]+\.py(?::[^/\\]+)?$)|golang:(?=[\s\S]+\.go(?::[^/\\]+)?$)|ruby:(?=[\s\S]+\.rb(?::[^/\\]+)?$))([\s\S]+)$/i,
-      );
-      if (!localProvider) {
+      const providerPath = getLocalProviderPath(expandedProviderId);
+      if (!providerPath) {
         return;
       }
-      const providerPath = localProvider[1];
-      processFileUrl(`file://${providerPath}`, false, configDir);
+      processFileUrl(`file://${providerPath}`, false, configDir, 'provider');
       const absolutePath = path.resolve(configDir, providerPath);
       if (
         /\.(?:ya?ml|json)$/i.test(providerPath) &&
@@ -572,7 +627,7 @@ export function extractFileDependencies(
       }
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(value, true);
+          processFileUrl(value, true, configDir, 'literal');
         } else if (
           typeof value === 'object' &&
           value !== null &&
@@ -602,7 +657,7 @@ export function extractFileDependencies(
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
-          processFileUrl(assert.value);
+          processFileUrl(assert.value, false, configDir, 'assertion');
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&
@@ -627,10 +682,11 @@ export function extractFileDependencies(
       includeFileUrls = true,
       testBaseDir = configDir,
       localRefFile = configPath,
+      selectorMode: FileUrlSelectorMode = 'assertion',
     ): void => {
       if (typeof value === 'string') {
         if (includeFileUrls && value.startsWith('file://')) {
-          processFileUrl(value, true);
+          processFileUrl(value, true, configDir, selectorMode);
         }
         return;
       }
@@ -660,6 +716,7 @@ export function extractFileDependencies(
             includeFileUrls,
             testBaseDir,
             localRefFile,
+            selectorMode,
           );
         }
         return;
@@ -763,11 +820,14 @@ export function extractFileDependencies(
               }
             }
           }
-          const localProvider = providerId?.match(
-            /^(?:file:\/\/|python:(?=[\s\S]+\.py(?::[^/\\]+)?$)|golang:(?=[\s\S]+\.go(?::[^/\\]+)?$)|ruby:(?=[\s\S]+\.rb(?::[^/\\]+)?$))([\s\S]+)$/i,
-          );
-          if (localProvider) {
-            processFileUrl(`file://${localProvider[1]}`, true, testBaseDir);
+          const providerPath = getLocalProviderPath(providerId);
+          if (providerPath) {
+            processFileUrl(
+              `file://${providerPath}`,
+              true,
+              testBaseDir,
+              'provider',
+            );
             if (typeof item === 'object' && item !== null) {
               for (const [providerKey, providerValue] of Object.entries(item)) {
                 if (providerKey !== 'id') {
@@ -777,6 +837,7 @@ export function extractFileDependencies(
                     includeFileUrls,
                     testBaseDir,
                     localRefFile,
+                    selectorMode,
                   );
                 }
               }
@@ -845,6 +906,11 @@ export function extractFileDependencies(
           includeFileUrls,
           testBaseDir,
           localRefFile,
+          key === 'vars'
+            ? 'literal'
+            : key === 'validateStatus'
+              ? 'javascript'
+              : selectorMode,
         );
       }
     };
@@ -928,6 +994,8 @@ export function extractFileDependencies(
                   processFileUrl(
                     assertionValue.slice(fileUrlIndex).trim(),
                     true,
+                    configDir,
+                    'assertion',
                   );
                 }
               }

@@ -293,7 +293,7 @@ targets:
     ]);
   });
 
-  it('should preserve an uppercase HTTP status-validator extension and literal colon filename', () => {
+  it('should conservatively track literal and underlying uppercase HTTP status-validator files', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - id: https://example.test/infer
@@ -303,7 +303,27 @@ providers:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/validators/status.JS:accept_status']);
+    ).toEqual([
+      '../config/validators/status.JS:accept_status',
+      '../config/validators/status.JS',
+    ]);
+  });
+
+  it.each([
+    'py',
+    'rb',
+    'go',
+  ])('should preserve the literal HTTP status-validator filename for unsupported %s selectors', (extension) => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/infer
+    config:
+      validateStatus: file://validators/status.${extension}:accept_status
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([`../config/validators/status.${extension}:accept_status`]);
   });
 
   it.each([
@@ -371,6 +391,65 @@ providers:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/providers/custom.py']);
+  });
+
+  it.each([
+    'top-level',
+    'per-test',
+  ])('should reject a pathological %s provider reference in linear time', (source) => {
+    const invalidProvider = `python:${'.py:'.repeat(16_384)}/`;
+    mockFs.readFileSync.mockReturnValue(
+      source === 'top-level'
+        ? `providers: ${JSON.stringify(invalidProvider)}`
+        : `tests:\n  - provider: ${JSON.stringify(invalidProvider)}`,
+    );
+
+    const startedAt = performance.now();
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(performance.now() - startedAt).toBeLessThan(200);
+  });
+
+  it('should preserve supported provider prefixes and safely ignore malformed or unsupported selectors', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - python:providers/direct.py
+  - ruby:providers/ruby.rb:Checks::Safety.call
+  - golang:providers/golang.go:Call
+  - python:providers/not-script.txt
+  - 'python:providers/invalid.py:not/allowed'
+  - 'ruby:providers/invalid.rb:not\\allowed'
+  - go:providers/unsupported.go:Call
+  - python:providers/mapped.py:call_api:
+      label: mapped
+targets: false
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/providers/direct.py',
+      '../config/providers/ruby.rb',
+      '../config/providers/golang.go',
+      '../config/providers/mapped.py',
+    ]);
+  });
+
+  it('should preserve provider selectors in target id and map forms', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: python:providers/target.py:call_api
+  - golang:providers/mapped.go:Call:
+      label: mapped
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/providers/target.py',
+      '../config/providers/mapped.go',
+    ]);
   });
 
   it('should extract prompt files', () => {
@@ -1440,19 +1519,19 @@ tests:
     [
       'Ruby variable',
       'vars:\n      context: file://vars/build.rb:build',
-      '../config/vars/build.rb',
+      '../config/vars/build.rb:build',
     ],
     [
       'Go variable',
       'vars:\n      context: file://vars/build.go:Build',
-      '../config/vars/build.go',
+      '../config/vars/build.go:Build',
     ],
     [
       'Go assertion',
       'assert:\n      - type: javascript\n        value: file://validators/check.go:Check',
-      '../config/validators/check.go',
+      '../config/validators/check.go:Check',
     ],
-  ])('should strip the function selector from a %s file URL', (_source, testBody, expectedDependency) => {
+  ])('should preserve the literal colon filename for a %s file URL', (_source, testBody, expectedDependency) => {
     mockFs.readFileSync.mockReturnValue(`tests:\n  - ${testBody}`);
 
     expect(
@@ -1471,6 +1550,84 @@ tests:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/validators/check.rb']);
+  });
+
+  it('should strip a namespaced Ruby assertion method qualifier', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert:
+      - type: ruby
+        value: file://validators/check.rb:Checks::Safety.check
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/validators/check.rb']);
+  });
+
+  it('should extract executable selectors from nested default and test assertion sets', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  assert:
+    - type: assert-set
+      assert:
+        - type: javascript
+          value: file://validators/default.js:check
+tests:
+  - assert:
+      - type: assert-set
+        assert:
+          - type: ruby
+            value: file://validators/nested.rb:Validators::Format.check
+          - type: assert-set
+            assert:
+              - type: python
+                value: file://validators/deep.py:check
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/validators/default.js',
+      '../config/validators/nested.rb',
+      '../config/validators/deep.py',
+    ]);
+  });
+
+  it('should safely stop a cyclic assertion set while preserving sibling validators', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert:
+      - &recursive
+        type: assert-set
+        assert:
+          - *recursive
+      - type: javascript
+        value: file://validators/safe.js:check
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/validators/safe.js']);
+  });
+
+  it('should conservatively track literal and underlying uppercase JavaScript provider and assertion files', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: file://providers/custom.JS:call_api
+tests:
+  - assert:
+      - type: javascript
+        value: file://validators/check.MJS:check
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/providers/custom.JS:call_api',
+      '../config/providers/custom.JS',
+      '../config/validators/check.MJS:check',
+      '../config/validators/check.MJS',
+    ]);
   });
 
   it('should ignore non-object entries in a file-backed test', () => {
