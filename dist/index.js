@@ -36440,7 +36440,7 @@ function extractFileDependencies(configPath) {
       }
     }
     const extensions = [];
-    let watchWorkspace = false;
+    let watchWorkspace = "$ref" in config2 || config2.commandLineOptions != null && "$ref" in config2.commandLineOptions;
     for (const extensionList of [
       config2.extensions,
       config2.commandLineOptions?.extension
@@ -36461,11 +36461,11 @@ function extractFileDependencies(configPath) {
         }
         continue;
       }
-      if (!extension.startsWith("file://")) {
-        continue;
-      }
       if (extension.includes("{{") || extension.includes("{%")) {
         watchWorkspace = true;
+        continue;
+      }
+      if (!extension.startsWith("file://")) {
         continue;
       }
       const hookSeparator = extension.lastIndexOf(":");

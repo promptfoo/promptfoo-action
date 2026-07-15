@@ -240,6 +240,63 @@ commandLineOptions:
     );
   });
 
+  it('should conservatively watch the workspace for fully templated extension URLs', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.js
+extensions:
+  - '{{ env.HOOK_URI }}'
+  - '{{ env.SCHEME }}://hooks/policy.js:beforeAll'
+commandLineOptions:
+  extension:
+    - '{{ env.CLI_HOOK_URI }}'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.js', './']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
+  it('should conservatively watch the workspace for referenced commandLineOptions', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.js
+commandLineOptions:
+  $ref: '#/shared/options'
+shared:
+  options:
+    extension:
+      - file://hooks/cli-shared.js:afterAll
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.js', './']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
+  it('should conservatively watch the workspace for a referenced root config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+$ref: '#/shared/config'
+shared:
+  config:
+    extensions:
+      - file://hooks/shared.js:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
   it('should conservatively watch the workspace for referenced extension entries', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
