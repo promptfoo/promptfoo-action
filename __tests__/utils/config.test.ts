@@ -2825,6 +2825,89 @@ providers:
     ).toHaveLength(1);
   });
 
+  it('should compare canonical glob matches against independently canonicalized roots', () => {
+    const safeMatch = '/test/working/providers/shared.py';
+    mockFs.readFileSync.mockReturnValue(
+      'providers: [file:///test/working/providers/*.py]',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([safeMatch]);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const value = String(filePath);
+      if (value === '/test/shared') {
+        return '/real/shared';
+      }
+      if (value.startsWith('/test/working')) {
+        return value.replace('/test/working', '/real/workspace');
+      }
+      return value;
+    });
+
+    expect(
+      extractFileDependencies('/test/shared/promptfooconfig.yaml'),
+    ).toEqual(['providers/shared.py', 'providers']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '\n',
+    '\r',
+    '\r\n',
+  ])('should sanitize unsafe templated dependency-path warnings', (lineBreak) => {
+    const canary = 'TEMPLATE_WARNING_CANARY_019F62C3';
+    const unsafeProvider = `file://../outside${lineBreak}::error::${canary}.py`;
+    mockFs.readFileSync.mockReturnValue(
+      `providers: ${JSON.stringify(unsafeProvider)}`,
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+    const warnings = (core.warning as Mock).mock.calls.flat().join('\n');
+    expect(warnings).toContain(`::error::${canary}`);
+    expect(warnings).not.toMatch(/(?:\r|\n)::error::TEMPLATE_WARNING/);
+  });
+
+  it.each([
+    'EACCES',
+    'ENOENT',
+  ])('should sanitize %s inspection warnings for CRLF test paths', (code) => {
+    const canary = `INSPECT_${code}_CANARY_019F62C3`;
+    const testPath = `tests/cases\r\n::error::${canary}.yaml`;
+    mockFs.readFileSync.mockReturnValue(
+      `tests: ${JSON.stringify(`file://${testPath}`)}`,
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (String(filePath).includes(canary)) {
+        throw Object.assign(new Error('permission denied'), { code });
+      }
+      return String(filePath);
+    });
+
+    extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    const warnings = (core.warning as Mock).mock.calls.flat().join('\n');
+    expect(warnings).toContain(`::error::${canary}`);
+    expect(warnings).not.toMatch(/(?:\r|\n)::error::INSPECT_/);
+  });
+
+  it('should sanitize CRLF glob-parser errors in dependency warnings', () => {
+    const canary = 'GLOB_WARNING_CANARY_019F62C3';
+    mockFs.readFileSync.mockReturnValue('providers: file://providers/*.py');
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error(`invalid pattern\r\n::error::${canary}`);
+    });
+
+    extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    const warnings = (core.warning as Mock).mock.calls.flat().join('\n');
+    expect(warnings).toContain(`::error::${canary}`);
+    expect(warnings).not.toMatch(/(?:\r|\n)::error::GLOB_WARNING/);
+  });
+
   it('should extract all file types from complex config', () => {
     const configContent = `
 providers:

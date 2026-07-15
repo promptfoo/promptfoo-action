@@ -46,6 +46,16 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function warnSafe(message: string): void {
+  core.warning(
+    message
+      .replace(/\r/g, '\\r')
+      .replace(/\n/g, '\\n')
+      .replace(/\t/g, '\\t')
+      .replace(/\0/g, '\\0'),
+  );
+}
+
 function stripNunjucksComments(value: string): string {
   let result = '';
   let cursor = 0;
@@ -174,7 +184,7 @@ export function extractFileDependencies(
         }
         return path.resolve(configDir, filePath);
       } catch (error) {
-        core.warning(
+        warnSafe(
           `Ignoring unsafe config dependency "${filePath}": ${String(
             error,
           ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
@@ -191,7 +201,7 @@ export function extractFileDependencies(
       windowsPathsNoEscape = false,
     ): string[] => {
       if (filePath.includes('\0')) {
-        core.warning(
+        warnSafe(
           `Ignoring unsafe config dependency "${filePath}": ${source} contains an invalid null byte`,
         );
         return [];
@@ -215,14 +225,14 @@ export function extractFileDependencies(
           : [normalizedPath];
       } catch (error) {
         dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
-        core.warning(
+        warnSafe(
           `Failed to parse config dependency glob (${source}): ${error instanceof Error ? error.message : String(error)}; conservatively watching the dependency root`,
         );
         return [];
       }
       if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
         dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
-        core.warning(
+        warnSafe(
           'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
         );
         return [];
@@ -236,7 +246,7 @@ export function extractFileDependencies(
           return !isSafeDependency(path.resolve(configDir, traversalPath));
         })
       ) {
-        core.warning(
+        warnSafe(
           `Ignoring unsafe config dependency "${normalizedPath}": ${source} must stay within the repository workspace`,
         );
         return [];
@@ -269,7 +279,7 @@ export function extractFileDependencies(
           try {
             realMatch = fs.realpathSync(absoluteMatch);
           } catch {
-            core.warning(
+            warnSafe(
               'Ignoring unsafe config dependency glob match: resolved path cannot be verified',
             );
             continue;
@@ -281,7 +291,7 @@ export function extractFileDependencies(
             dependencies.add(absoluteMatch);
             safeMatches.push(absoluteMatch);
           } else {
-            core.warning(
+            warnSafe(
               'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
             );
           }
@@ -807,7 +817,7 @@ export function extractFileDependencies(
           !isPathInside(realDependencyRoot, realTestFile) &&
           !isPathInside(realCwd, realTestFile)
         ) {
-          core.warning(
+          warnSafe(
             `Ignoring unsafe config dependency "${testFile}": test file dependency must stay within the repository workspace`,
           );
           return;
@@ -846,7 +856,7 @@ export function extractFileDependencies(
                 ? splitCsvAssertionValues(assertionMatch[1])
                 : [value];
               if (!values) {
-                core.warning(
+                warnSafe(
                   `Failed to inspect CSV assertion in test file dependency "${testFile}"`,
                 );
                 dependencies.add(
@@ -937,7 +947,7 @@ export function extractFileDependencies(
           );
         }
       } catch {
-        core.warning(`Failed to inspect test file dependency "${testFile}"`);
+        warnSafe(`Failed to inspect test file dependency "${testFile}"`);
       }
     };
 
@@ -1067,7 +1077,7 @@ export function extractFileDependencies(
       return repositoryPath;
     });
   } catch (error) {
-    core.warning(
+    warnSafe(
       `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
     );
     return [];
