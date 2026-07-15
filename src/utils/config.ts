@@ -452,7 +452,15 @@ export function extractFileDependencies(configPath: string): string[] {
 
     const canReadStructuredFile = (filePath: string): boolean => {
       try {
-        if (fs.statSync(filePath).size > MAX_STRUCTURED_FILE_SIZE) {
+        const fileStats = fs.statSync(filePath);
+        if (!fileStats.isFile()) {
+          addDependencyRootWatchers();
+          core.warning(
+            'Skipping non-regular structured config dependency; conservatively watching the dependency root',
+          );
+          return false;
+        }
+        if (fileStats.size > MAX_STRUCTURED_FILE_SIZE) {
           addDependencyRootWatchers();
           core.warning(
             'Skipping oversized structured config dependency; conservatively watching the dependency root',

@@ -62,7 +62,10 @@ describe('extractFileDependencies', () => {
     mockFs.lstatSync.mockImplementation(() => {
       throw Object.assign(new Error('not found'), { code: 'ENOENT' });
     });
-    mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+    } as fs.Stats);
   });
 
   it('should normalize standard Windows file URL drive prefixes', () => {
@@ -353,6 +356,7 @@ tests:
         ({
           size: String(filePath).includes('/large.yaml') ? 3_000_000_000 : 0,
           isDirectory: () => false,
+          isFile: () => true,
         }) as fs.Stats,
     );
 
@@ -387,7 +391,11 @@ tests:
       if (String(filePath).endsWith('/providers/unverifiable.yaml')) {
         throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
       }
-      return { size: 0, isDirectory: () => false } as fs.Stats;
+      return {
+        size: 0,
+        isDirectory: () => false,
+        isFile: () => true,
+      } as fs.Stats;
     });
 
     const deps = extractFileDependencies(
@@ -398,6 +406,34 @@ tests:
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('whose size cannot be verified'),
+    );
+  });
+
+  it('should fail closed before reading a contained non-regular structured dependency', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'providers: file://providers/stream.yaml';
+      }
+      throw new Error(`Unexpected structured read: ${String(filePath)}`);
+    });
+    mockFs.statSync.mockImplementation((filePath: unknown) => {
+      const isStream = String(filePath).endsWith('/providers/stream.yaml');
+      return {
+        size: 0,
+        isDirectory: () => false,
+        isFile: () => !isStream,
+        isFIFO: () => isStream,
+      } as fs.Stats;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/stream.yaml', './']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping non-regular structured config dependency; conservatively watching the dependency root',
     );
   });
 
@@ -2861,6 +2897,7 @@ vars:
       (filePath: unknown) =>
         ({
           isDirectory: () => String(filePath) === varsDirectory,
+          isFile: () => String(filePath) !== varsDirectory,
         }) as fs.Stats,
     );
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
@@ -2888,7 +2925,11 @@ vars:
   ])('should preserve an explicit missing vars directory watcher ending in %s', (separator) => {
     mockFs.statSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('/defaults/default.yaml')) {
-        return { size: 0, isDirectory: () => false } as fs.Stats;
+        return {
+          size: 0,
+          isDirectory: () => false,
+          isFile: () => true,
+        } as fs.Stats;
       }
       const error = new Error('missing directory') as NodeJS.ErrnoException;
       error.code = 'ENOENT';
