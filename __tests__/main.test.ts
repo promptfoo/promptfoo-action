@@ -46,7 +46,7 @@ const { mockGitInterface } = vi.hoisted(() => ({
     }),
     revparse: vi.fn(() => Promise.resolve('mock-commit-hash\n')),
     diff: vi.fn(() =>
-      Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+      Promise.resolve('M\0prompts/prompt1.txt\0M\0promptfooconfig.yaml\0'),
     ),
   },
 }));
@@ -163,7 +163,7 @@ function setupCommonMocks(): MockOctokit {
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
-    'prompts/prompt1.txt\npromptfooconfig.yaml',
+    'M\0prompts/prompt1.txt\0M\0promptfooconfig.yaml\0',
   );
   mockCache.cleanupOldCache.mockResolvedValue(0);
   mockCache.createCacheManifest.mockResolvedValue();
@@ -619,7 +619,9 @@ describe('GitHub Action Main', () => {
       >;
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
-          '--name-only',
+          '--name-status',
+          '--find-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -690,7 +692,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
-        '--name-only',
+        '--name-status',
+        '--find-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -882,7 +886,9 @@ describe('GitHub Action Main', () => {
       >;
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
-          '--name-only',
+          '--name-status',
+          '--find-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -917,6 +923,135 @@ describe('GitHub Action Main', () => {
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
       );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when a pull request renames a referenced dependency', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archive/cases.yaml',
+          previous_filename: 'tests/cases.yaml',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['tests/cases.yaml']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve newline-containing pull-request dependency paths', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'tests/cases\nprod.yaml', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'tests/cases\nprod.yaml',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'push',
+      'workflow_dispatch',
+    ])('should run when %s comparison renames a referenced dependency', async (eventName) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: eventName,
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value:
+          eventName === 'push'
+            ? { before: 'a'.repeat(40), after: 'b'.repeat(40) }
+            : { inputs: { base: 'main' } },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'R100\0tests/cases.yaml\0archive/cases.yaml\0',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['tests/cases.yaml']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should fail open when a rename comparison is truncated', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce('R100\0tests/cases.yaml\0');
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve newline-containing dependency paths from git comparisons', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'M\0tests/cases\nprod.yaml\0',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'tests/cases\nprod.yaml',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      ['missing final NUL', 'M\0docs/readme.md'],
+      ['missing changed path', 'M\0\0'],
+      ['copy record', 'C100\0tests/cases.yaml\0archive/cases.yaml\0'],
+    ])('should safely handle a %s git comparison record', async (_name, diff) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(diff);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue(['tests/cases.yaml']);
+
+      await run();
+
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
@@ -1545,7 +1680,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
-        '--name-only',
+        '--name-status',
+        '--find-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',

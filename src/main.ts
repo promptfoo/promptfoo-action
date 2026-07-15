@@ -38,6 +38,31 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function parseGitDiffPaths(diff: string): string[] {
+  if (diff && !diff.endsWith('\0')) {
+    return [];
+  }
+
+  const tokens = diff.split('\0');
+  const paths: string[] = [];
+  for (let index = 0; index < tokens.length - 1; ) {
+    const status = tokens[index++];
+    const firstPath = tokens[index++];
+    if (!status || !firstPath) {
+      return [];
+    }
+    paths.push(firstPath);
+    if (status.startsWith('R') || status.startsWith('C')) {
+      const secondPath = tokens[index++];
+      if (!secondPath) {
+        return [];
+      }
+      paths.push(secondPath);
+    }
+  }
+  return paths;
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -338,7 +363,7 @@ export async function run(): Promise<void> {
     const octokit = github.getOctokit(githubToken);
 
     const event = github.context.eventName;
-    let changedFiles = '';
+    let changedFiles: string[] = [];
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -364,7 +389,9 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
+        changedFiles = pullRequestFiles
+          .flatMap((file) => [file.filename, file.previous_filename])
+          .filter((file): file is string => typeof file === 'string');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -381,18 +408,21 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
-        core.info(`Using manually specified files: ${changedFiles}`);
+        changedFiles = filesInput.split('\n').filter(Boolean);
+        core.info(`Using manually specified files: ${filesInput}`);
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
         try {
-          changedFiles = await gitInterface.diff([
-            '--name-only',
+          const diff = await gitInterface.diff([
+            '--name-status',
+            '--find-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
+          changedFiles = parseGitDiffPaths(diff);
           core.info(
             `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
           );
@@ -401,7 +431,7 @@ export async function run(): Promise<void> {
           core.warning(
             `Could not compare against ${compareBase}: ${error}. Will process all matching prompt files.`,
           );
-          changedFiles = '';
+          changedFiles = [];
         }
       }
     } else if (event === 'push') {
@@ -419,12 +449,15 @@ export async function run(): Promise<void> {
         validateCommitSha(beforeSha, 'before commit');
         validateCommitSha(afterSha, 'after commit');
         try {
-          changedFiles = await gitInterface.diff([
-            '--name-only',
+          const diff = await gitInterface.diff([
+            '--name-status',
+            '--find-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
+          changedFiles = parseGitDiffPaths(diff);
           core.info(
             `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
           );
@@ -432,14 +465,14 @@ export async function run(): Promise<void> {
           core.warning(
             `Could not compare commits: ${error}. Will process all matching prompt files.`,
           );
-          changedFiles = '';
+          changedFiles = [];
         }
       } else {
         // First commit or unable to get before SHA
         core.info(
           'Unable to determine changed files from push event. Will process all matching prompt files.',
         );
-        changedFiles = '';
+        changedFiles = [];
       }
     } else {
       core.warning(
@@ -449,7 +482,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split('\n').filter((f) => f);
+    const changedFilesList = changedFiles;
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {

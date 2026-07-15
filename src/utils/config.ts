@@ -1,7 +1,16 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
+import {
+  binaryTag,
+  CORE_SCHEMA,
+  load as loadYaml,
+  mergeTag,
+  omapTag,
+  pairsTag,
+  setTag,
+  timestampTag,
+} from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
@@ -53,7 +62,14 @@ export function extractFileDependencies(
     }
 
     const config = loadYaml(configContent, {
-      schema: CORE_SCHEMA.withTags(mergeTag),
+      schema: CORE_SCHEMA.withTags(
+        mergeTag,
+        binaryTag,
+        timestampTag,
+        omapTag,
+        pairsTag,
+        setTag,
+      ),
     }) as PromptfooConfig;
 
     if (!config) {
@@ -96,6 +112,7 @@ export function extractFileDependencies(
       filePath: string,
       source = 'config file dependency',
       preserveGlobRoot = false,
+      windowsPathsNoEscape = false,
     ): string[] => {
       const absolutePath = resolveConfigDependency(filePath, source);
       if (!absolutePath) {
@@ -103,9 +120,19 @@ export function extractFileDependencies(
       }
 
       // Check if the path contains glob patterns
-      if (glob.hasMagic(filePath)) {
+      const usesWindowsSeparators =
+        windowsPathsNoEscape &&
+        filePath.includes('\\') &&
+        !filePath.includes('/\\');
+      const globOptions = usesWindowsSeparators
+        ? { windowsPathsNoEscape: true }
+        : undefined;
+      if (glob.hasMagic(filePath, globOptions)) {
         // It's a glob pattern, expand it
-        const matches = glob.sync(absolutePath, { nodir: true });
+        const matches = glob.sync(absolutePath, {
+          nodir: true,
+          ...globOptions,
+        });
         const safeMatches: string[] = [];
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
@@ -129,7 +156,7 @@ export function extractFileDependencies(
           .split(/[\\/]/);
         let globRoot = initialGlobRoot;
         for (const part of pathParts) {
-          if (glob.hasMagic(part)) {
+          if (glob.hasMagic(part, globOptions)) {
             break;
           }
           globRoot = path.join(globRoot, part);
@@ -211,6 +238,9 @@ export function extractFileDependencies(
       if (typeof vars === 'string' || Array.isArray(vars)) {
         const varFiles = Array.isArray(vars) ? vars : [vars];
         for (let varFile of varFiles) {
+          if (typeof varFile !== 'string') {
+            continue;
+          }
           if (varFile.startsWith('file://')) {
             varFile = varFile.slice('file://'.length);
           } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(varFile)) {
@@ -223,6 +253,7 @@ export function extractFileDependencies(
           processFilePath(
             relativeVarFile,
             'test variable file dependency',
+            true,
             true,
           );
         }
@@ -252,8 +283,11 @@ export function extractFileDependencies(
     const extractAssertFiles = (
       asserts?: Array<{ type?: string; value?: unknown }>,
     ): void => {
-      if (!asserts) return;
+      if (!Array.isArray(asserts)) return;
       for (const assert of asserts) {
+        if (typeof assert !== 'object' || assert === null) {
+          continue;
+        }
         if (
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
@@ -311,7 +345,9 @@ export function extractFileDependencies(
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
         if (key === '$ref' && typeof item === 'string') {
-          let refPath = item.split('#', 1)[0];
+          const hashIndex = item.indexOf('#');
+          let refPath = hashIndex === -1 ? item : item.slice(0, hashIndex);
+          const fragment = hashIndex === -1 ? undefined : item.slice(hashIndex);
           if (!refPath) {
             continue;
           }
@@ -323,6 +359,12 @@ export function extractFileDependencies(
           ) {
             continue;
           }
+          if (
+            /%[a-f\d]{2}/i.test(refPath) &&
+            !/%(?![a-f\d]{2})/i.test(refPath)
+          ) {
+            refPath = decodeURIComponent(refPath);
+          }
 
           const relativeRefPath = path.relative(
             configDir,
@@ -332,7 +374,13 @@ export function extractFileDependencies(
             relativeRefPath,
             'test $ref dependency',
           )) {
-            inspectTestFile(refFile, path.dirname(refFile), testBaseDir);
+            inspectTestFile(
+              refFile,
+              path.dirname(refFile),
+              testBaseDir,
+              fragment,
+              true,
+            );
           }
           continue;
         }
@@ -345,11 +393,13 @@ export function extractFileDependencies(
       testFile: string,
       refBaseDir = refResolutionRoot,
       testBaseDir = path.dirname(testFile),
+      fragment?: string,
+      allowBareTestPaths = false,
     ): void => {
-      const inspectionKey = `${testFile}\0${testBaseDir}`;
+      const inspectionKey = `${testFile}\0${testBaseDir}\0${fragment ?? ''}`;
       if (
         inspectedTestFiles.has(inspectionKey) ||
-        !/\.(?:ya?ml|jsonl?)$/i.test(testFile) ||
+        !/\.(?:ya?ml|jsonl?|csv)$/i.test(testFile) ||
         !fs.existsSync(testFile)
       ) {
         return;
@@ -367,6 +417,12 @@ export function extractFileDependencies(
         }
 
         const testContent = fs.readFileSync(realTestFile, 'utf8');
+        if (/\.csv$/i.test(realTestFile)) {
+          for (const value of testContent.match(/file:\/\/[^,\r\n]+/g) ?? []) {
+            processFileUrl(value.trim().replace(/["']+$/, ''));
+          }
+          return;
+        }
         const parsedTests = (
           /\.jsonl$/i.test(realTestFile)
             ? testContent
@@ -374,16 +430,44 @@ export function extractFileDependencies(
                 .filter((line) => line.trim())
                 .map((line) => JSON.parse(line))
             : loadYaml(testContent, {
-                schema: CORE_SCHEMA.withTags(mergeTag),
+                schema: CORE_SCHEMA.withTags(
+                  mergeTag,
+                  binaryTag,
+                  timestampTag,
+                  omapTag,
+                  pairsTag,
+                  setTag,
+                ),
               })
         ) as PromptfooTestConfig | PromptfooTestConfig[] | null;
-        const nestedTests = Array.isArray(parsedTests)
-          ? parsedTests
-          : parsedTests
-            ? [parsedTests]
+        const selectedTests = fragment?.startsWith('#/')
+          ? fragment
+              .slice(2)
+              .split('/')
+              .reduce<unknown>((value, token) => {
+                if (typeof value !== 'object' || value === null) {
+                  return undefined;
+                }
+                const key = token.replace(/~1/g, '/').replace(/~0/g, '~');
+                return (value as Record<string, unknown>)[key];
+              }, parsedTests)
+          : parsedTests;
+        const testsToInspect = selectedTests ?? parsedTests;
+        const nestedTests = Array.isArray(testsToInspect)
+          ? testsToInspect
+          : testsToInspect
+            ? [testsToInspect]
             : [];
 
         for (const nestedTest of nestedTests) {
+          if (typeof nestedTest === 'string' && allowBareTestPaths) {
+            const relativeTestPath = path.relative(
+              configDir,
+              path.resolve(testBaseDir, nestedTest),
+            );
+            processTestFile(relativeTestPath);
+            continue;
+          }
           if (typeof nestedTest !== 'object' || nestedTest === null) {
             continue;
           }
@@ -404,6 +488,10 @@ export function extractFileDependencies(
         // Remote source (https://, s3://, ...) — not a local file dependency.
         return;
       }
+      filePath = filePath.replace(
+        /\{\{\s*env(?:\.|\[)(?:[^}]|\}(?!\}))*\}\}/g,
+        '*',
+      );
 
       // Drop an Excel sheet reference while preserving `#` in other filenames.
       const fileName = path.basename(filePath);
@@ -432,6 +520,7 @@ export function extractFileDependencies(
         filePath,
         'test file dependency',
         true,
+        true,
       )) {
         inspectTestFile(testFile);
       }
@@ -450,6 +539,9 @@ export function extractFileDependencies(
       for (const test of tests) {
         if (typeof test === 'string') {
           processTestFile(test);
+          continue;
+        }
+        if (typeof test !== 'object' || test === null) {
           continue;
         }
         if (test.path) {

@@ -206,6 +206,41 @@ tests:
     ).toEqual(['../config/generators/tests.py', '../config/data/cases.json']);
   });
 
+  it('should preserve dependencies when generator config has an arbitrary assert map', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: file://generators/tests.cjs:generate_tests
+  config:
+    assert:
+      owner: qa
+    dataset: file://data/cases.json
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/generators/tests.cjs', '../config/data/cases.json']);
+  });
+
+  it('should ignore null and non-string vars entries without dropping dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - null
+  - 7
+  - vars:
+      - null
+      - 9
+      - file://data/vars.yaml
+    assert:
+      - null
+      - type: contains
+        value: file://expected/output.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/data/vars.yaml', '../config/expected/output.txt']);
+  });
+
   it('should extract dependencies nested in a file-backed YAML test', () => {
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) => {
@@ -389,6 +424,57 @@ tests:
     ]);
   });
 
+  it('should extract bare test paths selected through a main-config $ref', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        const target = String(filePath);
+        if (target.endsWith('tests-index.yaml')) {
+          return 'cases:\n  - tests/cases.yaml';
+        }
+        if (target.endsWith('tests/cases.yaml')) {
+          return '- vars:\n    value: file://data/value.txt';
+        }
+        return 'tests:\n  $ref: tests-index.yaml#/cases';
+      },
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['tests-index.yaml', 'tests/cases.yaml', 'data/value.txt']);
+  });
+
+  it('should decode URI-encoded local $ref filenames before tracking them', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('suite index.yaml')
+          ? 'cases:\n  - vars:\n      value: tracked'
+          : 'tests:\n  $ref: suite%20index.yaml#/cases',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['suite index.yaml']);
+  });
+
+  it('should retain a ref dependency when its JSON pointer crosses a scalar', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('tests-index.yaml')
+          ? 'cases:\n  - 7'
+          : 'tests:\n  $ref: tests-index.yaml#/cases/0/value',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['tests-index.yaml']);
+  });
+
   it('should inspect a shared $ref for each outer test vars base', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
     mockFs.readFileSync.mockImplementation(
@@ -537,6 +623,51 @@ tests:
     ).toEqual(['../config/tests/cases.yaml', '../config/data/context.txt']);
   });
 
+  it('should inspect a file-backed YAML test with supported binary metadata', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? [
+              '- metadata:',
+              '    blob: !!binary dGVzdA==',
+              '    tags: !!set { smoke: null, safety: null }',
+              '    pairs: !!pairs [ { owner: qa } ]',
+              '    ordered: !!omap [ { suite: safety } ]',
+              '    generated: 2026-07-14T12:00:00Z',
+              '  vars:',
+              '    value: file://data/value.txt',
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.yaml', '../config/data/value.txt']);
+  });
+
+  it('should preserve Promptfoo-compatible implicit YAML scalar test paths', () => {
+    mockFs.readFileSync.mockReturnValue('tests: on');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/on']);
+  });
+
+  it('should extract file URLs embedded in a file-backed CSV test', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.csv')
+          ? 'value,expected\nfile://data/value.txt,ok\n'
+          : 'tests: file://tests/cases.csv',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.csv', '../config/data/value.txt']);
+  });
+
   it('should warn when reading a file-backed test throws a non-Error', () => {
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) => {
@@ -602,6 +733,68 @@ tests:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toContain('../config/data/');
+  });
+
+  it('should expand Windows-style direct and nested-vars test globs', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? "- vars: 'vars\\\\*.yaml'"
+          : "tests: ['file://tests\\\\*.yaml']",
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { windowsPathsNoEscape?: boolean }) =>
+        value.includes('*') &&
+        (!value.includes('\\') || options?.windowsPathsNoEscape === true),
+    );
+    mockGlob.sync.mockImplementation(
+      (pattern: string, options?: { windowsPathsNoEscape?: boolean }) => {
+        expect(options?.windowsPathsNoEscape).toBe(true);
+        return String(pattern).includes('vars')
+          ? ['/test/config/tests/vars/inputs.yaml']
+          : ['/test/config/tests/cases.yaml'];
+      },
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      '../config/tests/',
+      '../config/tests/vars/inputs.yaml',
+      '../config/tests/vars/',
+    ]);
+  });
+
+  it('should preserve POSIX escaped-magic paths as literal dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(
+      String.raw`tests: ['file://tests/\*.yaml']`,
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { windowsPathsNoEscape?: boolean }) =>
+        value.includes('*') &&
+        (!value.includes('/\\*') || options?.windowsPathsNoEscape === true),
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/\\*.yaml']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should expand env-templated test paths conservatively', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: "file://tests/{{ env.SUITE }}.yaml"',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/tests/active.yaml']);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/active.yaml', '../config/tests/']);
   });
 
   it('should preserve the config directory for an empty root test glob', () => {
