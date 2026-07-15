@@ -16,24 +16,23 @@ export function normalizeConfigFilePath(
 
 interface PromptfooAssertion {
   type?: string;
-  value?: string | { file?: string };
+  value?: unknown;
   assert?: PromptfooAssertion[];
+}
+
+interface PromptfooTestConfig {
+  vars?: string | { [key: string]: string | { file?: string } };
+  assert?: PromptfooAssertion[];
+  assertScoringFunction?: unknown;
+  options?: { transform?: unknown };
+  [key: string]: unknown;
 }
 
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
-  tests?: Array<{
-    vars?: { [key: string]: string | { file?: string } };
-    assert?: PromptfooAssertion[];
-    [key: string]: unknown;
-  }>;
-  defaultTest?:
-    | string
-    | {
-        vars?: { [key: string]: string | { file?: string } };
-        assert?: PromptfooAssertion[];
-      };
+  tests?: PromptfooTestConfig[];
+  defaultTest?: string | PromptfooTestConfig;
 }
 
 function isPathInside(baseDir: string, targetPath: string): boolean {
@@ -196,8 +195,14 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Extract test variable files
-    const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
-      if (!vars) return;
+    const extractVarFiles = (
+      vars?: string | { [key: string]: unknown },
+    ): void => {
+      if (typeof vars === 'string' && vars.startsWith('file://')) {
+        processFileUrl(vars);
+        return;
+      }
+      if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return;
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
@@ -220,33 +225,37 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Extract assert files
     const visitedAssertSets = new WeakSet<PromptfooAssertion[]>();
+    const visitedAssertValues = new WeakSet<object>();
+    const extractAssertValueFiles = (value: unknown): void => {
+      if (typeof value === 'string' && value.startsWith('file://')) {
+        processFileUrl(value.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, '$1'));
+      } else if (Array.isArray(value)) {
+        if (visitedAssertValues.has(value)) return;
+        visitedAssertValues.add(value);
+        for (const item of value) {
+          extractAssertValueFiles(item);
+        }
+      } else if (
+        typeof value === 'object' &&
+        value !== null &&
+        'file' in value &&
+        typeof value.file === 'string'
+      ) {
+        const absolutePath = resolveConfigDependency(
+          value.file,
+          'assertion file dependency',
+        );
+        if (absolutePath) {
+          dependencies.add(absolutePath);
+        }
+      }
+    };
     const extractAssertFiles = (asserts?: PromptfooAssertion[]): void => {
       if (!Array.isArray(asserts) || visitedAssertSets.has(asserts)) return;
       visitedAssertSets.add(asserts);
       for (const assert of asserts) {
         if (!assert || typeof assert !== 'object') continue;
-        if (
-          typeof assert.value === 'string' &&
-          assert.value.startsWith('file://')
-        ) {
-          processFileUrl(
-            assert.value.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, '$1'),
-          );
-        } else if (
-          typeof assert.value === 'object' &&
-          assert.value !== null &&
-          'file' in assert.value &&
-          typeof assert.value.file === 'string'
-        ) {
-          const absolutePath = resolveConfigDependency(
-            assert.value.file,
-            'assertion file dependency',
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
-        }
-
+        extractAssertValueFiles(assert.value);
         extractAssertFiles(assert.assert);
       }
     };
@@ -292,6 +301,8 @@ export function extractFileDependencies(configPath: string): string[] {
                 ) {
                   extractVarFiles(defaultTest.vars);
                   extractAssertFiles(defaultTest.assert);
+                  extractAssertValueFiles(defaultTest.assertScoringFunction);
+                  extractAssertValueFiles(defaultTest.options?.transform);
                 }
               }
             } catch {
@@ -307,6 +318,8 @@ export function extractFileDependencies(configPath: string): string[] {
       ) {
         extractVarFiles(config.defaultTest.vars);
         extractAssertFiles(config.defaultTest.assert);
+        extractAssertValueFiles(config.defaultTest.assertScoringFunction);
+        extractAssertValueFiles(config.defaultTest.options?.transform);
       }
     }
 

@@ -36402,7 +36402,11 @@ function extractFileDependencies(configPath) {
       }
     }
     const extractVarFiles = (vars) => {
-      if (!vars) return;
+      if (typeof vars === "string" && vars.startsWith("file://")) {
+        processFileUrl(vars);
+        return;
+      }
+      if (!vars || typeof vars !== "object" || Array.isArray(vars)) return;
       for (const value of Object.values(vars)) {
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value);
@@ -36418,24 +36422,32 @@ function extractFileDependencies(configPath) {
       }
     };
     const visitedAssertSets = /* @__PURE__ */ new WeakSet();
+    const visitedAssertValues = /* @__PURE__ */ new WeakSet();
+    const extractAssertValueFiles = (value) => {
+      if (typeof value === "string" && value.startsWith("file://")) {
+        processFileUrl(value.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, "$1"));
+      } else if (Array.isArray(value)) {
+        if (visitedAssertValues.has(value)) return;
+        visitedAssertValues.add(value);
+        for (const item of value) {
+          extractAssertValueFiles(item);
+        }
+      } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
+        const absolutePath = resolveConfigDependency(
+          value.file,
+          "assertion file dependency"
+        );
+        if (absolutePath) {
+          dependencies.add(absolutePath);
+        }
+      }
+    };
     const extractAssertFiles = (asserts) => {
       if (!Array.isArray(asserts) || visitedAssertSets.has(asserts)) return;
       visitedAssertSets.add(asserts);
       for (const assert of asserts) {
         if (!assert || typeof assert !== "object") continue;
-        if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
-          processFileUrl(
-            assert.value.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, "$1")
-          );
-        } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
-          const absolutePath = resolveConfigDependency(
-            assert.value.file,
-            "assertion file dependency"
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
-        }
+        extractAssertValueFiles(assert.value);
         extractAssertFiles(assert.assert);
       }
     };
@@ -36472,6 +36484,8 @@ function extractFileDependencies(configPath) {
                 if (defaultTest && typeof defaultTest === "object" && !Array.isArray(defaultTest)) {
                   extractVarFiles(defaultTest.vars);
                   extractAssertFiles(defaultTest.assert);
+                  extractAssertValueFiles(defaultTest.assertScoringFunction);
+                  extractAssertValueFiles(defaultTest.options?.transform);
                 }
               }
             } catch {
@@ -36484,6 +36498,8 @@ function extractFileDependencies(configPath) {
       } else if (typeof config2.defaultTest === "object" && !Array.isArray(config2.defaultTest)) {
         extractVarFiles(config2.defaultTest.vars);
         extractAssertFiles(config2.defaultTest.assert);
+        extractAssertValueFiles(config2.defaultTest.assertScoringFunction);
+        extractAssertValueFiles(config2.defaultTest.options?.transform);
       }
     }
     if (config2.tests) {
