@@ -70,6 +70,9 @@ providers:
     expect(normalizeConfigFilePath('/C:/repo/prompts/*.txt', 'win32')).toBe(
       'C:/repo/prompts/*.txt',
     );
+    expect(normalizeConfigFilePath('prompts\\*.txt', 'win32')).toBe(
+      'prompts/*.txt',
+    );
     expect(
       normalizeConfigFilePath('/test/working/prompts/build.py', 'linux'),
     ).toBe('/test/working/prompts/build.py');
@@ -163,6 +166,57 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/prompts/generate.sh']);
+  });
+
+  it('should track existing file arguments for mapped executable prompts from the action working directory', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  exec:../bin/python ../prompts/generate.py: generated prompt
+`);
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('/prompts/generate.py'),
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o644,
+    } as fs.Stats);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+      '/test/working/custom',
+    );
+
+    expect(deps).toEqual(['bin/python', 'prompts/generate.py']);
+  });
+
+  it('should track contained absolute executable arguments and ignore directory arguments', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  exec:../bin/python /test/working/prompts/generate.py ./templates: generated prompt
+`);
+    mockFs.existsSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      return (
+        candidate.endsWith('/prompts/generate.py') ||
+        candidate.endsWith('/templates')
+      );
+    });
+    mockFs.statSync.mockImplementation(
+      (filePath: unknown) =>
+        ({
+          isDirectory: () => String(filePath).endsWith('/templates'),
+          isFile: () => String(filePath).endsWith('/prompts/generate.py'),
+          mode: 0o644,
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+      '/test/working/custom',
+    );
+
+    expect(deps).toEqual(['bin/python', 'prompts/generate.py']);
   });
 
   it('should extract file-backed prompt ids', () => {
@@ -319,6 +373,24 @@ tests:
     expect(deps).toContain('../config/validators/custom.js');
   });
 
+  it('should preserve literal function-like suffixes in variable and assertion filenames', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      context: file://data/context.rb:v2
+    assert:
+      - type: contains
+        value: file://expected/output.py:v3
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/data/context.rb:v2',
+      '../config/expected/output.py:v3',
+    ]);
+  });
+
   it('should extract defaultTest files', () => {
     const configContent = `
 defaultTest:
@@ -378,6 +450,65 @@ shared: &shared
     expect(() =>
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toThrow('Failed to extract dependencies from config');
+  });
+
+  it.each([
+    ['providers', 'providers:\n  $ref: providers.yaml#/providers'],
+    ['inline providers', 'providers: { $ref: providers.yaml#/providers }'],
+    [
+      'assertions',
+      'tests:\n  - assert:\n      $ref: assertions.yaml#/assertions',
+    ],
+  ])('should conservatively watch the repository for valid YAML $ref %s', (_name, section) => {
+    mockFs.readFileSync.mockReturnValue(`prompts: []\n${section}\n`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('YAML $ref dependencies'),
+    );
+  });
+
+  it('should preserve escaped glob literals on POSIX', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://prompts/\\*.txt: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation(
+      (filePath: string, options?: { windowsPathsNoEscape?: boolean }) =>
+        filePath.includes('*') && options?.windowsPathsNoEscape === true,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/\\*.txt']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should recognize Windows backslash-separated prompt globs', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://prompts\\*.txt: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation((filePath: string) =>
+      filePath.includes('*'),
+    );
+
+    try {
+      const deps = extractFileDependencies(
+        '/test/working/promptfooconfig.yaml',
+      );
+
+      expect(deps).toEqual(['prompts/']);
+      expect(mockGlob.hasMagic).toHaveBeenCalledWith('prompts/*.txt', {
+        windowsPathsNoEscape: true,
+      });
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
   });
 
   it('should conservatively watch all changes for JavaScript and TypeScript configs', () => {
@@ -503,7 +634,7 @@ prompts:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['prompts']);
+    expect(deps).toEqual(['prompts/']);
   });
 
   it('should preserve the config directory for an unmatched root-level prompt glob', () => {
@@ -520,7 +651,7 @@ prompts:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['evals']);
+    expect(deps).toEqual(['evals/']);
   });
 
   it('should preserve a repository-root directory sentinel', () => {

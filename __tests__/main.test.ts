@@ -432,6 +432,7 @@ describe('GitHub Action Main', () => {
       );
       expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
         path.join(process.cwd(), 'evals', 'promptfooconfig.yaml'),
+        path.join(process.cwd(), 'evals'),
       );
     });
 
@@ -972,6 +973,21 @@ describe('GitHub Action Main', () => {
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['/']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when dependency extraction returns a dot-slash repository sentinel', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/dynamic-provider.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
 
       await run();
 

@@ -42,7 +42,7 @@ export function normalizeConfigFilePath(
   platform: NodeJS.Platform = process.platform,
 ): string {
   return platform === 'win32'
-    ? filePath.replace(/^\/(?=[A-Za-z]:[\\/])/, '')
+    ? filePath.replace(/^\/(?=[A-Za-z]:[\\/])/, '').replace(/\\/g, '/')
     : filePath;
 }
 
@@ -50,7 +50,10 @@ export function normalizeConfigFilePath(
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
  */
-export function extractFileDependencies(configPath: string): string[] {
+export function extractFileDependencies(
+  configPath: string,
+  executionCwd = process.cwd(),
+): string[] {
   const dependencies = new Set<string>();
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
@@ -68,6 +71,15 @@ export function extractFileDependencies(configPath: string): string[] {
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
       return [];
+    }
+
+    if (
+      /(?:^|[,{]\s*|\n\s*(?:-\s*)?)["']?\$ref["']?\s*:/m.test(configContent)
+    ) {
+      core.warning(
+        'YAML $ref dependencies cannot be extracted statically; watching all repository changes',
+      );
+      return ['./'];
     }
 
     const config = loadYaml(configContent, {
@@ -110,11 +122,15 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): void => {
+    const processFileUrl = (
+      fileUrl: string,
+      stripFunctionSuffix = false,
+    ): void => {
+      const rawFilePath = fileUrl.replace('file://', '');
       const filePath = normalizeConfigFilePath(
-        fileUrl
-          .replace('file://', '')
-          .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1'),
+        stripFunctionSuffix
+          ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1')
+          : rawFilePath,
       );
       const absolutePath = resolveConfigDependency(
         filePath,
@@ -125,9 +141,15 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       // Check if the path contains glob patterns
-      if (glob.hasMagic(filePath)) {
+      const globOptions = {
+        windowsPathsNoEscape: process.platform === 'win32',
+      };
+      if (glob.hasMagic(filePath, globOptions)) {
         // It's a glob pattern, expand it
-        const matches = glob.sync(absolutePath, { nodir: true });
+        const matches = glob.sync(absolutePath, {
+          nodir: true,
+          ...globOptions,
+        });
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
           if (isPathInside(dependencyRoot, absoluteMatch)) {
@@ -148,12 +170,17 @@ export function extractFileDependencies(configPath: string): string[] {
           .filter(Boolean);
         let basePath = root;
         for (const part of pathParts) {
-          if (glob.hasMagic(part)) {
+          if (glob.hasMagic(part, globOptions)) {
             break;
           }
           basePath = basePath ? path.join(basePath, part) : part;
         }
-        dependencies.add(path.resolve(configDir, basePath || '.'));
+        const watchedDirectory = path.resolve(configDir, basePath || '.');
+        dependencies.add(
+          matches.length === 0
+            ? `${watchedDirectory.replace(/[\\/]+$/, '')}${path.sep}`
+            : watchedDirectory,
+        );
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = fileUrl.endsWith('/')
@@ -170,12 +197,12 @@ export function extractFileDependencies(configPath: string): string[] {
     if (config.providers) {
       for (const provider of config.providers) {
         if (typeof provider === 'string' && provider.startsWith('file://')) {
-          processFileUrl(provider);
+          processFileUrl(provider, true);
         } else if (
           typeof provider === 'object' &&
           provider.id?.startsWith('file://')
         ) {
-          processFileUrl(provider.id);
+          processFileUrl(provider.id, true);
         }
       }
     }
@@ -193,16 +220,41 @@ export function extractFileDependencies(configPath: string): string[] {
           );
 
         if (looksLikePath) {
-          const executablePath = reference
-            .replace(/^exec:/, '')
-            .match(/^[^\s"']+|"([^"]*)"|'([^']*)'/)?.[0]
-            ?.replace(/^['"]|['"]$/g, '');
-          const promptPath = isExecutable ? (executablePath ?? '') : reference;
+          const executableParts = isExecutable
+            ? (
+                reference
+                  .replace(/^exec:/, '')
+                  .match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? []
+              ).map((part) => part.replace(/^['"]|['"]$/g, ''))
+            : [];
+          const promptPath = isExecutable
+            ? (executableParts[0] ?? '')
+            : reference;
           processFileUrl(
             promptPath.startsWith('file://')
               ? promptPath
               : `file://${promptPath}`,
+            true,
           );
+
+          for (const executableArgument of executableParts.slice(1)) {
+            const argumentPath = path.isAbsolute(executableArgument)
+              ? path.resolve(executableArgument)
+              : path.resolve(executionCwd, executableArgument);
+            if (
+              !isPathInside(dependencyRoot, argumentPath) ||
+              !fs.existsSync(argumentPath)
+            ) {
+              continue;
+            }
+            try {
+              if (fs.statSync(argumentPath).isFile()) {
+                dependencies.add(argumentPath);
+              }
+            } catch {
+              // Ignore unreadable arguments while preserving other dependencies.
+            }
+          }
         }
       };
 
@@ -315,7 +367,7 @@ export function extractFileDependencies(configPath: string): string[] {
       for (const test of tests) {
         if (typeof test === 'string') {
           if (test.startsWith('file://')) {
-            processFileUrl(test);
+            processFileUrl(test, true);
           }
           continue;
         }
@@ -323,6 +375,7 @@ export function extractFileDependencies(configPath: string): string[] {
         if (typeof test.path === 'string') {
           processFileUrl(
             test.path.startsWith('file://') ? test.path : `file://${test.path}`,
+            true,
           );
           extractNestedFileUrls(test.config);
         }

@@ -36285,9 +36285,9 @@ function isPathInside(baseDir, targetPath) {
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
 function normalizeConfigFilePath(filePath, platform2 = process.platform) {
-  return platform2 === "win32" ? filePath.replace(/^\/(?=[A-Za-z]:[\\/])/, "") : filePath;
+  return platform2 === "win32" ? filePath.replace(/^\/(?=[A-Za-z]:[\\/])/, "").replace(/\\/g, "/") : filePath;
 }
-function extractFileDependencies(configPath) {
+function extractFileDependencies(configPath, executionCwd = process.cwd()) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path5.dirname(configPath);
   const cwd = process.cwd();
@@ -36303,6 +36303,12 @@ function extractFileDependencies(configPath) {
     if (!configContent.trim()) {
       debug("Config file is empty or invalid");
       return [];
+    }
+    if (/(?:^|[,{]\s*|\n\s*(?:-\s*)?)["']?\$ref["']?\s*:/m.test(configContent)) {
+      warning(
+        "YAML $ref dependencies cannot be extracted statically; watching all repository changes"
+      );
+      return ["./"];
     }
     const config2 = load(configContent, {
       schema: CORE_SCHEMA.withTags(mergeTag)
@@ -36335,9 +36341,10 @@ function extractFileDependencies(configPath) {
         return void 0;
       }
     };
-    const processFileUrl = (fileUrl) => {
+    const processFileUrl = (fileUrl, stripFunctionSuffix = false) => {
+      const rawFilePath = fileUrl.replace("file://", "");
       const filePath = normalizeConfigFilePath(
-        fileUrl.replace("file://", "").replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, "$1")
+        stripFunctionSuffix ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, "$1") : rawFilePath
       );
       const absolutePath = resolveConfigDependency(
         filePath,
@@ -36346,8 +36353,14 @@ function extractFileDependencies(configPath) {
       if (!absolutePath) {
         return;
       }
-      if (le(filePath)) {
-        const matches = Ui(absolutePath, { nodir: true });
+      const globOptions = {
+        windowsPathsNoEscape: process.platform === "win32"
+      };
+      if (le(filePath, globOptions)) {
+        const matches = Ui(absolutePath, {
+          nodir: true,
+          ...globOptions
+        });
         for (const match of matches) {
           const absoluteMatch = path5.resolve(match);
           if (isPathInside(dependencyRoot, absoluteMatch)) {
@@ -36362,12 +36375,15 @@ function extractFileDependencies(configPath) {
         const pathParts = filePath.slice(root.length).split(/[\\/]/).filter(Boolean);
         let basePath = root;
         for (const part of pathParts) {
-          if (le(part)) {
+          if (le(part, globOptions)) {
             break;
           }
           basePath = basePath ? path5.join(basePath, part) : part;
         }
-        dependencies.add(path5.resolve(configDir, basePath || "."));
+        const watchedDirectory = path5.resolve(configDir, basePath || ".");
+        dependencies.add(
+          matches.length === 0 ? `${watchedDirectory.replace(/[\\/]+$/, "")}${path5.sep}` : watchedDirectory
+        );
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
         dependencies.add(directoryPath);
@@ -36378,9 +36394,9 @@ function extractFileDependencies(configPath) {
     if (config2.providers) {
       for (const provider of config2.providers) {
         if (typeof provider === "string" && provider.startsWith("file://")) {
-          processFileUrl(provider);
+          processFileUrl(provider, true);
         } else if (typeof provider === "object" && provider.id?.startsWith("file://")) {
-          processFileUrl(provider.id);
+          processFileUrl(provider.id, true);
         }
       }
     }
@@ -36391,11 +36407,24 @@ function extractFileDependencies(configPath) {
           reference
         );
         if (looksLikePath) {
-          const executablePath = reference.replace(/^exec:/, "").match(/^[^\s"']+|"([^"]*)"|'([^']*)'/)?.[0]?.replace(/^['"]|['"]$/g, "");
-          const promptPath = isExecutable ? executablePath ?? "" : reference;
+          const executableParts = isExecutable ? (reference.replace(/^exec:/, "").match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? []).map((part) => part.replace(/^['"]|['"]$/g, "")) : [];
+          const promptPath = isExecutable ? executableParts[0] ?? "" : reference;
           processFileUrl(
-            promptPath.startsWith("file://") ? promptPath : `file://${promptPath}`
+            promptPath.startsWith("file://") ? promptPath : `file://${promptPath}`,
+            true
           );
+          for (const executableArgument of executableParts.slice(1)) {
+            const argumentPath = path5.isAbsolute(executableArgument) ? path5.resolve(executableArgument) : path5.resolve(executionCwd, executableArgument);
+            if (!isPathInside(dependencyRoot, argumentPath) || !fs6.existsSync(argumentPath)) {
+              continue;
+            }
+            try {
+              if (fs6.statSync(argumentPath).isFile()) {
+                dependencies.add(argumentPath);
+              }
+            } catch {
+            }
+          }
         }
       };
       if (typeof prompt === "string") {
@@ -36474,13 +36503,14 @@ function extractFileDependencies(configPath) {
       for (const test of tests) {
         if (typeof test === "string") {
           if (test.startsWith("file://")) {
-            processFileUrl(test);
+            processFileUrl(test, true);
           }
           continue;
         }
         if (typeof test.path === "string") {
           processFileUrl(
-            test.path.startsWith("file://") ? test.path : `file://${test.path}`
+            test.path.startsWith("file://") ? test.path : `file://${test.path}`,
+            true
           );
           extractNestedFileUrls(test.config);
         }
@@ -37172,13 +37202,16 @@ async function run() {
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+      const dependencies = extractFileDependencies(
+        configAbsolutePath,
+        workingDirectory
+      ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
         );
         dependencyChanged = dependencies.some((dep) => {
-          if (dep === "." || dep === "" || dep === "/") {
+          if (dep === "." || dep === "./" || dep === "" || dep === "/") {
             return true;
           }
           if (changedFilesList.includes(dep)) {
