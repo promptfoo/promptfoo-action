@@ -38675,7 +38675,7 @@ function extractFileDependencies(configPath) {
       if (filePath.includes("\0")) {
         addDependencyRootWatchers();
         warning(
-          "Skipping invalid config dependency glob pattern with mismatched or unclosed delimiters; conservatively watching the dependency root"
+          "Skipping invalid config dependency glob pattern containing a NUL byte; conservatively watching the dependency root"
         );
         return void 0;
       }
