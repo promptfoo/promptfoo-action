@@ -1594,6 +1594,29 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should match normalized repository dependency globs with POSIX semantics', async () => {
+      const posixMatcher = vi.spyOn(path.posix, 'matchesGlob');
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/nested/context.json' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('*'),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue(['data/**/*.json']);
+
+      await run();
+
+      expect(posixMatcher).toHaveBeenCalledWith(
+        'data/nested/context.json',
+        'data/**/*.json',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should run when a repository-root negated extglob matches a deletion', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'other' }]);
       mockGlob.sync.mockReturnValue([]);

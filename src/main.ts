@@ -569,7 +569,7 @@ export async function run(): Promise<void> {
               if (
                 glob.hasMagic(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS) &&
                 changedFilesList.some((changedFile) =>
-                  path.matchesGlob(changedFile, dep),
+                  path.posix.matchesGlob(changedFile, dep),
                 )
               ) {
                 return true;
