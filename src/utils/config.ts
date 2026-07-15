@@ -138,12 +138,22 @@ export function extractFileDependencies(configPath: string): string[] {
       magicalBraces: true,
     };
 
+    const hasDynamicFilePath = (filePath: string): boolean =>
+      /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}/.test(filePath);
+
+    const watchDynamicFilePath = (filePath: string): boolean => {
+      if (!hasDynamicFilePath(filePath)) return false;
+      dependencies.add(`${dependencyRoot}${path.sep}`);
+      return true;
+    };
+
     // Helper function to process file:// paths with glob support
     const processFileUrl = (
       fileUrl: string,
       resolvedPath?: string,
     ): string[] => {
       const filePath = normalizeConfigFilePath(fileUrl.replace('file://', ''));
+      if (watchDynamicFilePath(filePath)) return [];
       const absolutePath =
         resolvedPath ??
         resolveConfigDependency(filePath, 'config file dependency');
@@ -322,6 +332,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     function inspectNestedConfigFile(fileUrl: string): void {
       const filePath = normalizeConfigFilePath(fileUrl.slice('file://'.length));
+      if (watchDynamicFilePath(filePath)) return;
       const absolutePath = resolveConfigDependency(
         filePath,
         'nested config file dependency',
@@ -360,6 +371,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const inspectVarFile = (value: string): void => {
       const fileUrl = value.startsWith('file://') ? value : `file://${value}`;
       const filePath = normalizeConfigFilePath(fileUrl.slice('file://'.length));
+      if (watchDynamicFilePath(filePath)) return;
       const absolutePath = resolveConfigDependency(
         filePath,
         'test variable file dependency',
@@ -440,10 +452,7 @@ export function extractFileDependencies(configPath: string): string[] {
       if (typeof config.defaultTest === 'string') {
         if (config.defaultTest.startsWith('file://')) {
           const defaultTestFile = config.defaultTest.slice('file://'.length);
-          const hasDynamicDefaultTestPath =
-            /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}/.test(
-              defaultTestFile,
-            );
+          const hasDynamicDefaultTestPath = hasDynamicFilePath(defaultTestFile);
           const defaultTestPath = hasDynamicDefaultTestPath
             ? undefined
             : resolveConfigDependency(

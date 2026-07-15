@@ -478,6 +478,73 @@ assert:
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
   });
 
+  it('should conservatively watch the repository for templated nested provider, assert, and vars paths', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+vars:
+  - '{# external vars #}../../secrets/vars.yaml'
+assert:
+  - type: javascript
+    value: 'file://{{ env.ASSERT_PATH }}:score'
+    provider:
+      id: 'file://{% if env.USE_GRADER %}graders/local.py{% else %}../../secrets/grader.py{% endif %}:call_api'
+options:
+  provider:
+    'file://{{ env.MAP_GRADER }}:call_api':
+      config:
+        response_format: 'file://{# schema #}schemas/format.yaml'
+        tools: 'file://{% if env.USE_TOOLS %}tools/local.py{% else %}../../secrets/tools.py{% endif %}:get_tools'
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', './']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should conservatively watch the repository for templated references inside an external vars map', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: data/vars.yaml';
+      }
+      if (String(filePath).endsWith('evals/data/vars.yaml')) {
+        return `
+context: 'file://{# context #}fixtures/context.txt'
+documents:
+  - 'file://{{ env.DOCUMENT_PATH }}'
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/vars.yaml',
+      './',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(3);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should track the backing file for a named defaultTest assertion export', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
