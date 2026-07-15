@@ -38725,6 +38725,10 @@ function validatePromptGlob(pattern) {
         invalidGlob();
       }
       expansionCount = Math.floor(Math.abs(end - start) / Math.abs(rawStep)) + 1;
+      const endpointWidth = Math.max(range[0].length, range[1].length);
+      if (expansionCount * endpointWidth > MAX_PROMPT_GLOB_LENGTH) {
+        invalidGlob();
+      }
     }
     braceExpansions *= expansionCount;
     if (braceExpansions > PROMPT_GLOB_BRACE_EXPANSION_LIMIT) {

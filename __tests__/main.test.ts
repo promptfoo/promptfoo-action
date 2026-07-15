@@ -437,6 +437,10 @@ describe('GitHub Action Main', () => {
       ['oversized numeric range', 'prompts/{1..1000000000}.txt'],
       ['numeric range in character class', 'prompts/[{1..1000000000}].txt'],
       ['over-limit numeric range', 'prompts/{1..1025}.txt'],
+      [
+        'zero-padded numeric amplification',
+        `prompts/{${'0'.repeat(32_000)}1..1024}.txt`,
+      ],
       ['unsafe integer range', 'prompts/{1..999999999999999999999999}.txt'],
       ['zero numeric step', 'prompts/{1..4..0}.txt'],
       ['malformed numeric range', 'prompts/{1..many}.txt'],
@@ -468,6 +472,7 @@ describe('GitHub Action Main', () => {
       'prompts/[[:digit:]].txt',
       'prompts/[]]*.txt',
       'prompts/{first,second}.txt',
+      'prompts/{0001..0010}.txt',
     ])('should allow a bounded prompt glob before expansion: %s', async (promptGlob) => {
       withInputs({ prompts: promptGlob });
 
