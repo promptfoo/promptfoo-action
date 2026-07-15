@@ -130,7 +130,7 @@ export function extractFileDependencies(
       return absolutePath;
     };
 
-    const excludedParameters = new WeakSet<object>();
+    const excludedParameterParents = new WeakSet<object>();
     const readConfig = (filePath: string): unknown => {
       const lexicalStats = fs.lstatSync(filePath);
       const configStats = lexicalStats.isSymbolicLink()
@@ -199,7 +199,7 @@ export function extractFileDependencies(
                 typeof functionConfig.parameters === 'object' &&
                 functionConfig.parameters !== null
               ) {
-                excludedParameters.add(functionConfig.parameters);
+                excludedParameterParents.add(functionConfig);
               }
             }
           }
@@ -217,7 +217,7 @@ export function extractFileDependencies(
               ) {
                 continue;
               }
-              excludedParameters.add(tool.function.parameters);
+              excludedParameterParents.add(tool.function);
             }
           }
         }
@@ -367,9 +367,6 @@ export function extractFileDependencies(
       ) {
         continue;
       }
-      if (excludedParameters.has(next.value)) {
-        continue;
-      }
       const objectsForFile =
         inspectedObjects.get(next.file) ?? new WeakSet<object>();
       inspectedObjects.set(next.file, objectsForFile);
@@ -411,10 +408,15 @@ export function extractFileDependencies(
         }
       }
       pending.push(
-        ...Object.values(record).map((value) => ({
-          value,
-          file: next.file,
-        })),
+        ...Object.entries(record)
+          .filter(
+            ([key]) =>
+              key !== 'parameters' || !excludedParameterParents.has(record),
+          )
+          .map(([, value]) => ({
+            value,
+            file: next.file,
+          })),
       );
     }
 

@@ -697,6 +697,32 @@ tests:
     ).toEqual([...implicitConfigDependencies('promptfooconfig.yaml')]);
   });
 
+  it('tracks a provider parameter alias that is also a dereferenced test', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - id: openai:gpt-4',
+        '    config:',
+        '      tools:',
+        '        - type: function',
+        '          function:',
+        '            name: lookup',
+        '            parameters: &case',
+        "              $ref: './case.yaml'",
+        'tests:',
+        '  - *case',
+      ].join('\n'),
+      '/test/working/case.yaml': 'vars:\n  input: case\n',
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'case.yaml',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
   it('tracks literal wildcard-looking ref and envPath filenames without expanding them', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': [
