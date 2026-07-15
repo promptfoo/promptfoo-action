@@ -36865,8 +36865,6 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "CLAUDE_CODE_USE_BEDROCK",
   "CLAUDE_CODE_USE_VERTEX",
   "CLAUDE_CONFIG_DIR",
-  "CLAUDE_CODE_USE_BEDROCK",
-  "CLAUDE_CODE_USE_VERTEX",
   "CLAWDBOT_GATEWAY_URL",
   "CLOUDFLARE_ACCOUNT_ID",
   "CLOUDFLARE_GATEWAY_ID",
@@ -36895,7 +36893,6 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "GCCGO",
   "GCCGOTOOLDIR",
   "GCC_EXEC_PREFIX",
-  "GCLOUD_PROJECT",
   "GCE_METADATA_HOST",
   "GCE_METADATA_IP",
   "GCLOUD_PROJECT",
@@ -37077,7 +37074,6 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "VERCEL_AI_GATEWAY_BASE_URL",
   "VERTEX_API_HOST",
   "VERTEX_REGION",
-  "WATSONX_AI_PROJECT_ID",
   "VERTEX_PROJECT_ID",
   "WATSONX_AI_AUTH_TYPE",
   "WATSONX_AI_BEARER_TOKEN",
@@ -37118,7 +37114,7 @@ function findForbiddenAuthKey(environment) {
   );
 }
 function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, override = true) {
-  const fileEnvironment = Object.create(null);
+  const fileEnvironment = /* @__PURE__ */ Object.create(null);
   const result = dotenv.config({
     path: envFilePath,
     override: true,
