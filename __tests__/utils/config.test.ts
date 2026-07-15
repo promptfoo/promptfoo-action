@@ -3452,6 +3452,45 @@ assert:
     ]);
   });
 
+  it('should revisit an aliased external test file in its root and scenario base contexts', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('shared/cases.yaml'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? `
+tests: &cases file://shared/cases.yaml
+scenarios:
+  - tests: *cases
+`
+        : '- vars: vars/context.yaml\n  provider: python:providers/aliased.py:call_api',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/shared/cases.yaml',
+      'evals/shared/providers/aliased.py',
+      'evals/shared/vars/context.yaml',
+      'evals/providers/aliased.py',
+      'evals/vars/context.yaml',
+    ]);
+
+    mockFs.readFileSync.mockReturnValueOnce(`
+shared: &tests
+  - vars:
+      input: example
+    provider: python:providers/inline-alias.py:call_api
+tests: *tests
+scenarios:
+  - tests: *tests
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/inline-alias.py']);
+  });
+
   it('should extract dependencies reachable through an external test ref', () => {
     mockFs.existsSync.mockImplementation((filePath: string) =>
       /tests\/(?:cases\.yaml|case(?:-relative)?\.json)$/.test(filePath),

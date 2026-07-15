@@ -1192,7 +1192,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     const visitedGeneratorConfigs = new WeakSet<object>();
     const activeTestEntries = new WeakSet<object>();
-    const visitedTestEntries = new WeakSet<object>();
+    const visitedTestEntries = new WeakMap<object, Set<string>>();
     const visitedTestFiles = new Set<string>();
     let testTraversalCount = 0;
     const extractGeneratorConfigReferences = (value: unknown): void => {
@@ -1265,9 +1265,14 @@ export function extractFileDependencies(configPath: string): string[] {
             .replace(TEST_SHEET_SELECTOR_PATTERN, '$1'),
         );
         for (const testFile of resolvedPaths ?? []) {
+          const testFileContextKey = JSON.stringify([
+            testFile,
+            testBaseDir,
+            keepTestBaseDir,
+          ]);
           if (
             !/\.(?:ya?ml|jsonl?|csv)$/i.test(testFile) ||
-            visitedTestFiles.has(testFile) ||
+            visitedTestFiles.has(testFileContextKey) ||
             !fs.existsSync(testFile)
           ) {
             continue;
@@ -1277,7 +1282,7 @@ export function extractFileDependencies(configPath: string): string[] {
             break;
           }
           testTraversalCount += 1;
-          visitedTestFiles.add(testFile);
+          visitedTestFiles.add(testFileContextKey);
           try {
             if (fs.statSync(testFile).size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
               throw new Error('nested test dependency is too large');
@@ -1320,11 +1325,13 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
       if (Array.isArray(tests)) {
+        const testContextKey = JSON.stringify([testBaseDir, keepTestBaseDir]);
         if (activeTestEntries.has(tests)) {
           stopProviderTraversal();
           return;
         }
-        if (visitedTestEntries.has(tests)) {
+        const visitedContexts = visitedTestEntries.get(tests);
+        if (visitedContexts?.has(testContextKey)) {
           return;
         }
         if (testTraversalCount >= 1024) {
@@ -1333,7 +1340,11 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         testTraversalCount += 1;
         activeTestEntries.add(tests);
-        visitedTestEntries.add(tests);
+        if (visitedContexts) {
+          visitedContexts.add(testContextKey);
+        } else {
+          visitedTestEntries.set(tests, new Set([testContextKey]));
+        }
         try {
           for (const test of tests) {
             extractTests(test, testBaseDir, keepTestBaseDir);
