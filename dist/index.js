@@ -38499,8 +38499,11 @@ function extractFileDependencies(configPath) {
             if (path6.relative(cwd, absoluteBasePath) === "") {
               dependencies.add(safePattern);
             } else {
+              const hasBaseMatch = safeMatches.some(
+                (match2) => isPathInside(absoluteBasePath, match2)
+              );
               dependencies.add(
-                matches.length === 0 ? `${absoluteBasePath}${path6.sep}` : absoluteBasePath
+                hasBaseMatch ? absoluteBasePath : `${absoluteBasePath}${path6.sep}`
               );
             }
           } else {
