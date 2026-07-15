@@ -859,6 +859,33 @@ vars:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should keep a vars directory watcher without inspecting the directory as YAML', () => {
+    const varsDirectory = '/test/working/evals/data/vars';
+    mockFs.statSync.mockImplementation(
+      (filePath: unknown) =>
+        ({
+          isDirectory: () => String(filePath) === varsDirectory,
+        }) as fs.Stats,
+    );
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: file://data/vars/';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/data/vars/']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should track provider, options, and assertion file fields in a file-backed defaultTest', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {

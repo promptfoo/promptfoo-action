@@ -216,7 +216,7 @@ export function extractFileDependencies(configPath: string): string[] {
           ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
           : absolutePath;
         dependencies.add(directoryPath);
-        return [directoryPath];
+        return [];
       } else {
         // It's a regular file path
         dependencies.add(absolutePath);
