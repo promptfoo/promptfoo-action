@@ -845,7 +845,6 @@ export function extractFileDependencies(configPath: string): string[] {
         allowJavascript,
         environment,
       );
-      const isProviderConfig = /\.(?:ya?ml|json)$/i.test(providerPath);
       const isProviderGlob = hasGlobMagic(providerPath);
       if (providerPaths.length === 0) {
         if (
@@ -859,10 +858,7 @@ export function extractFileDependencies(configPath: string): string[] {
           dependencyRoot,
           path.resolve(configDir, providerPath),
         );
-        if (
-          (isProviderConfig && !isProviderGlob) ||
-          (isContainedReference && !isProviderGlob)
-        ) {
+        if (isContainedReference && !isProviderGlob) {
           dependencies.add(`${dependencyRoot}${path.sep}`);
         }
         return;

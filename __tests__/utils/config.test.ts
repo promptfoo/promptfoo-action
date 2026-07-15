@@ -2753,6 +2753,19 @@ prompts:
     expect(deps).toEqual(['../config/providers/custom.py']);
   });
 
+  it('should ignore an external provider config without watching the workspace', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://../outside/provider.yaml
+  - file://providers/safe.py
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['providers/safe.py']);
+  });
+
   it('should ignore empty and null-byte dependencies', () => {
     const configContent = `
 providers:
