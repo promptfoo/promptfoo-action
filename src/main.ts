@@ -33,6 +33,88 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
+const PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
+const MAX_PROMPT_GLOB_LENGTH = 65536;
+
+function invalidPromptGlobError(): PromptfooActionError {
+  return new PromptfooActionError(
+    'Invalid prompt glob: the pattern could not be expanded safely.',
+    ErrorCodes.INVALID_CONFIGURATION,
+    'Use valid prompt glob patterns with bounded brace expansion.',
+  );
+}
+
+function validatePromptGlob(pattern: string): void {
+  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || /[\0\r\n]/.test(pattern)) {
+    throw invalidPromptGlobError();
+  }
+
+  const braces: Array<{ start: number; nested: boolean }> = [];
+  let escaped = false;
+  let inCharacterClass = false;
+  for (let index = 0; index < pattern.length; index++) {
+    const character = pattern[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === '[') {
+      inCharacterClass = true;
+      continue;
+    }
+    if (character === ']') {
+      inCharacterClass = false;
+      continue;
+    }
+    if (character === '{') {
+      if (braces.length > 0) braces[braces.length - 1].nested = true;
+      braces.push({ start: index + 1, nested: false });
+      continue;
+    }
+    if (character !== '}') continue;
+    const brace = braces.pop();
+    if (!brace) throw invalidPromptGlobError();
+    if (brace.nested) continue;
+
+    const body = pattern.slice(brace.start, index);
+    if (!body.includes('..')) continue;
+    const parts = body.split('..');
+    const numeric = parts.every((part) => /^-?\d+$/.test(part));
+    const numericLike = parts.some((part) => /^-?\d/.test(part));
+    if (!numeric) {
+      if (numericLike) throw invalidPromptGlobError();
+      continue;
+    }
+    if (parts.length !== 2 && parts.length !== 3) {
+      throw invalidPromptGlobError();
+    }
+    const values = parts.map((part) => Number(part));
+    if (values.some((value) => !Number.isSafeInteger(value))) {
+      throw invalidPromptGlobError();
+    }
+    const start = BigInt(parts[0]);
+    const end = BigInt(parts[1]);
+    const step = parts.length === 3 ? BigInt(parts[2]) : BigInt(1);
+    if (step === BigInt(0)) throw invalidPromptGlobError();
+    const distance = end >= start ? end - start : start - end;
+    const increment = step > BigInt(0) ? step : -step;
+    const count = distance / increment + BigInt(1);
+    const paddedWidth = Math.max(parts[0].length, parts[1].length);
+    if (
+      count > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) ||
+      count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)
+    ) {
+      throw invalidPromptGlobError();
+    }
+  }
+  if (escaped || inCharacterClass || braces.length > 0) {
+    throw invalidPromptGlobError();
+  }
+}
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
@@ -628,10 +710,17 @@ export async function run(): Promise<void> {
         : changedFiles.split('\n').filter((f) => f));
 
     for (const globPattern of promptFilesGlobs) {
-      const matches = glob.sync(globPattern, {
-        cwd: workingDirectory,
-        nodir: true,
-      });
+      validatePromptGlob(globPattern);
+      let matches: string[];
+      try {
+        matches = glob.sync(globPattern, {
+          cwd: workingDirectory,
+          nodir: true,
+          braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT,
+        });
+      } catch {
+        throw invalidPromptGlobError();
+      }
       for (const file of matches) {
         const resolvedPromptPath = path.resolve(workingDirectory, file);
         const repositoryFile = toRepositoryPath(

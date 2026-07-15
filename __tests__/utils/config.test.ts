@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import * as path from 'path';
 import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { extractFileDependencies } from '../../src/utils/config';
@@ -26,11 +27,18 @@ vi.mock('fs', async () => {
 vi.mock('glob');
 vi.mock('path', async () => {
   const realPath = await vi.importActual<typeof import('path')>('path');
+  const activePath = () =>
+    pathState.sep === '\\' ? realPath.win32 : realPath.posix;
   return {
     ...realPath,
     get sep() {
       return pathState.sep;
     },
+    dirname: (value: string) => activePath().dirname(value),
+    isAbsolute: (value: string) => activePath().isAbsolute(value),
+    join: (...values: string[]) => activePath().join(...values),
+    relative: (from: string, to: string) => activePath().relative(from, to),
+    resolve: (...values: string[]) => activePath().resolve(...values),
   };
 });
 
@@ -493,6 +501,7 @@ providers:
 
   it('should handle Windows separators for grouped and ordinary globs', () => {
     pathState.sep = '\\';
+    vi.spyOn(process, 'cwd').mockReturnValue('C:\\repo');
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - 'file://providers\\{nested\\branch,other}\\*.py'
@@ -501,12 +510,21 @@ providers:
 `);
 
     expect(
-      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+      extractFileDependencies('C:\\repo\\evals\\promptfooconfig.yaml'),
     ).toEqual([
-      '../working//',
-      'evals/providers/nested//',
+      './',
+      'evals/providers/nested/',
       'evals/providers/literal/name.js',
     ]);
+    expect(mockFs.lstatSync).toHaveBeenCalledWith(
+      'C:\\repo\\evals\\providers\\nested',
+    );
+    expect(path.resolve('C:\\repo\\evals', '..', 'prompts\\one.txt')).toBe(
+      'C:\\repo\\prompts\\one.txt',
+    );
+    expect(
+      path.relative('C:\\repo', 'C:\\repo\\evals\\providers\\nested'),
+    ).toBe('evals\\providers\\nested');
   });
 
   it.each([
