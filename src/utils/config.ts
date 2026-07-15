@@ -42,6 +42,10 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function expandEnvTemplates(filePath: string): string {
+  return filePath.replace(/\{\{\s*env(?:\.|\[)(?:[^}]|\}(?!\}))*\}\}/g, '*');
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -121,11 +125,7 @@ export function extractFileDependencies(
       }
 
       // Check if the path contains glob patterns
-      const usesWindowsSeparators =
-        windowsPathsNoEscape &&
-        filePath.includes('\\') &&
-        !filePath.includes('/\\');
-      const globOptions = usesWindowsSeparators
+      const globOptions = windowsPathsNoEscape
         ? { windowsPathsNoEscape: true }
         : undefined;
       if (glob.hasMagic(filePath, globOptions)) {
@@ -189,6 +189,7 @@ export function extractFileDependencies(
       preserveGlobRoot = false,
     ): void => {
       let filePath = fileUrl.replace(/^file:\/\//, '');
+      filePath = expandEnvTemplates(filePath);
       const functionIndex = filePath.lastIndexOf(':');
       if (
         functionIndex > 1 &&
@@ -196,7 +197,12 @@ export function extractFileDependencies(
       ) {
         filePath = filePath.slice(0, functionIndex);
       }
-      processFilePath(filePath, 'config file dependency', preserveGlobRoot);
+      processFilePath(
+        filePath,
+        'config file dependency',
+        preserveGlobRoot,
+        preserveGlobRoot,
+      );
     };
 
     // Extract provider files
@@ -251,18 +257,20 @@ export function extractFileDependencies(
             configDir,
             path.resolve(baseDir, varFile),
           );
-          processFilePath(
-            relativeVarFile,
+          for (const resolvedVarFile of processFilePath(
+            expandEnvTemplates(relativeVarFile),
             'test variable file dependency',
             true,
             true,
-          );
+          )) {
+            inspectTestFile(resolvedVarFile, refResolutionRoot, baseDir);
+          }
         }
         return;
       }
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(value);
+          processFileUrl(value, true);
         } else if (
           typeof value === 'object' &&
           value !== null &&
@@ -349,6 +357,11 @@ export function extractFileDependencies(
         return;
       }
       const nestedTest = value as PromptfooTestConfig;
+      if (typeof nestedTest.$id === 'string') {
+        // JSON-schema scopes can redirect relative refs beyond what this
+        // static traversal can safely resolve. Avoid false-negative skips.
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+      }
       extractVarFiles(nestedTest.vars, testBaseDir);
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
@@ -422,7 +435,7 @@ export function extractFileDependencies(
       const inspectionKey = `${testFile}\0${refBaseDir}\0${testBaseDir}\0${fragment ?? ''}`;
       if (
         inspectedTestFiles.has(inspectionKey) ||
-        !/\.(?:ya?ml|jsonl?|csv|xlsx?)$/i.test(testFile) ||
+        !/\.(?:ya?ml|jsonl?|csv|xlsx?|py|[cm]?[jt]s)$/i.test(testFile) ||
         !fs.existsSync(testFile)
       ) {
         return;
@@ -439,10 +452,10 @@ export function extractFileDependencies(
           return;
         }
 
-        if (/\.xlsx?$/i.test(realTestFile)) {
-          // Excel parsing is optional and asynchronous in Promptfoo. A
-          // workspace marker safely prevents skipping changes referenced by
-          // workbook cells without loading an untrusted workbook here.
+        if (/\.(?:xlsx?|py|[cm]?[jt]s)$/i.test(realTestFile)) {
+          // Excel parsing is asynchronous and generators execute code in
+          // Promptfoo. A workspace marker safely prevents skipping referenced
+          // changes without loading an untrusted workbook or generator here.
           dependencies.add(
             `${realDependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
           );
@@ -460,7 +473,7 @@ export function extractFileDependencies(
             for (const value of row) {
               const fileUrlIndex = value.indexOf('file://');
               if (fileUrlIndex !== -1) {
-                processFileUrl(value.slice(fileUrlIndex).trim());
+                processFileUrl(value.slice(fileUrlIndex).trim(), true);
               }
             }
           }
@@ -545,10 +558,7 @@ export function extractFileDependencies(
         // Remote source (https://, s3://, ...) — not a local file dependency.
         return;
       }
-      filePath = filePath.replace(
-        /\{\{\s*env(?:\.|\[)(?:[^}]|\}(?!\}))*\}\}/g,
-        '*',
-      );
+      filePath = expandEnvTemplates(filePath);
 
       // Drop an Excel sheet reference while preserving `#` in other filenames.
       const fileName = path.basename(filePath);

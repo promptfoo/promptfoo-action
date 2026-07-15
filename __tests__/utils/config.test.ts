@@ -221,6 +221,26 @@ tests:
     ).toEqual(['../config/generators/tests.cjs', '../config/data/cases.json']);
   });
 
+  it.each([
+    'py',
+    'js',
+    'cjs',
+    'mjs',
+    'ts',
+    'cts',
+    'mts',
+  ])('should conservatively evaluate all changes for an existing %s test generator', (extension) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockReturnValue(
+      `tests: file://generators/tests.${extension}:generate_tests`,
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([`generators/tests.${extension}`, '/']);
+  });
+
   it('should ignore null and non-string vars entries without dropping dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
@@ -458,6 +478,25 @@ tests:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['suite index.yaml']);
+  });
+
+  it('should conservatively evaluate all changes for nested JSON-schema id scopes', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('tests/cases.yaml')
+          ? [
+              '$schema: https://json-schema.org/draft/2020-12/schema',
+              '$id: nested/',
+              '$ref: case.yaml#/case',
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toContain('/');
   });
 
   it('should decode URI-encoded JSON pointer tokens before selecting tests', () => {
@@ -774,6 +813,56 @@ tests:
     ).toEqual(['../config/tests/cases.csv', '../config/data/value.txt']);
   });
 
+  it.each([
+    ['yaml', '- vars:\n    value: file://data/{{ env.SUITE }}.txt'],
+    ['csv', 'value,expected\nfile://data/{{ env.SUITE }}.txt,ok\n'],
+  ])('should expand env templates in nested file URLs from a %s-backed test', (extension, testContent) => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith(`cases.${extension}`)
+          ? testContent
+          : `tests: file://tests/cases.${extension}`,
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/data/prod.txt']);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      `../config/tests/cases.${extension}`,
+      '../config/data/prod.txt',
+      '../config/data/',
+    ]);
+  });
+
+  it('should inspect file URLs nested inside a referenced vars file', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        const target = String(filePath);
+        if (target.endsWith('tests/cases.yaml')) {
+          return '- vars: vars/inputs.yaml';
+        }
+        if (target.endsWith('tests/vars/inputs.yaml')) {
+          return 'context: file://data/context.txt';
+        }
+        return 'tests: file://tests/cases.yaml';
+      },
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      'tests/cases.yaml',
+      'tests/vars/inputs.yaml',
+      'data/context.txt',
+    ]);
+  });
+
   it('should preserve commas in quoted file URLs from a file-backed CSV test', () => {
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) =>
@@ -930,7 +1019,7 @@ tests:
     ]);
   });
 
-  it('should preserve POSIX escaped-magic paths as literal dependencies', () => {
+  it('should expand mixed-separator test globs using Promptfoo semantics', () => {
     mockFs.readFileSync.mockReturnValue(
       String.raw`tests: ['file://tests/\*.yaml']`,
     );
@@ -939,11 +1028,15 @@ tests:
         value.includes('*') &&
         (!value.includes('/\\*') || options?.windowsPathsNoEscape === true),
     );
+    mockGlob.sync.mockReturnValue(['/test/config/tests/cases.yaml']);
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/tests/\\*.yaml']);
-    expect(mockGlob.sync).not.toHaveBeenCalled();
+    ).toEqual(['../config/tests/cases.yaml', '../config/tests/']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      expect.stringContaining('tests'),
+      expect.objectContaining({ windowsPathsNoEscape: true }),
+    );
   });
 
   it('should expand env-templated test paths conservatively', () => {
@@ -1490,7 +1583,7 @@ tests:
 
     expect(deps).toContain('../config/test-data/data1.json');
     expect(deps).toContain('../config/validators/validator.js');
-    expect(deps).toContain('../config/test-data');
+    expect(deps).toContain('../config/test-data/');
     expect(deps).toContain('../config/validators');
   });
 

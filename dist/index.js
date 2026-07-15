@@ -38013,6 +38013,9 @@ function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
+function expandEnvTemplates(filePath) {
+  return filePath.replace(/\{\{\s*env(?:\.|\[)(?:[^}]|\}(?!\}))*\}\}/g, "*");
+}
 function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path5.dirname(configPath);
@@ -38067,8 +38070,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       if (!absolutePath) {
         return [];
       }
-      const usesWindowsSeparators = windowsPathsNoEscape && filePath.includes("\\") && !filePath.includes("/\\");
-      const globOptions = usesWindowsSeparators ? { windowsPathsNoEscape: true } : void 0;
+      const globOptions = windowsPathsNoEscape ? { windowsPathsNoEscape: true } : void 0;
       if (le(filePath, globOptions)) {
         const matches = Ui(absolutePath, {
           nodir: true,
@@ -38111,11 +38113,17 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
     };
     const processFileUrl = (fileUrl, preserveGlobRoot = false) => {
       let filePath = fileUrl.replace(/^file:\/\//, "");
+      filePath = expandEnvTemplates(filePath);
       const functionIndex = filePath.lastIndexOf(":");
       if (functionIndex > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex))) {
         filePath = filePath.slice(0, functionIndex);
       }
-      processFilePath(filePath, "config file dependency", preserveGlobRoot);
+      processFilePath(
+        filePath,
+        "config file dependency",
+        preserveGlobRoot,
+        preserveGlobRoot
+      );
     };
     if (config2.providers) {
       for (const provider of config2.providers) {
@@ -38158,18 +38166,20 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
             configDir,
             path5.resolve(baseDir, varFile)
           );
-          processFilePath(
-            relativeVarFile,
+          for (const resolvedVarFile of processFilePath(
+            expandEnvTemplates(relativeVarFile),
             "test variable file dependency",
             true,
             true
-          );
+          )) {
+            inspectTestFile(resolvedVarFile, refResolutionRoot, baseDir);
+          }
         }
         return;
       }
       for (const value of Object.values(vars)) {
         if (typeof value === "string" && value.startsWith("file://")) {
-          processFileUrl(value);
+          processFileUrl(value, true);
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
           const absolutePath = resolveConfigDependency(
             value.file,
@@ -38230,6 +38240,9 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         return;
       }
       const nestedTest = value;
+      if (typeof nestedTest.$id === "string") {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path5.sep}`);
+      }
       extractVarFiles(nestedTest.vars, testBaseDir);
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
@@ -38287,7 +38300,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
     const inspectedTestFiles = /* @__PURE__ */ new Set();
     const inspectTestFile = (testFile, refBaseDir = refResolutionRoot, testBaseDir = path5.dirname(testFile), fragment, allowBareTestPaths = false) => {
       const inspectionKey = `${testFile}\0${refBaseDir}\0${testBaseDir}\0${fragment ?? ""}`;
-      if (inspectedTestFiles.has(inspectionKey) || !/\.(?:ya?ml|jsonl?|csv|xlsx?)$/i.test(testFile) || !fs6.existsSync(testFile)) {
+      if (inspectedTestFiles.has(inspectionKey) || !/\.(?:ya?ml|jsonl?|csv|xlsx?|py|[cm]?[jt]s)$/i.test(testFile) || !fs6.existsSync(testFile)) {
         return;
       }
       inspectedTestFiles.add(inspectionKey);
@@ -38300,7 +38313,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           );
           return;
         }
-        if (/\.xlsx?$/i.test(realTestFile)) {
+        if (/\.(?:xlsx?|py|[cm]?[jt]s)$/i.test(realTestFile)) {
           dependencies.add(
             `${realDependencyRoot.replace(/[\\/]+$/, "")}${path5.sep}`
           );
@@ -38317,7 +38330,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
             for (const value of row) {
               const fileUrlIndex = value.indexOf("file://");
               if (fileUrlIndex !== -1) {
-                processFileUrl(value.slice(fileUrlIndex).trim());
+                processFileUrl(value.slice(fileUrlIndex).trim(), true);
               }
             }
           }
@@ -38380,10 +38393,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
         return;
       }
-      filePath = filePath.replace(
-        /\{\{\s*env(?:\.|\[)(?:[^}]|\}(?!\}))*\}\}/g,
-        "*"
-      );
+      filePath = expandEnvTemplates(filePath);
       const fileName = path5.basename(filePath);
       const sheetIndex = fileName.indexOf("#");
       if (sheetIndex !== -1 && /\.xlsx?$/i.test(fileName.slice(0, sheetIndex))) {
