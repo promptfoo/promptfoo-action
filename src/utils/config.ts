@@ -1306,12 +1306,17 @@ export function extractFileDependencies(
           extractNestedFileUrls({
             provider: test.provider,
             assert: test.assert,
+            options: test.options,
           });
           continue;
         }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
-        extractNestedFileUrls({ provider: test.provider, assert: test.assert });
+        extractNestedFileUrls({
+          provider: test.provider,
+          assert: test.assert,
+          options: test.options,
+        });
       }
     }
 

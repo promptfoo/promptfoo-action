@@ -959,6 +959,41 @@ tests:
     expect(deps).toContain('../config/data/context.txt');
   });
 
+  it('should extract runtime-executed provider and hook dependencies from inline test options', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      input: hi
+    options:
+      provider: file://providers/inline.py:call_api
+      postprocess: file://hooks/postprocess.js:run
+      transform: file://hooks/transform.js:run
+      transformVars: file://hooks/transform-vars.js:run
+      rubricPrompt: file://rubrics/custom.txt
+      assertScoringFunction: file://hooks/scoring.js:score
+    assert:
+      - type: llm-rubric
+        value: be safe
+        provider: file://graders/inline.py:grade
+        contextTransform: file://hooks/context.js:run
+        transform: file://hooks/assert.js:run
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/graders/inline.py',
+      '../config/hooks/context.js',
+      '../config/hooks/assert.js',
+      '../config/providers/inline.py',
+      '../config/hooks/postprocess.js',
+      '../config/hooks/transform.js',
+      '../config/hooks/transform-vars.js',
+      '../config/rubrics/custom.txt',
+      '../config/hooks/scoring.js',
+    ]);
+  });
+
   it('should preserve the generator-config glob directory when its last match is deleted', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
