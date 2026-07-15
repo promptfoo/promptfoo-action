@@ -38321,6 +38321,7 @@ function isDirectory2(filePath) {
 // src/utils/glob.ts
 function normalizeGlobPattern(globPattern, platform2 = process.platform) {
   if (platform2 === "win32") return globPattern.replace(/\\/g, "/");
+  const hasPosixSeparator = globPattern.includes("/");
   let normalized = "";
   for (let index = 0; index < globPattern.length; index++) {
     if (globPattern[index] !== "\\") {
@@ -38330,10 +38331,14 @@ function normalizeGlobPattern(globPattern, platform2 = process.platform) {
     let end = index + 1;
     while (globPattern[end] === "\\") end++;
     const slashCount = end - index;
-    normalized += "{}[]()".includes(globPattern[end] ?? "\0") ? "\\".repeat(slashCount) : "/".repeat(slashCount);
+    const escapedCharacter = globPattern[end] ?? "\0";
+    normalized += "{}[]()".includes(escapedCharacter) || hasPosixSeparator && "*?".includes(escapedCharacter) ? "\\".repeat(slashCount) : "/".repeat(slashCount);
     index = end - 1;
   }
   return normalized;
+}
+function isForeignWindowsAbsoluteGlob(globPattern, platform2 = process.platform) {
+  return platform2 !== "win32" && /^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(globPattern);
 }
 function removePosixEscapes(globPattern) {
   const characters = globPattern.split("");
@@ -38786,7 +38791,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     };
     const tryHasGlobMagic = (globPath, source) => {
       if (globPath.length > MAX_GLOB_PATTERN_LENGTH) {
-        warning(`Ignoring ${source}: pattern is too long`);
+        warnUnsafeDependency(
+          "config dependency glob length",
+          `Ignoring ${source}: pattern is too long`
+        );
         return void 0;
       }
       const rangeError = getGlobRangeError(globPath, MAX_BRACE_EXPANSIONS);
@@ -38826,7 +38834,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
         const absolutePattern = path6.resolve(configDir, expandedPath);
         if (absolutePattern.length > MAX_GLOB_PATTERN_LENGTH) {
-          warning(`Ignoring ${source}: pattern is too long`);
+          warnUnsafeDependency(
+            "config dependency glob length",
+            `Ignoring ${source}: pattern is too long`
+          );
           continue;
         }
         if (isDependencyPathInside(absolutePattern)) {
@@ -38857,7 +38868,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       const filePath = normalizeConfigFilePath(
         selector?.pathWithoutSelector ?? rawFilePath
       );
-      const globPath = normalizeGlobPattern(filePath);
+      const globPath = normalizeGlobPattern(filePath, "win32");
       const hasGlobMagic = tryHasGlobMagic(globPath, "config dependency");
       if (hasGlobMagic === void 0) return;
       if (hasGlobMagic) {
@@ -39058,7 +39069,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       const pathWithoutPrefix = promptPath.replace(/^file:\/\//, "");
       const rawPath = getFileFunctionSelector(pathWithoutPrefix)?.pathWithoutSelector ?? pathWithoutPrefix;
       const normalizedPath = normalizeGlobPattern(
-        normalizeConfigFilePath(rawPath)
+        normalizeConfigFilePath(rawPath),
+        "win32"
       );
       const isPromptGlob = tryHasGlobMagic(
         normalizedPath,
@@ -39192,6 +39204,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         try {
           physicalPromptFile = fs6.realpathSync(absolutePromptFile);
         } catch {
+          hasDynamicPromptDependencies = true;
           warnUnsafeDependency(
             "prompt file dependency",
             `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`
@@ -39205,7 +39218,6 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           );
           continue;
         }
-        let promptContent;
         try {
           if (visitedStructuredFiles.has(physicalPromptFile)) continue;
           visitedStructuredFiles.add(physicalPromptFile);
@@ -39214,30 +39226,32 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             promptSize = fs6.statSync(physicalPromptFile).size;
           } catch {
             hasDynamicPromptDependencies = true;
-            warning(
+            warnUnsafeDependency(
+              "structured prompt dependency inspection",
               "Structured prompt file could not be inspected safely; watching all repository changes"
             );
             continue;
           }
           if (promptSize > MAX_STRUCTURED_PROMPT_BYTES) {
             hasDynamicPromptDependencies = true;
-            warning(
+            warnUnsafeDependency(
+              "structured prompt dependency size",
               "Structured prompt file is too large to scan safely; watching all repository changes"
             );
             continue;
           }
-          promptContent = fs6.readFileSync(physicalPromptFile, "utf8");
-          const parsed = absolutePromptFile.endsWith(".jsonl") ? promptContent.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line)) : absolutePromptFile.endsWith(".json") ? JSON.parse(promptContent) : load(promptContent, {
+          const promptContent = fs6.readFileSync(physicalPromptFile, "utf8");
+          const structuredExtension = path6.extname(absolutePromptFile).toLowerCase();
+          const parsed = structuredExtension === ".jsonl" ? promptContent.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line)) : structuredExtension === ".json" ? JSON.parse(promptContent) : load(promptContent, {
             schema: YAML_LOAD_SCHEMA
           });
           walk(parsed, physicalPromptFile);
         } catch {
-          if (promptContent !== void 0 && absolutePromptFile.endsWith(".jsonl")) {
-            hasDynamicPromptDependencies = true;
-            warning(
-              "Structured dependency file could not be parsed safely; watching all repository changes"
-            );
-          }
+          hasDynamicPromptDependencies = true;
+          warnUnsafeDependency(
+            "structured prompt dependency parsing",
+            "Structured dependency file could not be parsed safely; watching all repository changes"
+          );
         }
       }
     };
@@ -40397,8 +40411,16 @@ async function run() {
     const allPromptFiles = [];
     const seenPromptPaths = /* @__PURE__ */ new Set();
     const changedFilesList = changedFiles.split("\0").filter((file) => file);
-    const physicalWorkspaceRoot = fs7.realpathSync(workspaceRoot);
-    const physicalWorkingDirectory = fs7.realpathSync(workingDirectory);
+    let physicalWorkspaceRoot;
+    let physicalWorkingDirectory;
+    try {
+      physicalWorkspaceRoot = fs7.realpathSync(workspaceRoot);
+      physicalWorkingDirectory = fs7.realpathSync(workingDirectory);
+    } catch {
+      throw new Error(
+        "Could not resolve the repository workspace or working directory safely"
+      );
+    }
     for (const globPattern of promptFilesGlobs) {
       if (globPattern.length > MAX_DEPENDENCY_GLOB_PATTERN_LENGTH || globPattern.includes("\0") || !hasBalancedGlobDelimiters(globPattern)) {
         throw new Error("Prompt glob pattern is invalid or too large");
@@ -40421,7 +40443,7 @@ async function run() {
         throw new Error("Prompt glob pattern has too many brace alternatives");
       }
       if (expandedPatterns.some((expandedPattern) => {
-        if (/^(?:[A-Za-z]:\/|\/\/)/.test(expandedPattern)) return true;
+        if (isForeignWindowsAbsoluteGlob(expandedPattern)) return true;
         const absolutePattern = path7.resolve(
           workingDirectory,
           expandedPattern
@@ -40498,7 +40520,8 @@ async function run() {
       ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         debug(`Found ${dependencies.length} file dependencies in config`);
-        dependencyChanged = dependencies.some((dep) => {
+        dependencyChanged = dependencies.some((dependency) => {
+          const dep = normalizeGlobPattern(dependency, "win32");
           if (dep === "." || dep === "./" || dep === "" || dep === "/") {
             return true;
           }
