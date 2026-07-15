@@ -309,6 +309,24 @@ describe('GitHub Action Main', () => {
       });
     });
 
+    test('should reject a matched prompt filename that could forge a workflow annotation', async () => {
+      const forgedAnnotation = 'FORGED_ANNOTATION_CANARY_019F62C3';
+      const unsafePrompt = `prompts/prompt\n::error::${forgedAnnotation}.txt`;
+      mockOctokit.paginate.mockResolvedValue([{ filename: unsafePrompt }]);
+      mockGlob.sync.mockReturnValue([unsafePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths cannot contain carriage returns or line feeds.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        forgedAnnotation,
+      );
+    });
+
     test('should skip evaluation when no relevant files change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'README.md' },

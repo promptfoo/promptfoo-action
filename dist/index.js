@@ -39506,6 +39506,11 @@ async function run() {
         promptFiles.push(...allMatches);
       }
     }
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error(
+        "Prompt file paths cannot contain carriage returns or line feeds."
+      );
+    }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {

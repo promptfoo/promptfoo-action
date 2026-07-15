@@ -502,6 +502,12 @@ export async function run(): Promise<void> {
       }
     }
 
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error(
+        'Prompt file paths cannot contain carriage returns or line feeds.',
+      );
+    }
+
     const configChanged =
       changedFilesList.length > 0 &&
       changedFilesList.includes(configRepositoryPath);
