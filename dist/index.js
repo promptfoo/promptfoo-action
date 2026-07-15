@@ -36533,10 +36533,6 @@ var JS_EXTENSION_CASE_INSENSITIVE = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
 function hasGlobMagic(value) {
   for (let index = 0; index < value.length; index++) {
     const character = value[index];
-    if (path5.sep === "/" && character === "\\") {
-      index++;
-      continue;
-    }
     if ("*?[]{}".includes(character)) {
       return true;
     }
@@ -36570,10 +36566,6 @@ function hasUnsafeGroupedGlob(value) {
   const closingDelimiters = [];
   for (let index = 0; index < value.length; index++) {
     const character = value[index];
-    if (path5.sep === "/" && character === "\\") {
-      index++;
-      continue;
-    }
     if (character === "{") {
       closingDelimiters.push("}");
       continue;
@@ -36587,14 +36579,11 @@ function hasUnsafeGroupedGlob(value) {
       closingDelimiters.pop();
       continue;
     }
-    if (closingDelimiters.length > 0 && (character === "/" || path5.sep !== "/" && character === "\\" || character === "." && value[index + 1] === ".")) {
+    if (closingDelimiters.length > 0 && (character === "/" || character === "." && value[index + 1] === "." && (index === 0 || "/{(,|".includes(value[index - 1])) && (index + 2 === value.length || "/}),|".includes(value[index + 2])))) {
       return true;
     }
   }
   return closingDelimiters.length > 0;
-}
-function unescapePosixGlobLiterals(value) {
-  return path5.sep === "/" ? value.replace(/\\([*?[\]{}()@+!\\])/g, "$1") : value;
 }
 function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
@@ -36698,15 +36687,16 @@ function extractFileDependencies(configPath) {
     const addDirectoryDependency = (directoryPath) => {
       dependencies.add(`${directoryPath.replace(/[\\/]+$/, "")}${path5.sep}`);
     };
-    const processFilePath = (filePath) => {
+    const processFilePath = (filePath, globBacked = true) => {
       if (!filePath || filePath.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(filePath) || filePath.includes("{{") || filePath.includes("{%")) {
         markUnsafeDependency();
         return;
       }
-      if (hasGlobMagic(filePath)) {
-        const pathParts = path5.sep === "/" ? filePath.split("/") : filePath.split(/[\\/]/);
+      const runtimeFilePath = globBacked ? filePath.replace(/\\/g, "/") : filePath;
+      if (globBacked && hasGlobMagic(runtimeFilePath)) {
+        const pathParts = path5.sep === "/" ? runtimeFilePath.split("/") : runtimeFilePath.split(/[\\/]/);
         const firstMagicPart = pathParts.findIndex(hasGlobMagic);
-        const hasCrossDirectoryAlternative = hasUnsafeGroupedGlob(filePath);
+        const hasCrossDirectoryAlternative = hasUnsafeGroupedGlob(runtimeFilePath);
         const hasParentAfterMagic = pathParts.slice(firstMagicPart).some((part) => part === "..");
         if (hasCrossDirectoryAlternative || hasParentAfterMagic) {
           addDirectoryDependency(cwd);
@@ -36727,9 +36717,7 @@ function extractFileDependencies(configPath) {
         }
         return;
       }
-      const absolutePath = resolveConfigDependency(
-        unescapePosixGlobLiterals(filePath)
-      );
+      const absolutePath = resolveConfigDependency(runtimeFilePath);
       if (!absolutePath) {
         return;
       }
@@ -36792,9 +36780,10 @@ function extractFileDependencies(configPath) {
         markUnsafeDependency();
         return;
       }
-      const selectorIndex = rawPath.lastIndexOf(":");
-      const candidatePath = selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
-      const filePath = TRANSITIVE_CONFIG_EXTENSION.test(rawPath) ? rawPath : TRANSITIVE_CONFIG_EXTENSION.test(candidatePath) ? candidatePath : void 0;
+      const runtimePath = rawPath.replace(/\\/g, "/");
+      const selectorIndex = runtimePath.lastIndexOf(":");
+      const candidatePath = selectorIndex > -1 ? runtimePath.slice(0, selectorIndex) : runtimePath;
+      const filePath = TRANSITIVE_CONFIG_EXTENSION.test(runtimePath) ? runtimePath : TRANSITIVE_CONFIG_EXTENSION.test(candidatePath) ? candidatePath : void 0;
       if (!filePath) return;
       if (BINARY_TRANSITIVE_CONFIG_EXTENSION.test(filePath)) {
         markUnsafeDependency();
@@ -36831,7 +36820,7 @@ function extractFileDependencies(configPath) {
       }
       const processRawReference = (reference) => {
         if (typeof reference !== "string") return;
-        processFilePath(reference);
+        processFilePath(reference, false);
       };
       if (typeof httpConfig.validateStatus === "string" && httpConfig.validateStatus.startsWith("file://")) {
         processFileUrl(httpConfig.validateStatus, "http");
@@ -36900,7 +36889,7 @@ function extractFileDependencies(configPath) {
             if (kind === "file" || sourceType === "path" || dynamicKind || dynamicSourceType) {
               const sourcePath = sourceRecord.path;
               if (typeof sourcePath === "string" && sourcePath.startsWith("file://")) {
-                processFileUrl(sourcePath);
+                processRawReference(sourcePath.slice("file://".length));
               } else {
                 processRawReference(sourcePath);
               }
@@ -36963,6 +36952,7 @@ function extractFileDependencies(configPath) {
           "auth",
           "tls",
           "signatureAuth",
+          "multipart",
           "body"
         ]);
         for (const [field, value] of Object.entries(config3)) {
@@ -37025,6 +37015,7 @@ function extractFileDependencies(configPath) {
         }
         return;
       }
+      inspectTransitiveReference(reference);
       processFileUrl(
         reference.startsWith("file://") ? reference : `file://${reference}`,
         "provider"
