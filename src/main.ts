@@ -297,6 +297,13 @@ export async function run(): Promise<void> {
             );
             const parentCount = parentTraversal[1].length / 3;
 
+            if (
+              traversalPatterns.length + parentCount + 1 >
+              MAX_PROMPT_GLOB_VARIANTS
+            ) {
+              return true;
+            }
+
             // globstar may consume no segments before `..`, escaping the
             // static prefix, or traverse deeper and back out. Keep every
             // possible path so deleted prompts cannot be missed.
@@ -524,6 +531,7 @@ export async function run(): Promise<void> {
         // Option 1: Use provided file list
         const manualFiles = filesInput
           .split('\n')
+          .map((file) => file.trim())
           .filter((file) => file)
           .map((file) => ({
             filename: file,

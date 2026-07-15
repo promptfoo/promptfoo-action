@@ -515,6 +515,43 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should fail open before a single traversal group exceeds the variant cap', async () => {
+      withInputs({
+        prompts: `prompts/**${'/..'.repeat(1001)}/**/*.txt`,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/unrelated.md', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test('should fail open when brace expansion exceeds the variant cap', async () => {
+      withInputs({ prompts: 'prompts/{1..1001}/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/unrelated.md', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
     test.each([
       'darwin',
       'win32',
@@ -1234,6 +1271,29 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
 
+    test('should trim a manually specified missing prompt', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: '  prompts/removed.txt  \r\n  ' } },
+        configurable: true,
+      });
+      mockFs.existsSync.mockReturnValue(false);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
     test('should select an existing manually specified prompt', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -1254,6 +1314,31 @@ describe('GitHub Action Main', () => {
       expect(mockCore.warning).not.toHaveBeenCalledWith(
         expect.stringContaining('monitored prompt was removed or moved'),
       );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+      );
+      expect(args).not.toContain('prompts/remaining.txt');
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should trim an existing manually specified prompt before filtering', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: '  prompts/changed.txt  \r\n  ' } },
+        configurable: true,
+      });
+      mockFs.existsSync.mockReturnValue(true);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/remaining.txt',
+      ]);
+
+      await run();
+
       const args = mockExec.exec.mock.calls[0][1] as string[];
       expect(args).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/changed.txt']),

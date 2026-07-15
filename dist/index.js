@@ -29159,19 +29159,17 @@ function gte(i2, y2) {
 }
 function expand_(str, max, isTop) {
   const expansions = [];
-  for (; ; ) {
-    const m = balanced("{", "}", str);
-    if (!m)
-      return [str];
-    const pre = m.pre;
-    if (/\$$/.test(m.pre)) {
-      const post2 = m.post.length ? expand_(m.post, max, false) : [""];
-      for (let k3 = 0; k3 < post2.length && k3 < max; k3++) {
-        const expansion = pre + "{" + m.body + "}" + post2[k3];
-        expansions.push(expansion);
-      }
-      return expansions;
+  const m = balanced("{", "}", str);
+  if (!m)
+    return [str];
+  const pre = m.pre;
+  const post = m.post.length ? expand_(m.post, max, false) : [""];
+  if (/\$$/.test(m.pre)) {
+    for (let k3 = 0; k3 < post.length && k3 < max; k3++) {
+      const expansion = pre + "{" + m.body + "}" + post[k3];
+      expansions.push(expansion);
     }
+  } else {
     const isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
     const isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
     const isSequence = isNumericSequence || isAlphaSequence;
@@ -29179,12 +29177,10 @@ function expand_(str, max, isTop) {
     if (!isSequence && !isOptions) {
       if (m.post.match(/,(?!,).*\}/)) {
         str = m.pre + "{" + m.body + escClose + m.post;
-        isTop = true;
-        continue;
+        return expand_(str, max, true);
       }
       return [str];
     }
-    const post = m.post.length ? expand_(m.post, max, false) : [""];
     let n7;
     if (isSequence) {
       n7 = m.body.split(/\.\./);
@@ -29248,8 +29244,8 @@ function expand_(str, max, isTop) {
         }
       }
     }
-    return expansions;
   }
+  return expansions;
 }
 
 // node_modules/minimatch/dist/esm/assert-valid-pattern.js
@@ -38986,6 +38982,9 @@ async function run() {
               parentTraversal.index + parentTraversal[0].length
             );
             const parentCount = parentTraversal[1].length / 3;
+            if (traversalPatterns.length + parentCount + 1 > MAX_PROMPT_GLOB_VARIANTS) {
+              return true;
+            }
             traversalPatterns.push(`${prefix}/**${suffix}`);
             for (let index = 1; index <= parentCount; index += 1) {
               traversalPatterns.push(
@@ -39175,7 +39174,7 @@ async function run() {
       const filesInput = workflowFiles || context2.payload.inputs?.files || "";
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        const manualFiles = filesInput.split("\n").filter((file) => file).map((file) => ({
+        const manualFiles = filesInput.split("\n").map((file) => file.trim()).filter((file) => file).map((file) => ({
           filename: file,
           status: matchesPromptGlob(file) && !fs7.existsSync(path7.resolve(workspaceRoot, file)) ? "removed" : "modified"
         }));
