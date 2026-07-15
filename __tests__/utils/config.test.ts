@@ -3144,6 +3144,26 @@ prompts:
     ]);
   });
 
+  it('should extract an env-templated top-level prompt path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROMPT_DIR: prompts/current
+prompts: "file://{{ env.PROMPT_DIR }}/main.txt"
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/prompts/current/main.txt']);
+
+    mockFs.readFileSync.mockReturnValueOnce(
+      'prompts: "file://{{ env.MISSING_PROMPT_DIR }}/main.txt"',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
   it('should extract prompt-object raw/id paths and prompt-map keys', () => {
     mockFs.readFileSync.mockReturnValueOnce(`
 prompts:
@@ -3534,6 +3554,29 @@ tests:
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['shared/absolute-provider.py']);
+  });
+
+  it('should extract an aliased scripted test provider after the alias appears under vars', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('tests/cases.yaml'),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'tests: file://tests/cases.yaml';
+      }
+      return `
+- vars:
+    copied: &provider
+      id: python:../providers/aliased.py:call_api
+      config:
+        temperature: 0
+  provider: *provider
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/tests/cases.yaml', 'evals/providers/aliased.py']);
   });
 
   it('should extract direct string and array vars-file paths', () => {

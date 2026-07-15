@@ -1035,10 +1035,18 @@ export function extractFileDependencies(configPath: string): string[] {
             ? rawPrompt.slice('exec:'.length)
             : rawPrompt;
           if (rawPrompt.startsWith('exec:') || isPromptFilePath(promptPath)) {
+            const renderedPromptPath = renderEnvTemplates(promptPath, {
+              ...process.env,
+              ...configEnv,
+            });
+            if (/\{\{|\}\}|\{%|\{#/.test(renderedPromptPath)) {
+              watchDependencyRoots();
+              continue;
+            }
             processFileUrl(
-              (promptPath.startsWith('file://')
-                ? promptPath
-                : `file://${promptPath}`
+              (renderedPromptPath.startsWith('file://')
+                ? renderedPromptPath
+                : `file://${renderedPromptPath}`
               ).replace(PROMPT_FILE_SELECTOR_PATTERN, '$1'),
             );
           }
