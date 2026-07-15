@@ -683,7 +683,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${Array.from(promptFiles.values()).join(', ')}`,
+        `Processing all matching prompt files: ${JSON.stringify(promptFilesToEvaluate)}`,
       );
     }
 

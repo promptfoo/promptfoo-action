@@ -951,6 +951,31 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should keep absolute workflow-dispatch prompt matches relative and deduplicated in logs', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      const absoluteGlob = path.join(process.cwd(), 'prompts/*.txt');
+      const absolutePrompt = path.join(process.cwd(), 'prompts/prompt1.txt');
+      withInputs({ prompts: absoluteGlob });
+      mockGlob.sync.mockReturnValue([absolutePrompt, absolutePrompt]);
+      mockGitInterface.diff.mockResolvedValue('');
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: ["prompts/prompt1.txt"]',
+      );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/prompt1.txt');
+      expect(args).not.toContain(absolutePrompt);
+    });
+
     test('should handle workflow_dispatch with manual files input', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
