@@ -533,6 +533,12 @@ export function extractFileDependencies(configPath: string): string[] {
       while (pending.length > 0) {
         const current = pending.pop();
         processed++;
+        if (
+          typeof current === 'string' &&
+          (current.includes('{{') || current.includes('{%'))
+        ) {
+          return true;
+        }
         if (typeof current === 'string' && current.startsWith('file://')) {
           processFileUrl(current, 'auth');
           continue;
@@ -632,6 +638,8 @@ export function extractFileDependencies(configPath: string): string[] {
             code ? String.fromCharCode(Number.parseInt(code, 16)) : '/',
         );
         if (
+          canonicalContents.includes('{{') ||
+          canonicalContents.includes('{%') ||
           TRANSITIVE_FILE_REFERENCE.test(canonicalContents) ||
           hasTransitiveNestedReference(canonicalContents)
         ) {
@@ -657,6 +665,8 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       const httpConfig = providerConfig as Record<string, unknown>;
+      const isTemplated = (value: string): boolean =>
+        value.includes('{{') || value.includes('{%');
       if (extractNestedFileReferences(httpConfig.body)) {
         markUnsafeDependency();
       }
@@ -667,9 +677,12 @@ export function extractFileDependencies(configPath: string): string[] {
 
       if (
         typeof httpConfig.validateStatus === 'string' &&
-        httpConfig.validateStatus.startsWith('file://')
+        (httpConfig.validateStatus.startsWith('file://') ||
+          isTemplated(httpConfig.validateStatus))
       ) {
-        processFileUrl(httpConfig.validateStatus, 'http', false);
+        if (httpConfig.validateStatus.startsWith('file://')) {
+          processFileUrl(httpConfig.validateStatus, 'http', false);
+        }
         markUnsafeDependency();
       }
 
@@ -680,8 +693,13 @@ export function extractFileDependencies(configPath: string): string[] {
         'sessionParser',
       ]) {
         const reference = httpConfig[field];
-        if (typeof reference === 'string' && reference.startsWith('file://')) {
-          processFileUrl(reference, 'http', false);
+        if (
+          typeof reference === 'string' &&
+          (reference.startsWith('file://') || isTemplated(reference))
+        ) {
+          if (reference.startsWith('file://')) {
+            processFileUrl(reference, 'http', false);
+          }
           markUnsafeDependency();
         }
       }
@@ -691,15 +709,18 @@ export function extractFileDependencies(configPath: string): string[] {
         session !== null &&
         typeof (session as Record<string, unknown>).responseParser ===
           'string' &&
-        (
+        ((
           (session as Record<string, unknown>).responseParser as string
-        ).startsWith('file://')
+        ).startsWith('file://') ||
+          isTemplated(
+            (session as Record<string, unknown>).responseParser as string,
+          ))
       ) {
-        processFileUrl(
-          (session as Record<string, unknown>).responseParser as string,
-          'http',
-          false,
-        );
+        const responseParser = (session as Record<string, unknown>)
+          .responseParser as string;
+        if (responseParser.startsWith('file://')) {
+          processFileUrl(responseParser, 'http', false);
+        }
         markUnsafeDependency();
       }
 
@@ -793,6 +814,10 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     const processProviderId = (providerId: string): void => {
+      if (providerId.includes('{{') || providerId.includes('{%')) {
+        markUnsafeDependency();
+        return;
+      }
       if (providerId.startsWith('file://')) {
         processFileUrl(providerId, 'provider');
         inspectTransitiveReference(providerId);
@@ -865,7 +890,12 @@ export function extractFileDependencies(configPath: string): string[] {
         }
       };
       const processTransform = (value: unknown): void => {
-        if (typeof value === 'string' && value.startsWith('file://')) {
+        if (
+          typeof value === 'string' &&
+          (value.includes('{{') || value.includes('{%'))
+        ) {
+          markUnsafeDependency();
+        } else if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value, 'auth');
           markUnsafeDependency();
         }
@@ -908,7 +938,11 @@ export function extractFileDependencies(configPath: string): string[] {
       for (const envPath of envPaths) {
         if (envPath === undefined) continue;
         if (typeof envPath === 'string') {
-          processFilePath(envPath);
+          if (envPath.includes(',')) {
+            markUnsafeDependency();
+          } else {
+            processFilePath(envPath);
+          }
         } else {
           markUnsafeDependency();
         }
@@ -1116,9 +1150,13 @@ export function extractFileDependencies(configPath: string): string[] {
           const reference = assert[field];
           if (
             typeof reference === 'string' &&
-            reference.startsWith('file://')
+            (reference.startsWith('file://') ||
+              reference.includes('{{') ||
+              reference.includes('{%'))
           ) {
-            processFileUrl(reference, 'auth');
+            if (reference.startsWith('file://')) {
+              processFileUrl(reference, 'auth');
+            }
             markUnsafeDependency();
           }
         }
@@ -1136,9 +1174,13 @@ export function extractFileDependencies(configPath: string): string[] {
       if ('provider' in test) processProvider(test.provider);
       if (
         typeof test.assertScoringFunction === 'string' &&
-        test.assertScoringFunction.startsWith('file://')
+        (test.assertScoringFunction.startsWith('file://') ||
+          test.assertScoringFunction.includes('{{') ||
+          test.assertScoringFunction.includes('{%'))
       ) {
-        processFileUrl(test.assertScoringFunction, 'auth');
+        if (test.assertScoringFunction.startsWith('file://')) {
+          processFileUrl(test.assertScoringFunction, 'auth');
+        }
         markUnsafeDependency();
       }
       const options = test.options;
@@ -1146,8 +1188,15 @@ export function extractFileDependencies(configPath: string): string[] {
       const optionRecord = options as Record<string, unknown>;
       for (const field of ['postprocess', 'transform', 'transformVars']) {
         const reference = optionRecord[field];
-        if (typeof reference === 'string' && reference.startsWith('file://')) {
-          processFileUrl(reference, 'auth');
+        if (
+          typeof reference === 'string' &&
+          (reference.startsWith('file://') ||
+            reference.includes('{{') ||
+            reference.includes('{%'))
+        ) {
+          if (reference.startsWith('file://')) {
+            processFileUrl(reference, 'auth');
+          }
           markUnsafeDependency();
         }
       }

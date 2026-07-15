@@ -4,7 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
-import { braceExpand } from 'minimatch';
+import { braceExpand, Minimatch } from 'minimatch';
 import {
   afterEach,
   beforeEach,
@@ -664,8 +664,78 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      {
+        target: 'config',
+        reason: '15000 sequential extglobs',
+        pattern: `evals/${'@(x)'.repeat(15000)}.yaml`,
+      },
+      {
+        target: 'prompts',
+        reason: '15000 sequential extglobs',
+        pattern: `evals/${'@(x)'.repeat(15000)}.txt`,
+      },
+      {
+        target: 'config',
+        reason: '65 nested extglobs',
+        pattern: `evals/${'@('.repeat(65)}x${')'.repeat(65)}.yaml`,
+      },
+      {
+        target: 'prompts',
+        reason: '65 nested extglobs',
+        pattern: `evals/${'@('.repeat(65)}x${')'.repeat(65)}.txt`,
+      },
+    ])('should reject a $target glob with $reason before Minimatch parsing', async ({
+      target,
+      pattern,
+    }) => {
+      const parseSpy = vi.spyOn(Minimatch.prototype, 'parse');
+      withInputs({ [target]: pattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      try {
+        await run();
+
+        expect(parseSpy).not.toHaveBeenCalled();
+        expect(mockGlob.sync).not.toHaveBeenCalled();
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+        );
+        expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+          'Invalid regular expression',
+        );
+      } finally {
+        parseSpy.mockRestore();
+      }
+    });
+
+    test.each([
+      `prompts/${'\\@(x)'.repeat(1025)}.txt`,
+      `prompts/${'[@](x)'.repeat(1025)}.txt`,
+    ])('should ignore escaped and character-class extglob-like tokens while preflighting a prompt glob', async (prompts) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ cwd: process.cwd() }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
       'evals/**/../../outside/*.yaml',
       'evals/**/[.][.]/[.][.]/outside/*.yaml',
+      'evals/**/\\.\\./\\.\\./outside/*.yaml',
+      'evals/**/\\../.\\./outside/*.yaml',
       'evals/**/{.,.}{.,.}/{.,.}{.,.}/outside/*.yaml',
       'evals/**/@(.)@(.)/@(.)@(.)/outside/*.yaml',
       'evals/**/!(safe)/!(safe)/outside/*.yaml',
@@ -863,6 +933,39 @@ describe('GitHub Action Main', () => {
         'evals/second.yaml',
       ]);
       expect(args).not.toContain('evals/*.yaml');
+    });
+
+    test.each([
+      {
+        config: 'evals/*.yaml',
+        deleted: 'evals/deleted.yaml',
+        surviving: 'evals/surviving.yaml',
+      },
+      {
+        config: '*.yaml',
+        deleted: 'deleted.yaml',
+        surviving: 'surviving.yaml',
+      },
+    ])('should evaluate surviving primary-config glob matches when another match is deleted', async ({
+      config,
+      deleted,
+      surviving,
+    }) => {
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: deleted, status: 'removed' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === config ? [surviving] : ['prompts/unchanged.txt'],
+      );
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const configIndex = args.indexOf('-c');
+      expect(args[configIndex + 1]).toBe(surviving);
+      expect(args).not.toContain(deleted);
     });
 
     test.each([
@@ -1114,6 +1217,8 @@ describe('GitHub Action Main', () => {
     test.each([
       'evals/**/../../outside/*.txt',
       'evals/**/[.][.]/[.][.]/outside/*.txt',
+      'evals/**/\\.\\./\\.\\./outside/*.txt',
+      'evals/**/\\../.\\./outside/*.txt',
       'evals/**/{.,.}{.,.}/{.,.}{.,.}/outside/*.txt',
       'evals/**/@(.)@(.)/@(.)@(.)/outside/*.txt',
       'evals/**/!(safe)/!(safe)/outside/*.txt',

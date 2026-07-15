@@ -166,6 +166,77 @@ providers:
     ).toEqual(['./']);
   });
 
+  it.each([
+    `providers:\n  - "{{ 'python:providers/' + env.PROVIDER_FILE }}"`,
+    `providers:\n  - id: openai:gpt-4.1\n    transform: "{{ 'file://hooks/' + env.HOOK_FILE }}"`,
+    `providers:\n  - id: openai:gpt-4.1\n    transform: "{{ 'file:' + '//' + env.HOOK_FILE }}"`,
+    `providers:\n  - id: https\n    config:\n      transformResponse: "{{ env.RESPONSE_HOOK }}"`,
+    `providers:\n  - id: https\n    config:\n      validateStatus: "{{ env.STATUS_HOOK }}"`,
+    `providers:\n  - id: https\n    config:\n      session:\n        responseParser: "{{ env.SESSION_HOOK }}"`,
+    `tests:\n  - assertScoringFunction: "{{ env.SCORE_HOOK }}"`,
+    `tests:\n  - assertScoringFunction: "{% if env.SCORE_HOOK %}hook{% endif %}"`,
+    `tests:\n  - assert:\n      - type: contains\n        transform: "{{ env.ASSERT_HOOK }}"`,
+    `tests:\n  - assert:\n      - type: contains\n        transform: "{% if env.ASSERT_HOOK %}hook{% endif %}"`,
+    `defaultTest:\n  options:\n    transformVars: "{{ env.VARS_HOOK }}"`,
+    `defaultTest:\n  options:\n    transformVars: "{% if env.VARS_HOOK %}hook{% endif %}"`,
+  ])('should conservatively workspace-watch a templated executable provider or transform', (config) => {
+    mockFs.readFileSync.mockReturnValue(config);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it.each([
+    `prompts:\n  - file: prompts/base.txt\n    config:\n      formatter: "{{ env.PROMPT_HOOK }}"`,
+    `scenarios:\n  - config:\n      - options:\n          response_format: "{{ env.SCENARIO_SCHEMA }}"`,
+  ])('should conservatively workspace-watch a structured prompt or scenario containing an unresolved template', (config) => {
+    mockFs.readFileSync.mockReturnValue(config);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it.each([
+    {
+      config: 'tests: test-data/cases.yaml',
+      contents: '- provider: "{{ env.PROVIDER_ID }}"',
+    },
+    {
+      config: 'tests: test-data/cases.csv',
+      contents: 'prompt,__expected\nhello,"{{ env.EXPECTED }}"',
+    },
+    {
+      config: 'providers:\n  - file://providers/external.yaml',
+      contents: '- id: "{{ env.PROVIDER_ID }}"',
+    },
+  ])('should conservatively workspace-watch an unresolved template in an external config source', ({
+    config,
+    contents,
+  }) => {
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
+      filePath.toString().endsWith('promptfooconfig.yaml') ? config : contents,
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should conservatively evaluate a remote config reference with sibling local dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+$ref: https://example.test/config.yaml#/config
+tests:
+  - vars:
+      context: file://data/context.json
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
   it('should extract prompt files', () => {
     const configContent = `
 prompts:
@@ -284,6 +355,17 @@ commandLineOptions:
     mockFs.readFileSync.mockReturnValue(`
 commandLineOptions:
   envPath: false
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should conservatively workspace-watch a comma-separated config-level environment path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+commandLineOptions:
+  envPath: environments/base.env,environments/team.env
 `);
 
     expect(
@@ -2149,13 +2231,7 @@ providers:
 
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toEqual([
-      'tls/bare.pem',
-      'payloads/bare.bin',
-      'auth/dynamic.py:get_auth',
-      'tls/dynamic.pem',
-      'payloads/dynamic.bin',
-    ]);
+    ).toEqual(['./']);
   });
 
   it('should extract a file URL multipart upload dependency', () => {
@@ -2798,13 +2874,14 @@ tests:
   });
 
   it.each([
-    'equals:file://rubrics/expected.txt',
-    'javascript:file://validators/check.js:validate',
-  ])('should conservatively detect a typed file assertion in CSV tests', (assertion) => {
+    ['__expected', 'equals:file://rubrics/expected.txt'],
+    ['__expected', 'javascript:file://validators/check.js:validate'],
+    ['__expected_result', 'equals:file://rubrics/expected.txt'],
+  ])('should conservatively detect a typed file assertion in CSV tests', (header, assertion) => {
     mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) =>
       filePath.toString().endsWith('promptfooconfig.yaml')
         ? 'tests: test-data/cases.csv'
-        : `prompt,__expected\nhello,${assertion}`,
+        : `prompt,${header}\nhello,${assertion}`,
     );
 
     expect(

@@ -36,6 +36,8 @@ const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
 const MAX_PROMPT_GLOB_LENGTH = 65536;
+const MAX_PROMPT_EXTGLOB_COUNT = 1024;
+const MAX_PROMPT_EXTGLOB_DEPTH = 64;
 
 function invalidPromptGlobError(): PromptfooActionError {
   return new PromptfooActionError(
@@ -57,6 +59,8 @@ function validatePromptGlob(pattern: string): void {
   }> = [];
   let escaped = false;
   let inCharacterClass = false;
+  let extglobCount = 0;
+  let extglobDepth = 0;
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
     if (escaped) {
@@ -74,6 +78,26 @@ function validatePromptGlob(pattern: string): void {
     if (character === ']') {
       while (braces[braces.length - 1]?.inCharacterClass) braces.pop();
       inCharacterClass = false;
+      continue;
+    }
+    if (
+      !inCharacterClass &&
+      '*?@+!'.includes(character) &&
+      pattern[index + 1] === '('
+    ) {
+      extglobCount++;
+      extglobDepth++;
+      if (
+        extglobCount > MAX_PROMPT_EXTGLOB_COUNT ||
+        extglobDepth > MAX_PROMPT_EXTGLOB_DEPTH
+      ) {
+        throw invalidPromptGlobError();
+      }
+      index++;
+      continue;
+    }
+    if (!inCharacterClass && character === ')' && extglobDepth > 0) {
+      extglobDepth--;
       continue;
     }
     if (character === '{') {
@@ -122,7 +146,7 @@ function validatePromptGlob(pattern: string): void {
       throw invalidPromptGlobError();
     }
   }
-  if (escaped || inCharacterClass || braces.length > 0) {
+  if (escaped || inCharacterClass || braces.length > 0 || extglobDepth > 0) {
     throw invalidPromptGlobError();
   }
 
@@ -526,6 +550,7 @@ export async function run(): Promise<void> {
     } = {};
     validateWorkingDirectory(workspaceRoot, workingDirectory, realPromptRoots);
     let configPaths = [configPath];
+    let configGlobRepositoryRoot: string | undefined;
     if (/[*?{}[\]]|[@+!]\(/.test(configPath)) {
       validatePromptGlob(configPath);
       validateGlobPrefix(
@@ -534,6 +559,23 @@ export async function run(): Promise<void> {
         configPath,
         realPromptRoots,
       );
+      const normalizedConfigPattern = configPath.replace(/\\/g, '/');
+      const firstMagicIndex =
+        normalizedConfigPattern.search(/[*?{}[\]]|[@+!]\(/);
+      const staticPrefix = normalizedConfigPattern.slice(0, firstMagicIndex);
+      const directoryPrefix = staticPrefix.slice(
+        0,
+        staticPrefix.lastIndexOf('/') + 1,
+      );
+      const repositoryRoot = toRepositoryPath(
+        path.relative(
+          workspaceRoot,
+          path.resolve(workingDirectory, directoryPrefix),
+        ),
+      );
+      configGlobRepositoryRoot = repositoryRoot
+        ? `${repositoryRoot}/`
+        : repositoryRoot;
       try {
         const expandedConfigPaths = glob.sync(configPath, {
           cwd: workingDirectory,
@@ -971,7 +1013,12 @@ export async function run(): Promise<void> {
 
     const configChanged =
       changedFilesList.length > 0 &&
-      changedFilesList.some((file) => configRepositoryPaths.has(file));
+      changedFilesList.some(
+        (file) =>
+          configRepositoryPaths.has(file) ||
+          (configGlobRepositoryRoot !== undefined &&
+            file.startsWith(configGlobRepositoryRoot)),
+      );
 
     // Extract dependencies from config file
     let dependencyChanged = false;
