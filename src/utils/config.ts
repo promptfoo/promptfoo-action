@@ -119,6 +119,7 @@ export function extractFileDependencies(
     }
     return physicalDependencyRoots.some((root) => isPathInside(root, filePath));
   };
+  let parsedConfig = false;
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -135,6 +136,7 @@ export function extractFileDependencies(
       core.debug('Config file is empty or invalid');
       return [];
     }
+    parsedConfig = true;
 
     const resolveConfigDependency = (
       filePath: string,
@@ -859,6 +861,6 @@ export function extractFileDependencies(
     core.warning(
       'Failed to extract dependencies from config: unable to read or parse config',
     );
-    return [];
+    return parsedConfig ? ['./'] : [];
   }
 }

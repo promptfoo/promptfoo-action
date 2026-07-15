@@ -1002,7 +1002,7 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
-    test('should not narrow the evaluation when a prompt and config dependency both change', async () => {
+    test('should pass all action-input prompts when a prompt and config dependency both change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'prompts/changed.txt' },
         { filename: 'providers/custom.py' },
@@ -1021,7 +1021,54 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args).not.toContain('--prompts');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/changed.txt',
+          'prompts/unchanged.txt',
+        ]),
+      );
+    });
+
+    test('should pass all action-input prompts when only the config changes', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/one.txt', 'prompts/two.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/one.txt',
+          'prompts/two.txt',
+        ]),
+      );
+    });
+
+    test('should reject a CRLF prompt path selected by a shared dependency change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/custom.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/safe.txt',
+        'prompts/unchanged\r\n::warning::SENSITIVE-REVIEW-TOKEN.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths containing carriage returns or line feeds are not supported',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
     });
 
     test('should run when a referenced config dependency is renamed away', async () => {

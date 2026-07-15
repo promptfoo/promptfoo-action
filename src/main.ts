@@ -474,6 +474,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
+    const allPromptFiles: string[] = [];
     const changedFilesList = changedFiles
       .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
       .filter((file) => file);
@@ -483,32 +484,30 @@ export async function run(): Promise<void> {
         cwd: workingDirectory,
         nodir: true,
       });
+      const allMatches = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...allMatches);
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
-          return (
-            repositoryFile !== configRepositoryPath &&
-            changedFilesList.includes(repositoryFile)
-          );
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
         promptFiles.push(...allMatches);
       }
     }
 
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error(
         'Prompt file paths containing carriage returns or line feeds are not supported',
       );
@@ -628,13 +627,13 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (
-      !useConfigPrompts &&
-      !configChanged &&
-      !dependencyChanged &&
-      promptFiles.length > 0
-    ) {
-      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
+    const evaluationPromptFiles =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
+      promptfooArgs = promptfooArgs.concat([
+        '--prompts',
+        ...evaluationPromptFiles,
+      ]);
     }
     // Check if sharing is enabled and validate authentication upfront
     if (noShare) {

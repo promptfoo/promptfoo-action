@@ -63,6 +63,28 @@ providers:
     expect(deps).toContain('../config/another_provider.js');
   });
 
+  it('should conservatively watch the workspace after an unexpected post-parse extraction failure', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - id: file://prompts/main.txt
+    config:
+      basePath: prompts
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/promptfooconfig.yaml',
+      42 as unknown as string,
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract dependencies from config: unable to read or parse config',
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('42'),
+    );
+  });
+
   it('should extract absolute checkout dependencies from an external config', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('/prompts/structured.yaml')) {
