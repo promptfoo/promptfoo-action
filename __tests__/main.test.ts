@@ -4,6 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
+import { Minimatch } from 'minimatch';
 import {
   afterEach,
   beforeEach,
@@ -393,10 +394,12 @@ describe('GitHub Action Main', () => {
       expect(mockGlob.sync).toHaveBeenNthCalledWith(1, 'prompt one/*.txt', {
         cwd: process.cwd(),
         nodir: true,
+        braceExpandMax: 1024,
       });
       expect(mockGlob.sync).toHaveBeenNthCalledWith(2, 'prompt two/*.txt', {
         cwd: process.cwd(),
         nodir: true,
+        braceExpandMax: 1024,
       });
       const args = mockExec.exec.mock.calls[0][1] as string[];
       expect(args).toEqual(
@@ -426,8 +429,152 @@ describe('GitHub Action Main', () => {
       expect(mockGlob.sync).toHaveBeenCalledWith(prompts, {
         cwd: process.cwd(),
         nodir: true,
+        braceExpandMax: 1024,
       });
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject a hostile numeric prompt range before glob enumeration and still process a safe sibling', async () => {
+      withInputs({
+        prompts: 'prompts/{1..1000000000}.txt\nprompts/safe.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/safe.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/safe.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+      expect(mockGlob.sync).toHaveBeenCalledWith('prompts/safe.txt', {
+        cwd: process.cwd(),
+        nodir: true,
+        braceExpandMax: 1024,
+      });
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      { label: 'numeric range', prompts: 'prompts/{1..1000000000}.txt' },
+      { label: 'class-hidden range', prompts: 'prompts/[{1..5000000}].txt' },
+      {
+        label: 'even-backslash range',
+        prompts: 'prompts/\\\\{1..5000000}.txt',
+      },
+      { label: 'malformed braces', prompts: 'prompts/{one,two/*.txt' },
+      { label: 'null byte', prompts: 'prompts/*\0.txt' },
+      {
+        label: 'oversized pattern',
+        prompts: `prompts/${'a'.repeat(65_537)}.txt`,
+      },
+      {
+        label: 'deep nesting',
+        prompts: `prompts/${'{'.repeat(129)}one,two${'}'.repeat(129)}.txt`,
+      },
+      {
+        label: 'padded numeric range',
+        prompts: `prompts/{${'0'.repeat(32_000)}1..1024}.txt`,
+      },
+      {
+        label: 'comma-alternative range',
+        prompts: `prompts/{${Array.from({ length: 1025 }, (_, index) => index).join(',')}}/*.txt`,
+      },
+    ])('should fail closed on an unsafe prompt glob without enumerating it: $label', async ({
+      prompts,
+    }) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should fail closed and sanitize a prompt-glob enumeration error', async () => {
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockImplementation(() => {
+        throw new Error('SENSITIVE-REVIEW-TOKEN');
+      });
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve an odd-backslash escaped prompt brace literal', async () => {
+      const prompt = 'prompts/\\\\\\{literal\\}/*.txt';
+      withInputs({ prompts: prompt });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/{literal}/safe.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/{literal}/safe.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(prompt, {
+        cwd: process.cwd(),
+        nodir: true,
+        braceExpandMax: 1024,
+      });
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        'Ignoring unsafe prompt glob: pattern is malformed or exceeds supported limits',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      {
+        label: 'prompt-only change',
+        changed: 'prompts/one.txt',
+        expected: ['prompts/one.txt'],
+      },
+      {
+        label: 'config-triggered full evaluation',
+        changed: 'promptfooconfig.yaml',
+        expected: ['prompts/one.txt', 'prompts/two.txt'],
+      },
+    ])('should keep absolute action-glob matches relative in argv and the PR comment: $label', async ({
+      changed,
+      expected,
+    }) => {
+      const workspace = process.cwd();
+      withInputs({ prompts: path.join(workspace, 'prompts', '*.txt') });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changed }]);
+      mockGlob.sync.mockReturnValue([
+        path.join(workspace, 'prompts', 'one.txt'),
+        path.join(workspace, 'prompts', 'two.txt'),
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      const promptArgs = args
+        .slice(promptsIndex + 1)
+        .filter((arg) => !arg.startsWith('--'));
+      expect(promptArgs).toEqual(expected);
+      expect(promptArgs.some((arg) => path.isAbsolute(arg))).toBe(false);
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0]
+        .body as string;
+      for (const prompt of expected) expect(comment).toContain(prompt);
+      expect(comment).not.toContain(workspace);
     });
 
     test('should handle whitespace-only prompts input', async () => {
@@ -455,6 +602,28 @@ describe('GitHub Action Main', () => {
         expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
+    });
+
+    test('should fail closed before matching a multiplicative config dependency glob', async () => {
+      const posixMatcher = vi.spyOn(path.posix, 'matchesGlob');
+      const dependency = `data/${'{a,b}'.repeat(11)}.txt`;
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('{'),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(posixMatcher).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        'Skipping config dependency glob with too many brace alternatives; conservatively running evaluation',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should resolve prompt changes relative to working-directory', async () => {
@@ -775,6 +944,37 @@ describe('GitHub Action Main', () => {
         expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
+    });
+
+    test('should log only normalized, deduplicated prompt paths when a manual run has no changed-file list', async () => {
+      const workspace = process.cwd();
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      withInputs({
+        prompts: `${path.join(workspace, 'prompts', '*.txt')}\nprompts/*.txt`,
+      });
+      mockGitInterface.diff.mockRejectedValue(new Error('comparison failed'));
+      mockGlob.sync.mockReturnValue([
+        path.join(workspace, 'prompts', 'one.txt'),
+        path.join(workspace, 'prompts', 'two.txt'),
+        path.join(workspace, 'prompts', 'one.txt'),
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: ["prompts/one.txt","prompts/two.txt"]',
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining(workspace),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should handle workflow_dispatch with manual files input', async () => {
@@ -1720,6 +1920,7 @@ describe('GitHub Action Main', () => {
 
     test('should match normalized repository dependency globs with POSIX semantics', async () => {
       const posixMatcher = vi.spyOn(path.posix, 'matchesGlob');
+      const minimatchMatcher = vi.spyOn(Minimatch.prototype, 'match');
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },
       ]);
@@ -1731,14 +1932,59 @@ describe('GitHub Action Main', () => {
 
       await run();
 
-      expect(posixMatcher).toHaveBeenCalledWith(
-        'data/nested/context.json',
-        'data/**/*.json',
-      );
+      expect(posixMatcher).not.toHaveBeenCalled();
+      expect(minimatchMatcher).toHaveBeenCalledWith('data/nested/context.json');
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should compile an allowed brace dependency once for a large changed-file list', async () => {
+      const posixMatcher = vi.spyOn(path.posix, 'matchesGlob');
+      const minimatchMatcher = vi.spyOn(Minimatch.prototype, 'match');
+      const dependency = `data/${'{a,b}'.repeat(10)}.txt`;
+      mockOctokit.paginate.mockResolvedValue(
+        Array.from({ length: 2000 }, (_, index) => ({
+          filename: `docs/unrelated-${index}.md`,
+        })),
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('{'),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      const started = performance.now();
+      await run();
+
+      expect(performance.now() - started).toBeLessThan(5000);
+      expect(posixMatcher).not.toHaveBeenCalled();
+      expect(minimatchMatcher).toHaveBeenCalledTimes(2000);
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/{1..1000000000}.txt',
+      'prompts/[{1..5000000}].txt',
+    ])('should preflight a hostile config dependency before glob matching: %s', async (dependency) => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation(() => {
+        throw new Error('hostile range reached glob matching');
+      });
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        'Skipping unsafe config dependency glob; conservatively running evaluation',
+      );
     });
 
     test('should run when a repository-root negated extglob matches a deletion', async () => {

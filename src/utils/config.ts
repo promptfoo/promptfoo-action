@@ -16,6 +16,7 @@ import {
 import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import { isDirectory } from './fs';
+import { normalizeGlobSeparators, preflightGlob } from './glob';
 
 type PromptEntry =
   | string
@@ -105,6 +106,16 @@ const GLOB_MAGIC_OPTIONS = {
   magicalBraces: true,
   nonegate: true,
   braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+};
+const EXPANDED_GLOB_MAGIC_OPTIONS = {
+  ...GLOB_MAGIC_OPTIONS,
+  nobrace: true,
+};
+const GLOB_SYNC_OPTIONS = {
+  nodir: true,
+  windowsPathsNoEscape: path.sep === '\\',
+  nobrace: true,
+  braceExpandMax: MAX_BRACE_EXPANSIONS,
 };
 
 const legacySetTag = defineMappingTag<LegacyYamlSet>('tag:yaml.org,2002:set', {
@@ -264,51 +275,16 @@ function stripSpreadsheetSheetSelector(value: string): string {
   return extension === 'xlsx' || extension === 'xls' ? candidate : value;
 }
 
-function hasBalancedGlobDelimiters(value: string): boolean {
-  const expectedClosers: string[] = [];
-  for (let index = 0; index < value.length; index++) {
-    const character = value.charAt(index);
-    if (expectedClosers[expectedClosers.length - 1] === ']') {
-      if (character === ']') {
-        expectedClosers.pop();
-      }
-      continue;
-    }
-    if (character === '{') {
-      expectedClosers.push('}');
-      continue;
-    }
-    if (character === '[') {
-      expectedClosers.push(']');
-      continue;
-    }
-    if (
-      character === '(' &&
-      index > 0 &&
-      '*+?@!'.includes(value.charAt(index - 1))
-    ) {
-      expectedClosers.push(')');
-      continue;
-    }
-    if (!'}])'.includes(character) || expectedClosers.length === 0) {
-      continue;
-    }
-    if (expectedClosers[expectedClosers.length - 1] !== character) {
-      return false;
-    }
-    expectedClosers.pop();
-  }
-  return expectedClosers.length === 0;
-}
-
 function isUnsupportedForeignPath(value: string): boolean {
-  const driveLetter = value.charAt(0);
+  const drivePath = /^\/[A-Za-z]:[\\/]/.test(value) ? value.slice(1) : value;
+  const driveLetter = drivePath.charAt(0);
   const hasDrivePrefix =
-    value.charAt(1) === ':' &&
+    drivePath.charAt(1) === ':' &&
     ((driveLetter >= 'A' && driveLetter <= 'Z') ||
       (driveLetter >= 'a' && driveLetter <= 'z'));
   const isDriveAbsolute =
-    hasDrivePrefix && (value.charAt(2) === '/' || value.charAt(2) === '\\');
+    hasDrivePrefix &&
+    (drivePath.charAt(2) === '/' || drivePath.charAt(2) === '\\');
   const isUncPath =
     value.startsWith('\\\\') ||
     (value.startsWith('//') && value.indexOf('/', 2) > 2);
@@ -410,7 +386,10 @@ export function extractFileDependencies(
 
     // Helper function to process file:// paths with glob support
     const processFileUrl = (fileUrl: string): string[] | undefined => {
-      const filePath = fileUrl.replace('file://', '').replace(/\\/g, '/');
+      const filePath = normalizeGlobSeparators(
+        fileUrl.replace('file://', ''),
+        path.sep === '\\',
+      );
       if (filePath.includes('\0')) {
         core.warning(
           'Ignoring unsafe config dependency: config file dependency contains an invalid null byte',
@@ -433,14 +412,29 @@ export function extractFileDependencies(
       }
 
       try {
-        // Check if the path contains glob patterns
-        if (glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS)) {
-          if (!hasBalancedGlobDelimiters(filePath)) {
+        const isTemplatedPath = /\{[{%#]/.test(filePath);
+        if (!isTemplatedPath) {
+          const globPreflight = preflightGlob(filePath, {
+            maxLength: MAX_DEPENDENCY_REFERENCE_LENGTH,
+            maxBraceExpansions: MAX_BRACE_EXPANSIONS,
+          });
+          if (globPreflight === 'invalid') {
             core.warning(
               'Ignoring invalid config dependency glob; preserving other dependencies',
             );
             return;
           }
+          if (globPreflight === 'too-many-braces') {
+            dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
+            core.warning(
+              'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+            );
+            return;
+          }
+        }
+
+        // Check if the path contains glob patterns
+        if (!isTemplatedPath && glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS)) {
           const expandedPaths = braceExpand(filePath, {
             braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
           });
@@ -473,10 +467,7 @@ export function extractFileDependencies(
 
           const matches = glob.sync(
             safePatterns.length === 1 ? safePatterns[0] : safePatterns,
-            {
-              nodir: true,
-              windowsPathsNoEscape: true,
-            },
+            GLOB_SYNC_OPTIONS,
           );
           for (const match of matches) {
             const absoluteMatch = path.resolve(match);
@@ -503,7 +494,7 @@ export function extractFileDependencies(
           }
 
           for (const absolutePattern of safePatterns) {
-            if (!glob.hasMagic(absolutePattern, GLOB_MAGIC_OPTIONS)) {
+            if (!glob.hasMagic(absolutePattern, EXPANDED_GLOB_MAGIC_OPTIONS)) {
               dependencies.add(absolutePattern);
               continue;
             }
@@ -513,7 +504,7 @@ export function extractFileDependencies(
               .split(path.sep);
             let basePath = absoluteRoot;
             for (const part of pathParts) {
-              if (glob.hasMagic(part, GLOB_MAGIC_OPTIONS)) {
+              if (glob.hasMagic(part, EXPANDED_GLOB_MAGIC_OPTIONS)) {
                 break;
               }
               basePath = path.join(basePath, part);
@@ -857,6 +848,23 @@ export function extractFileDependencies(
         ) {
           return;
         }
+        let referenceHasMagic = false;
+        if (
+          !reference.includes('*') &&
+          !reference.includes('\0') &&
+          !/\s/.test(reference) &&
+          !isTemplated
+        ) {
+          const referencePreflight = preflightGlob(reference, {
+            maxLength: MAX_DEPENDENCY_REFERENCE_LENGTH,
+            maxBraceExpansions: MAX_BRACE_EXPANSIONS,
+            windowsPathsNoEscape: path.sep === '\\',
+          });
+          referenceHasMagic =
+            referencePreflight === 'too-many-braces' ||
+            (referencePreflight === 'safe' &&
+              glob.hasMagic(reference, GLOB_MAGIC_OPTIONS));
+        }
         const looksLikePath =
           declaredFile ||
           isExecutable ||
@@ -866,11 +874,7 @@ export function extractFileDependencies(
             (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) ||
               /^[^*]*\*+$/.test(reference) ||
               (!/\s/.test(reference) && /\*\([^/]*\)/.test(reference)))) ||
-          (!reference.includes('*') &&
-            !reference.includes('\0') &&
-            !/\s/.test(reference) &&
-            !isTemplated &&
-            glob.hasMagic(reference, GLOB_MAGIC_OPTIONS)) ||
+          referenceHasMagic ||
           (/[\\/]/.test(reference) && !/\s/.test(reference)) ||
           hasPromptFileExtension(reference);
 
@@ -910,11 +914,9 @@ export function extractFileDependencies(
           : [];
         const rawPromptPath = (
           isExecutable ? (executableParts[0] ?? '') : reference
-        )
-          .replace(/^file:\/\//, '')
-          .replace(/\\/g, '/');
+        ).replace(/^file:\/\//, '');
         const promptPath = stripFunctionSelector(
-          rawPromptPath,
+          normalizeGlobSeparators(rawPromptPath, path.sep === '\\'),
           PROVIDER_SELECTOR_EXTENSIONS,
         );
         const promptPatterns = processCompatibleFileUrl(
@@ -1007,6 +1009,14 @@ export function extractFileDependencies(
 
         let isPromptGlob: boolean;
         try {
+          if (
+            preflightGlob(promptPath, {
+              maxLength: MAX_DEPENDENCY_REFERENCE_LENGTH,
+              maxBraceExpansions: MAX_BRACE_EXPANSIONS,
+            }) !== 'safe'
+          ) {
+            return;
+          }
           isPromptGlob = glob.hasMagic(promptPath, GLOB_MAGIC_OPTIONS);
         } catch {
           return;
@@ -1031,10 +1041,7 @@ export function extractFileDependencies(
           }
           promptFiles = glob.sync(
             promptPatterns.length === 1 ? promptPatterns[0] : promptPatterns,
-            {
-              nodir: true,
-              windowsPathsNoEscape: true,
-            },
+            GLOB_SYNC_OPTIONS,
           );
         } else {
           promptFiles = [absolutePath];
