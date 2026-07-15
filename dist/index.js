@@ -36284,6 +36284,9 @@ function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
+function normalizeConfigFilePath(filePath, platform2 = process.platform) {
+  return platform2 === "win32" ? filePath.replace(/^\/(?=[A-Za-z]:[\\/])/, "") : filePath;
+}
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path5.dirname(configPath);
@@ -36333,7 +36336,9 @@ function extractFileDependencies(configPath) {
       }
     };
     const processFileUrl = (fileUrl) => {
-      const filePath = fileUrl.replace("file://", "").replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, "$1");
+      const filePath = normalizeConfigFilePath(
+        fileUrl.replace("file://", "").replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, "$1")
+      );
       const absolutePath = resolveConfigDependency(
         filePath,
         "config file dependency"

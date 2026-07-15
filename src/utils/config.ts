@@ -37,6 +37,15 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+export function normalizeConfigFilePath(
+  filePath: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return platform === 'win32'
+    ? filePath.replace(/^\/(?=[A-Za-z]:[\\/])/, '')
+    : filePath;
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -102,9 +111,11 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Helper function to process file:// paths with glob support
     const processFileUrl = (fileUrl: string): void => {
-      const filePath = fileUrl
-        .replace('file://', '')
-        .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1');
+      const filePath = normalizeConfigFilePath(
+        fileUrl
+          .replace('file://', '')
+          .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1'),
+      );
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',

@@ -3,7 +3,10 @@ import * as fs from 'fs';
 import * as glob from 'glob';
 import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { extractFileDependencies } from '../../src/utils/config';
+import {
+  extractFileDependencies,
+  normalizeConfigFilePath,
+} from '../../src/utils/config';
 
 vi.mock('fs', async () => {
   const realFs = await vi.importActual<typeof import('fs')>('fs');
@@ -58,6 +61,18 @@ providers:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/custom_provider.py');
     expect(deps).toContain('../config/another_provider.js');
+  });
+
+  it('should normalize canonical Windows file URL paths without changing POSIX paths', () => {
+    expect(normalizeConfigFilePath('/C:/repo/prompts/build.py', 'win32')).toBe(
+      'C:/repo/prompts/build.py',
+    );
+    expect(normalizeConfigFilePath('/C:/repo/prompts/*.txt', 'win32')).toBe(
+      'C:/repo/prompts/*.txt',
+    );
+    expect(
+      normalizeConfigFilePath('/test/working/prompts/build.py', 'linux'),
+    ).toBe('/test/working/prompts/build.py');
   });
 
   it('should extract prompt files', () => {
