@@ -93,6 +93,7 @@ vi.mock('fs', async () => {
   return {
     ...actual,
     readFileSync: vi.fn(),
+    realpathSync: vi.fn(),
     existsSync: vi.fn(),
     unlinkSync: vi.fn(),
     promises: {
@@ -103,6 +104,7 @@ vi.mock('fs', async () => {
   };
 });
 vi.mock('glob', () => ({
+  hasMagic: vi.fn(() => false),
   sync: vi.fn(),
 }));
 vi.mock('dotenv');
@@ -128,6 +130,7 @@ const mockExec = exec as unknown as {
 };
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
@@ -244,7 +247,12 @@ function setupCommonMocks(): MockOctokit {
       shareableUrl: 'https://example.com/results',
     }),
   );
-  mockFs.existsSync.mockReturnValue(false);
+  mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+    String(filePath).endsWith('promptfooconfig.yaml'),
+  );
+  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+    String(filePath),
+  );
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -323,6 +331,30 @@ describe('GitHub Action Main', () => {
         expect.any(Array),
         expect.any(Object),
       );
+    });
+
+    test('should not load environment files when no relevant files change', async () => {
+      withInputs({ 'env-files': '.env' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          Object.assign(options?.processEnv ?? process.env, {
+            PROMPTFOO_REMOTE_API_BASE_URL: 'https://capture.example',
+          });
+          return { parsed: {} };
+        },
+      );
+
+      await run();
+
+      expect(dotenv.config).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockAuth.validatePromptfooApiKey).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should process all matching prompts when PR file list hits GitHub cap', async () => {
@@ -721,14 +753,18 @@ describe('GitHub Action Main', () => {
       'GOOGLE_CLOUD_LOCATION',
       'GCE_METADATA_HOST',
       'gce_metadata_ip',
+      'GCLOUD_PROJECT',
       'METADATA_SERVER_DETECTION',
       'VERTEX_REGION',
+      'WATSONX_AI_PROJECT_ID',
       'VERTEX_PROJECT_ID',
       'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
       'cloudsdk_config',
       'CLOUDSDK_PYTHON',
       'AZURE_AI_PROJECT_URL',
       'CLOUDFLARE_ACCOUNT_ID',
+      'CLAUDE_CODE_USE_BEDROCK',
+      'CLAUDE_CODE_USE_VERTEX',
       'CLAUDE_CONFIG_DIR',
       'CODEX_HOME',
       'CLOUDFLARE_GATEWAY_ID',
@@ -749,6 +785,8 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_REMOTE_APP_BASE_URL',
       'PROMPTFOO_SHARING_APP_BASE_URL',
       'PROMPTFOO_CACHE_PATH',
+      'PROMPTFOO_CACHE_MAX_FILE_COUNT',
+      'PROMPTFOO_CACHE_MAX_SIZE',
       'PROMPTFOO_CONFIG_DIR',
       'PROMPTFOO_PASS_RATE_THRESHOLD',
       'PROMPTFOO_CACHE_TTL',
@@ -874,7 +912,9 @@ describe('GitHub Action Main', () => {
       mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
         const value = filePath.toString();
         return (
-          value.endsWith(`${path.sep}.env`) || value.endsWith('.env.local')
+          value.endsWith(`${path.sep}.env`) ||
+          value.endsWith('.env.local') ||
+          value.endsWith('promptfooconfig.yaml')
         );
       });
 
@@ -908,8 +948,10 @@ describe('GitHub Action Main', () => {
 
     test('should preserve trusted workflow credentials when loading the implicit .env', async () => {
       withInputs({ 'env-files': '' });
-      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
-        filePath.toString().endsWith(`${path.sep}.env`),
+      mockFs.existsSync.mockImplementation(
+        (filePath: fs.PathLike) =>
+          filePath.toString().endsWith(`${path.sep}.env`) ||
+          filePath.toString().endsWith('promptfooconfig.yaml'),
       );
 
       const dotenv = await import('dotenv');
@@ -1164,6 +1206,142 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.setFailed).toHaveBeenCalledWith(
         expect.stringContaining('Environment file'),
+      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('not found'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a protected endpoint from config-declared envPath before evaluation', async () => {
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        return (
+          value.endsWith('promptfooconfig.yaml') ||
+          value.endsWith(`${path.sep}.env.late`)
+        );
+      });
+      mockFs.readFileSync.mockImplementation(
+        (filePath: fs.PathOrFileDescriptor) =>
+          String(filePath).endsWith('promptfooconfig.yaml')
+            ? 'commandLineOptions:\n  envPath: .env.late'
+            : '{}',
+      );
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.late')
+            ? { PROMPTFOO_CLOUD_API_URL: 'https://capture.example' }
+            : {};
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('PROMPTFOO_CLOUD_API_URL'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should load safe config-declared envPath files before evaluation', async () => {
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        return (
+          value.endsWith('promptfooconfig.yaml') ||
+          value.endsWith(`${path.sep}.env.first`) ||
+          value.endsWith(`${path.sep}.env.second`)
+        );
+      });
+      mockFs.readFileSync.mockImplementation(
+        (filePath: fs.PathOrFileDescriptor) =>
+          String(filePath).endsWith('promptfooconfig.yaml')
+            ? 'commandLineOptions:\n  envPath: [".env.first, .env.second"]'
+            : '{"results":{"stats":{"successes":1,"failures":0}}}',
+      );
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.second')
+            ? { CUSTOM_PROVIDER_SETTING: 'second' }
+            : { CUSTOM_PROVIDER_SETTING: 'first' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+        expect(mockExec.exec.mock.calls[0][2]?.env).toEqual(
+          expect.objectContaining({ CUSTOM_PROVIDER_SETTING: 'second' }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+      }
+    });
+
+    test('should reject config-declared envPath traversal before evaluation', async () => {
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        String(filePath).endsWith('promptfooconfig.yaml'),
+      );
+      mockFs.readFileSync.mockImplementation(
+        (filePath: fs.PathOrFileDescriptor) =>
+          String(filePath).endsWith('promptfooconfig.yaml')
+            ? 'commandLineOptions:\n  envPath: ../outside.env'
+            : '{}',
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('must stay within the working directory'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'envPath: 7',
+      'envPath: [.env.valid, 7]',
+    ])('should reject malformed config-declared %s before evaluation', async (envPath) => {
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        String(filePath).endsWith('promptfooconfig.yaml'),
+      );
+      mockFs.readFileSync.mockImplementation(
+        (filePath: fs.PathOrFileDescriptor) =>
+          String(filePath).endsWith('promptfooconfig.yaml')
+            ? `commandLineOptions:\n  ${envPath}`
+            : '{}',
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid commandLineOptions.envPath'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a missing config-declared envPath before evaluation', async () => {
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        String(filePath).endsWith('promptfooconfig.yaml'),
+      );
+      mockFs.readFileSync.mockImplementation(
+        (filePath: fs.PathOrFileDescriptor) =>
+          String(filePath).endsWith('promptfooconfig.yaml')
+            ? 'commandLineOptions:\n  envPath: .env.missing'
+            : '{}',
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('Config environment file'),
       );
       expect(mockCore.setFailed).toHaveBeenCalledWith(
         expect.stringContaining('not found'),
@@ -2911,9 +3089,14 @@ describe('exec error handling with repeat-min-pass', () => {
 
   test('should report missing output after a test-failure exit', async () => {
     mockExec.exec.mockResolvedValue(100);
-    mockFs.readFileSync.mockImplementation(() => {
-      throw new Error('ENOENT');
-    });
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        if (String(filePath).endsWith('promptfooconfig.yaml')) {
+          return '{}';
+        }
+        throw new Error('ENOENT');
+      },
+    );
 
     await run();
 
@@ -2926,7 +3109,10 @@ describe('exec error handling with repeat-min-pass', () => {
 
   test('should report invalid output after a successful exit', async () => {
     mockExec.exec.mockResolvedValue(0);
-    mockFs.readFileSync.mockReturnValue('{not-json');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('promptfooconfig.yaml') ? '{}' : '{not-json',
+    );
 
     await run();
 
@@ -2937,9 +3123,14 @@ describe('exec error handling with repeat-min-pass', () => {
 
   test('should format non-Error output read failures', async () => {
     mockExec.exec.mockResolvedValue(0);
-    mockFs.readFileSync.mockImplementation(() => {
-      throw 'read failed';
-    });
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        if (String(filePath).endsWith('promptfooconfig.yaml')) {
+          return '{}';
+        }
+        throw 'read failed';
+      },
+    );
 
     await run();
 

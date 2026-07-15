@@ -14,7 +14,7 @@ import {
   setupCacheEnvironment,
 } from './utils/cache';
 import { extractFileDependencies } from './utils/config';
-import { loadEnvironmentFile } from './utils/env';
+import { loadConfigEnvironmentFiles, loadEnvironmentFile } from './utils/env';
 import {
   ErrorCodes,
   formatErrorMessage,
@@ -547,6 +547,8 @@ export async function run(): Promise<void> {
         `Processing all matching prompt files: ${promptFiles.join(', ')}`,
       );
     }
+
+    loadConfigEnvironmentFiles(configAbsolutePath, workingDirectory);
 
     // Set up caching environment for optimal performance
     core.startGroup('Setting up cache');

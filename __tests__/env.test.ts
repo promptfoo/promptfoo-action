@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import {
   findForbiddenAuthKey,
   findForbiddenEnvFileKey,
+  loadConfigEnvironmentFiles,
   loadEnvironmentFile,
 } from '../src/utils/env';
 import { ErrorCodes, PromptfooActionError } from '../src/utils/errors';
@@ -175,14 +176,18 @@ describe('findForbiddenEnvFileKey', () => {
     'GOOGLE_CLOUD_LOCATION',
     'GCE_METADATA_HOST',
     'gce_metadata_ip',
+    'GCLOUD_PROJECT',
     'METADATA_SERVER_DETECTION',
     'VERTEX_REGION',
+    'WATSONX_AI_PROJECT_ID',
     'VERTEX_PROJECT_ID',
     'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
     'cloudsdk_config',
     'CLOUDSDK_PYTHON',
     'AZURE_AI_PROJECT_URL',
     'CLOUDFLARE_ACCOUNT_ID',
+    'CLAUDE_CODE_USE_BEDROCK',
+    'CLAUDE_CODE_USE_VERTEX',
     'CLAUDE_CONFIG_DIR',
     'CODEX_HOME',
     'CLOUDFLARE_GATEWAY_ID',
@@ -203,6 +208,8 @@ describe('findForbiddenEnvFileKey', () => {
     'PROMPTFOO_REMOTE_APP_BASE_URL',
     'PROMPTFOO_SHARING_APP_BASE_URL',
     'PROMPTFOO_CACHE_PATH',
+    'PROMPTFOO_CACHE_MAX_FILE_COUNT',
+    'PROMPTFOO_CACHE_MAX_SIZE',
     'PROMPTFOO_CONFIG_DIR',
     'PROMPTFOO_PASS_RATE_THRESHOLD',
     'PROMPTFOO_CACHE_TTL',
@@ -333,6 +340,9 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     expect((error as PromptfooActionError).message).toContain(
       'PROMPTFOO_REMOTE_API_BASE_URL',
     );
+    expect((error as PromptfooActionError).helpText).toContain(
+      'Promptfoo authentication variables only in the trusted workflow environment',
+    );
     // Isolation: nothing from the rejected file leaks, so a workflow-set key
     // and host cannot be paired with an attacker value.
     expect(target).toEqual({ EXISTING: 'keep' });
@@ -413,5 +423,520 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     expect((error as PromptfooActionError).code).toBe(
       ErrorCodes.ENV_FILE_LOAD_ERROR,
     );
+  });
+});
+
+describe('loadConfigEnvironmentFiles', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'promptfoo-config-env-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const writeFile = (name: string, contents: string): string => {
+    const filePath = path.join(tmpDir, name);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, contents);
+    return filePath;
+  };
+
+  test.each([
+    ['promptfooconfig.yaml', 'commandLineOptions:\n  envPath: .env.late\n'],
+    ['promptfooconfig.json', '{"commandLineOptions":{"envPath":".env.late"}}'],
+  ])('rejects protected values from a %s envPath', (name, config) => {
+    const configPath = writeFile(name, config);
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /PROMPTFOO_CLOUD_API_URL/,
+    );
+  });
+
+  test('resolves envPath relative to a nested config directory', () => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'configs/promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+    writeFile('configs/.env.late', 'CUSTOM_PROVIDER_SETTING=nested\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('nested');
+  });
+
+  test('matches Promptfoo comma splitting for a nested config envPath', () => {
+    const configPath = writeFile(
+      'configs/promptfooconfig.yaml',
+      "commandLineOptions:\n  envPath: '.env.first, .env.second'\n",
+    );
+    writeFile('configs/.env.first', 'CUSTOM_PROVIDER_SETTING=first\n');
+    writeFile('configs/.env.second', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile(
+      '.env.second',
+      'PROMPTFOO_CLOUD_API_URL=https://capture.example\n',
+    );
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /PROMPTFOO_CLOUD_API_URL/,
+    );
+  });
+
+  test('follows local commandLineOptions fragment refs', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        'defs:',
+        '  options:',
+        '    envPath: .env.late',
+        'commandLineOptions:',
+        "  $ref: '#/defs/options'",
+      ].join('\n'),
+    );
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /PROMPTFOO_CLOUD_API_URL/,
+    );
+  });
+
+  test('follows external root and commandLineOptions fragment refs', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      "$ref: './defs/configs.yaml#/configs/re%61l'\n",
+    );
+    writeFile(
+      'defs/configs.yaml',
+      [
+        'configs:',
+        '  decoy:',
+        '    commandLineOptions:',
+        '      envPath: .env.missing',
+        '  real:',
+        '    commandLineOptions:',
+        "      $ref: './options.json#/items/a~1b~0c'",
+      ].join('\n'),
+    );
+    writeFile(
+      'defs/options.json',
+      '{"items":{"a/b~c":{"envPath":".env.late"}}}',
+    );
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /PROMPTFOO_CLOUD_API_URL/,
+    );
+  });
+
+  test('ignores nested envPath decoys that Promptfoo does not consume', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        'metadata:',
+        '  commandLineOptions:',
+        '    envPath: .env.missing-metadata',
+        'commandLineOptions:',
+        '  nested:',
+        '    envPath: .env.missing-nested',
+      ].join('\n'),
+    );
+
+    expect(() =>
+      loadConfigEnvironmentFiles(configPath, tmpDir, {}),
+    ).not.toThrow();
+  });
+
+  test('resolves the first external ref from the working directory', () => {
+    const configPath = writeFile(
+      'evals/promptfooconfig.yaml',
+      "$ref: './shared.yaml'\n",
+    );
+    writeFile(
+      'evals/shared.yaml',
+      'commandLineOptions:\n  envPath: .env.safe\n',
+    );
+    writeFile('evals/.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile('shared.yaml', 'commandLineOptions:\n  envPath: .env.late\n');
+    writeFile(
+      'evals/.env.late',
+      'PROMPTFOO_CLOUD_API_URL=https://capture.example\n',
+    );
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /PROMPTFOO_CLOUD_API_URL/,
+    );
+  });
+
+  test('follows a root ref when local commandLineOptions siblings are present', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      ["$ref: './base.yaml'", 'commandLineOptions:', '  repeat: 2'].join('\n'),
+    );
+    writeFile('base.yaml', 'commandLineOptions:\n  envPath: .env.late\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /PROMPTFOO_CLOUD_API_URL/,
+    );
+  });
+
+  test('rejects encoded slash characters in config ref paths', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      "$ref: './safe%2Fopts.yaml'\n",
+    );
+    writeFile('safe/opts.yaml', 'commandLineOptions:\n  envPath: .env.safe\n');
+    writeFile(
+      'safe%2Fopts.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+    writeFile('.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /uses an encoded path and cannot be safely preflighted/,
+    );
+  });
+
+  test('rejects encoded hash characters in config ref paths', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      "$ref: './safe%23opts.yaml'\n",
+    );
+    writeFile(
+      'safe%23opts.yaml',
+      'commandLineOptions:\n  envPath: .env.safe\n',
+    );
+    writeFile('safe#opts.yaml', 'commandLineOptions:\n  envPath: .env.late\n');
+    writeFile('.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /uses an encoded path and cannot be safely preflighted/,
+    );
+  });
+
+  test('rejects raw backslashes in config refs before Promptfoo normalizes them', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      "$ref: './safe\\\\opts.yaml'\n",
+    );
+    writeFile('safe\\opts.yaml', 'commandLineOptions:\n  envPath: .env.safe\n');
+    writeFile('safe/opts.yaml', 'commandLineOptions:\n  envPath: .env.late\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /uses backslashes and cannot be safely preflighted/,
+    );
+  });
+
+  test('uses a local envPath when it overrides a root-ref envPath', () => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        "$ref: './base.yaml'",
+        'commandLineOptions:',
+        '  envPath: .env.safe',
+      ].join('\n'),
+    );
+    writeFile('base.yaml', 'commandLineOptions:\n  envPath: .env.missing\n');
+    writeFile('.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('safe');
+  });
+
+  test('rejects nested extended refs whose envPath precedence is ambiguous', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        "$ref: '#/defs/base'",
+        'commandLineOptions:',
+        "  $ref: '#/defs/localopts'",
+        'defs:',
+        '  base:',
+        '    commandLineOptions:',
+        '      envPath: .env.late',
+        '  localopts:',
+        '    envPath: .env.safe',
+      ].join('\n'),
+    );
+    writeFile('.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /combines root and commandLineOptions refs and cannot be safely preflighted/,
+    );
+  });
+
+  test('rejects refs whose resolution scope can be changed by a root $id', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        "$schema: 'https://json-schema.org/draft/2020-12/schema'",
+        "$id: 'https://capture.example/config'",
+        'commandLineOptions:',
+        "  $ref: './opts.yaml'",
+      ].join('\n'),
+    );
+    writeFile('opts.yaml', 'envPath: .env.late\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /uses \$id and cannot be safely preflighted/,
+    );
+  });
+
+  test('rejects refs whose resolution scope can be changed by a nested $id', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        "$schema: 'https://json-schema.org/draft/2020-12/schema'",
+        "$ref: '#/defs/eval'",
+        'defs:',
+        '  eval:',
+        "    $id: './alt/'",
+        '    commandLineOptions:',
+        "      $ref: './opts.yaml'",
+      ].join('\n'),
+    );
+    writeFile('opts.yaml', 'envPath: .env.safe\n');
+    writeFile('alt/opts.yaml', 'envPath: .env.late\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /uses \$id and cannot be safely preflighted/,
+    );
+  });
+
+  test('rejects templated envPath values before Promptfoo can compute them', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        'env:',
+        "  PICK: '.env.late'",
+        'commandLineOptions:',
+        "  envPath: '{{ env.PICK }}'",
+      ].join('\n'),
+    );
+    writeFile('{{ env.PICK }}', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /cannot be safely preflighted/,
+    );
+  });
+
+  test.each([
+    'promptfooconfig.js',
+    'promptfooconfig.ts',
+  ])('rejects executable config %s before evaluation', (name) => {
+    const configPath = writeFile(name, 'export default {};\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /Executable Promptfoo config/,
+    );
+  });
+
+  test('rejects a config glob that cannot be preflighted', () => {
+    writeFile(
+      'evals/promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+
+    expect(() =>
+      loadConfigEnvironmentFiles(
+        path.join(tmpDir, 'evals', 'promptfoo*.yaml'),
+        tmpDir,
+        {},
+      ),
+    ).toThrow(/config glob.*cannot be safely preflighted/i);
+  });
+
+  test('rejects a brace-expanded config glob that cannot be preflighted', () => {
+    writeFile(
+      'evals/promptfooconfig-a.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+    writeFile(
+      'evals/promptfooconfig-b.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+    writeFile(
+      'evals/promptfooconfig-{a,b}.yaml',
+      'commandLineOptions:\n  envPath: .env.safe\n',
+    );
+
+    expect(() =>
+      loadConfigEnvironmentFiles(
+        path.join(tmpDir, 'evals', 'promptfooconfig-{a,b}.yaml'),
+        tmpDir,
+        {},
+      ),
+    ).toThrow(/cannot be safely preflighted/);
+  });
+
+  test('ignores unrelated provider parameter schemas that contain $id', () => {
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        'providers:',
+        '  - id: openai:gpt-4.1-mini',
+        '    config:',
+        '      tools:',
+        '        - type: function',
+        '          function:',
+        '            parameters:',
+        "              $id: 'https://example.com/tool-schema'",
+        'commandLineOptions:',
+        '  envPath: .env.safe',
+      ].join('\n'),
+    );
+    writeFile('.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+
+    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+
+    expect(target.CUSTOM_PROVIDER_SETTING).toBe('safe');
+  });
+
+  test('rejects a remote config identifier that cannot be preflighted', () => {
+    expect(() =>
+      loadConfigEnvironmentFiles(
+        '123e4567-e89b-12d3-a456-426614174000',
+        tmpDir,
+        {},
+      ),
+    ).toThrow(/cannot be safely preflighted/);
+  });
+
+  test('rejects executable config refs before evaluation', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      "$ref: './computed.ts'\n",
+    );
+    writeFile('computed.ts', 'export default {};\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /Executable Promptfoo config/,
+    );
+  });
+
+  test('rejects an executable config hidden behind a symlink', () => {
+    const executable = writeFile('computed.js', 'export default {};\n');
+    const configPath = path.join(tmpDir, 'promptfooconfig.yaml');
+    fs.symlinkSync(executable, configPath);
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /Executable Promptfoo config/,
+    );
+  });
+
+  test('rejects an executable lexical config symlink with a YAML target', () => {
+    const actualConfig = writeFile(
+      'configs/actual.yaml',
+      'module.exports = {};\n',
+    );
+    const configPath = path.join(tmpDir, 'promptfooconfig.js');
+    fs.symlinkSync(actualConfig, configPath);
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /Executable Promptfoo config/,
+    );
+  });
+
+  test.each([
+    ['promptfooconfig', 'cjs'],
+    ['promptfooconfig', 'cts'],
+    ['promptfooconfig', 'js'],
+    ['promptfooconfig', 'mjs'],
+    ['promptfooconfig', 'mts'],
+    ['promptfooconfig', 'ts'],
+    ['redteam', 'js'],
+  ])('rejects an implicit executable %s.%s alongside a selected config', (configName, extension) => {
+    const configPath = writeFile(
+      'evals/promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.safe\n',
+    );
+    writeFile(`${configName}.${extension}`, 'module.exports = {};\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /Implicit Promptfoo config.*cannot be safely preflighted/,
+    );
+  });
+
+  test('rejects an implicit YAML config alongside a selected config', () => {
+    const configPath = writeFile(
+      'evals/promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.safe\n',
+    );
+    writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  grader: file://./evil.js\n',
+    );
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /Implicit Promptfoo config.*cannot be safely preflighted/,
+    );
+  });
+
+  test('resolves envPath from the lexical directory of a symlinked config', () => {
+    const actualConfig = writeFile(
+      'configs/actual.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+    const configPath = path.join(tmpDir, 'promptfooconfig.yaml');
+    fs.symlinkSync(actualConfig, configPath);
+    writeFile('configs/.env.late', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /PROMPTFOO_CLOUD_API_URL/,
+    );
+  });
+
+  test('resolves nested refs from the lexical path of a symlinked ref', () => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      "$ref: './shared.yaml'\n",
+    );
+    const actualRef = writeFile(
+      'defs/actual.yaml',
+      "commandLineOptions:\n  $ref: './opts.yaml'\n",
+    );
+    fs.symlinkSync(actualRef, path.join(tmpDir, 'shared.yaml'));
+    writeFile('defs/opts.yaml', 'envPath: .env.safe\n');
+    writeFile('opts.yaml', 'envPath: .env.late\n');
+    writeFile('.env.safe', 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /PROMPTFOO_CLOUD_API_URL/,
+    );
+  });
+
+  test('rejects an envPath symlink that escapes the working directory', () => {
+    const outsideDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'promptfoo-outside-'),
+    );
+    const outsideFile = path.join(outsideDir, '.env.late');
+    fs.writeFileSync(outsideFile, 'CUSTOM_PROVIDER_SETTING=outside\n');
+    fs.symlinkSync(outsideFile, path.join(tmpDir, '.env.late'));
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: .env.late\n',
+    );
+
+    try {
+      expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+        /must stay within the working directory/,
+      );
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 });

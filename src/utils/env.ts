@@ -1,4 +1,17 @@
 import * as dotenv from 'dotenv';
+import * as fs from 'fs';
+import { hasMagic as hasGlobMagic } from 'glob';
+import {
+  binaryTag,
+  CORE_SCHEMA,
+  load as loadYaml,
+  mergeTag,
+  omapTag,
+  pairsTag,
+  setTag,
+  timestampTag,
+} from 'js-yaml';
+import * as path from 'path';
 import { ErrorCodes, PromptfooActionError } from './errors';
 
 // Variables that let a repository-controlled env file execute code, redirect an
@@ -57,6 +70,8 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'CGO_CXXFLAGS',
   'CGO_LDFLAGS',
   'CLAUDE_CONFIG_DIR',
+  'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX',
   'CLAWDBOT_GATEWAY_URL',
   'CLOUDFLARE_ACCOUNT_ID',
   'CLOUDFLARE_GATEWAY_ID',
@@ -80,6 +95,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'GCC_EXEC_PREFIX',
   'GCE_METADATA_HOST',
   'GCE_METADATA_IP',
+  'GCLOUD_PROJECT',
   'GEM_HOME',
   'GEM_PATH',
   'GEM_SPEC_CACHE',
@@ -179,6 +195,8 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST',
   'PORTKEY_API_BASE_URL',
   'PROMPTFOO_CACHE_PATH',
+  'PROMPTFOO_CACHE_MAX_FILE_COUNT',
+  'PROMPTFOO_CACHE_MAX_SIZE',
   'PROMPTFOO_CACHE_TTL',
   'PROMPTFOO_CA_CERT_PATH',
   'PROMPTFOO_CLOUD_API_URL',
@@ -234,6 +252,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'VERCEL_AI_GATEWAY_BASE_URL',
   'VERTEX_API_HOST',
   'VERTEX_REGION',
+  'WATSONX_AI_PROJECT_ID',
   'VERTEX_PROJECT_ID',
   'VOYAGE_API_BASE_URL',
   'XAI_API_BASE_URL',
@@ -310,21 +329,21 @@ export function loadEnvironmentFile(
     );
   }
 
-  const forbiddenKey = findForbiddenEnvFileKey(fileEnvironment);
-  if (forbiddenKey) {
-    throw new PromptfooActionError(
-      `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
-      ErrorCodes.INVALID_CONFIGURATION,
-      'Remove process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead.',
-    );
-  }
-
   const forbiddenAuthKey = findForbiddenAuthKey(fileEnvironment);
   if (forbiddenAuthKey) {
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets protected authentication variable ${forbiddenAuthKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
       'Configure Promptfoo authentication variables only in the trusted workflow environment.',
+    );
+  }
+
+  const forbiddenKey = findForbiddenEnvFileKey(fileEnvironment);
+  if (forbiddenKey) {
+    throw new PromptfooActionError(
+      `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      'Remove process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead.',
     );
   }
 
@@ -339,5 +358,413 @@ export function loadEnvironmentFile(
     if (override || targetEnvironment[key] === undefined) {
       targetEnvironment[key] = value;
     }
+  }
+}
+
+function assertWorkspacePath(
+  filePath: string,
+  workingDirectory: string,
+  source: string,
+): string {
+  const resolvedPath = path.resolve(filePath);
+  const relativePath = path.relative(workingDirectory, resolvedPath);
+  if (
+    relativePath === '..' ||
+    relativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new PromptfooActionError(
+      `${source} ${filePath} must stay within the working directory`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Use a repository-local ${source}.`,
+    );
+  }
+  if (!fs.existsSync(resolvedPath)) {
+    throw new PromptfooActionError(
+      `${source} ${resolvedPath} not found`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Check the configured ${source}.`,
+    );
+  }
+  const realWorkingDirectory = fs.realpathSync(workingDirectory);
+  const realPath = fs.realpathSync(resolvedPath);
+  const realRelativePath = path.relative(realWorkingDirectory, realPath);
+  if (
+    realRelativePath === '..' ||
+    realRelativePath.startsWith(`..${path.sep}`) ||
+    path.isAbsolute(realRelativePath)
+  ) {
+    throw new PromptfooActionError(
+      `${source} ${filePath} must stay within the working directory`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Use a repository-local ${source}.`,
+    );
+  }
+  return realPath;
+}
+
+/** Preflight environment files that Promptfoo loads after resolving config. */
+export function loadConfigEnvironmentFiles(
+  configPath: string,
+  workingDirectory: string,
+  targetEnvironment: NodeJS.ProcessEnv = process.env,
+): void {
+  if (
+    hasGlobMagic(configPath, {
+      magicalBraces: true,
+      windowsPathsNoEscape: true,
+    })
+  ) {
+    throw new PromptfooActionError(
+      `Promptfoo config glob ${configPath} cannot be safely preflighted for commandLineOptions.envPath`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      'Use a single YAML or JSON Promptfoo config.',
+    );
+  }
+  if (!fs.existsSync(configPath)) {
+    throw new PromptfooActionError(
+      `Promptfoo config ${configPath} cannot be safely preflighted for commandLineOptions.envPath`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      'Use a repository-local YAML or JSON Promptfoo config.',
+    );
+  }
+  const lexicalConfigPath = path.resolve(configPath);
+  for (const configName of ['promptfooconfig', 'redteam']) {
+    for (const extension of [
+      'yaml',
+      'yml',
+      'json',
+      'cjs',
+      'cts',
+      'js',
+      'mjs',
+      'mts',
+      'ts',
+    ]) {
+      const defaultConfigPath = path.resolve(
+        workingDirectory,
+        `${configName}.${extension}`,
+      );
+      try {
+        fs.lstatSync(defaultConfigPath);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          'code' in error &&
+          error.code === 'ENOENT'
+        ) {
+          continue;
+        }
+        throw error;
+      }
+      if (defaultConfigPath !== lexicalConfigPath) {
+        throw new PromptfooActionError(
+          `Implicit Promptfoo config ${defaultConfigPath} cannot be safely preflighted alongside ${configPath}`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Remove the implicit promptfooconfig or redteam config, or select it directly.',
+        );
+      }
+      break;
+    }
+  }
+  if (!/\.(?:ya?ml|json)$/i.test(lexicalConfigPath)) {
+    throw new PromptfooActionError(
+      `Executable Promptfoo config ${configPath} cannot be safely preflighted for commandLineOptions.envPath`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Use a YAML or JSON config and move environment files to the action's env-files input.",
+    );
+  }
+  const realConfigPath = assertWorkspacePath(
+    lexicalConfigPath,
+    workingDirectory,
+    'Promptfoo config',
+  );
+  const maxConfigBytes = 2 * 1024 * 1024;
+  const maxConfigDepth = 100;
+  const maxConfigNodes = 10_000;
+  const maxConfigRefs = 100;
+  const schema = CORE_SCHEMA.withTags(
+    mergeTag,
+    binaryTag,
+    timestampTag,
+    omapTag,
+    pairsTag,
+    setTag,
+  );
+  const loadedConfigs = new Map<string, unknown>();
+  const readConfigFile = (filePath: string): unknown => {
+    if (!/\.(?:ya?ml|json)$/i.test(filePath)) {
+      throw new PromptfooActionError(
+        `Executable Promptfoo config ${filePath} cannot be safely preflighted for commandLineOptions.envPath`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use a YAML or JSON config and move environment files to the action's env-files input.",
+      );
+    }
+    const cachedConfig = loadedConfigs.get(filePath);
+    if (cachedConfig !== undefined) {
+      return cachedConfig;
+    }
+    const content = fs.readFileSync(filePath, 'utf8');
+    if (Buffer.byteLength(content, 'utf8') > maxConfigBytes) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${filePath} exceeds the envPath preflight size limit`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Reduce the Promptfoo config or referenced config size.',
+      );
+    }
+    const config = loadYaml(content, { schema }) as unknown;
+    const inspectedObjects = new WeakSet<object>();
+    const pendingValues: unknown[] = [config];
+    let inspectedNodeCount = 0;
+    while (pendingValues.length > 0) {
+      const value = pendingValues.pop();
+      if (
+        typeof value !== 'object' ||
+        value === null ||
+        inspectedObjects.has(value)
+      ) {
+        continue;
+      }
+      inspectedObjects.add(value);
+      inspectedNodeCount++;
+      if (inspectedNodeCount > maxConfigNodes) {
+        throw new PromptfooActionError(
+          `Promptfoo config ${filePath} exceeds the envPath preflight traversal limit`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Reduce the Promptfoo config nesting or referenced config size.',
+        );
+      }
+      pendingValues.push(...Object.values(value));
+    }
+    loadedConfigs.set(filePath, config);
+    return config;
+  };
+
+  const config = readConfigFile(realConfigPath);
+  const inspectedRefs = new Set<string>();
+  const configuredPaths: string[] = [];
+
+  const resolveRef = (
+    ref: string,
+    sourceFile: string,
+  ): { config: unknown; file: string; fragment: string } => {
+    const hashIndex = ref.indexOf('#');
+    const refPath = hashIndex === -1 ? ref : ref.slice(0, hashIndex);
+    const fragment = hashIndex === -1 ? '' : ref.slice(hashIndex);
+    if (refPath && /^[a-z][a-z\d+.-]*:/i.test(refPath)) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${refPath} must stay within the working directory`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use a repository-local Promptfoo config $ref.',
+      );
+    }
+    if (refPath.includes('\\')) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${refPath} uses backslashes and cannot be safely preflighted`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use forward slashes in repository-local Promptfoo config refs.',
+      );
+    }
+    if (refPath.includes('%')) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${refPath} uses an encoded path and cannot be safely preflighted`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use an unencoded repository-local Promptfoo config ref path.',
+      );
+    }
+    if (refPath && /^[a-z][a-z\d+.-]*:/i.test(refPath)) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${refPath} must stay within the working directory`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use a repository-local Promptfoo config $ref.',
+      );
+    }
+
+    const refBase =
+      sourceFile === lexicalConfigPath
+        ? path.resolve(workingDirectory)
+        : path.dirname(sourceFile);
+    const lexicalRefFile = refPath
+      ? path.resolve(refBase, refPath)
+      : sourceFile;
+    if (!/\.(?:ya?ml|json)$/i.test(lexicalRefFile)) {
+      throw new PromptfooActionError(
+        `Executable Promptfoo config ${lexicalRefFile} cannot be safely preflighted for commandLineOptions.envPath`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use a YAML or JSON config and move environment files to the action's env-files input.",
+      );
+    }
+    const realRefFile = assertWorkspacePath(
+      lexicalRefFile,
+      workingDirectory,
+      'Promptfoo config $ref',
+    );
+    const referencedConfig = readConfigFile(realRefFile);
+    if (!fragment || fragment === '#') {
+      return { config: referencedConfig, file: lexicalRefFile, fragment };
+    }
+    let pointer: string;
+    try {
+      pointer = decodeURIComponent(fragment.slice(1));
+    } catch {
+      throw new PromptfooActionError(
+        `Invalid Promptfoo config $ref fragment ${fragment}`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use a valid JSON pointer fragment in the Promptfoo config $ref.',
+      );
+    }
+    if (!pointer.startsWith('/')) {
+      throw new PromptfooActionError(
+        `Unsupported Promptfoo config $ref fragment ${fragment}`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Use a JSON pointer fragment in the Promptfoo config $ref.',
+      );
+    }
+    let selectedConfig: unknown = referencedConfig;
+    for (const encodedPart of pointer.slice(1).split('/')) {
+      if (/~(?![01])/.test(encodedPart)) {
+        throw new PromptfooActionError(
+          `Invalid Promptfoo config $ref fragment ${fragment}`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Use a valid JSON pointer fragment in the Promptfoo config $ref.',
+        );
+      }
+      const part = encodedPart.replace(/~1/g, '/').replace(/~0/g, '~');
+      if (
+        typeof selectedConfig === 'object' &&
+        selectedConfig !== null &&
+        '$id' in selectedConfig
+      ) {
+        throw new PromptfooActionError(
+          `Promptfoo config $ref ${ref} uses $id and cannot be safely preflighted for commandLineOptions.envPath`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Remove $id from the Promptfoo config ref chain.',
+        );
+      }
+      if (
+        typeof selectedConfig !== 'object' ||
+        selectedConfig === null ||
+        !(part in selectedConfig)
+      ) {
+        throw new PromptfooActionError(
+          `Promptfoo config $ref fragment ${fragment} was not found`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Check the JSON pointer fragment in the Promptfoo config $ref.',
+        );
+      }
+      selectedConfig = (selectedConfig as Record<string, unknown>)[part];
+    }
+    return { config: selectedConfig, file: lexicalRefFile, fragment };
+  };
+
+  const inspectConfig = (
+    value: unknown,
+    sourceFile: string,
+    isCommandLineOptions: boolean,
+    depth: number,
+  ): boolean => {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+      return false;
+    }
+    if (depth > maxConfigDepth) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${configPath} exceeds the envPath preflight traversal limit`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Reduce the Promptfoo config nesting or referenced config size.',
+      );
+    }
+    const record = value as Record<string, unknown>;
+    if ('$id' in record) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${configPath} uses $id and cannot be safely preflighted for commandLineOptions.envPath`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Remove $id from the Promptfoo config ref chain.',
+      );
+    }
+    if (
+      !isCommandLineOptions &&
+      typeof record.$ref === 'string' &&
+      typeof record.commandLineOptions === 'object' &&
+      record.commandLineOptions !== null &&
+      '$ref' in record.commandLineOptions
+    ) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${configPath} combines root and commandLineOptions refs and cannot be safely preflighted for commandLineOptions.envPath`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        'Resolve one of the Promptfoo config ref layers into a static YAML or JSON config.',
+      );
+    }
+    if (isCommandLineOptions && 'envPath' in record) {
+      const envPath = record.envPath;
+      if (
+        typeof envPath !== 'string' &&
+        (!Array.isArray(envPath) ||
+          envPath.some((entry) => typeof entry !== 'string'))
+      ) {
+        throw new PromptfooActionError(
+          `Invalid commandLineOptions.envPath in ${configPath}`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Use a string or list of strings for commandLineOptions.envPath.',
+        );
+      }
+      const entries: string[] = Array.isArray(envPath) ? envPath : [envPath];
+      for (const entry of entries) {
+        if (entry.includes('{{')) {
+          throw new PromptfooActionError(
+            `Computed commandLineOptions.envPath in ${configPath} cannot be safely preflighted`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            "Use a literal envPath or move environment files to the action's env-files input.",
+          );
+        }
+        const resolvedEntry = path.isAbsolute(entry)
+          ? entry
+          : path.resolve(path.dirname(lexicalConfigPath), entry);
+        configuredPaths.push(
+          ...resolvedEntry.split(',').map((part) => part.trim()),
+        );
+      }
+      return true;
+    }
+
+    if (!isCommandLineOptions && 'commandLineOptions' in record) {
+      if (
+        inspectConfig(record.commandLineOptions, sourceFile, true, depth + 1)
+      ) {
+        return true;
+      }
+    }
+
+    if (typeof record.$ref === 'string') {
+      const referenced = resolveRef(record.$ref, sourceFile);
+      const inspectionKey = `${referenced.file}\0${referenced.fragment}\0${isCommandLineOptions}`;
+      if (inspectedRefs.has(inspectionKey)) {
+        return false;
+      }
+      if (inspectedRefs.size >= maxConfigRefs) {
+        throw new PromptfooActionError(
+          `Promptfoo config ${configPath} exceeds the envPath preflight reference limit`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Reduce the number of referenced Promptfoo config files.',
+        );
+      }
+      inspectedRefs.add(inspectionKey);
+      return inspectConfig(
+        referenced.config,
+        referenced.file,
+        isCommandLineOptions,
+        depth + 1,
+      );
+    }
+    return false;
+  };
+
+  inspectConfig(config, lexicalConfigPath, false, 0);
+  for (const configuredPath of configuredPaths.filter(Boolean)) {
+    const envFilePath = assertWorkspacePath(
+      path.resolve(workingDirectory, configuredPath),
+      workingDirectory,
+      'Config environment file',
+    );
+    loadEnvironmentFile(envFilePath, targetEnvironment);
   }
 }
