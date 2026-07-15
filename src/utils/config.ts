@@ -5,6 +5,15 @@ import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
+export function normalizeConfigFilePath(
+  filePath: string,
+  platform = process.platform,
+): string {
+  return platform === 'win32' && /^\/[A-Za-z]:[\\/]/.test(filePath)
+    ? filePath.slice(1)
+    : filePath;
+}
+
 interface PromptfooAssertion {
   type?: string;
   value?: string | { file?: string };
@@ -75,7 +84,10 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(configDir, filePath);
+        const absolutePath = path.resolve(
+          configDir,
+          normalizeConfigFilePath(filePath),
+        );
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -95,7 +107,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Helper function to process file:// paths with glob support
     const processFileUrl = (fileUrl: string): void => {
-      const filePath = fileUrl.replace('file://', '');
+      const filePath = normalizeConfigFilePath(fileUrl.replace('file://', ''));
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
@@ -121,8 +133,9 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathParts = filePath.split('/');
-        let basePath = '';
+        const pathRoot = path.parse(filePath).root;
+        const pathParts = filePath.slice(pathRoot.length).split(/[\\/]/);
+        let basePath = pathRoot;
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
             break;
@@ -130,7 +143,12 @@ export function extractFileDependencies(configPath: string): string[] {
           basePath = basePath ? path.join(basePath, part) : part;
         }
         if (basePath) {
-          dependencies.add(path.resolve(path.join(configDir, basePath)));
+          const absoluteBasePath = path.resolve(configDir, basePath);
+          dependencies.add(
+            matches.length === 0
+              ? `${absoluteBasePath}${path.sep}`
+              : absoluteBasePath,
+          );
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
@@ -199,18 +217,18 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Extract assert files
+    const visitedAssertSets = new WeakSet<PromptfooAssertion[]>();
     const extractAssertFiles = (asserts?: PromptfooAssertion[]): void => {
-      if (!asserts) return;
+      if (!Array.isArray(asserts) || visitedAssertSets.has(asserts)) return;
+      visitedAssertSets.add(asserts);
       for (const assert of asserts) {
+        if (!assert || typeof assert !== 'object') continue;
         if (
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
           processFileUrl(
-            assert.value.replace(
-              /(\.(?:[cm]?[jt]s|py)):[A-Za-z_$][\w$]*$/i,
-              '$1',
-            ),
+            assert.value.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, '$1'),
           );
         } else if (
           typeof assert.value === 'object' &&
@@ -236,9 +254,10 @@ export function extractFileDependencies(configPath: string): string[] {
       if (typeof config.defaultTest === 'string') {
         if (config.defaultTest.startsWith('file://')) {
           const defaultTestFile = config.defaultTest.slice('file://'.length);
-          const hasDynamicDefaultTestPath = /\{\{[\s\S]*?\}\}/.test(
-            defaultTestFile,
-          );
+          const hasDynamicDefaultTestPath =
+            /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}/.test(
+              defaultTestFile,
+            );
           const defaultTestPath = hasDynamicDefaultTestPath
             ? undefined
             : resolveConfigDependency(

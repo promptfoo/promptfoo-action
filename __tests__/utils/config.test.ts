@@ -3,7 +3,10 @@ import * as fs from 'fs';
 import * as glob from 'glob';
 import type { Mock } from 'vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { extractFileDependencies } from '../../src/utils/config';
+import {
+  extractFileDependencies,
+  normalizeConfigFilePath,
+} from '../../src/utils/config';
 
 vi.mock('fs', async () => {
   const realFs = await vi.importActual<typeof import('fs')>('fs');
@@ -45,6 +48,18 @@ describe('extractFileDependencies', () => {
       String(filePath),
     );
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
+  });
+
+  it('should normalize standard Windows file URL drive prefixes', () => {
+    expect(
+      normalizeConfigFilePath('/C:/repo/evals/default.yaml', 'win32'),
+    ).toBe('C:/repo/evals/default.yaml');
+    expect(
+      normalizeConfigFilePath('/C:\\repo\\evals\\default.yaml', 'win32'),
+    ).toBe('C:\\repo\\evals\\default.yaml');
+    expect(
+      normalizeConfigFilePath('/C:/repo/evals/default.yaml', 'linux'),
+    ).toBe('/C:/repo/evals/default.yaml');
   });
 
   it('should extract file:// providers', () => {
@@ -418,6 +433,19 @@ assert:
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
   });
 
+  it('should conservatively watch the repository for a Nunjucks block in a defaultTest path', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "defaultTest: 'file://{% if env.USE_DEFAULT %}defaults/default.yaml{% else %}other/default.yaml{% endif %}'",
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['/']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+  });
+
   it('should track the backing file for a named defaultTest assertion export', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
@@ -441,6 +469,28 @@ assert:
       'evals/defaults/default.yaml',
       'evals/check-named.js',
     ]);
+  });
+
+  it('should track the backing file for a dotted defaultTest assertion export', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+assert:
+  - type: javascript
+    value: file://check-dot.js:named.with.dot
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/check-dot.js']);
   });
 
   it('should track nested assert-set dependencies in a file-backed defaultTest', () => {
@@ -467,6 +517,88 @@ assert:
     expect(deps).toEqual([
       'evals/defaults/default.yaml',
       'evals/nested-check.js',
+    ]);
+  });
+
+  it('should handle cyclic and malformed defaultTest assert sets without dropping later dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return `
+providers:
+  - file://providers/custom.py
+defaultTest: file://defaults/default.yaml
+`;
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+assert: &asserts
+  - type: assert-set
+    assert: *asserts
+  - null
+  - type: assert-set
+    assert: not-an-array
+  - type: javascript
+    value: file://later-grader.js:named.with.dot
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/providers/custom.py',
+      'evals/defaults/default.yaml',
+      'evals/later-grader.js',
+    ]);
+  });
+
+  it('should preserve the missing glob directory for a deleted defaultTest dependency', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: { context: file://fixturegone/*.txt }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/fixturegone/']);
+  });
+
+  it('should preserve the missing absolute glob directory for a deleted defaultTest dependency', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: { context: file:///test/working/evals/absfixturegone/*.txt }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/absfixturegone/',
     ]);
   });
 

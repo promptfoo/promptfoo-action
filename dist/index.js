@@ -19528,7 +19528,7 @@ var require_dist = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.format = format;
-    exports2.parse = parse3;
+    exports2.parse = parse4;
     var TEXT_REGEXP = /^[\u0009\u0020-\u007e\u0080-\u00ff]*$/;
     var TOKEN_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
     var QUOTE_REGEXP = /[\\"]/g;
@@ -19555,7 +19555,7 @@ var require_dist = __commonJS({
       }
       return result;
     }
-    function parse3(header, options) {
+    function parse4(header, options) {
       const len = header.length;
       let index = skipOWS(header, 0, len);
       const valueStart = index;
@@ -19686,7 +19686,7 @@ var require_main = __commonJS({
       return supportsAnsi() ? `\x1B[2m${text}\x1B[0m` : text;
     }
     var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
-    function parse3(src) {
+    function parse4(src) {
       const obj = {};
       let lines = src.toString();
       lines = lines.replace(/\r\n?/mg, "\n");
@@ -19958,7 +19958,7 @@ var require_main = __commonJS({
       _parseVault,
       config: config2,
       decrypt,
-      parse: parse3,
+      parse: parse4,
       populate
     };
     module2.exports.configDotenv = DotenvModule.configDotenv;
@@ -19985,7 +19985,7 @@ var require_ms = __commonJS({
       options = options || {};
       var type = typeof val;
       if (type === "string" && val.length > 0) {
-        return parse3(val);
+        return parse4(val);
       } else if (type === "number" && isFinite(val)) {
         return options.long ? fmtLong(val) : fmtShort(val);
       }
@@ -19993,7 +19993,7 @@ var require_ms = __commonJS({
         "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
       );
     };
-    function parse3(str) {
+    function parse4(str) {
       str = String(str);
       if (str.length > 100) {
         return;
@@ -29699,7 +29699,7 @@ function parseStringResponse(result, parsers12, texts, trim = true) {
         }
         return lines[i2 + offset];
       };
-      parsers12.some(({ parse: parse3 }) => parse3(line, result));
+      parsers12.some(({ parse: parse4 }) => parse4(line, result));
     }
   });
   return result;
@@ -36280,6 +36280,9 @@ function isDirectory2(filePath) {
 }
 
 // src/utils/config.ts
+function normalizeConfigFilePath(filePath, platform2 = process.platform) {
+  return platform2 === "win32" && /^\/[A-Za-z]:[\\/]/.test(filePath) ? filePath.slice(1) : filePath;
+}
 function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
@@ -36310,7 +36313,10 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(configDir, filePath);
+        const absolutePath = path5.resolve(
+          configDir,
+          normalizeConfigFilePath(filePath)
+        );
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36327,7 +36333,7 @@ function extractFileDependencies(configPath) {
       }
     };
     const processFileUrl = (fileUrl) => {
-      const filePath = fileUrl.replace("file://", "");
+      const filePath = normalizeConfigFilePath(fileUrl.replace("file://", ""));
       const absolutePath = resolveConfigDependency(
         filePath,
         "config file dependency"
@@ -36347,8 +36353,9 @@ function extractFileDependencies(configPath) {
             );
           }
         }
-        const pathParts = filePath.split("/");
-        let basePath = "";
+        const pathRoot = path5.parse(filePath).root;
+        const pathParts = filePath.slice(pathRoot.length).split(/[\\/]/);
+        let basePath = pathRoot;
         for (const part of pathParts) {
           if (le(part)) {
             break;
@@ -36356,7 +36363,10 @@ function extractFileDependencies(configPath) {
           basePath = basePath ? path5.join(basePath, part) : part;
         }
         if (basePath) {
-          dependencies.add(path5.resolve(path5.join(configDir, basePath)));
+          const absoluteBasePath = path5.resolve(configDir, basePath);
+          dependencies.add(
+            matches.length === 0 ? `${absoluteBasePath}${path5.sep}` : absoluteBasePath
+          );
         }
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
@@ -36405,15 +36415,15 @@ function extractFileDependencies(configPath) {
         }
       }
     };
+    const visitedAssertSets = /* @__PURE__ */ new WeakSet();
     const extractAssertFiles = (asserts) => {
-      if (!asserts) return;
+      if (!Array.isArray(asserts) || visitedAssertSets.has(asserts)) return;
+      visitedAssertSets.add(asserts);
       for (const assert of asserts) {
+        if (!assert || typeof assert !== "object") continue;
         if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
           processFileUrl(
-            assert.value.replace(
-              /(\.(?:[cm]?[jt]s|py)):[A-Za-z_$][\w$]*$/i,
-              "$1"
-            )
+            assert.value.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, "$1")
           );
         } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
           const absolutePath = resolveConfigDependency(
@@ -36431,7 +36441,7 @@ function extractFileDependencies(configPath) {
       if (typeof config2.defaultTest === "string") {
         if (config2.defaultTest.startsWith("file://")) {
           const defaultTestFile = config2.defaultTest.slice("file://".length);
-          const hasDynamicDefaultTestPath = /\{\{[\s\S]*?\}\}/.test(
+          const hasDynamicDefaultTestPath = /\{\{[\s\S]*?\}\}|\{%[\s\S]*?%\}|\{#[\s\S]*?#\}/.test(
             defaultTestFile
           );
           const defaultTestPath = hasDynamicDefaultTestPath ? void 0 : resolveConfigDependency(
