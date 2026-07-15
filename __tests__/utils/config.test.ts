@@ -218,6 +218,20 @@ providers:
     ).toEqual(['../config/providers/custom.py']);
   });
 
+  it.each([
+    "''",
+    'false',
+  ])('should fall back to providers when targets is the falsy value %s', (targets) => {
+    mockFs.readFileSync.mockReturnValue(`
+targets: ${targets}
+providers: file://providers/custom.py:call_api
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/providers/custom.py']);
+  });
+
   it('should extract HTTP target config dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 targets:

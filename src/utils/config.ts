@@ -368,7 +368,7 @@ export function extractFileDependencies(
     };
 
     // Extract provider files
-    const configuredProviders = config.targets ?? config.providers;
+    const configuredProviders = config.targets || config.providers;
     if (configuredProviders) {
       const providers = Array.isArray(configuredProviders)
         ? configuredProviders
