@@ -1057,6 +1057,17 @@ prompts:
     expect(deps).toEqual(['prompts/generate.sh']);
   });
 
+  it.each([
+    ['exec:prompts/build.py:build', 'prompts/build.py'],
+    ['exec:prompts/build.sh', 'prompts/build.sh'],
+  ])('should track an executable prompt script and its supported selector: %s', (prompt, dependency) => {
+    mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([dependency]);
+  });
+
   it('should retain a deleted file argument for mapped executable prompts', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
@@ -3425,6 +3436,7 @@ prompts:
   it.each([
     'Answer in {{ env.TONE }} tone',
     'Use {{- env["TONE"] -}} tone for this response',
+    'What is 2+2?',
   ])('should ignore scalar inline prompt prose with environment templates: %s', (prompt) => {
     mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
 
@@ -3503,6 +3515,31 @@ prompts:
     );
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('unsafe config dependency glob alternative'),
+    );
+  });
+
+  it.each([
+    ['{foo,bar}/[!)]*.py', ['foo/', 'bar/']],
+    ['{foo,bar}/[!}]*.py', ['foo/', 'bar/']],
+    ['{foo,bar}/literal).py', ['foo/literal).py', 'bar/literal).py']],
+  ])('should preserve valid scoped brace globs with literal closers: %s', (pattern, dependencies) => {
+    mockFs.readFileSync.mockReturnValue(`providers: file://${pattern}\n`);
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(dependencies);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.stringContaining('/test/working/foo/'),
+        expect.stringContaining('/test/working/bar/'),
+      ]),
+      expect.objectContaining({ magicalBraces: true }),
     );
   });
 
