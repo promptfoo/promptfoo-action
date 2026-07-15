@@ -784,6 +784,20 @@ prompts:
     );
   });
 
+  it('should not expose an escaping env-expanded structured prompt path in containment warnings', () => {
+    vi.stubEnv('PROMPT_SECRET_DIR', '../../SENSITIVE-PROMPT-DIR');
+    mockFs.readFileSync.mockReturnValue(
+      'prompts:\n  file://$PROMPT_SECRET_DIR/linked.yaml: mapped prompt\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(vi.mocked(core.warning).mock.calls.join('\n')).not.toContain(
+      'SENSITIVE-PROMPT-DIR',
+    );
+  });
+
   it('should extract executable prompt-map keys from the action working directory', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
@@ -1305,7 +1319,7 @@ tests:
   it('should extract nested dependencies from mapped providers', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
-  - openai:gpt-4o:
+  - https://example.test/mapped:
       env:
         AUTH_PATH: ./auth/mapped-token.ts
       config:
@@ -1404,8 +1418,8 @@ extensions:
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual([
       'evals/scenarios/security.yaml',
-      'evals/filters/normalize.js',
       'evals/extensions/report.py',
+      'evals/filters/normalize.js',
     ]);
   });
 
@@ -1451,9 +1465,17 @@ tests:
       if (String(filePath).endsWith('promptfooconfig.yaml')) {
         return 'defaultTest: file://defaults/default.yaml\n';
       }
+      if (String(filePath).endsWith('/providers/grader.yaml')) {
+        return `
+id: http
+config:
+  transformResponse: file://parsers/grader.js:parse
+`;
+      }
       return `
 vars:
   context: file://data/context.yaml
+provider: file://providers/grader.yaml
 options:
   transform: file://transforms/default.js:transform
 assertScoringFunction: file://scoring/default.py:score
@@ -1465,6 +1487,8 @@ assertScoringFunction: file://scoring/default.py:score
     ).toEqual([
       'evals/defaults/default.yaml',
       'evals/data/context.yaml',
+      'evals/providers/grader.yaml',
+      'evals/parsers/grader.js',
       'evals/transforms/default.js',
       'evals/scoring/default.py',
     ]);
@@ -1541,6 +1565,7 @@ tests:
         value: check output
         transform: file://transforms/assert.js:normalize
         contextTransform: file://transforms/context.py:extract
+        rubricPrompt: file://rubrics/assert.txt
         provider:
           id: http
           config:
@@ -1552,6 +1577,7 @@ tests:
     ).toEqual([
       'evals/transforms/assert.js',
       'evals/transforms/context.py',
+      'evals/rubrics/assert.txt',
       'evals/parsers/grader.js',
     ]);
   });
@@ -1675,20 +1701,329 @@ providers:
         return `
 providers:
   - id: http
-    config: file://providers/options.yaml
+    env:
+      CONFIG_FILE: providers/options.yaml
+      TOKEN_PATH: ./credentials/options-token.ts
+    config: file://{{ env.CONFIG_FILE }}
   - id: http
     config: inline config
 `;
       }
       if (candidate.endsWith('/providers/options.yaml')) {
-        return 'transformResponse: file://parsers/options.js:parse\n';
+        return [
+          'transformResponse: file://parsers/options.js:parse',
+          'auth:',
+          '  type: file',
+          '  path: "{{ env.TOKEN_PATH }}"',
+        ].join('\n');
       }
       throw new Error(`unexpected read: ${candidate}`);
     });
 
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
-    ).toEqual(['evals/providers/options.yaml', 'evals/parsers/options.js']);
+    ).toEqual([
+      'evals/providers/options.yaml',
+      'evals/credentials/options-token.ts',
+      'evals/parsers/options.js',
+    ]);
+  });
+
+  it('should extract a mapped file-backed provider key and its nested dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return `
+providers:
+  - file://providers/mapped.yaml:
+      config:
+        temperature: 0
+`;
+      }
+      if (candidate.endsWith('/providers/mapped.yaml')) {
+        return `
+id: http
+config:
+  transformResponse: file://parsers/mapped.js:parse
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/mapped.yaml', 'evals/parsers/mapped.js']);
+  });
+
+  it.each([
+    ['provider', 'providers: file://{{ env.PROVIDER_FILE }}'],
+    ['target', 'targets: file://{{ env.PROVIDER_FILE }}'],
+    ['test provider', 'tests:\n  - provider: file://{{ env.PROVIDER_FILE }}'],
+    [
+      'assertion provider',
+      'tests:\n  - assert:\n      - type: llm-rubric\n        provider: file://{{ env.PROVIDER_FILE }}',
+    ],
+  ])('should render an env-templated %s reference before extracting nested dependencies', (_name, configContent) => {
+    vi.stubEnv('PROVIDER_FILE', 'providers/http.yaml');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) return configContent;
+      if (candidate.endsWith('/providers/http.yaml')) {
+        return `
+id: http
+config:
+  transformResponse: file://parsers/env.js:parse
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/http.yaml', 'evals/parsers/env.js']);
+  });
+
+  it('should not treat non-HTTP provider config fields as HTTP file dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4o
+    config:
+      auth:
+        type: file
+        path: ./not-a-dependency/auth.txt
+      tls:
+        keyPath: ./not-a-dependency/key.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should not treat fields inside an HTTP body file as HTTP credential dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'providers:\n  - id: http\n    config: file://providers/options.yaml\n';
+      }
+      if (candidate.endsWith('/providers/options.yaml')) {
+        return 'body: file://data/body.yaml\n';
+      }
+      if (candidate.endsWith('/data/body.yaml')) {
+        return [
+          'auth:',
+          '  type: file',
+          '  path: ./not-a-dependency/body-auth.txt',
+          'tls:',
+          '  keyPath: ./not-a-dependency/body-key.txt',
+        ].join('\n');
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/options.yaml', 'evals/data/body.yaml']);
+  });
+
+  it('should extract file-backed grading-provider type maps from assertions and default options', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return `
+defaultTest:
+  options:
+    provider:
+      text: file://providers/default-grader.yaml
+tests:
+  - assert:
+      - type: llm-rubric
+        provider:
+          text: file://providers/assert-grader.yaml
+`;
+      }
+      if (candidate.endsWith('/providers/default-grader.yaml')) {
+        return 'id: http\nconfig:\n  transformResponse: file://parsers/default-grader.js:parse\n';
+      }
+      if (candidate.endsWith('/providers/assert-grader.yaml')) {
+        return 'id: http\nconfig:\n  transformResponse: file://parsers/assert-grader.js:parse\n';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/providers/default-grader.yaml',
+      'evals/parsers/default-grader.js',
+      'evals/providers/assert-grader.yaml',
+      'evals/parsers/assert-grader.js',
+    ]);
+  });
+
+  it('should extract provider-level transforms for suite, test, and assertion providers', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4o
+    transform: file://transforms/provider.js:transform
+tests:
+  - provider:
+      id: http
+      transform: file://transforms/test-provider.py:transform
+    assert:
+      - type: llm-rubric
+        provider:
+          id: http
+          transform: file://transforms/grader.js:transform
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/transforms/provider.js',
+      'evals/transforms/grader.js',
+      'evals/transforms/test-provider.py',
+    ]);
+  });
+
+  it('should extract bare external tests and resolve scalar vars beside the test file', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'tests: tests/cases.yaml\n';
+      }
+      if (candidate.endsWith('/tests/cases.yaml')) {
+        return '- vars: file://data/context.yaml\n';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/tests/cases.yaml', 'evals/tests/data/context.yaml']);
+  });
+
+  it('should extract nested dependencies from external scenario and scenario-test files', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'scenarios: file://scenarios/security.yaml\n';
+      }
+      if (candidate.endsWith('/scenarios/security.yaml')) {
+        return '- tests: file://tests/scenario-cases.yaml\n';
+      }
+      if (candidate.endsWith('/tests/scenario-cases.yaml')) {
+        return '- assert:\n    - type: javascript\n      value: file://validators/scenario.js:check\n';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/scenarios/security.yaml',
+      'evals/tests/scenario-cases.yaml',
+      'evals/validators/scenario.js',
+    ]);
+  });
+
+  it('should conservatively watch an external test file containing a parsed $ref', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'tests: file://tests/cases.yaml\n';
+      }
+      if (candidate.endsWith('/tests/cases.yaml')) {
+        return "$ref: './parts/case.yaml#/0'\n";
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should ignore provider tool-schema refs reached from an external test file', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'tests: file://tests/cases.yaml\n';
+      }
+      if (candidate.endsWith('/tests/cases.yaml')) {
+        return '- provider: file://providers/grader.yaml\n';
+      }
+      if (candidate.endsWith('/tests/providers/grader.yaml')) {
+        return `
+id: http
+config:
+  transformResponse: file://parsers/grader.js:parse
+  tools:
+    - type: function
+      function:
+        name: example
+        parameters:
+          $ref: '#/$defs/Input'
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/tests/cases.yaml',
+      'evals/tests/providers/grader.yaml',
+      'evals/parsers/grader.js',
+    ]);
+  });
+
+  it('should conservatively watch unresolved external provider and scenario references', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers: file://{{ env.MISSING_PROVIDER }}
+scenarios: &scenarios
+  - file://scenarios/{{ env.MISSING_SCENARIO }}.yaml
+  - *scenarios
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it('should ignore malformed provider maps while preserving valid siblings', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - unknown: invalid provider map
+  - file://providers/safe.py
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/safe.py']);
+  });
+
+  it('should prefer targets when both targets and providers are present', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return [
+          'providers: file://providers/ignored.yaml',
+          'targets: file://providers/actual.yaml',
+        ].join('\n');
+      }
+      if (candidate.endsWith('/providers/actual.yaml')) {
+        return 'id: http\nconfig:\n  transformResponse: file://parsers/actual.js:parse\n';
+      }
+      if (candidate.endsWith('/providers/ignored.yaml')) {
+        return 'id: http\nconfig:\n  transformResponse: file://parsers/ignored.js:parse\n';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/actual.yaml', 'evals/parsers/actual.js']);
   });
 
   it('should preserve sibling dependencies when provider and test glob patterns are too long', () => {
@@ -1734,6 +2069,70 @@ providers:
     ).toEqual(['evals/providers/safe.py']);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('pattern is invalid'),
+    );
+  });
+
+  it('should preserve sibling dependencies when resolving a near-limit glob makes it too long', () => {
+    const nearLimitPattern = `file://providers/${'a'.repeat(65_510)}*.yaml`;
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'providers:',
+        `  - ${nearLimitPattern}`,
+        '  - file://providers/safe.py',
+      ].join('\n'),
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.length > 65_536) throw new Error('pattern is too long');
+      return value.includes('*');
+    });
+    mockGlob.sync.mockImplementation((value: string | string[]) => {
+      const patterns = Array.isArray(value) ? value : [value];
+      if (patterns.some((entry) => entry.length > 65_536)) {
+        throw new Error('pattern is too long');
+      }
+      return [];
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/safe.py']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('pattern is too long'),
+    );
+  });
+
+  it('should preserve siblings when glob expansion or absolute-pattern validation throws', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/throw-*.yaml
+  - file://providers/absolute-*.yaml
+  - file://providers/safe.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (
+        value.startsWith('/test/working/evals/') &&
+        value.includes('absolute-')
+      ) {
+        throw new Error('invalid absolute pattern');
+      }
+      return value.includes('*');
+    });
+    mockGlob.sync.mockImplementation((value: string | string[]) => {
+      const patterns = Array.isArray(value) ? value : [value];
+      if (patterns.some((entry) => entry.includes('throw-'))) {
+        throw new Error('invalid pattern');
+      }
+      return [];
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/safe.py']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring config dependency: pattern is invalid',
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring nested prompt dependency: pattern is invalid',
     );
   });
 

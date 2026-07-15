@@ -364,7 +364,13 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
+        changedFiles = pullRequestFiles
+          .flatMap((file) =>
+            file.previous_filename
+              ? [file.filename, file.previous_filename]
+              : [file.filename],
+          )
+          .join('\n');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -389,6 +395,7 @@ export async function run(): Promise<void> {
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
             compareBase,
             'HEAD',
             '--',
@@ -421,6 +428,7 @@ export async function run(): Promise<void> {
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
             beforeSha,
             afterSha,
             '--',
@@ -449,7 +457,10 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split('\n').filter((f) => f);
+    const changedFilesList = changedFiles
+      .split(/\r?\n/)
+      .map((file) => file.trim())
+      .filter((file) => file);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {

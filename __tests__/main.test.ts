@@ -627,6 +627,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -698,6 +699,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -749,6 +751,27 @@ describe('GitHub Action Main', () => {
         'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should match whitespace-padded CRLF workflow_dispatch file inputs', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: '  data/context.json  \r\n\r\n',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should handle workflow_dispatch with custom base comparison', async () => {
@@ -890,6 +913,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '--no-renames',
           'feature-branch',
           'HEAD',
           '--',
@@ -924,6 +948,22 @@ describe('GitHub Action Main', () => {
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
       );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when a referenced config dependency is renamed away', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archived/context.json',
+          previous_filename: 'data/context.json',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
@@ -1648,6 +1688,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '--no-renames',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',

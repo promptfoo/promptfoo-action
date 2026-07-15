@@ -114,15 +114,22 @@ function stripSpreadsheetSheetSelector(filePath: string): string {
 }
 
 function stripNunjucksComments(value: string): string {
-  let result = value;
-  let start = result.indexOf('{#');
+  const parts: string[] = [];
+  let cursor = 0;
+  let start = value.indexOf('{#', cursor);
   while (start !== -1) {
-    const end = result.indexOf('#}', start + 2);
+    const end = value.indexOf('#}', start + 2);
     if (end === -1) break;
-    result = `${result.slice(0, start)}${result.slice(end + 2)}`;
-    start = result.indexOf('{#', start);
+    parts.push(value.slice(cursor, start));
+    cursor = end + 2;
+    start = value.indexOf('{#', cursor);
   }
-  return result;
+  parts.push(value.slice(cursor));
+  return parts.join('');
+}
+
+function isHttpProviderId(providerId: string): boolean {
+  return /^https?(?::|$)/.test(providerId);
 }
 
 function renderEnvironmentTemplates(
@@ -381,6 +388,10 @@ export function extractFileDependencies(
       let unsafeAlternative = false;
       for (const expandedPath of expandedPaths) {
         const absolutePattern = path.resolve(configDir, expandedPath);
+        if (absolutePattern.length > MAX_GLOB_PATTERN_LENGTH) {
+          core.warning(`Ignoring ${source}: pattern is too long`);
+          continue;
+        }
         if (isPathInside(dependencyRoot, absolutePattern)) {
           safePatterns.push(absolutePattern);
         } else {
@@ -429,10 +440,16 @@ export function extractFileDependencies(
           safePatterns.length === 1 && !globPath.includes('{')
             ? safePatterns[0]
             : safePatterns;
-        const matches = glob.sync(globInput, {
-          nodir: true,
-          ...globOptions,
-        });
+        let matches: string[];
+        try {
+          matches = glob.sync(globInput, {
+            nodir: true,
+            ...globOptions,
+          });
+        } catch {
+          core.warning('Ignoring config dependency: pattern is invalid');
+          return;
+        }
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
           if (isPathInside(dependencyRoot, absoluteMatch)) {
@@ -453,7 +470,12 @@ export function extractFileDependencies(
         // Also add the base directory for watching
         // Extract the non-glob part of the path
         for (const safePattern of safePatterns) {
-          if (!glob.hasMagic(safePattern, globOptions)) {
+          const safePatternHasMagic = tryHasGlobMagic(
+            safePattern,
+            'config dependency',
+          );
+          if (safePatternHasMagic === undefined) continue;
+          if (!safePatternHasMagic) {
             dependencies.add(safePattern);
             continue;
           }
@@ -595,6 +617,9 @@ export function extractFileDependencies(
       displayPromptPath = promptPath,
       scanProviderPaths = false,
       resolveNestedProviderPaths = false,
+      knownHttpProvider = false,
+      initialEnv = templateEnv,
+      failClosedOnRefs = false,
     ): void => {
       const rawPath = promptPath
         .replace(/^file:\/\//, '')
@@ -619,19 +644,26 @@ export function extractFileDependencies(
               resolveConfigDependency(
                 normalizedPath,
                 'nested prompt file dependency',
+                displayPromptPath.replace(/^file:\/\//, ''),
               ),
             ]
       )?.filter((entry): entry is string => entry !== undefined);
       if (!promptPatterns || promptPatterns.length === 0) return;
 
-      const promptFiles = isPromptGlob
-        ? glob.sync(
+      let promptFiles = promptPatterns;
+      if (isPromptGlob) {
+        try {
+          promptFiles = glob.sync(
             promptPatterns.length === 1 && !normalizedPath.includes('{')
               ? promptPatterns[0]
               : promptPatterns,
             { nodir: true, ...globOptions },
-          )
-        : promptPatterns;
+          );
+        } catch {
+          core.warning('Ignoring nested prompt dependency: pattern is invalid');
+          return;
+        }
+      }
 
       const visited = new WeakSet<object>();
       const walk = (root: unknown, sourcePath: string): void => {
@@ -639,13 +671,19 @@ export function extractFileDependencies(
           value: unknown;
           env: Record<string, string | undefined>;
           providerContext: boolean;
+          testVarsFileContext: boolean;
         }> = [
-          { value: root, env: templateEnv, providerContext: scanProviderPaths },
+          {
+            value: root,
+            env: initialEnv,
+            providerContext: scanProviderPaths,
+            testVarsFileContext: false,
+          },
         ];
         while (pending.length > 0) {
           const current = pending[pending.length - 1];
           pending.length -= 1;
-          const { value, env, providerContext } = current;
+          const { value, env, providerContext, testVarsFileContext } = current;
           if (typeof value === 'string' && value.startsWith('file://')) {
             const renderedReference = stripNunjucksComments(
               renderEnvironmentTemplates(value, env),
@@ -655,7 +693,7 @@ export function extractFileDependencies(
               continue;
             }
             const providerReference =
-              providerContext &&
+              (providerContext || testVarsFileContext) &&
               resolveNestedProviderPaths &&
               !path.isAbsolute(renderedReference.replace(/^file:\/\//, ''))
                 ? `file://${path.resolve(
@@ -664,15 +702,25 @@ export function extractFileDependencies(
                   )}`
                 : renderedReference;
             processFileUrl(providerReference, true, value);
-            if (providerContext) {
-              extractNestedPromptFileUrls(providerReference, value, true);
-            }
+            extractNestedPromptFileUrls(
+              providerReference,
+              value,
+              providerContext,
+              false,
+              false,
+              env,
+              failClosedOnRefs && !providerContext,
+            );
           } else if (typeof value === 'object' && value !== null) {
             if (ArrayBuffer.isView(value)) continue;
             if (visited.has(value)) continue;
             visited.add(value);
 
             const record = value as Record<string, unknown>;
+            if (failClosedOnRefs && Object.keys(record).includes('$ref')) {
+              hasDynamicPromptDependencies = true;
+              continue;
+            }
             const localEnv = Object.fromEntries(
               Object.entries(
                 typeof record.env === 'object' && record.env !== null
@@ -685,15 +733,19 @@ export function extractFileDependencies(
               ),
             );
             const nestedEnv = { ...env, ...localEnv };
+            const httpConfig =
+              knownHttpProvider && value === root
+                ? record
+                : typeof record.config === 'object' && record.config !== null
+                  ? (record.config as Record<string, unknown>)
+                  : undefined;
             if (
               providerContext &&
-              typeof record.config === 'object' &&
-              record.config !== null
+              httpConfig &&
+              (knownHttpProvider ||
+                (typeof record.id === 'string' && isHttpProviderId(record.id)))
             ) {
-              extractHttpFileDependencies(
-                record.config as Record<string, unknown>,
-                nestedEnv,
-              );
+              extractHttpFileDependencies(httpConfig, nestedEnv);
             }
 
             for (const [key, entry] of Object.entries(value).reverse()) {
@@ -701,6 +753,10 @@ export function extractFileDependencies(
                 value: entry,
                 env: nestedEnv,
                 providerContext: providerContext || key === 'provider',
+                testVarsFileContext:
+                  testVarsFileContext ||
+                  (key === 'vars' &&
+                    (typeof entry === 'string' || Array.isArray(entry))),
               });
             }
           }
@@ -786,10 +842,30 @@ export function extractFileDependencies(
     };
 
     const extractProviderDependencies = (provider: unknown): void => {
+      const processProviderReference = (
+        reference: string,
+        env: Record<string, string | undefined>,
+        knownHttpProvider = false,
+      ): void => {
+        const renderedReference = renderEnvironmentTemplates(reference, env);
+        if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedReference)) {
+          hasDynamicPromptDependencies = true;
+          return;
+        }
+        if (!renderedReference.startsWith('file://')) return;
+        processFileUrl(renderedReference, true, reference);
+        extractNestedPromptFileUrls(
+          renderedReference,
+          reference,
+          true,
+          false,
+          knownHttpProvider,
+          env,
+        );
+      };
+
       if (typeof provider === 'string') {
-        if (!provider.startsWith('file://')) return;
-        processFileUrl(provider, true);
-        extractNestedPromptFileUrls(provider, provider, true);
+        processProviderReference(provider, templateEnv);
         return;
       }
       if (typeof provider !== 'object' || provider === null) return;
@@ -798,25 +874,46 @@ export function extractFileDependencies(
         id?: unknown;
         config?: unknown;
       };
-      if (
-        typeof providerEntry.id === 'string' &&
-        providerEntry.id.startsWith('file://')
-      ) {
-        processFileUrl(providerEntry.id, true);
-        extractNestedPromptFileUrls(providerEntry.id, providerEntry.id, true);
+      if (typeof providerEntry.id !== 'string') {
+        const gradingTypes = [
+          'embedding',
+          'classification',
+          'text',
+          'moderation',
+        ] as const;
+        let foundGradingProvider = false;
+        for (const type of gradingTypes) {
+          if (!(type in providerEntry)) continue;
+          foundGradingProvider = true;
+          extractProviderDependencies(
+            (providerEntry as Record<string, unknown>)[type],
+          );
+        }
+        if (foundGradingProvider) return;
       }
 
-      const providerOptions = providerEntry.config
-        ? providerEntry
-        : Object.values(providerEntry).find(
-            (entry) => typeof entry === 'object' && entry !== null,
-          );
+      const mappedEntry = Object.entries(providerEntry).find(
+        ([key, entry]) =>
+          key !== 'id' && typeof entry === 'object' && entry !== null,
+      );
+      const providerReference =
+        typeof providerEntry.id === 'string'
+          ? providerEntry.id
+          : mappedEntry?.[0];
+      const providerOptions =
+        providerEntry.config ||
+        typeof providerEntry.id === 'string' ||
+        'transform' in providerEntry ||
+        'env' in providerEntry
+          ? providerEntry
+          : mappedEntry?.[1];
       if (typeof providerOptions !== 'object' || providerOptions === null) {
         return;
       }
       const providerRecord = providerOptions as {
         env?: unknown;
         config?: unknown;
+        transform?: unknown;
       };
       const providerEnv = Object.fromEntries(
         Object.entries(
@@ -829,28 +926,41 @@ export function extractFileDependencies(
             : [],
         ),
       );
+      const mergedProviderEnv = {
+        ...templateEnv,
+        ...providerEnv,
+      };
+      if (providerReference) {
+        processProviderReference(providerReference, mergedProviderEnv);
+      }
+      const isHttpProvider =
+        typeof providerReference === 'string' &&
+        isHttpProviderId(
+          renderEnvironmentTemplates(providerReference, mergedProviderEnv),
+        );
       extractNestedConfigDependencies(
         providerRecord.config,
-        {
-          ...templateEnv,
-          ...providerEnv,
-        },
-        true,
+        mergedProviderEnv,
+        isHttpProvider,
+      );
+      extractNestedConfigDependencies(
+        providerRecord.transform,
+        mergedProviderEnv,
       );
       if (
         typeof providerRecord.config === 'string' &&
         providerRecord.config.startsWith('file://')
       ) {
-        extractNestedPromptFileUrls(
+        processProviderReference(
           providerRecord.config,
-          providerRecord.config,
-          true,
+          mergedProviderEnv,
+          isHttpProvider,
         );
       }
     };
 
     // Promptfoo normalizes the targets alias into providers before evaluation.
-    const configuredProviders = config.providers ?? config.targets;
+    const configuredProviders = config.targets ?? config.providers;
     if (configuredProviders) {
       const providers =
         typeof configuredProviders === 'string'
@@ -862,6 +972,36 @@ export function extractFileDependencies(
     }
 
     extractNestedConfigDependencies(config.scenarios);
+    const pendingScenarios: unknown[] = [config.scenarios];
+    const visitedScenarios = new WeakSet<object>();
+    while (pendingScenarios.length > 0) {
+      const scenario = pendingScenarios.pop();
+      if (typeof scenario === 'string' && scenario.startsWith('file://')) {
+        const renderedScenario = renderEnvironmentTemplates(
+          scenario,
+          templateEnv,
+        );
+        if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedScenario)) {
+          hasDynamicPromptDependencies = true;
+          continue;
+        }
+        extractNestedPromptFileUrls(
+          renderedScenario,
+          scenario,
+          false,
+          false,
+          false,
+          templateEnv,
+          true,
+        );
+      } else if (typeof scenario === 'object' && scenario !== null) {
+        if (visitedScenarios.has(scenario)) continue;
+        visitedScenarios.add(scenario);
+        for (const entry of Object.values(scenario).reverse()) {
+          pendingScenarios.push(entry);
+        }
+      }
+    }
     if (config.nunjucksFilters) {
       for (const filterPath of Object.values(config.nunjucksFilters)) {
         const renderedFilterPath = renderEnvironmentTemplates(
@@ -1083,6 +1223,7 @@ export function extractFileDependencies(
         transform?: unknown;
         contextTransform?: unknown;
         provider?: unknown;
+        rubricPrompt?: unknown;
         assert?: Array<{ type?: string; value?: unknown }>;
       }>,
     ): void => {
@@ -1114,6 +1255,7 @@ export function extractFileDependencies(
         extractNestedConfigDependencies(assert.config);
         extractNestedConfigDependencies(assert.transform);
         extractNestedConfigDependencies(assert.contextTransform);
+        extractNestedConfigDependencies(assert.rubricPrompt);
         extractProviderDependencies(assert.provider);
         extractAssertFiles(assert.assert);
       }
@@ -1126,6 +1268,9 @@ export function extractFileDependencies(
         config.defaultTest,
         config.defaultTest,
         false,
+        false,
+        false,
+        templateEnv,
         true,
       );
     } else if (config.defaultTest) {
@@ -1133,6 +1278,10 @@ export function extractFileDependencies(
       extractAssertFiles(config.defaultTest.assert);
       extractProviderDependencies(config.defaultTest.provider);
       extractNestedConfigDependencies(config.defaultTest.options);
+      extractProviderDependencies(
+        (config.defaultTest.options as { provider?: unknown } | undefined)
+          ?.provider,
+      );
       extractNestedConfigDependencies(config.defaultTest.assertScoringFunction);
     }
 
@@ -1159,11 +1308,27 @@ export function extractFileDependencies(
 
       for (const test of tests) {
         if (typeof test === 'string') {
-          if (test.startsWith('file://')) {
-            const testPath = stripSpreadsheetSheetSelector(test);
-            processFileUrl(testPath, true);
-            extractNestedPromptFileUrls(testPath, testPath, false, true);
+          if (
+            !test.startsWith('file://') &&
+            !/[\\/*?{}]/.test(test) &&
+            !/\.[A-Za-z0-9]{1,10}(?::[^\\/]+)?$/.test(test)
+          ) {
+            continue;
           }
+          const testPath = stripSpreadsheetSheetSelector(test);
+          const testReference = testPath.startsWith('file://')
+            ? testPath
+            : `file://${testPath}`;
+          processFileUrl(testReference, true);
+          extractNestedPromptFileUrls(
+            testReference,
+            testPath,
+            false,
+            true,
+            false,
+            templateEnv,
+            true,
+          );
           continue;
         }
         if (typeof test !== 'object' || test === null) continue;
@@ -1174,13 +1339,24 @@ export function extractFileDependencies(
             testPath.startsWith('file://') ? testPath : `file://${testPath}`,
             true,
           );
-          extractNestedPromptFileUrls(testPath, testPath, false, true);
+          extractNestedPromptFileUrls(
+            testPath,
+            testPath,
+            false,
+            true,
+            false,
+            templateEnv,
+            true,
+          );
           extractNestedFileUrls(test.config);
         }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
         extractProviderDependencies(test.provider);
         extractNestedConfigDependencies(test.options);
+        extractProviderDependencies(
+          (test.options as { provider?: unknown } | undefined)?.provider,
+        );
         extractNestedConfigDependencies(test.assertScoringFunction);
       }
     }
