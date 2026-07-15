@@ -963,8 +963,10 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = evaluationPromptFiles.join(', ');
-      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+      const evaluationDescription = evaluationPromptFiles.length
+        ? `⚠️ Evaluated prompt files: ${evaluationPromptFiles.join(', ')}`
+        : '⚠️ Evaluated config-defined prompts';
+      let body = `${evaluationDescription}
 
 | Success | Failure |
 |---------|---------|

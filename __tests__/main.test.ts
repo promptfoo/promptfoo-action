@@ -307,7 +307,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
     });
 
@@ -1677,7 +1677,24 @@ describe('GitHub Action Main', () => {
       );
       expect(
         mockOctokit.rest.issues.createComment.mock.calls[0][0].body,
-      ).toContain('prompts/prompt1.txt, prompts/prompt2.txt');
+      ).toContain(
+        'Evaluated prompt files: prompts/prompt1.txt, prompts/prompt2.txt',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should describe config-defined prompts accurately in a config-only PR evaluation', async () => {
+      withInputs({ prompts: '' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(body).toContain('Evaluated config-defined prompts');
+      expect(body).not.toContain('LLM prompt was modified');
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
@@ -1920,7 +1937,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
 
       // Should still fail the action after posting the comment
