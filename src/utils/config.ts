@@ -175,7 +175,7 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): string[] | undefined => {
+    const processFileUrlUnchecked = (fileUrl: string): string[] | undefined => {
       const filePath = fileUrl.replace('file://', '');
       const isGlob = glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS);
 
@@ -280,6 +280,26 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       return resolvedPaths;
+    };
+
+    const processFileUrl = (fileUrl: string): string[] | undefined => {
+      try {
+        return processFileUrlUnchecked(fileUrl);
+      } catch {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        core.warning(
+          'Skipping invalid config dependency glob; conservatively watching the dependency root',
+        );
+        return [];
+      }
+    };
+
+    const hasGlobMagicSafely = (filePath: string): boolean => {
+      try {
+        return glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS);
+      } catch {
+        return true;
+      }
     };
 
     // Extract provider files
@@ -465,7 +485,7 @@ export function extractFileDependencies(configPath: string): string[] {
         if (
           resolvedPaths.length === 0 &&
           cleanPath &&
-          !glob.hasMagic(cleanPath, GLOB_MAGIC_OPTIONS) &&
+          !hasGlobMagicSafely(cleanPath) &&
           !cleanPath.includes('\0')
         ) {
           const lexicalPath = path.resolve(configDir, cleanPath);

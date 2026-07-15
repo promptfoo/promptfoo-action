@@ -1350,6 +1350,46 @@ providers:
     );
   });
 
+  it('should preserve sibling dependencies when a provider glob is oversized or invalid', () => {
+    const oversizedPattern = `providers/${'x'.repeat(65537)}*.py`;
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/first.py
+  - file://${oversizedPattern}
+  - file://providers/INVALID_GLOB_SECRET_MARKER[.py
+  - file://providers/second.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.length > 65536) {
+        throw new TypeError('pattern is too long');
+      }
+      if (value.includes('INVALID_GLOB_SECRET_MARKER')) {
+        throw new TypeError('INVALID_GLOB_SECRET_MARKER: invalid pattern');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/providers/first.py',
+      './',
+      'evals/providers/second.py',
+    ]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping invalid config dependency glob; conservatively watching the dependency root',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) =>
+          String(call[0]).includes('INVALID_GLOB_SECRET_MARKER'),
+        ),
+    ).toBe(false);
+  });
+
   it('should preserve the watch root for an empty absolute provider glob', () => {
     mockFs.readFileSync.mockReturnValue(
       'providers: file:///test/working/providers/deleted_*.yaml',
