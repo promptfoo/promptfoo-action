@@ -417,13 +417,25 @@ export async function run(): Promise<void> {
       );
     };
     const selectChangedFiles = (files: ChangedFile[]): string[] => {
-      const monitoredPromptRemovedOrRenamedOut = files.some(
+      const monitoredPromptTransitions = files.filter(
         (file) =>
           (file.status === 'removed' && matchesPromptGlob(file.filename)) ||
           (file.status === 'renamed' &&
             matchesPromptGlob(file.previous_filename) &&
-            !matchesPromptGlob(file.filename)),
+            (promptGlobMatchingCapped || !matchesPromptGlob(file.filename))),
       );
+
+      if (
+        monitoredPromptTransitions.some((file) =>
+          /[\r\n]/.test(file.filename + (file.previous_filename ?? '')),
+        )
+      ) {
+        throw new PromptfooActionError(
+          'Prompt filenames cannot contain carriage return or newline characters.',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+
       if (promptGlobMatchingCapped) {
         core.warning(
           'Prompt glob matching exceeded its safety limits. Processing all remaining matching prompt files.',
@@ -431,7 +443,7 @@ export async function run(): Promise<void> {
         return [];
       }
 
-      if (monitoredPromptRemovedOrRenamedOut) {
+      if (monitoredPromptTransitions.length > 0) {
         core.warning(
           'A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files.',
         );
@@ -651,6 +663,10 @@ export async function run(): Promise<void> {
             `Comparing against ${compareBase}, found ${changedFilesList.length} changed file(s).`,
           );
         } catch (error) {
+          if (error instanceof PromptfooActionError) {
+            throw error;
+          }
+
           // Option 3: If comparison fails, we'll process all matching prompt files
           core.warning(
             `Could not compare against ${compareBase}: ${error}. Will process all matching prompt files.`,
@@ -686,6 +702,10 @@ export async function run(): Promise<void> {
             `Comparing ${beforeSha}..${afterSha}, found ${changedFilesList.length} changed file(s).`,
           );
         } catch (error) {
+          if (error instanceof PromptfooActionError) {
+            throw error;
+          }
+
           core.warning(
             `Could not compare commits: ${error}. Will process all matching prompt files.`,
           );
@@ -841,7 +861,12 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (!useConfigPrompts && promptFiles.length > 0) {
+    if (
+      !useConfigPrompts &&
+      !configChanged &&
+      !dependencyChanged &&
+      promptFiles.length > 0
+    ) {
       promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
     // Check if sharing is enabled and validate authentication upfront

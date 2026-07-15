@@ -342,6 +342,74 @@ describe('GitHub Action Main', () => {
       ).toBe(true);
     });
 
+    test.each([
+      [
+        'removed',
+        { filename: 'prompts/policy\n::error::forged.txt', status: 'removed' },
+      ],
+      [
+        'renamed-out',
+        {
+          filename: 'archive/policy.txt',
+          previous_filename: 'prompts/policy\r::error::forged.txt',
+          status: 'renamed',
+        },
+      ],
+    ])('should reject a CRLF %s prompt before full-scan fallback', async (_case, file) => {
+      mockOctokit.paginate.mockResolvedValue([file]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should ignore a removed CRLF filename outside the configured prompt globs', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/old\nnotes.md', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a CRLF rename-out when prompt-glob matching is capped', async () => {
+      withInputs({ prompts: `prompts/${'a'.repeat(65536)}\nprompts/*.txt` });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archive/policy.txt',
+          previous_filename: 'prompts/policy\n::error::forged.txt',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should skip evaluation when no relevant files change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'README.md' },
@@ -1727,6 +1795,35 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      ['removed', 'D\0prompts/policy\n::error::forged.txt\0'],
+      [
+        'renamed-out',
+        'R100\0prompts/policy\r::error::forged.txt\0archive/policy.txt\0',
+      ],
+    ])('should reject a CRLF %s push prompt before full-scan fallback', async (_case, diff) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(diff);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('Could not compare commits'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should select a copied prompt from a push comparison', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',
@@ -2097,6 +2194,31 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should reject a CRLF removed prompt from a manual comparison before full-scan fallback', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { base: 'main' } },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        'D\0prompts/policy\n::error::forged.txt\0',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt filenames cannot contain carriage return or newline characters.',
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('Could not compare against'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should handle workflow_dispatch when diff comparison fails', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -2249,6 +2371,25 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should not narrow evaluation when a prompt and shared config dependency change together', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+        { filename: 'data/context.json', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/unchanged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain('--prompts');
     });
 
     test('should run when a file inside a dependency directory changes', async () => {

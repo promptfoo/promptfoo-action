@@ -258,6 +258,47 @@ prompts:
     expect(deps).toEqual(['providers/custom.py', 'prompts/prompt.txt']);
   });
 
+  it('should preserve absolute checkout dependencies from an external config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/shared.py
+prompts:
+  - file: /test/working/prompts/shared.txt
+tests:
+  - vars:
+      context:
+        file: /test/working/data/context.json
+    assert:
+      - type: javascript
+        value:
+          file: /test/working/hooks/validator.js
+`);
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/shared.py',
+      'prompts/shared.txt',
+      'data/context.json',
+      'hooks/validator.js',
+    ]);
+  });
+
+  it('should preserve absolute checkout dependency glob matches from an external config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/working/providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/providers/shared.py']);
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/shared.py', 'providers']);
+  });
+
   it('should keep dependencies whose names begin with two dots', () => {
     const configContent = `
 providers:
