@@ -16,7 +16,6 @@ const GLOB_MAGIC_OPTIONS = {
 const FILE_BEARING_PROVIDER_KEYS = new Set([
   'file',
   'functions',
-  'path',
   'request',
   'response_format',
   'responseFormat',
@@ -277,9 +276,9 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
     const envTemplatePattern =
-      /\{\{\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*\}\}/g;
+      /\{\{-?\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*-?\}\}/g;
     const envDefaultTemplatePattern =
-      /\{\{\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*\|\s*default\(\s*(['"])([^'"]*)\3(?:\s*,\s*(true|false))?\s*\)\s*\}\}/g;
+      /\{\{-?\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*\|\s*(?:default|d)\(\s*(['"])([^'"]*)\3(?:\s*,\s*(true|false))?\s*\)\s*-?\}\}/g;
     const renderEnvTemplates = (
       value: string,
       activeEnv: ProviderEnv,
@@ -367,7 +366,7 @@ export function extractFileDependencies(configPath: string): string[] {
           ...process.env,
           ...activeEnv,
         });
-        const unresolvedLeadingEnvTemplate = /^\s*\{\{\s*env(?:\.|\[)/.test(
+        const unresolvedLeadingEnvTemplate = /^\s*\{\{-?\s*env(?:\.|\[)/.test(
           renderedProvider,
         );
         if (!renderedProvider.startsWith('file://')) {

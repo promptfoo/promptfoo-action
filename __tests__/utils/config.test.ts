@@ -49,6 +49,7 @@ describe('extractFileDependencies', () => {
     delete process.env.MISSING_PROVIDER;
     delete process.env.PROVIDER_REV;
     delete process.env.PROVIDER_FLAG;
+    delete process.env.API_KEY;
   });
 
   it('should extract file:// providers', () => {
@@ -333,6 +334,7 @@ providers:
   });
 
   it('should not watch the workspace for arbitrary nested provider templates', () => {
+    process.env.API_KEY = 'secret-token';
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - id: openai:gpt-4
@@ -346,7 +348,7 @@ providers:
         prompt: "hello {{ prompt }} {{ env.API_KEY | upper }}"
         metadata:
           type: file
-          path: ./payload-not-executed.txt
+          path: "{{ env.API_KEY | upper }}"
 `);
 
     const deps = extractFileDependencies(
@@ -409,6 +411,24 @@ providers:
     );
 
     expect(deps).toEqual(['evals/auth/current-token.ts']);
+  });
+
+  it('should resolve a whitespace-controlled default env template in an HTTP file-auth path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      method: GET
+      auth:
+        type: file
+        path: "{{- env['MISSING_PROVIDER'] | d('./auth/default-token.ts', true) -}}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/auth/default-token.ts']);
   });
 
   it('should reject an HTTP file-auth path outside the workspace without leaking it', () => {
@@ -553,6 +573,9 @@ providers:
   - id: openai:gpt-4
     config:
       tools: "{{ env['MISSING_PROVIDER'] | default('file://tools/bracket-default.ts:getTools') }}"
+  - id: openai:gpt-4
+    config:
+      tools: "{{- env['MISSING_PROVIDER'] | d('file://tools/whitespace-default.ts:getTools', true) -}}"
 `);
 
     const deps = extractFileDependencies(
@@ -563,6 +586,7 @@ providers:
       'evals/tools/current.ts',
       'evals/tools/default.ts',
       'evals/tools/bracket-default.ts',
+      'evals/tools/whitespace-default.ts',
     ]);
   });
 
