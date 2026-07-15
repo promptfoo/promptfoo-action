@@ -10,6 +10,7 @@ vi.mock('fs', async () => {
   return {
     ...realFs,
     readFileSync: vi.fn(),
+    realpathSync: vi.fn(),
     existsSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
@@ -24,6 +25,7 @@ vi.mock('glob');
 describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
+    realpathSync: Mock;
     existsSync: Mock;
     statSync: Mock;
   };
@@ -39,6 +41,9 @@ describe('extractFileDependencies', () => {
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath),
+    );
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
 
@@ -235,7 +240,98 @@ defaultTest: file://defaults/default.yaml
 
     expect(deps).toEqual(['evals/defaults/default.yaml']);
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('Permission denied'),
+      expect.stringContaining('Failed to inspect file-backed defaultTest'),
+    );
+  });
+
+  it('should not read or leak a file-backed defaultTest symlink outside the workspace', () => {
+    const canary = 'EXTERNAL_DEFAULT_TEST_SECRET_CANARY';
+    const linkedDefaultTest =
+      '/test/working/evals/defaults/external-default.yaml';
+    const externalDefaultTest = '/test/secrets/external-default.yaml';
+
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath) === linkedDefaultTest
+        ? externalDefaultTest
+        : String(filePath),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/external-default.yaml';
+      }
+      if (String(filePath) === linkedDefaultTest) {
+        return `vars: [invalid\nsecret: ${canary}`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/external-default.yaml']);
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(
+      linkedDefaultTest,
+      'utf8',
+    );
+    expect(mockFs.readFileSync).not.toHaveBeenCalledWith(
+      externalDefaultTest,
+      'utf8',
+    );
+    expect(vi.mocked(core.warning).mock.calls.flat().join(' ')).not.toContain(
+      canary,
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
+  it('should not leak malformed file-backed defaultTest contents in warnings', () => {
+    const canary = 'DEFAULT_TEST_PARSE_SECRET_CANARY';
+
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `vars: [invalid\nsecret: ${canary}`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml']);
+    expect(vi.mocked(core.warning).mock.calls.flat().join(' ')).not.toContain(
+      canary,
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to inspect file-backed defaultTest'),
+    );
+  });
+
+  it('should keep file-backed defaultTest glob dependencies inside the workspace', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'defaultTest: file://{../../secrets,defaults}/*.yaml',
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) =>
+        value.includes('*') || value.includes('{') || value.includes('}'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/secrets/external-default.yaml',
+      '/test/working/evals/defaults/default.yaml',
+    ]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('glob match must stay within the repository'),
     );
   });
 
@@ -288,6 +384,89 @@ assert:
       'evals/defaults/default.yaml',
       'evals/context.txt',
       'evals/check.js',
+    ]);
+  });
+
+  it('should resolve an absolute file-backed defaultTest inside the workspace', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file:///test/working/evals/defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: { context: file://context.txt }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/context.txt']);
+  });
+
+  it('should conservatively watch the repository for a templated defaultTest path', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'defaultTest: file://{{ env.DEFAULT_TEST_PATH }}',
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['/']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+  });
+
+  it('should track the backing file for a named defaultTest assertion export', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+assert:
+  - type: javascript
+    value: file://check-named.js:named
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/check-named.js',
+    ]);
+  });
+
+  it('should track nested assert-set dependencies in a file-backed defaultTest', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+assert:
+  - type: assert-set
+    assert:
+      - type: javascript
+        value: file://nested-check.js:named
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/nested-check.js',
     ]);
   });
 

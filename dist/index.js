@@ -36310,7 +36310,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = path5.resolve(configDir, filePath);
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36409,7 +36409,12 @@ function extractFileDependencies(configPath) {
       if (!asserts) return;
       for (const assert of asserts) {
         if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
-          processFileUrl(assert.value);
+          processFileUrl(
+            assert.value.replace(
+              /(\.(?:[cm]?[jt]s|py)):[A-Za-z_$][\w$]*$/i,
+              "$1"
+            )
+          );
         } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
           const absolutePath = resolveConfigDependency(
             assert.value.file,
@@ -36419,31 +36424,47 @@ function extractFileDependencies(configPath) {
             dependencies.add(absolutePath);
           }
         }
+        extractAssertFiles(assert.assert);
       }
     };
     if (config2.defaultTest) {
       if (typeof config2.defaultTest === "string") {
         if (config2.defaultTest.startsWith("file://")) {
-          const defaultTestPath = resolveConfigDependency(
-            config2.defaultTest.slice("file://".length),
+          const defaultTestFile = config2.defaultTest.slice("file://".length);
+          const hasDynamicDefaultTestPath = /\{\{[\s\S]*?\}\}/.test(
+            defaultTestFile
+          );
+          const defaultTestPath = hasDynamicDefaultTestPath ? void 0 : resolveConfigDependency(
+            defaultTestFile,
             "defaultTest file dependency"
           );
+          if (hasDynamicDefaultTestPath) {
+            dependencies.add(`${dependencyRoot}${path5.sep}`);
+          }
           if (defaultTestPath) {
             processFileUrl(config2.defaultTest);
           }
           if (defaultTestPath && !le(defaultTestPath)) {
             try {
-              const defaultTest = load(
-                fs6.readFileSync(defaultTestPath, "utf8"),
-                { schema: CORE_SCHEMA.withTags(mergeTag) }
-              );
-              if (defaultTest && typeof defaultTest === "object" && !Array.isArray(defaultTest)) {
-                extractVarFiles(defaultTest.vars);
-                extractAssertFiles(defaultTest.assert);
+              const realDependencyRoot = fs6.realpathSync(dependencyRoot);
+              const realDefaultTestPath = fs6.realpathSync(defaultTestPath);
+              if (!isPathInside(realDependencyRoot, realDefaultTestPath)) {
+                warning(
+                  "Ignoring unsafe file-backed defaultTest: resolved path must stay within the repository workspace"
+                );
+              } else {
+                const defaultTest = load(
+                  fs6.readFileSync(realDefaultTestPath, "utf8"),
+                  { schema: CORE_SCHEMA.withTags(mergeTag) }
+                );
+                if (defaultTest && typeof defaultTest === "object" && !Array.isArray(defaultTest)) {
+                  extractVarFiles(defaultTest.vars);
+                  extractAssertFiles(defaultTest.assert);
+                }
               }
-            } catch (error2) {
+            } catch {
               warning(
-                `Failed to inspect file-backed defaultTest "${defaultTestPath}": ${error2 instanceof Error ? error2.message : String(error2)}`
+                "Failed to inspect file-backed defaultTest; nested file dependencies may be incomplete"
               );
             }
           }
@@ -37152,6 +37173,9 @@ async function run() {
         );
         dependencyChanged = dependencies.some((dep) => {
           if (changedFilesList.includes(dep)) {
+            return true;
+          }
+          if (dep === "/") {
             return true;
           }
           if (dep.endsWith("/") || isDirectory2(dep)) {

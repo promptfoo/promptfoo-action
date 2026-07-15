@@ -502,6 +502,10 @@ export async function run(): Promise<void> {
             return true;
           }
 
+          if (dep === '/') {
+            return true;
+          }
+
           // Check if the dependency is a directory and any changed file is within it
           if (dep.endsWith('/') || isDirectory(dep)) {
             const depDir = dep.endsWith('/') ? dep : `${dep}/`;

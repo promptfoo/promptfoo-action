@@ -5,19 +5,25 @@ import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
+interface PromptfooAssertion {
+  type?: string;
+  value?: string | { file?: string };
+  assert?: PromptfooAssertion[];
+}
+
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
+    assert?: PromptfooAssertion[];
     [key: string]: unknown;
   }>;
   defaultTest?:
     | string
     | {
         vars?: { [key: string]: string | { file?: string } };
-        assert?: Array<{ type?: string; value?: string | { file?: string } }>;
+        assert?: PromptfooAssertion[];
       };
 }
 
@@ -69,7 +75,7 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.resolve(configDir, filePath);
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -193,16 +199,19 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Extract assert files
-    const extractAssertFiles = (
-      asserts?: Array<{ type?: string; value?: unknown }>,
-    ): void => {
+    const extractAssertFiles = (asserts?: PromptfooAssertion[]): void => {
       if (!asserts) return;
       for (const assert of asserts) {
         if (
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
-          processFileUrl(assert.value);
+          processFileUrl(
+            assert.value.replace(
+              /(\.(?:[cm]?[jt]s|py)):[A-Za-z_$][\w$]*$/i,
+              '$1',
+            ),
+          );
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&
@@ -217,6 +226,8 @@ export function extractFileDependencies(configPath: string): string[] {
             dependencies.add(absolutePath);
           }
         }
+
+        extractAssertFiles(assert.assert);
       }
     };
 
@@ -224,30 +235,47 @@ export function extractFileDependencies(configPath: string): string[] {
     if (config.defaultTest) {
       if (typeof config.defaultTest === 'string') {
         if (config.defaultTest.startsWith('file://')) {
-          const defaultTestPath = resolveConfigDependency(
-            config.defaultTest.slice('file://'.length),
-            'defaultTest file dependency',
+          const defaultTestFile = config.defaultTest.slice('file://'.length);
+          const hasDynamicDefaultTestPath = /\{\{[\s\S]*?\}\}/.test(
+            defaultTestFile,
           );
+          const defaultTestPath = hasDynamicDefaultTestPath
+            ? undefined
+            : resolveConfigDependency(
+                defaultTestFile,
+                'defaultTest file dependency',
+              );
+          if (hasDynamicDefaultTestPath) {
+            dependencies.add(`${dependencyRoot}${path.sep}`);
+          }
           if (defaultTestPath) {
             processFileUrl(config.defaultTest);
           }
           if (defaultTestPath && !glob.hasMagic(defaultTestPath)) {
             try {
-              const defaultTest = loadYaml(
-                fs.readFileSync(defaultTestPath, 'utf8'),
-                { schema: CORE_SCHEMA.withTags(mergeTag) },
-              ) as PromptfooConfig['defaultTest'];
-              if (
-                defaultTest &&
-                typeof defaultTest === 'object' &&
-                !Array.isArray(defaultTest)
-              ) {
-                extractVarFiles(defaultTest.vars);
-                extractAssertFiles(defaultTest.assert);
+              const realDependencyRoot = fs.realpathSync(dependencyRoot);
+              const realDefaultTestPath = fs.realpathSync(defaultTestPath);
+              if (!isPathInside(realDependencyRoot, realDefaultTestPath)) {
+                core.warning(
+                  'Ignoring unsafe file-backed defaultTest: resolved path must stay within the repository workspace',
+                );
+              } else {
+                const defaultTest = loadYaml(
+                  fs.readFileSync(realDefaultTestPath, 'utf8'),
+                  { schema: CORE_SCHEMA.withTags(mergeTag) },
+                ) as PromptfooConfig['defaultTest'];
+                if (
+                  defaultTest &&
+                  typeof defaultTest === 'object' &&
+                  !Array.isArray(defaultTest)
+                ) {
+                  extractVarFiles(defaultTest.vars);
+                  extractAssertFiles(defaultTest.assert);
+                }
               }
-            } catch (error) {
+            } catch {
               core.warning(
-                `Failed to inspect file-backed defaultTest "${defaultTestPath}": ${error instanceof Error ? error.message : String(error)}`,
+                'Failed to inspect file-backed defaultTest; nested file dependencies may be incomplete',
               );
             }
           }
