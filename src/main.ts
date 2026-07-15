@@ -615,6 +615,7 @@ export async function run(): Promise<void> {
     // Resolve glob patterns to file paths
     const allPromptFiles: string[] = [];
     const changedPromptFiles: string[] = [];
+    const seenPromptFiles = new Set<string>();
     const containsQuotedControlPath =
       changedFilesFromGit &&
       /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
@@ -639,6 +640,10 @@ export async function run(): Promise<void> {
         if (repositoryFile === configRepositoryPath) {
           continue;
         }
+        if (seenPromptFiles.has(repositoryFile)) {
+          continue;
+        }
+        seenPromptFiles.add(repositoryFile);
         allPromptFiles.push(file);
         if (changedFilesList.includes(repositoryFile)) {
           changedPromptFiles.push(file);

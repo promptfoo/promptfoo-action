@@ -367,6 +367,60 @@ describe('GitHub Action Main', () => {
       expect(comment.body).toContain('LLM prompt was modified');
     });
 
+    test.each([
+      [
+        'config',
+        'promptfooconfig.yaml',
+        ['prompts/second.txt', 'prompts/first.txt'],
+      ],
+      ['prompt', 'prompts/first.txt', ['prompts/first.txt']],
+    ])('should deduplicate overlapping prompt globs for a %s change while preserving order', async (_reason, changedFile, expectedPrompts) => {
+      withInputs({
+        prompts: 'prompts/**/*.txt\nprompts/first*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/**/*.txt'
+          ? ['prompts/second.txt', 'prompts/first.txt']
+          : ['prompts/first.txt'],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(
+        args.slice(promptsIndex + 1, promptsIndex + 1 + expectedPrompts.length),
+      ).toEqual(expectedPrompts);
+      expect(
+        args.filter((value) => value === 'prompts/first.txt'),
+      ).toHaveLength(1);
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body.match(/prompts\/first\.txt/g) || []).toHaveLength(1);
+    });
+
+    test('should deduplicate relative and absolute matches for the same prompt', async () => {
+      const absolutePrompt = path.resolve(__dirname, '..', 'prompts/first.txt');
+      withInputs({ prompts: 'prompts/*.txt\nprompts/first*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/first.txt' },
+      ]);
+      mockGlob.sync
+        .mockReturnValueOnce(['prompts/first.txt'])
+        .mockReturnValueOnce([absolutePrompt]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 2)).toEqual([
+        'prompts/first.txt',
+      ]);
+      expect(args).not.toContain(absolutePrompt);
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body.match(/prompts\/first\.txt/g) || []).toHaveLength(1);
+    });
+
     test('should exclude the config file when a prompt glob also matches it', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'promptfooconfig.yaml' },
