@@ -325,6 +325,20 @@ describe('GitHub Action Main', () => {
       });
     });
 
+    test('should report config-defined prompts in a PR when use-config-prompts is enabled', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(args).not.toContain('--prompts');
+      expect(comment.body).toContain('Evaluated config-defined prompts');
+      expect(comment.body).not.toContain('prompts/prompt1.txt');
+    });
+
     test.each([
       {
         reason: 'config',
@@ -4459,23 +4473,32 @@ describe('GitHub Action Main', () => {
 
     test('should omit evaluated files when a non-PR run uses config prompts', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
-        value: 'workflow_dispatch',
+        value: 'push',
         configurable: true,
       });
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
-          inputs: {},
+          before: 'a'.repeat(40),
+          after: 'b'.repeat(40),
         },
         configurable: true,
       });
-      withInputs({ prompts: '' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockResolvedValueOnce('promptfooconfig.yaml');
 
       await run();
 
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
       expect(mockCore.summary.addHeading).not.toHaveBeenCalledWith(
         'Evaluated Files',
         3,
       );
+      expect(mockCore.summary.addList).not.toHaveBeenCalledWith([
+        'prompts/prompt1.txt',
+      ]);
       expect(mockCore.summary.write).toHaveBeenCalled();
     });
 

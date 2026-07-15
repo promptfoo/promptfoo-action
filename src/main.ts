@@ -1166,7 +1166,7 @@ export async function run(): Promise<void> {
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const evaluatedFiles = evaluatedPromptFiles.join(', ');
       const description =
-        evaluatedPromptFiles.length === 0
+        useConfigPrompts || evaluatedPromptFiles.length === 0
           ? 'Evaluated config-defined prompts'
           : forceRun ||
               configChanged ||
@@ -1209,7 +1209,7 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (evaluatedPromptFiles.length > 0) {
+      if (!useConfigPrompts && evaluatedPromptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
         summary.addList(evaluatedPromptFiles);
       }
