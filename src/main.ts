@@ -14,7 +14,7 @@ import {
   setupCacheEnvironment,
 } from './utils/cache';
 import { extractFileDependencies } from './utils/config';
-import { loadEnvironmentFile } from './utils/env';
+import { loadConfigEnvironmentFiles, loadEnvironmentFile } from './utils/env';
 import {
   ErrorCodes,
   formatErrorMessage,
@@ -34,7 +34,7 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
-const MAX_PROMPT_GLOB_LENGTH = 65536;
+const MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
 
 function invalidPromptGlobError(): PromptfooActionError {
   return new PromptfooActionError(
@@ -45,16 +45,24 @@ function invalidPromptGlobError(): PromptfooActionError {
 }
 
 function validatePromptGlob(pattern: string): void {
-  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || /[\0\r\n]/.test(pattern)) {
+  const hasControlCharacter = [...pattern].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || hasControlCharacter) {
     throw invalidPromptGlobError();
   }
 
   const braces: Array<{ start: number; nested: boolean }> = [];
+  let escapedBraceClosers = 0;
+  let braceExpansions = BigInt(1);
   let escaped = false;
   let inCharacterClass = false;
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
     if (escaped) {
+      if (character === '{') escapedBraceClosers++;
+      if (character === '}' && escapedBraceClosers > 0) escapedBraceClosers--;
       escaped = false;
       continue;
     }
@@ -77,13 +85,30 @@ function validatePromptGlob(pattern: string): void {
     }
     if (character !== '}') continue;
     const brace = braces.pop();
-    if (!brace) throw invalidPromptGlobError();
-    // A numeric-looking alternative beside a nested brace is a literal;
-    // brace expansion only expands an entirely numeric brace body.
-    if (brace.nested) continue;
-
+    if (!brace) {
+      if (escapedBraceClosers > 0) {
+        escapedBraceClosers--;
+        continue;
+      }
+      throw invalidPromptGlobError();
+    }
     const body = pattern.slice(brace.start, index);
-    if (!body.includes('..')) continue;
+    // Nested comma groups still multiply the expansion count. Numeric-looking
+    // alternatives beside a nested brace stay literal.
+    if (brace.nested) {
+      braceExpansions *= BigInt(body.split(',').length);
+      if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
+        throw invalidPromptGlobError();
+      }
+      continue;
+    }
+    if (!body.includes('..')) {
+      braceExpansions *= BigInt(body.split(',').length);
+      if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
+        throw invalidPromptGlobError();
+      }
+      continue;
+    }
     const parts = body.split('..');
     const numeric = parts.every((part) => /^-?\d+$/.test(part));
     const numericLike = parts.some((part) => /^-?\d/.test(part));
@@ -105,9 +130,10 @@ function validatePromptGlob(pattern: string): void {
     const distance = end >= start ? end - start : start - end;
     const increment = step > BigInt(0) ? step : -step;
     const count = distance / increment + BigInt(1);
+    braceExpansions *= count;
     const paddedWidth = Math.max(parts[0].length, parts[1].length);
     if (
-      count > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) ||
+      braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) ||
       count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)
     ) {
       throw invalidPromptGlobError();
@@ -166,6 +192,14 @@ function validatePromptPath(
       'Use readable prompt files and glob patterns contained within the working directory.',
     );
   }
+}
+
+function formatChangedFilesForLog(changedFiles: string): string {
+  return JSON.stringify(
+    changedFiles
+      .split(changedFiles.includes('\0') ? '\0' : '\n')
+      .filter(Boolean),
+  );
 }
 
 /**
@@ -313,7 +347,9 @@ export async function run(): Promise<void> {
     const groqApiKey: string = core.getInput('groq-api-key', {
       required: false,
     });
-    const maskApiKeys = (): void => {
+    const maskApiKeys = (
+      environment: NodeJS.ProcessEnv = process.env,
+    ): void => {
       const apiKeys = [
         openaiApiKey,
         azureApiKey,
@@ -328,7 +364,7 @@ export async function run(): Promise<void> {
         mistralApiKey,
         groqApiKey,
       ];
-      for (const [name, value] of Object.entries(process.env)) {
+      for (const [name, value] of Object.entries(environment)) {
         if (
           value &&
           (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
@@ -520,7 +556,9 @@ export async function run(): Promise<void> {
           return envFile.trim();
         })
         .filter(Boolean)
-        .map((envFile) => path.resolve(path.join(workingDirectory, envFile)))
+        .map((envFile) =>
+          resolveContainedEnvFile(path.join(workingDirectory, envFile)),
+        )
         .map((envFilePath) => {
           resolveContainedEnvFile(envFilePath);
           const vaultPath = envFilePath.endsWith('.vault')
@@ -572,8 +610,6 @@ export async function run(): Promise<void> {
 
     const event = github.context.eventName;
     let changedFiles = '';
-    let changedFileNames: string[] | undefined;
-    let changedFilesFromGit = false;
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -599,8 +635,14 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFileNames = pullRequestFiles.map((file) => file.filename);
-        changedFiles = changedFileNames.join('\n');
+        changedFiles = pullRequestFiles
+          .flatMap((file) =>
+            file.previous_filename
+              ? [file.filename, file.previous_filename]
+              : [file.filename],
+          )
+          .join('\0')
+          .concat('\0');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -626,23 +668,34 @@ export async function run(): Promise<void> {
         }
         const manualFiles = filesInput
           .split('\n')
-          .map((file: string) => file.replace(/\r/g, ''))
+          .map((file: string) => file.replace(/\r$/, ''));
+        const trimmedFiles = manualFiles
+          .map((file: string) => file.trim())
           .filter(Boolean);
-        changedFiles = manualFiles.join('\n');
-        core.info(`Using ${manualFiles.length} manually specified files`);
+        changedFiles = manualFiles
+          .flatMap((file: string) => {
+            const trimmed = file.trim();
+            if (!trimmed) {
+              return [];
+            }
+            return file === trimmed ? [file] : [file, trimmed];
+          })
+          .join('\0');
+        core.info(`Using ${trimmedFiles.length} manually specified files`);
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
         try {
-          changedFilesFromGit = true;
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -667,15 +720,16 @@ export async function run(): Promise<void> {
         validateCommitSha(beforeSha, 'before commit');
         validateCommitSha(afterSha, 'after commit');
         try {
-          changedFilesFromGit = true;
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
           );
         } catch (error) {
           core.warning(
@@ -701,15 +755,15 @@ export async function run(): Promise<void> {
     const changedPromptFiles: string[] = [];
     const seenPromptFiles = new Set<string>();
     const containsQuotedControlPath =
-      changedFilesFromGit &&
+      !changedFiles.includes('\0') &&
       /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
         changedFiles,
       );
-    const changedFilesList =
-      changedFileNames ||
-      (containsQuotedControlPath
-        ? []
-        : changedFiles.split('\n').filter((f) => f));
+    const changedFilesList = containsQuotedControlPath
+      ? []
+      : changedFiles
+          .split(changedFiles.includes('\0') ? '\0' : '\n')
+          .filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
       validatePromptGlob(globPattern);
@@ -751,15 +805,18 @@ export async function run(): Promise<void> {
 
     // Extract dependencies from config file
     let dependencyChanged = false;
-    const dependencies =
-      extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+    const dependencies = extractFileDependencies(
+      configAbsolutePath,
+      process.cwd(),
+      workingDirectory,
+    ).map(toRepositoryPath);
     if (changedFilesList.length > 0) {
       if (dependencies.length > 0) {
         core.debug(`Found ${dependencies.length} file dependencies in config`);
 
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
-          if (dep === '.' || dep === './' || /[\r\n\0]/.test(dep)) {
+          if (dep === './' || dep === '.' || /[\r\n\0]/.test(dep)) {
             return true;
           }
           // Direct file match
@@ -798,14 +855,14 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const evaluatedPromptFiles =
-      forceRun ||
-      configChanged ||
-      dependencyChanged ||
-      changedFilesList.length === 0
+    const evaluatedPromptFiles = useConfigPrompts
+      ? []
+      : forceRun ||
+          configChanged ||
+          dependencyChanged ||
+          changedFilesList.length === 0
         ? allPromptFiles
         : changedPromptFiles;
-
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
         'Invalid prompt file path: line breaks are not allowed.',
@@ -826,9 +883,17 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${evaluatedPromptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${JSON.stringify(evaluatedPromptFiles)}`,
       );
     }
+
+    const configEnvironment: NodeJS.ProcessEnv = { ...process.env };
+    loadConfigEnvironmentFiles(
+      configAbsolutePath,
+      workingDirectory,
+      configEnvironment,
+    );
+    maskApiKeys(configEnvironment);
 
     // Set up caching environment for optimal performance
     core.startGroup('Setting up cache');
@@ -865,7 +930,7 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (!useConfigPrompts && evaluatedPromptFiles.length > 0) {
+    if (evaluatedPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         '--prompts',
         ...evaluatedPromptFiles,

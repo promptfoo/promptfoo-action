@@ -1073,14 +1073,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path7 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path8 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path7 && path7[0] !== "/") {
-          path7 = `/${path7}`;
+        if (path8 && path8[0] !== "/") {
+          path8 = `/${path8}`;
         }
-        return new URL(`${origin}${path7}`);
+        return new URL(`${origin}${path8}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -1531,39 +1531,39 @@ var require_diagnostics = __commonJS({
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin }
+          request: { method, path: path8, origin }
         } = evt;
-        debuglog("sending request to %s %s/%s", method, origin, path7);
+        debuglog("sending request to %s %s/%s", method, origin, path8);
       });
       diagnosticsChannel.channel("undici:request:headers").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin },
+          request: { method, path: path8, origin },
           response: { statusCode }
         } = evt;
         debuglog(
           "received response to %s %s/%s - HTTP %d",
           method,
           origin,
-          path7,
+          path8,
           statusCode
         );
       });
       diagnosticsChannel.channel("undici:request:trailers").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin }
+          request: { method, path: path8, origin }
         } = evt;
-        debuglog("trailers received from %s %s/%s", method, origin, path7);
+        debuglog("trailers received from %s %s/%s", method, origin, path8);
       });
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin },
+          request: { method, path: path8, origin },
           error: error2
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
-          path7,
+          path8,
           error2.message
         );
       });
@@ -1612,9 +1612,9 @@ var require_diagnostics = __commonJS({
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
           const {
-            request: { method, path: path7, origin }
+            request: { method, path: path8, origin }
           } = evt;
-          debuglog("sending request to %s %s/%s", method, origin, path7);
+          debuglog("sending request to %s %s/%s", method, origin, path8);
         });
       }
       diagnosticsChannel.channel("undici:websocket:open").subscribe((evt) => {
@@ -1677,7 +1677,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path7,
+        path: path8,
         method,
         body,
         headers,
@@ -1692,11 +1692,11 @@ var require_request = __commonJS({
         expectContinue,
         servername
       }, handler2) {
-        if (typeof path7 !== "string") {
+        if (typeof path8 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path7[0] !== "/" && !(path7.startsWith("http://") || path7.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path8[0] !== "/" && !(path8.startsWith("http://") || path8.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path7)) {
+        } else if (invalidPathRegex.test(path8)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -1762,7 +1762,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? buildURL(path7, query) : path7;
+        this.path = query ? buildURL(path8, query) : path8;
         this.origin = origin;
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
         this.blocking = blocking == null ? false : blocking;
@@ -2088,9 +2088,9 @@ var require_dispatcher_base = __commonJS({
       }
       close(callback) {
         if (callback === void 0) {
-          return new Promise((resolve4, reject) => {
+          return new Promise((resolve5, reject) => {
             this.close((err, data) => {
-              return err ? reject(err) : resolve4(data);
+              return err ? reject(err) : resolve5(data);
             });
           });
         }
@@ -2128,12 +2128,12 @@ var require_dispatcher_base = __commonJS({
           err = null;
         }
         if (callback === void 0) {
-          return new Promise((resolve4, reject) => {
+          return new Promise((resolve5, reject) => {
             this.destroy(err, (err2, data) => {
               return err2 ? (
                 /* istanbul ignore next: should never error */
                 reject(err2)
-              ) : resolve4(data);
+              ) : resolve5(data);
             });
           });
         }
@@ -4400,8 +4400,8 @@ var require_util2 = __commonJS({
     function createDeferredPromise() {
       let res;
       let rej;
-      const promise = new Promise((resolve4, reject) => {
-        res = resolve4;
+      const promise = new Promise((resolve5, reject) => {
+        res = resolve5;
         rej = reject;
       });
       return { promise, resolve: res, reject: rej };
@@ -6384,7 +6384,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request2) {
-      const { method, path: path7, host, upgrade, blocking, reset } = request2;
+      const { method, path: path8, host, upgrade, blocking, reset } = request2;
       let { body, headers, contentLength } = request2;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -6451,7 +6451,7 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path7} HTTP/1.1\r
+      let header = `${method} ${path8} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -6638,12 +6638,12 @@ upgrade: ${upgrade}\r
           cb();
         }
       }
-      const waitForDrain = () => new Promise((resolve4, reject) => {
+      const waitForDrain = () => new Promise((resolve5, reject) => {
         assert(callback === null);
         if (socket[kError]) {
           reject(socket[kError]);
         } else {
-          callback = resolve4;
+          callback = resolve5;
         }
       });
       socket.on("close", onDrain).on("drain", onDrain);
@@ -6977,7 +6977,7 @@ var require_client_h2 = __commonJS({
     }
     function writeH2(client, request2) {
       const session = client[kHTTP2Session];
-      const { method, path: path7, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
+      const { method, path: path8, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
       let { body } = request2;
       if (upgrade) {
         util.errorRequest(client, request2, new Error("Upgrade not supported for H2"));
@@ -7044,7 +7044,7 @@ var require_client_h2 = __commonJS({
         });
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path7;
+      headers[HTTP2_HEADER_PATH] = path8;
       headers[HTTP2_HEADER_SCHEME] = "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -7280,12 +7280,12 @@ var require_client_h2 = __commonJS({
           cb();
         }
       }
-      const waitForDrain = () => new Promise((resolve4, reject) => {
+      const waitForDrain = () => new Promise((resolve5, reject) => {
         assert(callback === null);
         if (socket[kError]) {
           reject(socket[kError]);
         } else {
-          callback = resolve4;
+          callback = resolve5;
         }
       });
       h2stream.on("close", onDrain).on("drain", onDrain);
@@ -7397,9 +7397,9 @@ var require_redirect_handler = __commonJS({
           return this.handler.onHeaders(statusCode, headers, resume, statusText);
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path7 = search ? `${pathname}${search}` : pathname;
+        const path8 = search ? `${pathname}${search}` : pathname;
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path7;
+        this.opts.path = path8;
         this.opts.origin = origin;
         this.opts.maxRedirections = 0;
         this.opts.query = null;
@@ -7763,16 +7763,16 @@ var require_client = __commonJS({
         return this[kNeedDrain] < 2;
       }
       async [kClose]() {
-        return new Promise((resolve4) => {
+        return new Promise((resolve5) => {
           if (this[kSize]) {
-            this[kClosedResolve] = resolve4;
+            this[kClosedResolve] = resolve5;
           } else {
-            resolve4(null);
+            resolve5(null);
           }
         });
       }
       async [kDestroy](err) {
-        return new Promise((resolve4) => {
+        return new Promise((resolve5) => {
           const requests = this[kQueue].splice(this[kPendingIdx]);
           for (let i2 = 0; i2 < requests.length; i2++) {
             const request2 = requests[i2];
@@ -7783,7 +7783,7 @@ var require_client = __commonJS({
               this[kClosedResolve]();
               this[kClosedResolve] = null;
             }
-            resolve4(null);
+            resolve5(null);
           };
           if (this[kHTTPContext]) {
             this[kHTTPContext].destroy(err, callback);
@@ -7834,7 +7834,7 @@ var require_client = __commonJS({
         });
       }
       try {
-        const socket = await new Promise((resolve4, reject) => {
+        const socket = await new Promise((resolve5, reject) => {
           client[kConnector]({
             host,
             hostname,
@@ -7846,7 +7846,7 @@ var require_client = __commonJS({
             if (err) {
               reject(err);
             } else {
-              resolve4(socket2);
+              resolve5(socket2);
             }
           });
         });
@@ -8182,8 +8182,8 @@ var require_pool_base = __commonJS({
         if (this[kQueue].isEmpty()) {
           await Promise.all(this[kClients].map((c3) => c3.close()));
         } else {
-          await new Promise((resolve4) => {
-            this[kClosedResolve] = resolve4;
+          await new Promise((resolve5) => {
+            this[kClosedResolve] = resolve5;
           });
         }
       }
@@ -8634,10 +8634,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path7 = "/",
+          path: path8 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path7;
+        opts.path = origin + path8;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL2(origin);
           headers.host = host;
@@ -9398,7 +9398,7 @@ var require_readable = __commonJS({
         if (this._readableState.closeEmitted) {
           return null;
         }
-        return await new Promise((resolve4, reject) => {
+        return await new Promise((resolve5, reject) => {
           if (this[kContentLength] > limit) {
             this.destroy(new AbortError());
           }
@@ -9411,7 +9411,7 @@ var require_readable = __commonJS({
             if (signal?.aborted) {
               reject(signal.reason ?? new AbortError());
             } else {
-              resolve4(null);
+              resolve5(null);
             }
           }).on("error", noop3).on("data", function(chunk) {
             limit -= chunk.length;
@@ -9430,7 +9430,7 @@ var require_readable = __commonJS({
     }
     async function consume(stream, type) {
       assert(!stream[kConsume]);
-      return new Promise((resolve4, reject) => {
+      return new Promise((resolve5, reject) => {
         if (isUnusable(stream)) {
           const rState = stream._readableState;
           if (rState.destroyed && rState.closeEmitted === false) {
@@ -9447,7 +9447,7 @@ var require_readable = __commonJS({
             stream[kConsume] = {
               type,
               stream,
-              resolve: resolve4,
+              resolve: resolve5,
               reject,
               length: 0,
               body: []
@@ -9517,18 +9517,18 @@ var require_readable = __commonJS({
       return buffer;
     }
     function consumeEnd(consume2) {
-      const { type, body, resolve: resolve4, stream, length } = consume2;
+      const { type, body, resolve: resolve5, stream, length } = consume2;
       try {
         if (type === "text") {
-          resolve4(chunksDecode(body, length));
+          resolve5(chunksDecode(body, length));
         } else if (type === "json") {
-          resolve4(JSON.parse(chunksDecode(body, length)));
+          resolve5(JSON.parse(chunksDecode(body, length)));
         } else if (type === "arrayBuffer") {
-          resolve4(chunksConcat(body, length).buffer);
+          resolve5(chunksConcat(body, length).buffer);
         } else if (type === "blob") {
-          resolve4(new Blob(body, { type: stream[kContentType] }));
+          resolve5(new Blob(body, { type: stream[kContentType] }));
         } else if (type === "bytes") {
-          resolve4(chunksConcat(body, length));
+          resolve5(chunksConcat(body, length));
         }
         consumeFinish(consume2);
       } catch (err) {
@@ -9785,9 +9785,9 @@ var require_api_request = __commonJS({
     };
     function request2(opts, callback) {
       if (callback === void 0) {
-        return new Promise((resolve4, reject) => {
+        return new Promise((resolve5, reject) => {
           request2.call(this, opts, (err, data) => {
-            return err ? reject(err) : resolve4(data);
+            return err ? reject(err) : resolve5(data);
           });
         });
       }
@@ -10010,9 +10010,9 @@ var require_api_stream = __commonJS({
     };
     function stream(opts, factory, callback) {
       if (callback === void 0) {
-        return new Promise((resolve4, reject) => {
+        return new Promise((resolve5, reject) => {
           stream.call(this, opts, factory, (err, data) => {
-            return err ? reject(err) : resolve4(data);
+            return err ? reject(err) : resolve5(data);
           });
         });
       }
@@ -10297,9 +10297,9 @@ var require_api_upgrade = __commonJS({
     };
     function upgrade(opts, callback) {
       if (callback === void 0) {
-        return new Promise((resolve4, reject) => {
+        return new Promise((resolve5, reject) => {
           upgrade.call(this, opts, (err, data) => {
-            return err ? reject(err) : resolve4(data);
+            return err ? reject(err) : resolve5(data);
           });
         });
       }
@@ -10391,9 +10391,9 @@ var require_api_connect = __commonJS({
     };
     function connect(opts, callback) {
       if (callback === void 0) {
-        return new Promise((resolve4, reject) => {
+        return new Promise((resolve5, reject) => {
           connect.call(this, opts, (err, data) => {
-            return err ? reject(err) : resolve4(data);
+            return err ? reject(err) : resolve5(data);
           });
         });
       }
@@ -10558,20 +10558,20 @@ var require_mock_utils = __commonJS({
       }
       return true;
     }
-    function safeUrl(path7) {
-      if (typeof path7 !== "string") {
-        return path7;
+    function safeUrl(path8) {
+      if (typeof path8 !== "string") {
+        return path8;
       }
-      const pathSegments = path7.split("?");
+      const pathSegments = path8.split("?");
       if (pathSegments.length !== 2) {
-        return path7;
+        return path8;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path7, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path7);
+    function matchKey(mockDispatch2, { path: path8, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path8);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -10593,7 +10593,7 @@ var require_mock_utils = __commonJS({
     function getMockDispatch(mockDispatches, key) {
       const basePath = key.query ? buildURL(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path7 }) => matchValue(safeUrl(path7), resolvedPath));
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path8 }) => matchValue(safeUrl(path8), resolvedPath));
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
       }
@@ -10631,9 +10631,9 @@ var require_mock_utils = __commonJS({
       }
     }
     function buildKey(opts) {
-      const { path: path7, method, body, headers, query } = opts;
+      const { path: path8, method, body, headers, query } = opts;
       return {
-        path: path7,
+        path: path8,
         method,
         body,
         headers,
@@ -11096,10 +11096,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path7, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path8, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path7,
+            Path: path8,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -14255,7 +14255,7 @@ var require_fetch = __commonJS({
       function dispatch({ body }) {
         const url = requestCurrentURL(request2);
         const agent = fetchParams.controller.dispatcher;
-        return new Promise((resolve4, reject) => agent.dispatch(
+        return new Promise((resolve5, reject) => agent.dispatch(
           {
             path: url.pathname + url.search,
             origin: url.origin,
@@ -14331,7 +14331,7 @@ var require_fetch = __commonJS({
                 }
               }
               const onError2 = this.onError.bind(this);
-              resolve4({
+              resolve5({
                 status,
                 statusText,
                 headersList,
@@ -14377,7 +14377,7 @@ var require_fetch = __commonJS({
               for (let i2 = 0; i2 < rawHeaders.length; i2 += 2) {
                 headersList.append(bufferToLowerCasedHeaderName(rawHeaders[i2]), rawHeaders[i2 + 1].toString("latin1"), true);
               }
-              resolve4({
+              resolve5({
                 status,
                 statusText: STATUS_CODES[status],
                 headersList,
@@ -15980,9 +15980,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path7) {
-      for (let i2 = 0; i2 < path7.length; ++i2) {
-        const code = path7.charCodeAt(i2);
+    function validateCookiePath(path8) {
+      for (let i2 = 0; i2 < path8.length; ++i2) {
+        const code = path8.charCodeAt(i2);
         if (code < 32 || // exclude CTLs (0-31)
         code === 127 || // DEL
         code === 59) {
@@ -18069,8 +18069,8 @@ var require_util8 = __commonJS({
       return true;
     }
     function delay2(ms2) {
-      return new Promise((resolve4) => {
-        setTimeout(resolve4, ms2).unref();
+      return new Promise((resolve5) => {
+        setTimeout(resolve5, ms2).unref();
       });
     }
     module2.exports = {
@@ -18675,11 +18675,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path7 = opts.path;
+          let path8 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path7 = `/${path7}`;
+            path8 = `/${path8}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path7);
+          url = new URL(util.parseOrigin(url).origin + path8);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -18874,11 +18874,11 @@ var require_lib = __commonJS({
     })();
     var __awaiter7 = exports2 && exports2.__awaiter || function(thisArg, _arguments, P3, generator) {
       function adopt(value) {
-        return value instanceof P3 ? value : new P3(function(resolve4) {
-          resolve4(value);
+        return value instanceof P3 ? value : new P3(function(resolve5) {
+          resolve5(value);
         });
       }
-      return new (P3 || (P3 = Promise))(function(resolve4, reject) {
+      return new (P3 || (P3 = Promise))(function(resolve5, reject) {
         function fulfilled(value) {
           try {
             step(generator.next(value));
@@ -18894,7 +18894,7 @@ var require_lib = __commonJS({
           }
         }
         function step(result) {
-          result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
+          result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
         }
         step((generator = generator.apply(thisArg, _arguments || [])).next());
       });
@@ -18981,26 +18981,26 @@ var require_lib = __commonJS({
       }
       readBody() {
         return __awaiter7(this, void 0, void 0, function* () {
-          return new Promise((resolve4) => __awaiter7(this, void 0, void 0, function* () {
+          return new Promise((resolve5) => __awaiter7(this, void 0, void 0, function* () {
             let output = Buffer.alloc(0);
             this.message.on("data", (chunk) => {
               output = Buffer.concat([output, chunk]);
             });
             this.message.on("end", () => {
-              resolve4(output.toString());
+              resolve5(output.toString());
             });
           }));
         });
       }
       readBodyBuffer() {
         return __awaiter7(this, void 0, void 0, function* () {
-          return new Promise((resolve4) => __awaiter7(this, void 0, void 0, function* () {
+          return new Promise((resolve5) => __awaiter7(this, void 0, void 0, function* () {
             const chunks = [];
             this.message.on("data", (chunk) => {
               chunks.push(chunk);
             });
             this.message.on("end", () => {
-              resolve4(Buffer.concat(chunks));
+              resolve5(Buffer.concat(chunks));
             });
           }));
         });
@@ -19208,14 +19208,14 @@ var require_lib = __commonJS({
        */
       requestRaw(info2, data) {
         return __awaiter7(this, void 0, void 0, function* () {
-          return new Promise((resolve4, reject) => {
+          return new Promise((resolve5, reject) => {
             function callbackForResult(err, res) {
               if (err) {
                 reject(err);
               } else if (!res) {
                 reject(new Error("Unknown error"));
               } else {
-                resolve4(res);
+                resolve5(res);
               }
             }
             this.requestRawWithCallback(info2, data, callbackForResult);
@@ -19459,12 +19459,12 @@ var require_lib = __commonJS({
         return __awaiter7(this, void 0, void 0, function* () {
           retryNumber = Math.min(ExponentialBackoffCeiling, retryNumber);
           const ms2 = ExponentialBackoffTimeSlice * Math.pow(2, retryNumber);
-          return new Promise((resolve4) => setTimeout(() => resolve4(), ms2));
+          return new Promise((resolve5) => setTimeout(() => resolve5(), ms2));
         });
       }
       _processResponse(res, options) {
         return __awaiter7(this, void 0, void 0, function* () {
-          return new Promise((resolve4, reject) => __awaiter7(this, void 0, void 0, function* () {
+          return new Promise((resolve5, reject) => __awaiter7(this, void 0, void 0, function* () {
             const statusCode = res.message.statusCode || 0;
             const response = {
               statusCode,
@@ -19472,7 +19472,7 @@ var require_lib = __commonJS({
               headers: {}
             };
             if (statusCode === HttpCodes2.NotFound) {
-              resolve4(response);
+              resolve5(response);
             }
             function dateTimeDeserializer(key, value) {
               if (typeof value === "string") {
@@ -19511,7 +19511,7 @@ var require_lib = __commonJS({
               err.result = response.result;
               reject(err);
             } else {
-              resolve4(response);
+              resolve5(response);
             }
           }));
         });
@@ -19528,7 +19528,7 @@ var require_dist = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.format = format;
-    exports2.parse = parse3;
+    exports2.parse = parse4;
     var TEXT_REGEXP = /^[\u0009\u0020-\u007e\u0080-\u00ff]*$/;
     var TOKEN_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
     var QUOTE_REGEXP = /[\\"]/g;
@@ -19555,7 +19555,7 @@ var require_dist = __commonJS({
       }
       return result;
     }
-    function parse3(header, options) {
+    function parse4(header, options) {
       const len = header.length;
       let index = skipOWS(header, 0, len);
       const valueStart = index;
@@ -19666,7 +19666,7 @@ var require_ms = __commonJS({
       options = options || {};
       var type = typeof val;
       if (type === "string" && val.length > 0) {
-        return parse3(val);
+        return parse4(val);
       } else if (type === "number" && isFinite(val)) {
         return options.long ? fmtLong(val) : fmtShort(val);
       }
@@ -19674,7 +19674,7 @@ var require_ms = __commonJS({
         "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
       );
     };
-    function parse3(str) {
+    function parse4(str) {
       str = String(str);
       if (str.length > 100) {
         return;
@@ -20427,10 +20427,10 @@ var require_src2 = __commonJS({
     var fs_1 = require("fs");
     var debug_1 = __importDefault(require_src());
     var log = debug_1.default("@kwsites/file-exists");
-    function check(path7, isFile, isDirectory3) {
-      log(`checking %s`, path7);
+    function check(path8, isFile, isDirectory3) {
+      log(`checking %s`, path8);
       try {
-        const stat2 = fs_1.statSync(path7);
+        const stat2 = fs_1.statSync(path8);
         if (stat2.isFile() && isFile) {
           log(`[OK] path represents a file`);
           return true;
@@ -20450,8 +20450,8 @@ var require_src2 = __commonJS({
         throw e;
       }
     }
-    function exists3(path7, type = exports2.READABLE) {
-      return check(path7, (type & exports2.FILE) > 0, (type & exports2.FOLDER) > 0);
+    function exists3(path8, type = exports2.READABLE) {
+      return check(path8, (type & exports2.FILE) > 0, (type & exports2.FOLDER) > 0);
     }
     exports2.exists = exists3;
     exports2.FILE = 1;
@@ -20517,8 +20517,8 @@ var require_dist3 = __commonJS({
 // node_modules/dotenv/lib/main.js
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs8 = require("fs");
-    var path7 = require("path");
+    var fs9 = require("fs");
+    var path8 = require("path");
     var os7 = require("os");
     var crypto2 = require("crypto");
     var TIPS = [
@@ -20547,7 +20547,7 @@ var require_main = __commonJS({
       return supportsAnsi() ? `\x1B[2m${text}\x1B[0m` : text;
     }
     var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
-    function parse3(src) {
+    function parse4(src) {
       const obj = {};
       let lines = src.toString();
       lines = lines.replace(/\r\n?/mg, "\n");
@@ -20649,7 +20649,7 @@ var require_main = __commonJS({
       if (options && options.path && options.path.length > 0) {
         if (Array.isArray(options.path)) {
           for (const filepath of options.path) {
-            if (fs8.existsSync(filepath)) {
+            if (fs9.existsSync(filepath)) {
               possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
             }
           }
@@ -20657,15 +20657,15 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path7.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path8.resolve(process.cwd(), ".env.vault");
       }
-      if (fs8.existsSync(possibleVaultPath)) {
+      if (fs9.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
       }
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path7.join(os7.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path8.join(os7.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug3 = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -20682,7 +20682,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path7.resolve(process.cwd(), ".env");
+      const dotenvPath = path8.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -20710,13 +20710,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path8 of optionPaths) {
+      for (const path9 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs8.readFileSync(path8, { encoding }));
+          const parsed = DotenvModule.parse(fs9.readFileSync(path9, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug3) {
-            _debug(`failed to load ${path8} ${e.message}`);
+            _debug(`failed to load ${path9} ${e.message}`);
           }
           lastError = e;
         }
@@ -20729,8 +20729,8 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative4 = path7.relative(process.cwd(), filePath);
-            shortPaths.push(relative4);
+            const relative5 = path8.relative(process.cwd(), filePath);
+            shortPaths.push(relative5);
           } catch (e) {
             if (debug3) {
               _debug(`failed to load ${filePath} ${e.message}`);
@@ -20819,7 +20819,7 @@ var require_main = __commonJS({
       _parseVault,
       config: config2,
       decrypt,
-      parse: parse3,
+      parse: parse4,
       populate
     };
     module2.exports.configDotenv = DotenvModule.configDotenv;
@@ -21006,11 +21006,11 @@ var import_os = require("os");
 var import_fs = require("fs");
 var __awaiter = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve4) {
-      resolve4(value);
+    return value instanceof P3 ? value : new P3(function(resolve5) {
+      resolve5(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve5, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21026,7 +21026,7 @@ var __awaiter = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21303,11 +21303,11 @@ var fs2 = __toESM(require("fs"), 1);
 var path = __toESM(require("path"), 1);
 var __awaiter2 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve4) {
-      resolve4(value);
+    return value instanceof P3 ? value : new P3(function(resolve5) {
+      resolve5(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve5, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21323,7 +21323,7 @@ var __awaiter2 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21427,11 +21427,11 @@ function isUnixExecutable(stats) {
 // node_modules/@actions/io/lib/io.js
 var __awaiter3 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve4) {
-      resolve4(value);
+    return value instanceof P3 ? value : new P3(function(resolve5) {
+      resolve5(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve5, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21447,7 +21447,7 @@ var __awaiter3 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21521,11 +21521,11 @@ function findInPath(tool) {
 var import_timers = require("timers");
 var __awaiter4 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve4) {
-      resolve4(value);
+    return value instanceof P3 ? value : new P3(function(resolve5) {
+      resolve5(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve5, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21541,7 +21541,7 @@ var __awaiter4 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -21760,7 +21760,7 @@ var ToolRunner = class extends events.EventEmitter {
         this.toolPath = path3.resolve(process.cwd(), this.options.cwd || process.cwd(), this.toolPath);
       }
       this.toolPath = yield which(this.toolPath, true);
-      return new Promise((resolve4, reject) => __awaiter4(this, void 0, void 0, function* () {
+      return new Promise((resolve5, reject) => __awaiter4(this, void 0, void 0, function* () {
         this._debug(`exec tool: ${this.toolPath}`);
         this._debug("arguments:");
         for (const arg of this.args) {
@@ -21843,7 +21843,7 @@ var ToolRunner = class extends events.EventEmitter {
           if (error2) {
             reject(error2);
           } else {
-            resolve4(exitCode);
+            resolve5(exitCode);
           }
         });
         if (this.options.input) {
@@ -21966,11 +21966,11 @@ var ExecState = class _ExecState extends events.EventEmitter {
 // node_modules/@actions/exec/lib/exec.js
 var __awaiter5 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve4) {
-      resolve4(value);
+    return value instanceof P3 ? value : new P3(function(resolve5) {
+      resolve5(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve5, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -21986,7 +21986,7 @@ var __awaiter5 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -22083,8 +22083,8 @@ var Context = class {
       if ((0, import_fs2.existsSync)(process.env.GITHUB_EVENT_PATH)) {
         this.payload = JSON.parse((0, import_fs2.readFileSync)(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
       } else {
-        const path7 = process.env.GITHUB_EVENT_PATH;
-        process.stdout.write(`GITHUB_EVENT_PATH ${path7} does not exist${import_os3.EOL}`);
+        const path8 = process.env.GITHUB_EVENT_PATH;
+        process.stdout.write(`GITHUB_EVENT_PATH ${path8} does not exist${import_os3.EOL}`);
       }
     }
     this.eventName = process.env.GITHUB_EVENT_NAME;
@@ -22125,11 +22125,11 @@ var httpClient = __toESM(require_lib(), 1);
 var import_undici2 = __toESM(require_undici(), 1);
 var __awaiter6 = function(thisArg, _arguments, P3, generator) {
   function adopt(value) {
-    return value instanceof P3 ? value : new P3(function(resolve4) {
-      resolve4(value);
+    return value instanceof P3 ? value : new P3(function(resolve5) {
+      resolve5(value);
     });
   }
-  return new (P3 || (P3 = Promise))(function(resolve4, reject) {
+  return new (P3 || (P3 = Promise))(function(resolve5, reject) {
     function fulfilled(value) {
       try {
         step(generator.next(value));
@@ -22145,7 +22145,7 @@ var __awaiter6 = function(thisArg, _arguments, P3, generator) {
       }
     }
     function step(result) {
-      result.done ? resolve4(result.value) : adopt(result.value).then(fulfilled, rejected);
+      result.done ? resolve5(result.value) : adopt(result.value).then(fulfilled, rejected);
     }
     step((generator = generator.apply(thisArg, _arguments || [])).next());
   });
@@ -26048,7 +26048,7 @@ function getOctokit(token, options, ...additionalPlugins) {
 }
 
 // src/main.ts
-var fs7 = __toESM(require("fs"));
+var fs8 = __toESM(require("fs"));
 
 // node_modules/glob/dist/esm/index.min.js
 var import_node_url = require("node:url");
@@ -29035,7 +29035,7 @@ var Ze = Object.assign(Je, { glob: Je, globSync: ts, sync: Ui, globStream: Qe, s
 Ze.glob = Ze;
 
 // src/main.ts
-var path6 = __toESM(require("path"));
+var path7 = __toESM(require("path"));
 
 // node_modules/simple-git/dist/esm/index.js
 var import_file_exists = __toESM(require_dist2(), 1);
@@ -29626,8 +29626,8 @@ function toLinesWithContent(input = "", trimmed2 = true, separator = "\n") {
 function forEachLineWithContent(input, callback) {
   return toLinesWithContent(input, true).map((line) => callback(line));
 }
-function folderExists(path7) {
-  return (0, import_file_exists.exists)(path7, import_file_exists.FOLDER);
+function folderExists(path8) {
+  return (0, import_file_exists.exists)(path8, import_file_exists.FOLDER);
 }
 function append(target, item) {
   if (Array.isArray(target)) {
@@ -29931,7 +29931,7 @@ function parseStringResponse(result, parsers12, texts, trim = true) {
         }
         return lines[i2 + offset];
       };
-      parsers12.some(({ parse: parse3 }) => parse3(line, result));
+      parsers12.some(({ parse: parse4 }) => parse4(line, result));
     }
   });
   return result;
@@ -30029,8 +30029,8 @@ function checkIsRepoRootTask() {
     commands,
     format: "utf-8",
     onError,
-    parser(path7) {
-      return /^\.(git)?$/.test(path7.trim());
+    parser(path8) {
+      return /^\.(git)?$/.test(path8.trim());
     }
   };
 }
@@ -30464,11 +30464,11 @@ function parseGrep(grep) {
   const paths = /* @__PURE__ */ new Set();
   const results = {};
   forEachLineWithContent(grep, (input) => {
-    const [path7, line, preview] = input.split(NULL);
-    paths.add(path7);
-    (results[path7] = results[path7] || []).push({
+    const [path8, line, preview] = input.split(NULL);
+    paths.add(path8);
+    (results[path8] = results[path8] || []).push({
       line: asNumber(line),
-      path: path7,
+      path: path8,
       preview
     });
   });
@@ -31232,14 +31232,14 @@ var init_hash_object = __esm({
     init_task();
   }
 });
-function parseInit(bare, path7, text) {
+function parseInit(bare, path8, text) {
   const response = String(text).trim();
   let result;
   if (result = initResponseRegex.exec(response)) {
-    return new InitSummary(bare, path7, false, result[1]);
+    return new InitSummary(bare, path8, false, result[1]);
   }
   if (result = reInitResponseRegex.exec(response)) {
-    return new InitSummary(bare, path7, true, result[1]);
+    return new InitSummary(bare, path8, true, result[1]);
   }
   let gitDir = "";
   const tokens = response.split(" ");
@@ -31250,7 +31250,7 @@ function parseInit(bare, path7, text) {
       break;
     }
   }
-  return new InitSummary(bare, path7, /^re/i.test(response), gitDir);
+  return new InitSummary(bare, path8, /^re/i.test(response), gitDir);
 }
 var InitSummary;
 var initResponseRegex;
@@ -31259,9 +31259,9 @@ var init_InitSummary = __esm({
   "src/lib/responses/InitSummary.ts"() {
     "use strict";
     InitSummary = class {
-      constructor(bare, path7, existing, gitDir) {
+      constructor(bare, path8, existing, gitDir) {
         this.bare = bare;
-        this.path = path7;
+        this.path = path8;
         this.existing = existing;
         this.gitDir = gitDir;
       }
@@ -31273,7 +31273,7 @@ var init_InitSummary = __esm({
 function hasBareCommand(command) {
   return command.includes(bareCommand);
 }
-function initTask(bare = false, path7, customArgs) {
+function initTask(bare = false, path8, customArgs) {
   const commands = ["init", ...customArgs];
   if (bare && !hasBareCommand(commands)) {
     commands.splice(1, 0, bareCommand);
@@ -31282,7 +31282,7 @@ function initTask(bare = false, path7, customArgs) {
     commands,
     format: "utf-8",
     parser(text) {
-      return parseInit(commands.includes("--bare"), path7, text);
+      return parseInit(commands.includes("--bare"), path8, text);
     }
   };
 }
@@ -32097,12 +32097,12 @@ var init_FileStatusSummary = __esm({
     "use strict";
     fromPathRegex = /^(.+)\0(.+)$/;
     FileStatusSummary = class {
-      constructor(path7, index, working_dir) {
-        this.path = path7;
+      constructor(path8, index, working_dir) {
+        this.path = path8;
         this.index = index;
         this.working_dir = working_dir;
         if (index === "R" || working_dir === "R") {
-          const detail = fromPathRegex.exec(path7) || [null, path7, path7];
+          const detail = fromPathRegex.exec(path8) || [null, path8, path8];
           this.from = detail[2] || "";
           this.path = detail[1] || "";
         }
@@ -32133,14 +32133,14 @@ function splitLine(result, lineStr) {
     default:
       return;
   }
-  function data(index, workingDir, path7) {
+  function data(index, workingDir, path8) {
     const raw = `${index}${workingDir}`;
     const handler2 = parsers6.get(raw);
     if (handler2) {
-      handler2(result, path7);
+      handler2(result, path8);
     }
     if (raw !== "##" && raw !== "!!") {
-      result.files.push(new FileStatusSummary(path7, index, workingDir));
+      result.files.push(new FileStatusSummary(path8, index, workingDir));
     }
   }
 }
@@ -32491,9 +32491,9 @@ var init_simple_git_api = __esm({
           next
         );
       }
-      hashObject(path7, write) {
+      hashObject(path8, write) {
         return this._runTask(
-          hashObjectTask(path7, write === true),
+          hashObjectTask(path8, write === true),
           trailingFunctionArgument(arguments)
         );
       }
@@ -32847,8 +32847,8 @@ var init_branch = __esm({
   }
 });
 function toPath(input) {
-  const path7 = input.trim().replace(/^["']|["']$/g, "");
-  return path7 && (0, import_node_path2.normalize)(path7);
+  const path8 = input.trim().replace(/^["']|["']$/g, "");
+  return path8 && (0, import_node_path2.normalize)(path8);
 }
 var parseCheckIgnore;
 var init_CheckIgnore = __esm({
@@ -33133,8 +33133,8 @@ __export2(sub_module_exports, {
   subModuleTask: () => subModuleTask,
   updateSubModuleTask: () => updateSubModuleTask
 });
-function addSubModuleTask(repo, path7) {
-  return subModuleTask(["add", repo, path7]);
+function addSubModuleTask(repo, path8) {
+  return subModuleTask(["add", repo, path8]);
 }
 function initSubModuleTask(customArgs) {
   return subModuleTask(["init", ...customArgs]);
@@ -33448,8 +33448,8 @@ var require_git = __commonJS2({
       }
       return this._runTask(straightThroughStringTask2(command, this._trimmed), next);
     };
-    Git2.prototype.submoduleAdd = function(repo, path7, then) {
-      return this._runTask(addSubModuleTask2(repo, path7), trailingFunctionArgument2(arguments));
+    Git2.prototype.submoduleAdd = function(repo, path8, then) {
+      return this._runTask(addSubModuleTask2(repo, path8), trailingFunctionArgument2(arguments));
     };
     Git2.prototype.submoduleUpdate = function(args, then) {
       return this._runTask(
@@ -34274,7 +34274,7 @@ async function createCacheManifest(cachePath, outputPath) {
 }
 
 // src/utils/config.ts
-var fs5 = __toESM(require("fs"));
+var fs6 = __toESM(require("fs"));
 
 // node_modules/js-yaml/dist/js-yaml.mjs
 var NOT_RESOLVED = /* @__PURE__ */ Symbol("NOT_RESOLVED");
@@ -36500,12 +36500,29 @@ var DEFAULT_DUMP_OPTIONS = {
 
 // src/utils/config.ts
 var path5 = __toESM(require("path"));
-var MAX_DEPENDENCY_PATH_LENGTH = 65536;
-var MAX_ASSERTION_DEPTH = 128;
-var MAX_NESTED_CONFIG_VALUES = 1e5;
+
+// src/utils/fs.ts
+var fs5 = __toESM(require("fs"));
+function isDirectory2(filePath) {
+  try {
+    return fs5.statSync(filePath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// src/utils/config.ts
 var MAX_TRANSITIVE_CONFIG_BYTES = 1024 * 1024;
+var MAX_NESTED_CONFIG_VALUES = 1e5;
 var TRANSITIVE_CONFIG_EXTENSION = /\.(?:yaml|yml|json|jsonl|csv|xlsx|xls)(?:#[^\r\n]*)?$/i;
 var BINARY_TRANSITIVE_CONFIG_EXTENSION = /\.(?:xlsx|xls)(?:#[^\r\n]*)?$/i;
+function normalizeProviderEntries(providers) {
+  if (Array.isArray(providers)) return providers;
+  if (typeof providers === "string" || typeof providers === "object" && providers !== null) {
+    return [providers];
+  }
+  return [];
+}
 var TRANSITIVE_NESTED_EXTENSIONS = /* @__PURE__ */ new Set([
   "yaml",
   "yml",
@@ -36524,28 +36541,6 @@ var TRANSITIVE_NESTED_EXTENSIONS = /* @__PURE__ */ new Set([
   "go",
   "rb"
 ]);
-var UNSAFE_PATH_CHARACTERS = /[\0\r\n]/;
-var PROVIDER_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/;
-var ASSERT_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/;
-var AUTH_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py)$/;
-var HTTP_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts)$/;
-var JS_EXTENSION_CASE_INSENSITIVE = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
-function hasGlobMagic(value) {
-  for (let index = 0; index < value.length; index++) {
-    const character = value[index];
-    if (path5.sep === "/" && character === "\\") {
-      index++;
-      continue;
-    }
-    if ("*?[]{}".includes(character)) {
-      return true;
-    }
-    if ("*?@+!".includes(character) && value[index + 1] === "(") {
-      return true;
-    }
-  }
-  return false;
-}
 function hasTransitiveNestedReference(contents) {
   for (const token of contents.split(/[\s,"'[\]{}()]+/)) {
     if (!token) continue;
@@ -36566,12 +36561,49 @@ function hasTransitiveNestedReference(contents) {
   }
   return false;
 }
-function hasUnsafeGroupedGlob(value) {
-  const closingDelimiters = [];
+function hasGlobMagic(value) {
   for (let index = 0; index < value.length; index++) {
     const character = value[index];
     if (path5.sep === "/" && character === "\\") {
       index++;
+      continue;
+    }
+    if ("*?[]{}".includes(character)) {
+      return true;
+    }
+    if ("*?@+!".includes(character) && value[index + 1] === "(") {
+      return true;
+    }
+  }
+  return false;
+}
+function isPathInside(baseDir, targetPath) {
+  const relativePath = path5.relative(baseDir, targetPath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
+}
+function sanitizeLogText(value) {
+  return value.replace(/\0/g, "\\0").replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+}
+function isUnsupportedWindowsPath(filePath) {
+  return /^[A-Za-z]:(?![\\/])/.test(filePath) || /^(?:file:\/\/)?\/[A-Za-z]:[\\/]/i.test(filePath) || !path5.isAbsolute(filePath) && path5.win32.isAbsolute(filePath);
+}
+function hasUnsafeGroupedGlob(value) {
+  const closingDelimiters = [];
+  let inCharacterClass = false;
+  for (let index = 0; index < value.length; index++) {
+    const character = value[index];
+    if (path5.sep === "/" && character === "\\") {
+      index++;
+      continue;
+    }
+    if (character === "[") {
+      inCharacterClass = true;
+      continue;
+    }
+    if (inCharacterClass) {
+      if (character === "]") {
+        inCharacterClass = false;
+      }
       continue;
     }
     if (character === "{") {
@@ -36583,460 +36615,887 @@ function hasUnsafeGroupedGlob(value) {
       index++;
       continue;
     }
-    if (closingDelimiters.length > 0 && character === closingDelimiters[closingDelimiters.length - 1]) {
+    if (closingDelimiters.length > 0 && (character === "}" || character === ")")) {
+      if (character !== closingDelimiters[closingDelimiters.length - 1]) {
+        return true;
+      }
       closingDelimiters.pop();
       continue;
     }
-    if (closingDelimiters.length > 0 && (character === "/" || path5.sep !== "/" && character === "\\" || character === "." && value[index + 1] === ".")) {
+    if (closingDelimiters.length > 0 && (character === "/" || character === "\\" || character === "." && value[index + 1] === ".")) {
       return true;
     }
   }
   return closingDelimiters.length > 0;
 }
-function unescapePosixGlobLiterals(value) {
-  return path5.sep === "/" ? value.replace(/\\([*?[\]{}()@+!\\])/g, "$1") : value;
-}
-function isPathInside(baseDir, targetPath) {
-  const relativePath = path5.relative(baseDir, targetPath);
-  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
-}
-function resolvePhysicalPath(targetPath) {
-  let existingPath = targetPath;
-  while (true) {
-    try {
-      fs5.lstatSync(existingPath);
-      break;
-    } catch (error2) {
-      const code = error2.code;
-      if (code !== "ENOENT" && code !== "ENOTDIR") {
-        throw error2;
-      }
-      const parentPath = path5.dirname(existingPath);
-      if (parentPath === existingPath) {
-        throw error2;
-      }
-      existingPath = parentPath;
-    }
+function normalizeFileUrlSelectors(fileUrl, executableExtensions, requireFunctionName = false, useFirstColon = false) {
+  const rawFilename = fileUrl.slice("file://".length);
+  const lastColonIndex = useFirstColon ? rawFilename.indexOf(":") : rawFilename.lastIndexOf(":");
+  if (lastColonIndex <= 1 || requireFunctionName && lastColonIndex === rawFilename.length - 1) {
+    return [fileUrl];
   }
-  const realExistingPath = fs5.realpathSync(existingPath).toString();
-  return path5.resolve(
-    realExistingPath,
-    path5.relative(existingPath, targetPath)
-  );
+  const candidateFilename = rawFilename.slice(0, lastColonIndex);
+  const stripped = `file://${candidateFilename}`;
+  if (executableExtensions.test(candidateFilename)) {
+    return [stripped];
+  }
+  if (/\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(candidateFilename)) {
+    return [fileUrl, stripped];
+  }
+  return [fileUrl];
 }
-function extractFileDependencies(configPath) {
+function normalizeProviderFileUrls(providerPath) {
+  const executable = providerPath.startsWith("exec:") ? providerPath.slice("exec:".length) : void 0;
+  if (executable !== void 0 && /\s/.test(executable)) {
+    throw new Error("Command-style Promptfoo exec providers are unsafe");
+  }
+  const fileUrl = executable?.startsWith("file://") ? executable : executable !== void 0 ? `file://${executable}` : providerPath.startsWith("file://") ? providerPath : /^(?:python|golang|ruby):/.test(providerPath) ? `file://${providerPath.slice(providerPath.indexOf(":") + 1)}` : /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(providerPath) ? `file://${providerPath}` : void 0;
+  return fileUrl ? normalizeFileUrlSelectors(
+    fileUrl,
+    /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+  ) : [];
+}
+function containsEnvTemplate(value) {
+  return typeof value === "string" && (value.includes("{{") || value.includes("{%")) && /\benv(?:\.|\[)/.test(value);
+}
+function extractFileDependencies(configPath, workspaceRoot = process.cwd(), workingDirectory = workspaceRoot) {
   const dependencies = /* @__PURE__ */ new Set();
-  const configDir = path5.dirname(configPath);
-  const cwd = process.cwd();
+  const lexicalConfigPath = path5.resolve(configPath);
+  const configDir = path5.dirname(lexicalConfigPath);
+  const cwd = path5.resolve(workspaceRoot);
+  const resolvedWorkingDirectory = path5.resolve(workingDirectory);
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
-  let requiresFullEvaluation = false;
-  let physicalConfigDir;
-  let physicalCwd;
-  let physicalConfigPath;
-  try {
-    physicalConfigDir = resolvePhysicalPath(configDir);
-    physicalCwd = resolvePhysicalPath(cwd);
-    physicalConfigPath = resolvePhysicalPath(configPath);
-  } catch {
-    throw new PromptfooActionError(
-      "Invalid config directory: the config must stay within the working directory.",
-      ErrorCodes.INVALID_CONFIGURATION,
-      "Use a readable config file and directory within the working directory."
-    );
-  }
-  if (isPathInside(cwd, configDir) && (!isPathInside(physicalCwd, physicalConfigDir) || !isPathInside(physicalCwd, physicalConfigPath))) {
-    throw new PromptfooActionError(
-      "Invalid config directory: the config must stay within the working directory.",
-      ErrorCodes.INVALID_CONFIGURATION,
-      "Use a readable config file and directory within the working directory."
-    );
-  }
-  const markUnsafeDependency = () => {
-    if (!requiresFullEvaluation) {
-      warning(
-        "Ignoring an unsafe config dependency; running a full evaluation."
-      );
+  const isSafeDependency = (targetPath) => isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
+  const getRealDependencyRoots = () => {
+    const roots = [];
+    for (const root of /* @__PURE__ */ new Set([configDir, cwd])) {
+      try {
+        roots.push(path5.resolve(fs6.realpathSync(root)));
+      } catch {
+      }
     }
-    requiresFullEvaluation = true;
+    return roots;
+  };
+  const maxConfigBytes = 2 * 1024 * 1024;
+  const maxConfigDepth = 64;
+  const maxConfigNodes = 1e4;
+  const maxConfigRefs = 100;
+  const maxGlobPatternLength = 64 * 1024;
+  const maxGlobBraceExpansions = 1024;
+  let requiresFullEvaluation = false;
+  let warnedUnsafeDependency = false;
+  const assertConfigDepth = (depth) => {
+    if (depth > maxConfigDepth) {
+      throw new Error("Promptfoo config exceeds the dependency depth limit");
+    }
+  };
+  const assertConfigRefBudget = (refCount) => {
+    if (refCount >= maxConfigRefs) {
+      throw new Error("Promptfoo config exceeds the dependency ref limit");
+    }
   };
   try {
-    const configContent = fs5.readFileSync(configPath, "utf8");
-    if (!configContent.trim()) {
-      debug("Config file is empty or invalid");
-      return [];
+    if (!isPathInside(cwd, resolvedWorkingDirectory)) {
+      throw new Error(
+        "Promptfoo working directory must stay within the repository workspace"
+      );
     }
-    const config2 = load(configContent, {
-      schema: CORE_SCHEMA.withTags(mergeTag)
-    });
+    if (configPath.length > maxGlobPatternLength || isUnsupportedWindowsPath(configPath) || hasGlobMagic(configPath) || configPath.includes("{{")) {
+      throw new Error("Dynamic Promptfoo configs cannot be safely inspected");
+    }
+    if (!/\.(?:ya?ml|json)$/i.test(lexicalConfigPath)) {
+      throw new Error(
+        "Executable Promptfoo configs cannot be safely inspected"
+      );
+    }
+    const addSafeDependency = (filePath, baseDir, source, trackLexicalPath = true) => {
+      if (!filePath || filePath.includes("\0")) {
+        throw new Error(`${source} is empty or contains an invalid null byte`);
+      }
+      const absolutePath = path5.isAbsolute(filePath) ? path5.resolve(filePath) : path5.resolve(baseDir, filePath);
+      if (!isPathInside(dependencyRoot, absolutePath)) {
+        throw new Error(`${source} must stay within the repository workspace`);
+      }
+      if (trackLexicalPath) {
+        dependencies.add(absolutePath);
+      }
+      let existingPath = absolutePath;
+      while (existingPath !== dependencyRoot && !fs6.existsSync(existingPath)) {
+        existingPath = path5.dirname(existingPath);
+      }
+      if (fs6.existsSync(existingPath)) {
+        const realRoot = fs6.existsSync(dependencyRoot) ? fs6.realpathSync(dependencyRoot) : dependencyRoot;
+        const realExistingPath = fs6.realpathSync(existingPath);
+        if (!isPathInside(realRoot, realExistingPath)) {
+          throw new Error(
+            `${source} must stay within the repository workspace`
+          );
+        }
+        if (existingPath === absolutePath && realExistingPath !== absolutePath) {
+          dependencies.add(realExistingPath);
+        }
+      }
+      return absolutePath;
+    };
+    const excludedParameterParents = /* @__PURE__ */ new WeakSet();
+    const readConfig = (filePath) => {
+      const lexicalStats = fs6.lstatSync(filePath);
+      const configStats = lexicalStats.isSymbolicLink() ? fs6.statSync(filePath) : lexicalStats;
+      if (!configStats.isFile()) {
+        throw new Error("Promptfoo config must be a regular file");
+      }
+      if (configStats.size > maxConfigBytes) {
+        throw new Error("Promptfoo config exceeds the dependency size limit");
+      }
+      const realConfigPath = fs6.realpathSync(filePath);
+      if (!/\.(?:ya?ml|json)$/i.test(realConfigPath)) {
+        throw new Error(
+          "Executable Promptfoo configs cannot be safely inspected"
+        );
+      }
+      const content = fs6.readFileSync(filePath, "utf8");
+      if (Buffer.byteLength(content, "utf8") > maxConfigBytes) {
+        throw new Error("Promptfoo config exceeds the dependency size limit");
+      }
+      if (!content.trim()) {
+        return null;
+      }
+      const parsed = load(content, {
+        schema: CORE_SCHEMA.withTags(
+          mergeTag,
+          binaryTag,
+          timestampTag,
+          omapTag,
+          pairsTag,
+          setTag
+        )
+      });
+      if (filePath === lexicalConfigPath && typeof parsed === "object" && parsed !== null && "providers" in parsed && Array.isArray(parsed.providers)) {
+        for (const entry of parsed.providers) {
+          if (typeof entry !== "object" || entry === null) {
+            continue;
+          }
+          let provider = entry;
+          if (!("config" in provider)) {
+            const mappedProvider = Object.values(provider)[0];
+            if (typeof mappedProvider !== "object" || mappedProvider === null) {
+              continue;
+            }
+            provider = mappedProvider;
+          }
+          if (typeof provider.config !== "object" || provider.config === null) {
+            continue;
+          }
+          const providerConfig = provider.config;
+          if (Array.isArray(providerConfig.functions)) {
+            for (const functionConfig of providerConfig.functions) {
+              if (typeof functionConfig === "object" && functionConfig !== null && "parameters" in functionConfig && typeof functionConfig.parameters === "object" && functionConfig.parameters !== null) {
+                excludedParameterParents.add(functionConfig);
+              }
+            }
+          }
+          if (Array.isArray(providerConfig.tools)) {
+            for (const tool of providerConfig.tools) {
+              if (typeof tool !== "object" || tool === null || !("function" in tool) || typeof tool.function !== "object" || tool.function === null || !("parameters" in tool.function) || typeof tool.function.parameters !== "object" || tool.function.parameters === null) {
+                continue;
+              }
+              excludedParameterParents.add(tool.function);
+            }
+          }
+        }
+      }
+      const inspected = /* @__PURE__ */ new WeakSet();
+      const pending2 = [
+        { value: parsed, depth: 0 }
+      ];
+      let nodeCount = 0;
+      while (pending2.length > 0) {
+        const next = pending2.pop();
+        const value = next.value;
+        assertConfigDepth(next.depth);
+        if (typeof value !== "object" || value === null || !Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype || inspected.has(value)) {
+          continue;
+        }
+        inspected.add(value);
+        nodeCount++;
+        if (nodeCount > maxConfigNodes) {
+          throw new Error(
+            "Promptfoo config exceeds the dependency traversal limit"
+          );
+        }
+        pending2.push(
+          ...Object.values(value).map((child2) => ({
+            value: child2,
+            depth: next.depth + 1
+          }))
+        );
+      }
+      return parsed;
+    };
+    const loadedConfigs = /* @__PURE__ */ new Map();
+    const loadConfig = (filePath) => {
+      if (loadedConfigs.has(filePath)) {
+        return loadedConfigs.get(filePath);
+      }
+      const parsed = readConfig(filePath);
+      loadedConfigs.set(filePath, parsed);
+      return parsed;
+    };
+    addSafeDependency(lexicalConfigPath, configDir, "Promptfoo config", false);
+    const config2 = loadConfig(lexicalConfigPath);
+    const refsDisabled = ["1", "true", "yes", "yup", "yeppers"].includes(
+      (process.env.PROMPTFOO_DISABLE_REF_PARSER ?? "").toLowerCase()
+    );
     if (!config2) {
       debug("Config file is empty or invalid");
       return [];
     }
-    const resolveConfigDependency = (filePath) => {
-      if (!filePath || filePath.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(filePath) || path5.isAbsolute(filePath) || path5.win32.isAbsolute(filePath)) {
-        markUnsafeDependency();
-        return void 0;
-      }
-      const absolutePath = path5.resolve(path5.join(configDir, filePath));
-      if (!isPathInside(dependencyRoot, absolutePath)) {
-        markUnsafeDependency();
-        return void 0;
-      }
-      try {
-        const physicalPath = resolvePhysicalPath(absolutePath);
-        const allowedRoots = [physicalConfigDir, physicalCwd];
-        if (!allowedRoots.some((root) => isPathInside(root, physicalPath))) {
-          markUnsafeDependency();
-          return void 0;
+    const inspectedRefs = /* @__PURE__ */ new Set();
+    const resolveConfigRef = (ref, sourceFile) => {
+      const hashIndex = ref.indexOf("#");
+      const refPath = hashIndex === -1 ? ref : ref.slice(0, hashIndex);
+      const fragment = hashIndex === -1 ? "" : ref.slice(hashIndex);
+      const hasControlCharacters = [...refPath + fragment].some(
+        (character) => {
+          const code = character.charCodeAt(0);
+          return code < 32 || code === 127;
         }
-      } catch {
-        markUnsafeDependency();
-        return void 0;
-      }
-      return absolutePath;
-    };
-    const addDirectoryDependency = (directoryPath) => {
-      dependencies.add(`${directoryPath.replace(/[\\/]+$/, "")}${path5.sep}`);
-    };
-    const processFilePath = (filePath) => {
-      if (!filePath || filePath.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(filePath) || filePath.includes("{{") || filePath.includes("{%")) {
-        markUnsafeDependency();
-        return;
-      }
-      if (hasGlobMagic(filePath)) {
-        const pathParts = path5.sep === "/" ? filePath.split("/") : filePath.split(/[\\/]/);
-        const firstMagicPart = pathParts.findIndex(hasGlobMagic);
-        const hasCrossDirectoryAlternative = hasUnsafeGroupedGlob(filePath);
-        const hasParentAfterMagic = pathParts.slice(firstMagicPart).some((part) => part === "..");
-        if (hasCrossDirectoryAlternative || hasParentAfterMagic) {
-          addDirectoryDependency(cwd);
-          return;
-        }
-        const baseParts = [];
-        for (const part of pathParts) {
-          if (hasGlobMagic(part)) {
-            break;
-          }
-          baseParts.push(part);
-        }
-        const basePath = resolveConfigDependency(
-          baseParts.length > 0 ? baseParts.join(path5.sep) : "."
-        );
-        if (basePath) {
-          addDirectoryDependency(basePath);
-        }
-        return;
-      }
-      const absolutePath = resolveConfigDependency(
-        unescapePosixGlobLiterals(filePath)
       );
-      if (!absolutePath) {
-        return;
+      const hasOuterWhitespace = refPath.length > 0 && (refPath.charCodeAt(0) <= 32 || refPath.charCodeAt(refPath.length - 1) <= 32);
+      if (!ref || ref.includes("\0") || ref.includes("{{") || refPath.includes("\\") || fragment.includes("\\") || refPath.includes("%") || fragment.includes("%") || hasControlCharacters || hasOuterWhitespace || /^[a-z][a-z\d+.-]*:/i.test(refPath)) {
+        throw new Error(
+          "Dynamic or unsafe Promptfoo config refs are unsupported"
+        );
       }
-      try {
-        if (fs5.statSync(absolutePath).isDirectory()) {
-          addDirectoryDependency(absolutePath);
-          return;
-        }
-      } catch (error2) {
-        const code = error2.code;
-        if (code !== "ENOENT" && code !== "ENOTDIR") {
-          markUnsafeDependency();
-          return;
-        }
+      const refBase = sourceFile === lexicalConfigPath ? resolvedWorkingDirectory : path5.dirname(sourceFile);
+      const refFile = refPath ? addSafeDependency(refPath, refBase, "Promptfoo config ref") : sourceFile;
+      if (!/\.(?:ya?ml|json)$/i.test(refFile)) {
+        throw new Error(
+          "Executable Promptfoo config refs cannot be safely inspected"
+        );
       }
-      dependencies.add(absolutePath);
+      let selectedConfig = loadConfig(refFile);
+      if (!fragment || fragment === "#") {
+        return { config: selectedConfig, file: refFile, fragment };
+      }
+      const pointer = fragment.slice(1);
+      if (!pointer.startsWith("/")) {
+        throw new Error("Unsupported Promptfoo config ref fragment");
+      }
+      for (const encodedPart of pointer.slice(1).split("/")) {
+        if (/~(?![01])/.test(encodedPart)) {
+          throw new Error("Invalid Promptfoo config ref fragment");
+        }
+        const part = encodedPart.replace(/~1/g, "/").replace(/~0/g, "~");
+        if (typeof selectedConfig !== "object" || selectedConfig === null || "$id" in selectedConfig || !(part in selectedConfig)) {
+          throw new Error("Unsafe or missing Promptfoo config ref fragment");
+        }
+        selectedConfig = selectedConfig[part];
+      }
+      return { config: selectedConfig, file: refFile, fragment };
     };
-    const processFileUrl = (fileUrl, selector = "literal") => {
-      const filePath = fileUrl.slice("file://".length);
-      if (!filePath || filePath.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(filePath)) {
-        markUnsafeDependency();
-        return;
-      }
-      const selectorIndex = selector === "assert" ? filePath.indexOf(":") : filePath.lastIndexOf(":");
-      const candidatePath = selectorIndex > -1 && (selector !== "http" || selectorIndex < filePath.length - 1) ? filePath.slice(0, selectorIndex) : void 0;
-      const extensionPattern = selector === "provider" ? PROVIDER_EXTENSION : selector === "assert" ? ASSERT_EXTENSION : selector === "auth" ? AUTH_EXTENSION : selector === "http" ? HTTP_EXTENSION : void 0;
-      if (candidatePath && extensionPattern?.test(candidatePath)) {
-        processFilePath(candidatePath);
-        return;
-      }
-      if (candidatePath && extensionPattern && JS_EXTENSION_CASE_INSENSITIVE.test(candidatePath) && !HTTP_EXTENSION.test(candidatePath)) {
-        processFilePath(filePath);
-        processFilePath(candidatePath);
-        return;
-      }
-      processFilePath(filePath);
-    };
-    const extractNestedFileReferences = (value) => {
-      const pending = [value];
-      const visited = /* @__PURE__ */ new WeakSet();
-      let processed = 0;
-      while (pending.length > 0) {
-        const current = pending.pop();
-        processed++;
-        if (processed > MAX_NESTED_CONFIG_VALUES) return true;
-        if (typeof current === "string" && current.startsWith("file://")) {
-          processFileUrl(current, "auth");
-          continue;
+    const discoveredRefs = /* @__PURE__ */ new Set();
+    const inspectedObjects = /* @__PURE__ */ new Map();
+    const httpValidateStatusParents = /* @__PURE__ */ new WeakSet();
+    const httpTransformParents = /* @__PURE__ */ new WeakSet();
+    const httpSessionParserParents = /* @__PURE__ */ new WeakSet();
+    const httpFileAuthParents = /* @__PURE__ */ new WeakSet();
+    const providerIdParents = /* @__PURE__ */ new WeakSet();
+    const nestedFileUrls = [];
+    const normalizedSelectorUrls = /* @__PURE__ */ new Set();
+    const nestedFilePaths = [];
+    const pending = [{ value: config2, file: lexicalConfigPath, context: "general" }];
+    let inspectedNodeCount = 0;
+    while (pending.length > 0) {
+      const next = pending.pop();
+      if (typeof next.value === "string") {
+        if (next.value.includes("file://") && containsEnvTemplate(next.value)) {
+          throw new Error(
+            "Dynamic Promptfoo file references cannot be safely inspected"
+          );
         }
-        if (typeof current !== "object" || current === null) continue;
-        if (visited.has(current)) return true;
-        visited.add(current);
-        pending.push(...Object.values(current));
+        if (next.context === "provider-list") {
+          nestedFileUrls.push(...normalizeProviderFileUrls(next.value));
+        } else if (next.value.startsWith("file://")) {
+          const normalizedFileUrls = next.context === "general" ? [next.value] : normalizeFileUrlSelectors(
+            next.value,
+            /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/,
+            false,
+            true
+          );
+          if (next.context === "assertion" && normalizedFileUrls.some((fileUrl) => fileUrl !== next.value)) {
+            normalizedSelectorUrls.add(next.value);
+          }
+          nestedFileUrls.push(...normalizedFileUrls);
+        }
+        continue;
+      }
+      if (typeof next.value !== "object" || next.value === null || !Array.isArray(next.value) && Object.getPrototypeOf(next.value) !== Object.prototype) {
+        continue;
+      }
+      const inspectionContext = `${next.file}\0${next.context}`;
+      const objectsForFile = inspectedObjects.get(inspectionContext) ?? /* @__PURE__ */ new WeakSet();
+      inspectedObjects.set(inspectionContext, objectsForFile);
+      if (objectsForFile.has(next.value)) {
+        continue;
+      }
+      objectsForFile.add(next.value);
+      inspectedNodeCount++;
+      if (inspectedNodeCount > maxConfigNodes) {
+        throw new Error(
+          "Promptfoo config exceeds the dependency traversal limit"
+        );
+      }
+      const record = next.value;
+      for (const providers of [record.providers, record.targets]) {
+        for (const entry of normalizeProviderEntries(providers)) {
+          if (typeof entry === "string") {
+            nestedFileUrls.push(...normalizeProviderFileUrls(entry));
+            continue;
+          }
+          if (typeof entry !== "object" || entry === null) {
+            continue;
+          }
+          const provider = entry;
+          let providerId = provider.id;
+          let providerConfig = provider.config;
+          if (typeof providerId !== "string") {
+            const mappedProvider = Object.entries(provider).find(
+              ([id]) => /^https?(?::|$)/i.test(id) || normalizeProviderFileUrls(id).length > 0
+            );
+            providerId = mappedProvider?.[0];
+            const mappedValue = mappedProvider?.[1];
+            providerConfig = typeof mappedValue === "object" && mappedValue !== null ? mappedValue.config : void 0;
+          }
+          if (typeof providerId === "string") {
+            nestedFileUrls.push(...normalizeProviderFileUrls(providerId));
+            if (provider.id === providerId) {
+              providerIdParents.add(provider);
+            }
+          }
+          if (containsEnvTemplate(providerId) && typeof providerConfig === "object" && providerConfig !== null && [
+            "validateStatus",
+            "transformRequest",
+            "transformResponse",
+            "responseParser",
+            "sessionParser",
+            "session",
+            "auth",
+            "tls",
+            "signatureAuth",
+            "multipart"
+          ].some((field) => field in providerConfig)) {
+            throw new Error(
+              "Dynamic Promptfoo HTTP provider dependencies cannot be safely inspected"
+            );
+          }
+          if (typeof providerId !== "string" || !/^https?(?::|$)/i.test(providerId) || typeof providerConfig !== "object" || providerConfig === null) {
+            continue;
+          }
+          const configRecord = providerConfig;
+          const validateStatus = configRecord.validateStatus;
+          if (typeof validateStatus === "string" && validateStatus.startsWith("file://")) {
+            nestedFileUrls.push(
+              ...normalizeFileUrlSelectors(
+                validateStatus,
+                /\.(?:js|cjs|mjs|ts|cts|mts)$/,
+                true
+              )
+            );
+            httpValidateStatusParents.add(configRecord);
+          }
+          for (const field of [
+            "transformRequest",
+            "transformResponse",
+            "responseParser",
+            "sessionParser"
+          ]) {
+            const reference = configRecord[field];
+            if (typeof reference === "string" && reference.startsWith("file://")) {
+              nestedFileUrls.push(
+                ...normalizeFileUrlSelectors(
+                  reference,
+                  /\.(?:js|cjs|mjs|ts|cts|mts)$/,
+                  true
+                )
+              );
+              httpTransformParents.add(configRecord);
+            }
+          }
+          const session = configRecord.session;
+          if (typeof session === "object" && session !== null) {
+            const responseParser = session.responseParser;
+            if (typeof responseParser === "string" && responseParser.startsWith("file://")) {
+              nestedFileUrls.push(
+                ...normalizeFileUrlSelectors(
+                  responseParser,
+                  /\.(?:js|cjs|mjs|ts|cts|mts)$/,
+                  true
+                )
+              );
+              httpSessionParserParents.add(session);
+            }
+          }
+          const auth2 = configRecord.auth;
+          if (typeof auth2 === "object" && auth2 !== null && (auth2.type === "file" || containsEnvTemplate(auth2.type))) {
+            const authRecord = auth2;
+            if (typeof authRecord.path === "string") {
+              if (authRecord.path.startsWith("file://")) {
+                nestedFileUrls.push(
+                  ...normalizeFileUrlSelectors(
+                    authRecord.path,
+                    /\.(?:js|cjs|mjs|ts|cts|mts|py)$/
+                  )
+                );
+                httpFileAuthParents.add(authRecord);
+              } else {
+                nestedFilePaths.push(authRecord.path);
+              }
+            }
+          }
+          const multipart = configRecord.multipart;
+          if (typeof multipart === "object" && multipart !== null) {
+            const parts = multipart.parts;
+            if (Array.isArray(parts)) {
+              for (const part of parts) {
+                if (typeof part !== "object" || part === null) {
+                  continue;
+                }
+                const partRecord = part;
+                const source = partRecord.source;
+                if ((partRecord.kind === "file" || containsEnvTemplate(partRecord.kind)) && typeof source === "object" && source !== null && (source.type === "path" || containsEnvTemplate(
+                  source.type
+                )) && typeof source.path === "string") {
+                  const sourcePath = source.path;
+                  if (sourcePath.startsWith("file://")) {
+                    nestedFileUrls.push(sourcePath);
+                  } else {
+                    nestedFilePaths.push(sourcePath);
+                  }
+                }
+              }
+            }
+          }
+          const pathSections = [
+            [
+              configRecord.tls,
+              ["caPath", "certPath", "keyPath", "pfxPath", "jksPath"]
+            ],
+            [
+              configRecord.signatureAuth,
+              [
+                "privateKeyPath",
+                "keystorePath",
+                "pfxPath",
+                "certPath",
+                "keyPath"
+              ]
+            ]
+          ];
+          for (const [section, keys] of pathSections) {
+            if (typeof section !== "object" || section === null) {
+              continue;
+            }
+            for (const key of keys) {
+              const filePath = section[key];
+              if (typeof filePath === "string") {
+                nestedFilePaths.push(filePath);
+              }
+            }
+          }
+        }
+      }
+      if (typeof record.file === "string") {
+        nestedFilePaths.push(record.file);
+      }
+      if (!refsDisabled && "$id" in record) {
+        throw new Error("Promptfoo config refs using $id are unsupported");
+      }
+      if (!refsDisabled && "$ref" in record) {
+        if (typeof record.$ref !== "string") {
+          throw new Error("Invalid Promptfoo config ref");
+        }
+        const refKey = `${next.file}\0${next.context}\0${record.$ref}`;
+        if (!discoveredRefs.has(refKey)) {
+          assertConfigRefBudget(discoveredRefs.size);
+          discoveredRefs.add(refKey);
+          const referenced = resolveConfigRef(record.$ref, next.file);
+          pending.push({
+            value: referenced.config,
+            file: referenced.file,
+            context: next.context
+          });
+        }
+      }
+      pending.push(
+        ...Object.entries(record).filter(
+          ([key]) => (key !== "parameters" || !excludedParameterParents.has(record)) && (key !== "validateStatus" || !httpValidateStatusParents.has(record)) && (![
+            "transformRequest",
+            "transformResponse",
+            "responseParser",
+            "sessionParser"
+          ].includes(key) || !httpTransformParents.has(record)) && (key !== "responseParser" || !httpSessionParserParents.has(record)) && (key !== "path" || !httpFileAuthParents.has(record)) && (key !== "id" || !providerIdParents.has(record))
+        ).map(
+          ([key, value]) => ({
+            value,
+            file: next.file,
+            context: key === "providers" || key === "targets" ? "provider-list" : key === "assert" ? "assertion" : next.context === "provider-list" ? Array.isArray(record) ? "provider-list" : "general" : next.context
+          })
+        )
+      );
+    }
+    const inspectEnvironmentDependencies = (value, sourceFile, isCommandLineOptions, depth) => {
+      if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return false;
+      }
+      assertConfigDepth(depth);
+      const record = value;
+      if (!refsDisabled && !isCommandLineOptions && typeof record.$ref === "string" && typeof record.commandLineOptions === "object" && record.commandLineOptions !== null && ("$ref" in record.commandLineOptions || "envPath" in record.commandLineOptions)) {
+        throw new Error("Ambiguous extended Promptfoo config envPath refs");
+      }
+      if (isCommandLineOptions && "envPath" in record) {
+        if (!refsDisabled && "$ref" in record) {
+          throw new Error("Ambiguous extended Promptfoo config envPath refs");
+        }
+        const envPath = record.envPath;
+        if (typeof envPath !== "string" && (!Array.isArray(envPath) || envPath.some((entry) => typeof entry !== "string"))) {
+          throw new Error("Invalid commandLineOptions.envPath");
+        }
+        const rawEntries = Array.isArray(envPath) ? envPath : [envPath];
+        const envDependencies = [];
+        for (const rawEntry of rawEntries) {
+          if (rawEntry.split(",").every((part) => part.trim().length === 0)) {
+            continue;
+          }
+          if (/\{[{%#]/.test(rawEntry)) {
+            throw new Error(
+              "Dynamic commandLineOptions.envPath cannot be safely inspected"
+            );
+          }
+          if (rawEntry.split(",").some((part) => isUnsupportedWindowsPath(part.trim()))) {
+            throw new Error(
+              "commandLineOptions.envPath uses an unsupported Windows path"
+            );
+          }
+          const resolvedEntry = path5.isAbsolute(rawEntry) ? rawEntry : path5.resolve(configDir, rawEntry);
+          for (const entry of resolvedEntry.split(",").map((part) => part.trim()).filter(Boolean)) {
+            envDependencies.push(entry);
+            addSafeDependency(
+              entry,
+              resolvedWorkingDirectory,
+              "commandLineOptions.envPath"
+            );
+          }
+        }
+        const lastEnvDependency = envDependencies[envDependencies.length - 1];
+        if (process.env.DOTENV_KEY && lastEnvDependency) {
+          addSafeDependency(
+            lastEnvDependency.endsWith(".vault") ? lastEnvDependency : `${lastEnvDependency}.vault`,
+            resolvedWorkingDirectory,
+            "commandLineOptions.envPath vault"
+          );
+        }
+        return true;
+      }
+      if (!isCommandLineOptions && "commandLineOptions" in record && inspectEnvironmentDependencies(
+        record.commandLineOptions,
+        sourceFile,
+        true,
+        depth + 1
+      )) {
+        return true;
+      }
+      if (!refsDisabled && typeof record.$ref === "string") {
+        const inspectionKey = `${sourceFile}\0${record.$ref}\0${isCommandLineOptions}`;
+        if (inspectedRefs.has(inspectionKey)) {
+          return false;
+        }
+        assertConfigRefBudget(inspectedRefs.size);
+        inspectedRefs.add(inspectionKey);
+        const referenced = resolveConfigRef(record.$ref, sourceFile);
+        return inspectEnvironmentDependencies(
+          referenced.config,
+          referenced.file,
+          isCommandLineOptions,
+          depth + 1
+        );
       }
       return false;
     };
+    inspectEnvironmentDependencies(config2, lexicalConfigPath, false, 0);
+    const resolveConfigDependency = (filePath, source) => {
+      try {
+        if (!filePath) {
+          throw new Error(`${source} is empty`);
+        }
+        if (filePath.includes("\0")) {
+          throw new Error(`${source} contains an invalid null byte`);
+        }
+        if (/[\r\n]/.test(filePath)) {
+          throw new Error(`${source} contains an invalid line break`);
+        }
+        if (isUnsupportedWindowsPath(filePath)) {
+          throw new Error(`${source} uses an unsupported Windows path`);
+        }
+        const absolutePath = path5.resolve(configDir, filePath);
+        if (!isSafeDependency(absolutePath)) {
+          throw new Error(
+            `${source} must stay within the repository workspace`
+          );
+        }
+        let lexicalStats;
+        let existingPath = absolutePath;
+        try {
+          lexicalStats = fs6.lstatSync(absolutePath);
+        } catch (error2) {
+          const code = error2.code;
+          if (code !== "ENOENT" && code !== "ENOTDIR") {
+            throw error2;
+          }
+          while (true) {
+            const parentPath = path5.dirname(existingPath);
+            if (parentPath === existingPath) {
+              throw error2;
+            }
+            existingPath = parentPath;
+            try {
+              fs6.lstatSync(existingPath);
+              break;
+            } catch (parentError) {
+              const parentCode = parentError.code;
+              if (parentCode !== "ENOENT" && parentCode !== "ENOTDIR") {
+                throw parentError;
+              }
+            }
+          }
+          const realExistingPath = path5.resolve(fs6.realpathSync(existingPath));
+          if (!getRealDependencyRoots().some(
+            (root) => isPathInside(root, realExistingPath)
+          )) {
+            throw new Error(
+              `${source} resolved path must stay within the repository workspace`
+            );
+          }
+        }
+        if (lexicalStats) {
+          let realPath;
+          try {
+            realPath = path5.resolve(fs6.realpathSync(absolutePath));
+          } catch (error2) {
+            const code = error2.code;
+            if (lexicalStats.isSymbolicLink() || code !== "ENOENT" && code !== "ENOTDIR") {
+              throw new Error(`${source} resolved path cannot be verified`);
+            }
+          }
+          if (realPath && !getRealDependencyRoots().some(
+            (root) => isPathInside(root, realPath)
+          )) {
+            throw new Error(
+              `${source} resolved path must stay within the repository workspace`
+            );
+          }
+        }
+        return absolutePath;
+      } catch (error2) {
+        if (String(error2).includes("resolved path")) {
+          requiresFullEvaluation = true;
+        }
+        if (!warnedUnsafeDependency) {
+          warnedUnsafeDependency = true;
+          warning(
+            `Ignoring unsafe config dependency "${sanitizeLogText(filePath)}": ${sanitizeLogText(
+              String(error2).replace(/^(?:[A-Za-z]+)?Error: /, "")
+            )}`
+          );
+        }
+        return void 0;
+      }
+    };
     const inspectTransitiveReference = (reference) => {
       const rawPath = reference.startsWith("file://") ? reference.slice("file://".length) : reference;
-      if (!rawPath || rawPath.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(rawPath)) {
-        markUnsafeDependency();
-        return;
+      if (!rawPath || rawPath.length > maxGlobPatternLength || /[\0\r\n]/.test(rawPath)) {
+        throw new Error("Invalid transitive Promptfoo config dependency");
       }
       const selectorIndex = rawPath.lastIndexOf(":");
       const candidatePath = selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
       const filePath = TRANSITIVE_CONFIG_EXTENSION.test(rawPath) ? rawPath : TRANSITIVE_CONFIG_EXTENSION.test(candidatePath) ? candidatePath : void 0;
       if (!filePath) return;
       if (BINARY_TRANSITIVE_CONFIG_EXTENSION.test(filePath)) {
-        markUnsafeDependency();
+        throw new Error(
+          "Binary Promptfoo test dependencies cannot be safely inspected"
+        );
+      }
+      if (hasGlobMagic(filePath)) {
+        throw new Error(
+          "Dynamic transitive Promptfoo config dependencies cannot be safely inspected"
+        );
+      }
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        "transitive Promptfoo config dependency"
+      );
+      if (!absolutePath) {
+        throw new Error("Unsafe transitive Promptfoo config dependency");
+      }
+      const stat2 = fs6.statSync(absolutePath);
+      if (stat2.size > MAX_TRANSITIVE_CONFIG_BYTES) {
+        throw new Error(
+          "Transitive Promptfoo config dependency exceeds the size limit"
+        );
+      }
+      const contents = fs6.readFileSync(absolutePath, "utf8").toString();
+      if (Buffer.byteLength(contents, "utf8") > MAX_TRANSITIVE_CONFIG_BYTES || contents.includes("file://") || hasTransitiveNestedReference(contents)) {
+        throw new Error(
+          "Nested transitive Promptfoo config dependencies require a full evaluation"
+        );
+      }
+    };
+    const processFileUrl = (fileUrl) => {
+      const filePath = fileUrl.replace("file://", "");
+      if (filePath.length > maxGlobPatternLength) {
+        throw new Error("Config file dependency pattern is too long");
+      }
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        "config file dependency"
+      );
+      if (!absolutePath) {
         return;
       }
       if (hasGlobMagic(filePath)) {
-        markUnsafeDependency();
-        return;
-      }
-      const absolutePath = resolveConfigDependency(filePath);
-      if (!absolutePath) return;
-      try {
-        const stat2 = fs5.statSync(absolutePath);
-        if (stat2.size > MAX_TRANSITIVE_CONFIG_BYTES) {
-          markUnsafeDependency();
-          return;
+        if (hasUnsafeGroupedGlob(filePath)) {
+          throw new Error("Unsafe grouped config dependency pattern");
         }
-        const contents = fs5.readFileSync(absolutePath, "utf8").toString();
-        if (Buffer.byteLength(contents, "utf8") > MAX_TRANSITIVE_CONFIG_BYTES || contents.includes("file://") || hasTransitiveNestedReference(contents)) {
-          markUnsafeDependency();
+        const braceGroups = filePath.match(/\{[^{}]*\}/g) ?? [];
+        const openBraceCount = (filePath.match(/\{/g) ?? []).length;
+        let braceExpansions = 1;
+        if (openBraceCount !== braceGroups.length) {
+          throw new Error("Nested config dependency brace patterns are unsafe");
         }
-      } catch {
-        markUnsafeDependency();
-      }
-    };
-    const processHttpProvider = (providerId, providerConfig) => {
-      const dynamicProviderId = providerId.includes("{{") || providerId.includes("{%");
-      if (!/^https?(?::|$)/.test(providerId) && !dynamicProviderId || typeof providerConfig !== "object" || providerConfig === null) {
-        return;
-      }
-      const httpConfig = providerConfig;
-      if (extractNestedFileReferences(httpConfig.body)) {
-        markUnsafeDependency();
-      }
-      const processRawReference = (reference) => {
-        if (typeof reference !== "string") return;
-        processFilePath(reference);
-      };
-      if (typeof httpConfig.validateStatus === "string" && httpConfig.validateStatus.startsWith("file://")) {
-        processFileUrl(httpConfig.validateStatus, "http");
-      }
-      for (const field of [
-        "transformRequest",
-        "transformResponse",
-        "responseParser",
-        "sessionParser"
-      ]) {
-        const reference = httpConfig[field];
-        if (typeof reference === "string" && reference.startsWith("file://")) {
-          processFileUrl(reference, "http");
+        for (const braceGroup of braceGroups) {
+          braceExpansions *= braceGroup.split(",").length;
+          if (braceExpansions > maxGlobBraceExpansions) {
+            throw new Error("Config dependency brace expansion is too large");
+          }
         }
-      }
-      const session = httpConfig.session;
-      if (typeof session === "object" && session !== null && typeof session.responseParser === "string" && session.responseParser.startsWith("file://")) {
-        processFileUrl(
-          session.responseParser,
-          "http"
+        const filePathRoot = path5.parse(filePath).root;
+        const pathParts = filePath.slice(filePathRoot.length).split(/[\\/]/);
+        let basePath = filePathRoot;
+        for (const part of pathParts) {
+          if (hasGlobMagic(part)) {
+            break;
+          }
+          basePath = basePath ? path5.join(basePath, part) : part;
+        }
+        const baseDirectory = resolveConfigDependency(
+          basePath || ".",
+          "config file dependency glob base"
         );
-      }
-      const auth2 = httpConfig.auth;
-      const authType = typeof auth2 === "object" && auth2 !== null ? auth2.type : void 0;
-      if (typeof auth2 === "object" && auth2 !== null && (authType === "file" || typeof authType === "string" && (authType.includes("{{") || authType.includes("{%")))) {
-        const authPath = auth2.path;
-        if (typeof authPath === "string" && authPath.startsWith("file://")) {
-          processFileUrl(authPath, "auth");
-        } else {
-          processRawReference(authPath);
-        }
-      }
-      const processPathFields = (value, fields) => {
-        if (typeof value !== "object" || value === null) return;
-        const paths = value;
-        for (const field of fields) processRawReference(paths[field]);
-      };
-      processPathFields(httpConfig.tls, [
-        "caPath",
-        "certPath",
-        "keyPath",
-        "pfxPath",
-        "jksPath"
-      ]);
-      processPathFields(httpConfig.signatureAuth, [
-        "privateKeyPath",
-        "keystorePath",
-        "pfxPath",
-        "certPath",
-        "keyPath"
-      ]);
-      const multipart = httpConfig.multipart;
-      if (typeof multipart === "object" && multipart !== null) {
-        const parts = multipart.parts;
-        if (Array.isArray(parts)) {
-          for (const part of parts) {
-            if (typeof part !== "object" || part === null) continue;
-            const partRecord = part;
-            const source = partRecord.source;
-            if (typeof source !== "object" || source === null) continue;
-            const sourceRecord = source;
-            const kind = partRecord.kind;
-            const sourceType = sourceRecord.type;
-            const dynamicKind = typeof kind === "string" && (kind.includes("{{") || kind.includes("{%"));
-            const dynamicSourceType = typeof sourceType === "string" && (sourceType.includes("{{") || sourceType.includes("{%"));
-            if (kind === "file" || sourceType === "path" || dynamicKind || dynamicSourceType) {
-              const sourcePath = sourceRecord.path;
-              if (typeof sourcePath === "string" && sourcePath.startsWith("file://")) {
-                processFileUrl(sourcePath);
-              } else {
-                processRawReference(sourcePath);
-              }
-            }
-          }
-        }
-      }
-    };
-    const processProviderId = (providerId) => {
-      if (providerId.startsWith("file://")) {
-        processFileUrl(providerId, "provider");
-        inspectTransitiveReference(providerId);
-        if (TRANSITIVE_CONFIG_EXTENSION.test(providerId.slice("file://".length))) {
-          markUnsafeDependency();
-        }
-        return;
-      }
-      if (providerId.startsWith("exec:")) {
-        const executable = providerId.slice("exec:".length);
-        if (executable.startsWith("file://")) {
-          processFileUrl(executable, "provider");
-        } else if (/\s/.test(executable)) {
-          markUnsafeDependency();
-        } else {
-          processFilePath(executable);
-        }
-        return;
-      }
-      for (const prefix of ["python:", "golang:", "ruby:"]) {
-        if (providerId.startsWith(prefix)) {
-          processFileUrl(
-            `file://${providerId.slice(prefix.length)}`,
-            "provider"
+        if (baseDirectory) {
+          dependencies.add(
+            `${baseDirectory.replace(/[\\/]+$/, "")}${path5.sep}`
           );
-          return;
         }
-      }
-      if (JS_EXTENSION_CASE_INSENSITIVE.test(providerId)) {
-        processFilePath(providerId);
+      } else if (isDirectory2(absolutePath)) {
+        const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
+        dependencies.add(directoryPath);
+      } else {
+        dependencies.add(absolutePath);
       }
     };
-    const processProvider = (provider) => {
-      if (typeof provider === "string") {
-        processProviderId(provider);
-        return;
-      }
-      if (typeof provider !== "object" || provider === null) {
-        return;
-      }
-      const record = provider;
-      const scanProviderConfig = (providerId2, config3) => {
-        if (typeof config3 !== "object" || config3 === null) return;
-        const knownHttpFields = /* @__PURE__ */ new Set([
-          "validateStatus",
-          "transformRequest",
-          "transformResponse",
-          "responseParser",
-          "sessionParser",
-          "session",
-          "auth",
-          "tls",
-          "signatureAuth",
-          "body"
-        ]);
-        for (const [field, value] of Object.entries(config3)) {
-          if ((!/^https?(?::|$)/.test(providerId2) || !knownHttpFields.has(field)) && extractNestedFileReferences(value)) {
-            markUnsafeDependency();
-            return;
+    const processProviderFiles = (providers) => {
+      for (const provider of normalizeProviderEntries(providers)) {
+        if (typeof provider !== "string" && (typeof provider !== "object" || provider === null)) {
+          continue;
+        }
+        const providerIds = typeof provider === "string" ? [provider] : typeof provider.id === "string" ? [provider.id] : Object.keys(provider);
+        for (const providerId of providerIds) {
+          for (const fileUrl of normalizeProviderFileUrls(providerId)) {
+            inspectTransitiveReference(fileUrl);
+            if (TRANSITIVE_CONFIG_EXTENSION.test(fileUrl.slice("file://".length))) {
+              throw new Error(
+                "External Promptfoo provider configs require a full evaluation"
+              );
+            }
+            processFileUrl(fileUrl);
           }
         }
-      };
-      const processTransform = (value) => {
-        if (typeof value === "string" && value.startsWith("file://")) {
-          processFileUrl(value, "auth");
-        }
-      };
-      if (typeof record.id === "string") {
-        processProviderId(record.id);
-        processTransform(record.transform);
-        scanProviderConfig(record.id, record.config);
-        processHttpProvider(record.id, record.config);
-        return;
       }
-      const providerEntries = Object.entries(record);
-      if (providerEntries.length !== 1) {
-        return;
-      }
-      const [providerId, providerOptions] = providerEntries[0];
-      processProviderId(providerId);
-      if (typeof providerOptions !== "object" || providerOptions === null) {
-        return;
-      }
-      const options = providerOptions;
-      processTransform(options.transform);
-      scanProviderConfig(providerId, options.config);
-      processHttpProvider(providerId, options.config);
     };
-    for (const configuredProviders of [config2.providers, config2.targets]) {
-      if (!configuredProviders) continue;
-      const providers = Array.isArray(configuredProviders) ? configuredProviders : [configuredProviders];
-      for (const provider of providers) processProvider(provider);
+    for (const providers of [config2.providers, config2.targets]) {
+      processProviderFiles(providers);
     }
-    const processConfigReference = (reference, selector = "literal") => {
+    const processConfigReference = (reference) => {
       inspectTransitiveReference(reference);
-      if (reference.startsWith("file://")) {
-        processFileUrl(reference, selector);
-      } else if (selector === "auth") {
-        processFileUrl(`file://${reference}`, selector);
-      } else {
-        processFilePath(reference);
-      }
-    };
-    const processPromptReference = (reference) => {
-      if (reference.startsWith("exec:")) {
-        const executable = reference.slice("exec:".length);
-        if (executable.startsWith("file://")) {
-          processFileUrl(executable, "provider");
-        } else if (/\s/.test(executable)) {
-          markUnsafeDependency();
-        } else {
-          processFilePath(executable);
-        }
-        return;
-      }
       processFileUrl(
-        reference.startsWith("file://") ? reference : `file://${reference}`,
-        "provider"
+        reference.startsWith("file://") ? reference : `file://${reference}`
       );
     };
-    const isPromptReference = (reference) => {
-      if (!reference || reference.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(reference)) {
-        markUnsafeDependency();
-        return false;
+    const processHookReference = (reference) => {
+      if (typeof reference !== "string" || !reference.startsWith("file://")) {
+        return;
       }
-      if (reference.includes("{{") || reference.includes("{%")) {
-        return reference.includes("file://");
+      normalizedSelectorUrls.add(reference);
+      for (const fileUrl of normalizeFileUrlSelectors(
+        reference,
+        /\.(?:js|cjs|mjs|ts|cts|mts|py)$/
+      )) {
+        processFileUrl(fileUrl);
+      }
+    };
+    const processNestedHookReferences = (value) => {
+      const pendingValues = [value];
+      const visited = /* @__PURE__ */ new WeakSet();
+      let inspected = 0;
+      while (pendingValues.length > 0) {
+        const current = pendingValues.pop();
+        inspected++;
+        if (inspected > MAX_NESTED_CONFIG_VALUES) {
+          throw new Error(
+            "Nested Promptfoo hook dependencies exceed the limit"
+          );
+        }
+        if (typeof current === "string") {
+          processHookReference(current);
+          continue;
+        }
+        if (typeof current !== "object" || current === null) continue;
+        if (visited.has(current)) {
+          throw new Error(
+            "Circular Promptfoo hook dependencies are unsupported"
+          );
+        }
+        visited.add(current);
+        pendingValues.push(...Object.values(current));
+      }
+    };
+    const processProviderHooks = (provider) => {
+      if (typeof provider !== "object" || provider === null) return;
+      const record = provider;
+      processHookReference(record.transform);
+      const mapped = typeof record.id === "string" ? record : Object.values(record).find(
+        (value) => typeof value === "object" && value !== null
+      );
+      if (typeof mapped !== "object" || mapped === null) return;
+      processHookReference(mapped.transform);
+    };
+    const processNestedProvider = (provider) => {
+      processProviderFiles(provider);
+      processProviderHooks(provider);
+    };
+    for (const providers of [config2.providers, config2.targets]) {
+      for (const provider of normalizeProviderEntries(providers)) {
+        processProviderHooks(provider);
+      }
+    }
+    const isPromptReference = (reference) => {
+      if (!reference || reference.length > maxGlobPatternLength || reference.includes("\0")) {
+        throw new Error("Invalid Promptfoo prompt dependency");
+      }
+      if (["\n", "portkey://", "langfuse://", "helicone://"].some(
+        (value) => reference.includes(value)
+      )) {
+        return false;
       }
       if (reference.startsWith("file://") || reference.startsWith("exec:")) {
         return true;
@@ -37051,23 +37510,43 @@ function extractFileDependencies(configPath) {
       }
       return hasExtension;
     };
+    const processPromptReference = (reference) => {
+      if (!isPromptReference(reference)) {
+        return;
+      }
+      let fileUrl = reference;
+      if (reference.startsWith("file://")) {
+        normalizedSelectorUrls.add(reference);
+      }
+      if (reference.startsWith("exec:")) {
+        const executable = reference.slice("exec:".length);
+        if (/\s/.test(executable)) {
+          throw new Error("Command-style Promptfoo exec prompts are unsafe");
+        }
+        fileUrl = executable.startsWith("file://") ? executable : `file://${executable}`;
+      } else if (!reference.startsWith("file://")) {
+        fileUrl = `file://${reference}`;
+      }
+      for (const normalizedFileUrl of normalizeFileUrlSelectors(
+        fileUrl,
+        /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+      )) {
+        processFileUrl(normalizedFileUrl);
+      }
+    };
     if (typeof config2.prompts === "string") {
       processPromptReference(config2.prompts);
     } else if (config2.prompts) {
-      for (const prompt of config2.prompts) {
+      const prompts = Array.isArray(config2.prompts) ? config2.prompts : Object.values(config2.prompts);
+      for (const prompt of prompts) {
         if (typeof prompt === "string") {
-          if (isPromptReference(prompt)) {
-            processPromptReference(prompt);
-          }
+          processPromptReference(prompt);
         } else if (typeof prompt === "object" && prompt !== null) {
           for (const field of ["file", "raw", "id"]) {
             const reference = prompt[field];
-            if (typeof reference === "string" && isPromptReference(reference)) {
+            if (typeof reference === "string") {
               processPromptReference(reference);
             }
-          }
-          if ("config" in prompt && extractNestedFileReferences(prompt.config)) {
-            markUnsafeDependency();
           }
         }
       }
@@ -37080,128 +37559,140 @@ function extractFileDependencies(configPath) {
       }
       if (Array.isArray(vars)) {
         for (const value of vars) {
-          if (typeof value === "string") {
-            processConfigReference(value);
-          } else {
-            markUnsafeDependency();
+          if (typeof value !== "string") {
+            throw new Error("Invalid Promptfoo vars file dependency");
           }
+          processConfigReference(value);
         }
         return;
       }
       if (typeof vars !== "object") {
-        markUnsafeDependency();
-        return;
+        throw new Error("Invalid Promptfoo vars file dependency");
       }
       for (const value of Object.values(vars)) {
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value);
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
-          const absolutePath = resolveConfigDependency(value.file);
+          const absolutePath = resolveConfigDependency(
+            value.file,
+            "test variable file dependency"
+          );
           if (absolutePath) {
             dependencies.add(absolutePath);
           }
         }
       }
     };
-    const visitedAssertions = /* @__PURE__ */ new WeakSet();
-    const extractAssertFiles = (asserts, depth = 0) => {
-      if (!asserts) return;
-      if (!Array.isArray(asserts) || depth > MAX_ASSERTION_DEPTH) {
-        markUnsafeDependency();
-        return;
-      }
-      if (visitedAssertions.has(asserts)) {
-        markUnsafeDependency();
-        return;
-      }
-      visitedAssertions.add(asserts);
-      for (const assert of asserts) {
-        if (typeof assert !== "object" || assert === null) {
-          markUnsafeDependency();
+    const inspectedAsserts = /* @__PURE__ */ new WeakSet();
+    const extractAssertFiles = (asserts) => {
+      if (!Array.isArray(asserts)) return;
+      const pendingAsserts = [...asserts];
+      for (let index = 0; index < pendingAsserts.length; index++) {
+        const assert = pendingAsserts[index];
+        if (typeof assert !== "object" || assert === null || Array.isArray(assert) || inspectedAsserts.has(assert)) {
           continue;
         }
-        if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
-          processFileUrl(assert.value, "assert");
-        } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
-          const absolutePath = resolveConfigDependency(assert.value.file);
+        inspectedAsserts.add(assert);
+        const assertion = assert;
+        if (typeof assertion.value === "string" && assertion.value.startsWith("file://")) {
+          for (const fileUrl of normalizeFileUrlSelectors(
+            assertion.value,
+            /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/,
+            false,
+            true
+          )) {
+            processFileUrl(fileUrl);
+          }
+        } else if (typeof assertion.value === "object" && assertion.value !== null && "file" in assertion.value && typeof assertion.value.file === "string") {
+          const absolutePath = resolveConfigDependency(
+            assertion.value.file,
+            "assertion file dependency"
+          );
           if (absolutePath) {
             dependencies.add(absolutePath);
           }
         }
-        if ("assert" in assert && assert.assert !== void 0) {
-          extractAssertFiles(assert.assert, depth + 1);
+        if (assertion.type === "assert-set" && Array.isArray(assertion.assert)) {
+          pendingAsserts.push(...assertion.assert);
         }
         for (const field of ["transform", "contextTransform"]) {
-          const reference = assert[field];
-          if (typeof reference === "string" && reference.startsWith("file://")) {
-            processFileUrl(reference, "auth");
-          }
+          processHookReference(assertion[field]);
         }
-        if ("provider" in assert) processProvider(assert.provider);
-        if ("rubricPrompt" in assert && extractNestedFileReferences(assert.rubricPrompt)) {
-          markUnsafeDependency();
+        if ("provider" in assertion) {
+          processNestedProvider(
+            assertion.provider
+          );
         }
-      }
-    };
-    const processTestHooks = (test) => {
-      if ("provider" in test) processProvider(test.provider);
-      if (typeof test.assertScoringFunction === "string" && test.assertScoringFunction.startsWith("file://")) {
-        processFileUrl(test.assertScoringFunction, "auth");
-      }
-      const options = test.options;
-      if (typeof options !== "object" || options === null) return;
-      const optionRecord = options;
-      for (const field of ["postprocess", "transform", "transformVars"]) {
-        const reference = optionRecord[field];
-        if (typeof reference === "string" && reference.startsWith("file://")) {
-          processFileUrl(reference, "auth");
+        if ("rubricPrompt" in assertion) {
+          processNestedHookReferences(
+            assertion.rubricPrompt
+          );
         }
       }
-      if ("rubricPrompt" in optionRecord && extractNestedFileReferences(optionRecord.rubricPrompt)) {
-        markUnsafeDependency();
-      }
-      if ("provider" in optionRecord) processProvider(optionRecord.provider);
     };
     if (typeof config2.defaultTest === "string") {
       processConfigReference(config2.defaultTest);
     } else if (config2.defaultTest) {
       extractVarFiles(config2.defaultTest.vars);
       extractAssertFiles(config2.defaultTest.assert);
-      processTestHooks(config2.defaultTest);
+      const defaultTest = config2.defaultTest;
+      processHookReference(defaultTest.assertScoringFunction);
+      processNestedProvider(defaultTest.provider);
+      if (typeof defaultTest.options === "object" && defaultTest.options) {
+        const options = defaultTest.options;
+        for (const field of ["postprocess", "transform", "transformVars"]) {
+          processHookReference(options[field]);
+        }
+        processNestedProvider(options.provider);
+        processNestedHookReferences(options.rubricPrompt);
+      }
     }
     const processTestInputs = (tests) => {
       if (typeof tests === "string") {
-        processConfigReference(tests, "auth");
+        processConfigReference(tests);
         return;
       }
-      if (!Array.isArray(tests)) {
-        markUnsafeDependency();
-        return;
-      }
-      for (const test of tests) {
+      const testEntries = Array.isArray(tests) ? tests : [tests];
+      for (const test of testEntries) {
         if (typeof test === "string") {
-          processConfigReference(test, "auth");
+          processConfigReference(test);
           continue;
         }
         if (typeof test !== "object" || test === null) {
-          markUnsafeDependency();
-          continue;
+          throw new Error("Invalid Promptfoo test dependency");
         }
-        if ("path" in test && typeof test.path === "string") {
-          processConfigReference(test.path, "auth");
-          if ("config" in test && test.config !== void 0) {
-            markUnsafeDependency();
+        const testRecord = test;
+        if (typeof testRecord.path === "string") {
+          const rawPath = testRecord.path.startsWith("file://") ? testRecord.path : `file://${testRecord.path}`;
+          normalizedSelectorUrls.add(rawPath);
+          for (const fileUrl of normalizeFileUrlSelectors(
+            rawPath,
+            /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+          )) {
+            processFileUrl(fileUrl);
           }
         }
-        extractVarFiles(test.vars);
-        extractAssertFiles(test.assert);
-        processTestHooks(test);
+        extractVarFiles(testRecord.vars);
+        extractAssertFiles(
+          testRecord.assert
+        );
+        processHookReference(testRecord.assertScoringFunction);
+        processNestedProvider(testRecord.provider);
+        processNestedHookReferences(testRecord.config);
+        if (typeof testRecord.options === "object" && testRecord.options) {
+          const options = testRecord.options;
+          for (const field of ["postprocess", "transform", "transformVars"]) {
+            processHookReference(options[field]);
+          }
+          processNestedProvider(options.provider);
+          processNestedHookReferences(options.rubricPrompt);
+        }
       }
     };
-    if (config2.tests) {
+    if (config2.tests !== void 0) {
       processTestInputs(config2.tests);
     }
-    if (config2.scenarios) {
+    if (config2.scenarios !== void 0) {
       const scenarios = Array.isArray(config2.scenarios) ? config2.scenarios : [config2.scenarios];
       for (const scenario of scenarios) {
         if (typeof scenario === "string") {
@@ -37209,35 +37700,76 @@ function extractFileDependencies(configPath) {
           continue;
         }
         if (typeof scenario !== "object" || scenario === null) {
-          markUnsafeDependency();
-          continue;
+          throw new Error("Invalid Promptfoo scenario dependency");
         }
-        if ("tests" in scenario && scenario.tests !== void 0) {
-          processTestInputs(scenario.tests);
+        const scenarioRecord = scenario;
+        if (scenarioRecord.tests !== void 0) {
+          processTestInputs(scenarioRecord.tests);
         }
-        if ("config" in scenario && scenario.config !== void 0) {
-          processTestInputs(scenario.config);
+        if (scenarioRecord.config !== void 0) {
+          processTestInputs(scenarioRecord.config);
         }
       }
     }
-    if (config2.nunjucksFilters) {
+    if (config2.nunjucksFilters !== void 0) {
+      if (typeof config2.nunjucksFilters !== "object" || config2.nunjucksFilters === null || Array.isArray(config2.nunjucksFilters)) {
+        throw new Error("Invalid Promptfoo Nunjucks filter dependency");
+      }
       for (const filter of Object.values(config2.nunjucksFilters)) {
-        if (typeof filter === "string") {
-          processFilePath(filter);
-        } else {
-          markUnsafeDependency();
+        if (typeof filter !== "string") {
+          throw new Error("Invalid Promptfoo Nunjucks filter dependency");
         }
+        processConfigReference(filter);
       }
     }
-    if (config2.extensions) {
+    if (config2.extensions !== void 0) {
       if (!Array.isArray(config2.extensions)) {
-        markUnsafeDependency();
-      } else {
-        for (const extension of config2.extensions) {
-          if (typeof extension === "string" && extension.startsWith("file://")) {
-            processFileUrl(extension, "auth");
-          } else {
-            markUnsafeDependency();
+        throw new Error("Invalid Promptfoo extension dependency");
+      }
+      for (const extension of config2.extensions) {
+        if (typeof extension !== "string") {
+          throw new Error("Invalid Promptfoo extension dependency");
+        }
+        processHookReference(extension);
+      }
+    }
+    for (const fileUrl of nestedFileUrls) {
+      if (!normalizedSelectorUrls.has(fileUrl)) {
+        processFileUrl(fileUrl);
+      }
+    }
+    for (const filePath of nestedFilePaths) {
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        "referenced file dependency"
+      );
+      if (absolutePath) {
+        dependencies.add(absolutePath);
+      }
+    }
+    if (isPathInside(cwd, configDir)) {
+      for (const configName of ["promptfooconfig", "redteam"]) {
+        for (const extension of [
+          "yaml",
+          "yml",
+          "json",
+          "cjs",
+          "cts",
+          "js",
+          "mjs",
+          "mts",
+          "ts"
+        ]) {
+          const implicitConfig = path5.resolve(
+            resolvedWorkingDirectory,
+            `${configName}.${extension}`
+          );
+          if (implicitConfig !== lexicalConfigPath) {
+            addSafeDependency(
+              implicitConfig,
+              resolvedWorkingDirectory,
+              "Implicit Promptfoo config"
+            );
           }
         }
       }
@@ -37245,17 +37777,22 @@ function extractFileDependencies(configPath) {
     if (requiresFullEvaluation) {
       return ["./"];
     }
-    return Array.from(dependencies).map((dependency) => {
-      const relativePath = path5.relative(cwd, dependency);
+    return Array.from(dependencies).map((dep) => {
+      const relativePath = path5.relative(cwd, dep);
+      if (relativePath === "") {
+        return "./";
+      }
       const repositoryPath = relativePath.split(path5.sep).join("/");
-      if (/[\\/]$/.test(dependency)) {
-        return repositoryPath ? `${repositoryPath}/` : "./";
+      if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
+        return `${repositoryPath}/`;
       }
       return repositoryPath;
     });
-  } catch {
+  } catch (error2) {
     warning(
-      "Failed to extract config dependencies safely; running a full evaluation."
+      `Failed to extract dependencies from config: ${sanitizeLogText(
+        error2 instanceof Error ? error2.message : String(error2)
+      )}`
     );
     return ["./"];
   }
@@ -37263,6 +37800,8 @@ function extractFileDependencies(configPath) {
 
 // src/utils/env.ts
 var dotenv = __toESM(require_main());
+var fs7 = __toESM(require("fs"));
+var path6 = __toESM(require("path"));
 var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "__PROTO__",
   "ABLIT_API_BASE_URL",
@@ -37369,9 +37908,9 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "GCCGO",
   "GCCGOTOOLDIR",
   "GCC_EXEC_PREFIX",
-  "GCLOUD_PROJECT",
   "GCE_METADATA_HOST",
   "GCE_METADATA_IP",
+  "GCLOUD_PROJECT",
   "GEM_HOME",
   "GEM_PATH",
   "GEM_SPEC_CACHE",
@@ -37485,12 +38024,14 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST",
   "PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST",
   "PORTKEY_API_BASE_URL",
-  "PROMPTFOO_CACHE_PATH",
   "PROMPTFOO_API_KEY",
   "PROMPTFOO_AUTHOR",
+  "PROMPTFOO_CACHE_ENABLED",
   "PROMPTFOO_CACHE_MAX_FILE_COUNT",
   "PROMPTFOO_CACHE_MAX_SIZE",
+  "PROMPTFOO_CACHE_PATH",
   "PROMPTFOO_CACHE_TTL",
+  "PROMPTFOO_CACHE_TYPE",
   "PROMPTFOO_CA_CERT_PATH",
   "PROMPTFOO_CLOUD_API_URL",
   "PROMPTFOO_CONFIG_DIR",
@@ -37512,7 +38053,11 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_JKS_CERT_PATH",
   "PROMPTFOO_LOG_DIR",
   "PROMPTFOO_MEDIA_PATH",
+  "PROMPTFOO_OTEL_DEBUG",
+  "PROMPTFOO_OTEL_ENABLED",
   "PROMPTFOO_OTEL_ENDPOINT",
+  "PROMPTFOO_OTEL_LOCAL_EXPORT",
+  "PROMPTFOO_OTEL_SERVICE_NAME",
   "PROMPTFOO_PASS_RATE_THRESHOLD",
   "PROMPTFOO_PFX_CERT_PATH",
   "PROMPTFOO_PYTHON",
@@ -37523,6 +38068,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_SELF_HOSTED",
   "PROMPTFOO_SHARING_APP_BASE_URL",
   "PROMPTFOO_STRICT_FILES",
+  "PROMPTFOO_TRACING_ENABLED",
   "PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT",
   "PROTOTYPE",
   "PUPPETEER_CACHE_DIR",
@@ -37577,6 +38123,10 @@ var FORBIDDEN_ENV_FILE_PREFIXES = [
   "OTEL_EXPORTER_OTLP_",
   "PROMPTFOO_STRIP_"
 ];
+var FORBIDDEN_AUTH_KEYS = /* @__PURE__ */ new Set([
+  "PROMPTFOO_API_KEY",
+  "PROMPTFOO_REMOTE_API_BASE_URL"
+]);
 function findForbiddenEnvFileKey(environment) {
   return Object.keys(environment).find((key) => {
     const normalizedKey = key.toUpperCase();
@@ -37585,8 +38135,14 @@ function findForbiddenEnvFileKey(environment) {
     );
   });
 }
+function findForbiddenAuthKey(environment) {
+  return Object.keys(environment).find(
+    (key) => FORBIDDEN_AUTH_KEYS.has(key.toUpperCase())
+  );
+}
 function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, override = true) {
-  if (/[\0\r\n]/.test(envFilePath)) {
+  const filePaths = Array.isArray(envFilePath) ? envFilePath : [envFilePath];
+  if (filePaths.some((filePath) => /[\0\r\n]/.test(filePath))) {
     throw new PromptfooActionError(
       "Invalid environment file path: control characters are not allowed.",
       ErrorCodes.INVALID_CONFIGURATION,
@@ -37607,12 +38163,20 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, overr
       "Check that the file exists and has valid .env format"
     );
   }
+  const forbiddenAuthKey = findForbiddenAuthKey(fileEnvironment);
+  if (forbiddenAuthKey) {
+    throw new PromptfooActionError(
+      `Environment file ${envFilePath} sets protected authentication variable ${forbiddenAuthKey}`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Configure Promptfoo authentication variables only in the trusted workflow environment."
+    );
+  }
   const forbiddenKey = findForbiddenEnvFileKey(fileEnvironment);
   if (forbiddenKey) {
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      "Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead."
+      "Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, telemetry/tracing, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead."
     );
   }
   for (const [key, value] of Object.entries(fileEnvironment)) {
@@ -37621,14 +38185,419 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, overr
     }
   }
 }
-
-// src/utils/fs.ts
-var fs6 = __toESM(require("fs"));
-function isDirectory2(filePath) {
-  try {
-    return fs6.statSync(filePath).isDirectory();
-  } catch {
+function assertWorkspacePath(filePath, workingDirectory, source) {
+  const resolvedPath = path6.resolve(filePath);
+  const relativePath = path6.relative(workingDirectory, resolvedPath);
+  if (relativePath === ".." || relativePath.startsWith(`..${path6.sep}`) || path6.isAbsolute(relativePath)) {
+    throw new PromptfooActionError(
+      `${source} ${filePath} must stay within the working directory`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Use a repository-local ${source}.`
+    );
+  }
+  if (!fs7.existsSync(resolvedPath)) {
+    throw new PromptfooActionError(
+      `${source} ${resolvedPath} not found`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Check the configured ${source}.`
+    );
+  }
+  const realWorkingDirectory = fs7.realpathSync(workingDirectory);
+  const realPath = fs7.realpathSync(resolvedPath);
+  const realRelativePath = path6.relative(realWorkingDirectory, realPath);
+  if (realRelativePath === ".." || realRelativePath.startsWith(`..${path6.sep}`) || path6.isAbsolute(realRelativePath)) {
+    throw new PromptfooActionError(
+      `${source} ${filePath} must stay within the working directory`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      `Use a repository-local ${source}.`
+    );
+  }
+  return realPath;
+}
+function isUnsupportedWindowsPath2(filePath) {
+  return /^[A-Za-z]:(?![\\/])/.test(filePath) || /^(?:file:\/\/)?\/[A-Za-z]:[\\/]/i.test(filePath) || !path6.isAbsolute(filePath) && path6.win32.isAbsolute(filePath);
+}
+function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironment = process.env) {
+  if (isUnsupportedWindowsPath2(configPath) || le(configPath, {
+    magicalBraces: true,
+    windowsPathsNoEscape: true
+  })) {
+    throw new PromptfooActionError(
+      `Promptfoo config glob ${configPath} cannot be safely preflighted for commandLineOptions.envPath`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Use a single YAML or JSON Promptfoo config."
+    );
+  }
+  if (!fs7.existsSync(configPath)) {
+    throw new PromptfooActionError(
+      `Promptfoo config ${configPath} cannot be safely preflighted for commandLineOptions.envPath`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Use a repository-local YAML or JSON Promptfoo config."
+    );
+  }
+  const lexicalConfigPath = path6.resolve(configPath);
+  const realSelectedConfigPath = fs7.realpathSync(lexicalConfigPath);
+  for (const configName of ["promptfooconfig", "redteam"]) {
+    for (const extension of [
+      "yaml",
+      "yml",
+      "json",
+      "cjs",
+      "cts",
+      "js",
+      "mjs",
+      "mts",
+      "ts"
+    ]) {
+      const defaultConfigPath = path6.resolve(
+        workingDirectory,
+        `${configName}.${extension}`
+      );
+      try {
+        fs7.lstatSync(defaultConfigPath);
+      } catch (error2) {
+        if (error2 instanceof Error && "code" in error2 && error2.code === "ENOENT") {
+          continue;
+        }
+        throw error2;
+      }
+      if (defaultConfigPath !== lexicalConfigPath && (!/\.(?:ya?ml|json)$/i.test(defaultConfigPath) || !/\.(?:ya?ml|json)$/i.test(lexicalConfigPath) || fs7.realpathSync(defaultConfigPath) !== realSelectedConfigPath)) {
+        throw new PromptfooActionError(
+          `Implicit Promptfoo config ${defaultConfigPath} cannot be safely preflighted alongside ${configPath}`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Remove the implicit promptfooconfig or redteam config, or select it directly."
+        );
+      }
+      break;
+    }
+  }
+  if (!/\.(?:ya?ml|json)$/i.test(lexicalConfigPath)) {
+    throw new PromptfooActionError(
+      `Executable Promptfoo config ${configPath} cannot be safely preflighted for commandLineOptions.envPath`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Use a YAML or JSON config and move environment files to the action's env-files input."
+    );
+  }
+  const realConfigPath = assertWorkspacePath(
+    lexicalConfigPath,
+    workingDirectory,
+    "Promptfoo config"
+  );
+  const maxConfigBytes = 2 * 1024 * 1024;
+  const maxConfigDepth = 100;
+  const maxConfigNodes = 1e4;
+  const maxConfigRefs = 100;
+  const schema = CORE_SCHEMA.withTags(
+    mergeTag,
+    binaryTag,
+    timestampTag,
+    omapTag,
+    pairsTag,
+    setTag
+  );
+  const loadedConfigs = /* @__PURE__ */ new Map();
+  const readConfigFile = (filePath) => {
+    if (!/\.(?:ya?ml|json)$/i.test(filePath)) {
+      throw new PromptfooActionError(
+        `Executable Promptfoo config ${filePath} cannot be safely preflighted for commandLineOptions.envPath`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use a YAML or JSON config and move environment files to the action's env-files input."
+      );
+    }
+    const cachedConfig = loadedConfigs.get(filePath);
+    if (cachedConfig !== void 0) {
+      return cachedConfig;
+    }
+    const configStats = fs7.statSync(filePath);
+    if (!configStats.isFile()) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${filePath} must be a regular file`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use a regular YAML or JSON Promptfoo config file."
+      );
+    }
+    if (configStats.size > maxConfigBytes) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${filePath} exceeds the envPath preflight size limit`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Reduce the Promptfoo config or referenced config size."
+      );
+    }
+    const content = fs7.readFileSync(filePath, "utf8");
+    if (Buffer.byteLength(content, "utf8") > maxConfigBytes) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${filePath} exceeds the envPath preflight size limit`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Reduce the Promptfoo config or referenced config size."
+      );
+    }
+    const config3 = load(content, { schema });
+    const inspectedObjects = /* @__PURE__ */ new WeakSet();
+    const pendingValues = [config3];
+    let inspectedNodeCount = 0;
+    while (pendingValues.length > 0) {
+      const value = pendingValues.pop();
+      if (typeof value !== "object" || value === null || !Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype || inspectedObjects.has(value)) {
+        continue;
+      }
+      inspectedObjects.add(value);
+      inspectedNodeCount++;
+      if (inspectedNodeCount > maxConfigNodes) {
+        throw new PromptfooActionError(
+          `Promptfoo config ${filePath} exceeds the envPath preflight traversal limit`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Reduce the Promptfoo config nesting or referenced config size."
+        );
+      }
+      pendingValues.push(...Object.values(value));
+    }
+    loadedConfigs.set(filePath, config3);
+    return config3;
+  };
+  const config2 = readConfigFile(realConfigPath);
+  const inspectedRefs = /* @__PURE__ */ new Set();
+  const configuredPaths = [];
+  const refsDisabled = ["1", "true", "yes", "yup", "yeppers"].includes(
+    (targetEnvironment.PROMPTFOO_DISABLE_REF_PARSER ?? "").toLowerCase()
+  );
+  const resolveRef = (ref, sourceFile) => {
+    const hashIndex = ref.indexOf("#");
+    const refPath = hashIndex === -1 ? ref : ref.slice(0, hashIndex);
+    const fragment = hashIndex === -1 ? "" : ref.slice(hashIndex);
+    if (refPath && /^[a-z][a-z\d+.-]*:/i.test(refPath)) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${refPath} must stay within the working directory`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use a repository-local Promptfoo config $ref."
+      );
+    }
+    if (refPath.includes("\\")) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${refPath} uses backslashes and cannot be safely preflighted`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use forward slashes in repository-local Promptfoo config refs."
+      );
+    }
+    const hasControlCharacters = [...refPath + fragment].some((character) => {
+      const code = character.charCodeAt(0);
+      return code < 32 || code === 127;
+    });
+    const hasOuterWhitespace = refPath.length > 0 && (refPath.charCodeAt(0) <= 32 || refPath.charCodeAt(refPath.length - 1) <= 32);
+    if (hasControlCharacters || hasOuterWhitespace) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${ref} uses control characters and cannot be safely preflighted`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use a repository-local Promptfoo config ref without control characters."
+      );
+    }
+    if (refPath.includes("%")) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${refPath} uses an encoded path and cannot be safely preflighted`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use an unencoded repository-local Promptfoo config ref path."
+      );
+    }
+    if (fragment.includes("%")) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${fragment} uses an encoded fragment and cannot be safely preflighted`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use an unencoded JSON pointer fragment in the Promptfoo config ref."
+      );
+    }
+    if (fragment.includes("\\")) {
+      throw new PromptfooActionError(
+        `Promptfoo config $ref ${fragment} uses backslashes in a fragment and cannot be safely preflighted`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use forward slashes in the Promptfoo config JSON pointer fragment."
+      );
+    }
+    const refBase = sourceFile === lexicalConfigPath ? path6.resolve(workingDirectory) : path6.dirname(sourceFile);
+    const lexicalRefFile = refPath ? path6.resolve(refBase, refPath) : sourceFile;
+    if (!/\.(?:ya?ml|json)$/i.test(lexicalRefFile)) {
+      throw new PromptfooActionError(
+        `Executable Promptfoo config ${lexicalRefFile} cannot be safely preflighted for commandLineOptions.envPath`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use a YAML or JSON config and move environment files to the action's env-files input."
+      );
+    }
+    const realRefFile = assertWorkspacePath(
+      lexicalRefFile,
+      workingDirectory,
+      "Promptfoo config $ref"
+    );
+    const referencedConfig = readConfigFile(realRefFile);
+    if (!fragment || fragment === "#") {
+      return { config: referencedConfig, file: lexicalRefFile, fragment };
+    }
+    const pointer = fragment.slice(1);
+    if (!pointer.startsWith("/")) {
+      throw new PromptfooActionError(
+        `Unsupported Promptfoo config $ref fragment ${fragment}`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use a JSON pointer fragment in the Promptfoo config $ref."
+      );
+    }
+    let selectedConfig = referencedConfig;
+    for (const encodedPart of pointer.slice(1).split("/")) {
+      if (/~(?![01])/.test(encodedPart)) {
+        throw new PromptfooActionError(
+          `Invalid Promptfoo config $ref fragment ${fragment}`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Use a valid JSON pointer fragment in the Promptfoo config $ref."
+        );
+      }
+      const part = encodedPart.replace(/~1/g, "/").replace(/~0/g, "~");
+      if (typeof selectedConfig === "object" && selectedConfig !== null && "$id" in selectedConfig) {
+        throw new PromptfooActionError(
+          `Promptfoo config $ref ${ref} uses $id and cannot be safely preflighted for commandLineOptions.envPath`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Remove $id from the Promptfoo config ref chain."
+        );
+      }
+      if (typeof selectedConfig !== "object" || selectedConfig === null || !(part in selectedConfig)) {
+        throw new PromptfooActionError(
+          `Promptfoo config $ref fragment ${fragment} was not found`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Check the JSON pointer fragment in the Promptfoo config $ref."
+        );
+      }
+      selectedConfig = selectedConfig[part];
+    }
+    return { config: selectedConfig, file: lexicalRefFile, fragment };
+  };
+  const inspectConfig = (value, sourceFile, isCommandLineOptions, depth) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return false;
+    }
+    if (depth > maxConfigDepth) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${configPath} exceeds the envPath preflight traversal limit`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Reduce the Promptfoo config nesting or referenced config size."
+      );
+    }
+    const record = value;
+    if (!refsDisabled && "$id" in record) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${configPath} uses $id and cannot be safely preflighted for commandLineOptions.envPath`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Remove $id from the Promptfoo config ref chain."
+      );
+    }
+    if (!refsDisabled && !isCommandLineOptions && typeof record.$ref === "string" && typeof record.commandLineOptions === "object" && record.commandLineOptions !== null && ("$ref" in record.commandLineOptions || "envPath" in record.commandLineOptions)) {
+      throw new PromptfooActionError(
+        `Promptfoo config ${configPath} combines root and commandLineOptions refs and cannot be safely preflighted for commandLineOptions.envPath`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Resolve one of the Promptfoo config ref layers into a static YAML or JSON config."
+      );
+    }
+    if (isCommandLineOptions && "envPath" in record) {
+      const envPath = record.envPath;
+      if (!refsDisabled && typeof record.$ref === "string") {
+        throw new PromptfooActionError(
+          `Promptfoo config ${configPath} combines a commandLineOptions ref with a local envPath and cannot be safely preflighted`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Resolve commandLineOptions into a static YAML or JSON config before using a local envPath."
+        );
+      }
+      if (typeof envPath !== "string" && (!Array.isArray(envPath) || envPath.some((entry) => typeof entry !== "string"))) {
+        throw new PromptfooActionError(
+          `Invalid commandLineOptions.envPath in ${configPath}`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Use a string or list of strings for commandLineOptions.envPath."
+        );
+      }
+      const entries = Array.isArray(envPath) ? envPath : [envPath];
+      for (const entry of entries) {
+        if (entry.split(",").every((part) => part.trim().length === 0)) {
+          continue;
+        }
+        if (/\{[{%#]/.test(entry)) {
+          throw new PromptfooActionError(
+            `Computed commandLineOptions.envPath in ${configPath} cannot be safely preflighted`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            "Use a literal envPath or move environment files to the action's env-files input."
+          );
+        }
+        if (entry.split(",").some((part) => isUnsupportedWindowsPath2(part.trim()))) {
+          throw new PromptfooActionError(
+            "commandLineOptions.envPath uses an unsupported Windows path",
+            ErrorCodes.INVALID_CONFIGURATION,
+            "Use repository-local POSIX paths when the action runs on a POSIX runner."
+          );
+        }
+        const resolvedEntry = path6.isAbsolute(entry) ? entry : path6.resolve(path6.dirname(lexicalConfigPath), entry);
+        configuredPaths.push(
+          ...resolvedEntry.split(",").map((part) => part.trim())
+        );
+      }
+      return true;
+    }
+    if (!isCommandLineOptions && "commandLineOptions" in record) {
+      if (inspectConfig(record.commandLineOptions, sourceFile, true, depth + 1)) {
+        return true;
+      }
+    }
+    if (!refsDisabled && typeof record.$ref === "string") {
+      const referenced = resolveRef(record.$ref, sourceFile);
+      const inspectionKey = `${referenced.file}\0${referenced.fragment}\0${isCommandLineOptions}`;
+      if (inspectedRefs.has(inspectionKey)) {
+        return false;
+      }
+      if (inspectedRefs.size >= maxConfigRefs) {
+        throw new PromptfooActionError(
+          `Promptfoo config ${configPath} exceeds the envPath preflight reference limit`,
+          ErrorCodes.INVALID_CONFIGURATION,
+          "Reduce the number of referenced Promptfoo config files."
+        );
+      }
+      inspectedRefs.add(inspectionKey);
+      return inspectConfig(
+        referenced.config,
+        referenced.file,
+        isCommandLineOptions,
+        depth + 1
+      );
+    }
     return false;
+  };
+  inspectConfig(config2, lexicalConfigPath, false, 0);
+  const envFilePaths = configuredPaths.filter(Boolean).map((configuredPath) => path6.resolve(workingDirectory, configuredPath));
+  const validateEnvFile = (envFilePath) => {
+    const realEnvFilePath = assertWorkspacePath(
+      envFilePath,
+      workingDirectory,
+      "Config environment file"
+    );
+    const envFileStats = fs7.statSync(realEnvFilePath);
+    if (!envFileStats.isFile()) {
+      throw new PromptfooActionError(
+        `Config environment file ${envFilePath} must be a regular file`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Use a regular repository-local environment file."
+      );
+    }
+    if (envFileStats.size > maxConfigBytes) {
+      throw new PromptfooActionError(
+        `Config environment file ${envFilePath} exceeds the envPath preflight size limit`,
+        ErrorCodes.INVALID_CONFIGURATION,
+        "Reduce the configured environment-file size."
+      );
+    }
+  };
+  const lastEnvFilePath = envFilePaths[envFilePaths.length - 1];
+  for (const envFilePath of envFilePaths) {
+    validateEnvFile(envFilePath);
+  }
+  const vaultPath = process.env.DOTENV_KEY && lastEnvFilePath ? lastEnvFilePath.endsWith(".vault") ? lastEnvFilePath : `${lastEnvFilePath}.vault` : void 0;
+  if (vaultPath && fs7.existsSync(vaultPath)) {
+    validateEnvFile(vaultPath);
+  }
+  if (envFilePaths.length > 0) {
+    loadEnvironmentFile(
+      envFilePaths.length === 1 ? envFilePaths[0] : envFilePaths,
+      targetEnvironment
+    );
   }
 }
 
@@ -37945,7 +38914,7 @@ function formatRepeatCommentMarkdown(summary2) {
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 var PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
-var MAX_PROMPT_GLOB_LENGTH = 65536;
+var MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
 function invalidPromptGlobError() {
   return new PromptfooActionError(
     "Invalid prompt glob: the pattern could not be expanded safely.",
@@ -37954,15 +38923,23 @@ function invalidPromptGlobError() {
   );
 }
 function validatePromptGlob(pattern) {
-  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || /[\0\r\n]/.test(pattern)) {
+  const hasControlCharacter = [...pattern].some((character) => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || hasControlCharacter) {
     throw invalidPromptGlobError();
   }
   const braces = [];
+  let escapedBraceClosers = 0;
+  let braceExpansions = BigInt(1);
   let escaped = false;
   let inCharacterClass = false;
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
     if (escaped) {
+      if (character === "{") escapedBraceClosers++;
+      if (character === "}" && escapedBraceClosers > 0) escapedBraceClosers--;
       escaped = false;
       continue;
     }
@@ -37985,10 +38962,28 @@ function validatePromptGlob(pattern) {
     }
     if (character !== "}") continue;
     const brace = braces.pop();
-    if (!brace) throw invalidPromptGlobError();
-    if (brace.nested) continue;
+    if (!brace) {
+      if (escapedBraceClosers > 0) {
+        escapedBraceClosers--;
+        continue;
+      }
+      throw invalidPromptGlobError();
+    }
     const body = pattern.slice(brace.start, index);
-    if (!body.includes("..")) continue;
+    if (brace.nested) {
+      braceExpansions *= BigInt(body.split(",").length);
+      if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
+        throw invalidPromptGlobError();
+      }
+      continue;
+    }
+    if (!body.includes("..")) {
+      braceExpansions *= BigInt(body.split(",").length);
+      if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
+        throw invalidPromptGlobError();
+      }
+      continue;
+    }
     const parts = body.split("..");
     const numeric = parts.every((part) => /^-?\d+$/.test(part));
     const numericLike = parts.some((part) => /^-?\d/.test(part));
@@ -38010,8 +39005,9 @@ function validatePromptGlob(pattern) {
     const distance = end >= start ? end - start : start - end;
     const increment = step > BigInt(0) ? step : -step;
     const count = distance / increment + BigInt(1);
+    braceExpansions *= count;
     const paddedWidth = Math.max(parts[0].length, parts[1].length);
-    if (count > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) || count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)) {
+    if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) || count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)) {
       throw invalidPromptGlobError();
     }
   }
@@ -38020,25 +39016,25 @@ function validatePromptGlob(pattern) {
   }
 }
 function toRepositoryPath(filePath) {
-  return filePath.split(path6.sep).join("/");
+  return filePath.split(path7.sep).join("/");
 }
 function isPathInside2(baseDir, targetPath) {
-  const relativePath = path6.relative(baseDir, targetPath);
-  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
+  const relativePath = path7.relative(baseDir, targetPath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relativePath);
 }
 function validatePromptPath(workspaceRoot, workingDirectory, filePath) {
-  const resolvedPath = path6.resolve(workingDirectory, filePath);
+  const resolvedPath = path7.resolve(workingDirectory, filePath);
   try {
     if (!isPathInside2(workspaceRoot, resolvedPath) || !isPathInside2(workingDirectory, resolvedPath)) {
       throw new Error("Prompt path escapes the workspace");
     }
-    const realWorkspaceRoot = path6.resolve(
-      fs7.realpathSync(workspaceRoot).toString()
+    const realWorkspaceRoot = path7.resolve(
+      fs8.realpathSync(workspaceRoot).toString()
     );
-    const realWorkingDirectory = path6.resolve(
-      fs7.realpathSync(workingDirectory).toString()
+    const realWorkingDirectory = path7.resolve(
+      fs8.realpathSync(workingDirectory).toString()
     );
-    const realPath = path6.resolve(fs7.realpathSync(resolvedPath).toString());
+    const realPath = path7.resolve(fs8.realpathSync(resolvedPath).toString());
     if (!isPathInside2(realWorkspaceRoot, realPath) || !isPathInside2(realWorkingDirectory, realPath)) {
       throw new Error("Prompt path escapes the workspace");
     }
@@ -38050,6 +39046,11 @@ function validatePromptPath(workspaceRoot, workingDirectory, filePath) {
       "Use readable prompt files and glob patterns contained within the working directory."
     );
   }
+}
+function formatChangedFilesForLog(changedFiles) {
+  return JSON.stringify(
+    changedFiles.split(changedFiles.includes("\0") ? "\0" : "\n").filter(Boolean)
+  );
 }
 function validateGitRevision(ref) {
   const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
@@ -38151,7 +39152,7 @@ async function run() {
     const groqApiKey = getInput("groq-api-key", {
       required: false
     });
-    const maskApiKeys = () => {
+    const maskApiKeys = (environment = process.env) => {
       const apiKeys = [
         openaiApiKey,
         azureApiKey,
@@ -38166,7 +39167,7 @@ async function run() {
         mistralApiKey,
         groqApiKey
       ];
-      for (const [name, value] of Object.entries(process.env)) {
+      for (const [name, value] of Object.entries(environment)) {
         if (value && (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
           name
         ) || /(?:^|_)BEARER_TOKEN(?:_|$)/i.test(name) || name.toUpperCase() === "FAL_KEY" || name.toUpperCase() === "ABLIT_KEY")) {
@@ -38195,15 +39196,15 @@ async function run() {
     const version = getInput("promptfoo-version", { required: false }) || "latest";
     validatePromptfooVersion(version);
     const workspaceRoot = process.cwd();
-    const workingDirectory = path6.resolve(
-      path6.join(
+    const workingDirectory = path7.resolve(
+      path7.join(
         workspaceRoot,
         getInput("working-directory", { required: false }) || "."
       )
     );
-    const configAbsolutePath = path6.resolve(workingDirectory, configPath);
+    const configAbsolutePath = path7.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
-      path6.relative(workspaceRoot, configAbsolutePath)
+      path7.relative(workspaceRoot, configAbsolutePath)
     );
     const noShare = getBooleanInput("no-share", {
       required: false
@@ -38289,24 +39290,24 @@ async function run() {
       };
       const resolveContainedEnvFile = (envFilePath) => {
         validateEnvFilePath(envFilePath);
-        const resolvedPath = path6.resolve(envFilePath);
-        const relativePath = path6.relative(workingDirectory, resolvedPath);
-        if (relativePath === ".." || relativePath.startsWith(`..${path6.sep}`) || path6.isAbsolute(relativePath)) {
+        const resolvedPath = path7.resolve(envFilePath);
+        const relativePath = path7.relative(workingDirectory, resolvedPath);
+        if (relativePath === ".." || relativePath.startsWith(`..${path7.sep}`) || path7.isAbsolute(relativePath)) {
           throw new PromptfooActionError(
             `Environment file ${envFilePath} must stay within the working directory`,
             ErrorCodes.INVALID_CONFIGURATION,
             `Choose an environment file within ${workingDirectory}`
           );
         }
-        if (!fs7.existsSync(resolvedPath)) {
+        if (!fs8.existsSync(resolvedPath)) {
           return resolvedPath;
         }
-        const realWorkingDirectory = path6.resolve(
-          fs7.realpathSync(workingDirectory).toString()
+        const realWorkingDirectory = path7.resolve(
+          fs8.realpathSync(workingDirectory).toString()
         );
-        const realPath = path6.resolve(fs7.realpathSync(resolvedPath).toString());
-        const realRelativePath = path6.relative(realWorkingDirectory, realPath);
-        if (realRelativePath === ".." || realRelativePath.startsWith(`..${path6.sep}`) || path6.isAbsolute(realRelativePath)) {
+        const realPath = path7.resolve(fs8.realpathSync(resolvedPath).toString());
+        const realRelativePath = path7.relative(realWorkingDirectory, realPath);
+        if (realRelativePath === ".." || realRelativePath.startsWith(`..${path7.sep}`) || path7.isAbsolute(realRelativePath)) {
           throw new PromptfooActionError(
             `Environment file ${envFilePath} must stay within the working directory`,
             ErrorCodes.INVALID_CONFIGURATION,
@@ -38315,20 +39316,22 @@ async function run() {
         }
         return resolvedPath;
       };
-      const implicitEnvFilePath = path6.join(workingDirectory, ".env");
+      const implicitEnvFilePath = path7.join(workingDirectory, ".env");
       const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
-      const implicitEnvExists = fs7.existsSync(implicitEnvFilePath);
-      const implicitVaultExists = process.env.DOTENV_KEY && fs7.existsSync(implicitVaultFilePath);
+      const implicitEnvExists = fs8.existsSync(implicitEnvFilePath);
+      const implicitVaultExists = process.env.DOTENV_KEY && fs8.existsSync(implicitVaultFilePath);
       const implicitFilePath = resolveContainedEnvFile(
         implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath
       );
       const explicitEnvFiles = envFiles.split(",").map((envFile) => {
         validateEnvFilePath(envFile);
         return envFile.trim();
-      }).filter(Boolean).map((envFile) => path6.resolve(path6.join(workingDirectory, envFile))).map((envFilePath) => {
+      }).filter(Boolean).map(
+        (envFile) => resolveContainedEnvFile(path7.join(workingDirectory, envFile))
+      ).map((envFilePath) => {
         resolveContainedEnvFile(envFilePath);
         const vaultPath = envFilePath.endsWith(".vault") ? envFilePath : `${envFilePath}.vault`;
-        const effectivePath = process.env.DOTENV_KEY && fs7.existsSync(vaultPath) ? vaultPath : envFilePath;
+        const effectivePath = process.env.DOTENV_KEY && fs8.existsSync(vaultPath) ? vaultPath : envFilePath;
         return resolveContainedEnvFile(effectivePath);
       });
       const implicitFileIsExplicit = explicitEnvFiles.includes(implicitFilePath);
@@ -38344,7 +39347,7 @@ async function run() {
       }
       if (explicitEnvFiles.length > 0) {
         for (const envFilePath of explicitEnvFiles) {
-          if (fs7.existsSync(envFilePath)) {
+          if (fs8.existsSync(envFilePath)) {
             info(`Loading environment variables from ${envFilePath}`);
             loadEnvironmentFile(resolveContainedEnvFile(envFilePath));
             maskApiKeys();
@@ -38363,8 +39366,6 @@ async function run() {
     const octokit = getOctokit(githubToken);
     const event = context2.eventName;
     let changedFiles = "";
-    let changedFileNames;
-    let changedFilesFromGit = false;
     let isPullRequest = false;
     let pullRequestNumber;
     if (event === "pull_request" || event === "pull_request_target") {
@@ -38387,8 +39388,9 @@ async function run() {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
         );
       } else {
-        changedFileNames = pullRequestFiles.map((file) => file.filename);
-        changedFiles = changedFileNames.join("\n");
+        changedFiles = pullRequestFiles.flatMap(
+          (file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]
+        ).join("\0").concat("\0");
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
@@ -38402,21 +39404,29 @@ async function run() {
             "Remove null bytes from the workflow file list."
           );
         }
-        const manualFiles = filesInput.split("\n").map((file) => file.replace(/\r/g, "")).filter(Boolean);
-        changedFiles = manualFiles.join("\n");
-        info(`Using ${manualFiles.length} manually specified files`);
+        const manualFiles = filesInput.split("\n").map((file) => file.replace(/\r$/, ""));
+        const trimmedFiles = manualFiles.map((file) => file.trim()).filter(Boolean);
+        changedFiles = manualFiles.flatMap((file) => {
+          const trimmed2 = file.trim();
+          if (!trimmed2) {
+            return [];
+          }
+          return file === trimmed2 ? [file] : [file, trimmed2];
+        }).join("\0");
+        info(`Using ${trimmedFiles.length} manually specified files`);
       } else {
         validateGitRevision(compareBase);
         try {
-          changedFilesFromGit = true;
           changedFiles = await gitInterface.diff([
             "--name-only",
+            "--no-renames",
+            "-z",
             compareBase,
             "HEAD",
             "--"
           ]);
           info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`
+            `Comparing against ${compareBase}, found changed files: ${formatChangedFilesForLog(changedFiles)}`
           );
         } catch (error2) {
           warning(
@@ -38433,15 +39443,16 @@ async function run() {
         validateCommitSha(beforeSha, "before commit");
         validateCommitSha(afterSha, "after commit");
         try {
-          changedFilesFromGit = true;
           changedFiles = await gitInterface.diff([
             "--name-only",
+            "--no-renames",
+            "-z",
             beforeSha,
             afterSha,
             "--"
           ]);
           info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${formatChangedFilesForLog(changedFiles)}`
           );
         } catch (error2) {
           warning(
@@ -38463,10 +39474,10 @@ async function run() {
     const allPromptFiles = [];
     const changedPromptFiles = [];
     const seenPromptFiles = /* @__PURE__ */ new Set();
-    const containsQuotedControlPath = changedFilesFromGit && /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
+    const containsQuotedControlPath = !changedFiles.includes("\0") && /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
       changedFiles
     );
-    const changedFilesList = changedFileNames || (containsQuotedControlPath ? [] : changedFiles.split("\n").filter((f) => f));
+    const changedFilesList = containsQuotedControlPath ? [] : changedFiles.split(changedFiles.includes("\0") ? "\0" : "\n").filter(Boolean);
     for (const globPattern of promptFilesGlobs) {
       validatePromptGlob(globPattern);
       let matches;
@@ -38480,9 +39491,9 @@ async function run() {
         throw invalidPromptGlobError();
       }
       for (const file of matches) {
-        const resolvedPromptPath = path6.resolve(workingDirectory, file);
+        const resolvedPromptPath = path7.resolve(workingDirectory, file);
         const repositoryFile = toRepositoryPath(
-          path6.relative(workspaceRoot, resolvedPromptPath)
+          path7.relative(workspaceRoot, resolvedPromptPath)
         );
         if (repositoryFile === configRepositoryPath) {
           continue;
@@ -38492,7 +39503,7 @@ async function run() {
         }
         seenPromptFiles.add(repositoryFile);
         const promptFile = toRepositoryPath(
-          path6.relative(workingDirectory, resolvedPromptPath)
+          path7.relative(workingDirectory, resolvedPromptPath)
         );
         allPromptFiles.push(promptFile);
         if (changedFilesList.includes(repositoryFile)) {
@@ -38502,12 +39513,16 @@ async function run() {
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
-    const dependencies = extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+    const dependencies = extractFileDependencies(
+      configAbsolutePath,
+      process.cwd(),
+      workingDirectory
+    ).map(toRepositoryPath);
     if (changedFilesList.length > 0) {
       if (dependencies.length > 0) {
         debug(`Found ${dependencies.length} file dependencies in config`);
         dependencyChanged = dependencies.some((dep) => {
-          if (dep === "." || dep === "./" || /[\r\n\0]/.test(dep)) {
+          if (dep === "./" || dep === "." || /[\r\n\0]/.test(dep)) {
             return true;
           }
           if (changedFilesList.includes(dep)) {
@@ -38530,7 +39545,7 @@ async function run() {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
-    const evaluatedPromptFiles = forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? allPromptFiles : changedPromptFiles;
+    const evaluatedPromptFiles = useConfigPrompts ? [] : forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? allPromptFiles : changedPromptFiles;
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
         "Invalid prompt file path: line breaks are not allowed.",
@@ -38547,15 +39562,22 @@ async function run() {
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${evaluatedPromptFiles.join(", ")}`
+        `Processing all matching prompt files: ${JSON.stringify(evaluatedPromptFiles)}`
       );
     }
+    const configEnvironment = { ...process.env };
+    loadConfigEnvironmentFiles(
+      configAbsolutePath,
+      workingDirectory,
+      configEnvironment
+    );
+    maskApiKeys(configEnvironment);
     startGroup("Setting up cache");
-    const resolvedCachePath = cachePath ? path6.resolve(workingDirectory, cachePath) : void 0;
+    const resolvedCachePath = cachePath ? path7.resolve(workingDirectory, cachePath) : void 0;
     setupCacheEnvironment(resolvedCachePath);
     if (process.env.CI === "true") {
       const cleanedCount = await cleanupOldCache(
-        process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
+        process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path7.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
         7 * 24 * 60 * 60
         // 7 days
       );
@@ -38563,15 +39585,15 @@ async function run() {
         info(`Cleaned ${cleanedCount} old cache entries`);
       }
     }
-    const cacheDir = process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
+    const cacheDir = process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path7.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
     await logCacheMetrics(cacheDir);
     endGroup();
-    const outputFile = path6.join(
+    const outputFile = path7.join(
       workingDirectory,
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
-    if (!useConfigPrompts && evaluatedPromptFiles.length > 0) {
+    if (evaluatedPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         "--prompts",
         ...evaluatedPromptFiles
@@ -38654,7 +39676,7 @@ async function run() {
       "npx",
       [
         "--prefix",
-        path6.resolve(__dirname, ".."),
+        path7.resolve(__dirname, ".."),
         `promptfoo@${version}`,
         ...promptfooArgs
       ],
@@ -38671,7 +39693,7 @@ async function run() {
     }
     let output;
     try {
-      const outputContent = fs7.readFileSync(outputFile, "utf8");
+      const outputContent = fs8.readFileSync(outputFile, "utf8");
       output = JSON.parse(outputContent);
     } catch (error2) {
       if (isTestFailureExit) {
@@ -38688,7 +39710,7 @@ async function run() {
       );
     }
     try {
-      fs7.unlinkSync(outputFile);
+      fs8.unlinkSync(outputFile);
     } catch {
     }
     startGroup("Cache metrics after evaluation");
