@@ -641,8 +641,14 @@ export async function run(): Promise<void> {
     }
 
     // Resolve glob patterns to file paths
-    const promptFiles: string[] = [];
-    const allPromptFiles: string[] = [];
+    const promptFiles = new Map<string, string>();
+    const allPromptFiles = new Map<string, string>();
+    const addPromptFile = (files: Map<string, string>, file: string): void => {
+      const resolvedFile = path.resolve(workingDirectory, file);
+      if (!files.has(resolvedFile)) {
+        files.set(resolvedFile, file);
+      }
+    };
     const containsQuotedControlPath =
       !changedFiles.includes('\0') &&
       /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
@@ -665,7 +671,9 @@ export async function run(): Promise<void> {
         );
         return repositoryFile !== configRepositoryPath;
       });
-      allPromptFiles.push(...allMatches);
+      for (const file of allMatches) {
+        addPromptFile(allPromptFiles, file);
+      }
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
@@ -675,10 +683,14 @@ export async function run(): Promise<void> {
           );
           return changedFilesList.includes(repositoryFile);
         });
-        promptFiles.push(...changedMatches);
+        for (const file of changedMatches) {
+          addPromptFile(promptFiles, file);
+        }
       } else {
         // No changed files info available, include all matches
-        promptFiles.push(...allMatches);
+        for (const file of allMatches) {
+          addPromptFile(promptFiles, file);
+        }
       }
     }
 
@@ -726,7 +738,7 @@ export async function run(): Promise<void> {
 
     if (
       !forceRun &&
-      promptFiles.length < 1 &&
+      promptFiles.size < 1 &&
       !configChanged &&
       !dependencyChanged &&
       changedFilesList.length > 0 &&
@@ -741,8 +753,8 @@ export async function run(): Promise<void> {
     const evaluatedPromptFiles = useConfigPrompts
       ? []
       : forceRun || configChanged || dependencyChanged
-        ? allPromptFiles
-        : promptFiles;
+        ? Array.from(allPromptFiles.values())
+        : Array.from(promptFiles.values());
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
         'Invalid prompt file path: line breaks are not allowed.',
@@ -763,7 +775,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${JSON.stringify(promptFiles)}`,
+        `Processing all matching prompt files: ${JSON.stringify(Array.from(promptFiles.values()))}`,
       );
     }
 

@@ -379,6 +379,47 @@ describe('GitHub Action Main', () => {
       expect(comment.body).toContain('LLM prompt was modified');
     });
 
+    test.each([
+      ['prompt-only', 'prompts/first.txt'],
+      ['config', 'promptfooconfig.yaml'],
+    ])('should deduplicate overlapping prompt globs for a %s change', async (_reason, changedFile) => {
+      withInputs({ prompts: 'prompts/*.txt\nprompts/first.*' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.filter((arg) => arg === 'prompts/first.txt')).toEqual([
+        'prompts/first.txt',
+      ]);
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body.match(/prompts\/first\.txt/g)).toEqual([
+        'prompts/first.txt',
+      ]);
+    });
+
+    test('should deduplicate relative and absolute prompt glob matches', async () => {
+      const relativePrompt = 'prompts/first.txt';
+      const absolutePrompt = path.join(process.cwd(), relativePrompt);
+      withInputs({ prompts: `prompts/*.txt\n${absolutePrompt}` });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        path.isAbsolute(pattern) ? [absolutePrompt] : [relativePrompt],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain(relativePrompt);
+      expect(args).not.toContain(absolutePrompt);
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain(relativePrompt);
+      expect(comment.body).not.toContain(absolutePrompt);
+    });
+
     test('should exclude the config file when a prompt glob also matches it', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'promptfooconfig.yaml' },

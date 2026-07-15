@@ -39095,8 +39095,14 @@ async function run() {
         `This action is designed to run on pull request, push, or workflow_dispatch events, but a "${event}" event was received. Will process all matching prompt files.`
       );
     }
-    const promptFiles = [];
-    const allPromptFiles = [];
+    const promptFiles = /* @__PURE__ */ new Map();
+    const allPromptFiles = /* @__PURE__ */ new Map();
+    const addPromptFile = (files, file) => {
+      const resolvedFile = path7.resolve(workingDirectory, file);
+      if (!files.has(resolvedFile)) {
+        files.set(resolvedFile, file);
+      }
+    };
     const containsQuotedControlPath = !changedFiles.includes("\0") && /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
       changedFiles
     );
@@ -39112,7 +39118,9 @@ async function run() {
         );
         return repositoryFile !== configRepositoryPath;
       });
-      allPromptFiles.push(...allMatches);
+      for (const file of allMatches) {
+        addPromptFile(allPromptFiles, file);
+      }
       if (changedFilesList.length > 0) {
         const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
@@ -39120,9 +39128,13 @@ async function run() {
           );
           return changedFilesList.includes(repositoryFile);
         });
-        promptFiles.push(...changedMatches);
+        for (const file of changedMatches) {
+          addPromptFile(promptFiles, file);
+        }
       } else {
-        promptFiles.push(...allMatches);
+        for (const file of allMatches) {
+          addPromptFile(promptFiles, file);
+        }
       }
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
@@ -39155,11 +39167,11 @@ async function run() {
         }
       }
     }
-    if (!forceRun && promptFiles.length < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
+    if (!forceRun && promptFiles.size < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
-    const evaluatedPromptFiles = useConfigPrompts ? [] : forceRun || configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const evaluatedPromptFiles = useConfigPrompts ? [] : forceRun || configChanged || dependencyChanged ? Array.from(allPromptFiles.values()) : Array.from(promptFiles.values());
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
         "Invalid prompt file path: line breaks are not allowed.",
@@ -39176,7 +39188,7 @@ async function run() {
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${JSON.stringify(promptFiles)}`
+        `Processing all matching prompt files: ${JSON.stringify(Array.from(promptFiles.values()))}`
       );
     }
     const configEnvironment = { ...process.env };
