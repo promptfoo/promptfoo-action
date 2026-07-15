@@ -38378,6 +38378,7 @@ async function run() {
     }
     const allPromptFiles = [];
     const changedPromptFiles = [];
+    const seenPromptFiles = /* @__PURE__ */ new Set();
     const containsQuotedControlPath = changedFilesFromGit && /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
       changedFiles
     );
@@ -38395,6 +38396,10 @@ async function run() {
         if (repositoryFile === configRepositoryPath) {
           continue;
         }
+        if (seenPromptFiles.has(repositoryFile)) {
+          continue;
+        }
+        seenPromptFiles.add(repositoryFile);
         allPromptFiles.push(file);
         if (changedFilesList.includes(repositoryFile)) {
           changedPromptFiles.push(file);
