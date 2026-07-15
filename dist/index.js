@@ -37771,7 +37771,7 @@ function isPathInside(baseDir, targetPath) {
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
 function expandEnvTemplates(filePath) {
-  return filePath.replace(
+  return filePath.replace(/\{#(?:[^#]|#(?!\}))*#\}/g, "").replace(/\{%(?:[^%]|%(?!\}))*%\}/g, "**/*").replace(
     /\{\{(?:[^}]|\}(?!\}))*\}\}/g,
     (template) => /\benv\.|env\[/.test(template) ? "**/*" : template
   );

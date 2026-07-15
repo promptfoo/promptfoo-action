@@ -1078,6 +1078,54 @@ tests:
     ]);
   });
 
+  it('should strip Nunjucks comments from a file-backed assertion path', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? [
+              '- assert:',
+              '    - type: contains',
+              '      value: "file://expected/{# note #}real.txt"',
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.yaml', '../config/expected/real.txt']);
+  });
+
+  it('should conservatively expand Nunjucks blocks in a file-backed assertion path', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? [
+              '- assert:',
+              '    - type: contains',
+              '      value: "file://expected/{% if env.SUITE %}prod/{% endif %}real.txt"',
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/expected/prod/real.txt']);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      '../config/expected/prod/real.txt',
+      '../config/expected/',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/config/expected/**/*prod/**/*real.txt',
+      expect.objectContaining({ nodir: true }),
+    );
+  });
+
   it('should inspect file URLs nested inside a referenced vars file', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
     mockFs.readFileSync.mockImplementation(

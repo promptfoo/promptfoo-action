@@ -43,9 +43,12 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
 }
 
 function expandEnvTemplates(filePath: string): string {
-  return filePath.replace(/\{\{(?:[^}]|\}(?!\}))*\}\}/g, (template) =>
-    /\benv\.|env\[/.test(template) ? '**/*' : template,
-  );
+  return filePath
+    .replace(/\{#(?:[^#]|#(?!\}))*#\}/g, '')
+    .replace(/\{%(?:[^%]|%(?!\}))*%\}/g, '**/*')
+    .replace(/\{\{(?:[^}]|\}(?!\}))*\}\}/g, (template) =>
+      /\benv\.|env\[/.test(template) ? '**/*' : template,
+    );
 }
 
 function splitCsvAssertionValues(value: string): string[] | undefined {
