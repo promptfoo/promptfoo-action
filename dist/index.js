@@ -40215,7 +40215,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         const literalPromptPath = stripNunjucksComments(promptPath).replace(/\{%(?:[^%]|%(?!\}))*%\}/g, "").replace(/\{\{(?:[^}]|\}(?!\}))*\}\}/g, "").trim();
         if (literalPromptPath && !(literalPromptPath.includes("file://") || literalPromptPath.startsWith("exec:") || /\.(?:cjs|cts|j2|js|jsonl?|md|mjs|mts|py|ts|txt|ya?ml)(?::[^/\\]+)?$/i.test(
           literalPromptPath
-        ) || /[*/\\]/.test(literalPromptPath) || literalPromptPath.charAt(literalPromptPath.length - 3) === "." || literalPromptPath.charAt(literalPromptPath.length - 4) === ".")) {
+        ) || /[\\/]/.test(literalPromptPath) || !/\s/.test(literalPromptPath) && literalPromptPath.includes("*") || literalPromptPath.charAt(literalPromptPath.length - 3) === "." || literalPromptPath.charAt(literalPromptPath.length - 4) === ".")) {
           continue;
         }
         const expandedPromptPath = expandAndTrackEnvTemplates(promptPath);
@@ -40340,7 +40340,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
         if (key === "provider" && includeFileUrls) {
-          const providerId = typeof item === "string" ? item : typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" ? item.id : void 0;
+          const providerId = typeof item === "string" ? item : typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" ? item.id : typeof item === "object" && item !== null ? Object.keys(item)[0] : void 0;
           const isHttpProvider = typeof providerId === "string" && /^https?(?::|$)/i.test(providerId);
           const providerConfig = typeof item === "object" && item !== null && "config" in item && typeof item.config === "object" && item.config !== null ? item.config : void 0;
           const fileAuth = providerConfig && "auth" in providerConfig && typeof providerConfig.auth === "object" && providerConfig.auth !== null ? providerConfig.auth : void 0;
@@ -40721,13 +40721,18 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           extractNestedFileUrls(test.config);
           extractNestedFileUrls({
             provider: test.provider,
-            assert: test.assert
+            assert: test.assert,
+            options: test.options
           });
           continue;
         }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
-        extractNestedFileUrls({ provider: test.provider, assert: test.assert });
+        extractNestedFileUrls({
+          provider: test.provider,
+          assert: test.assert,
+          options: test.options
+        });
       }
     }
     const extendedConfig = config2;
@@ -41811,8 +41816,8 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = evaluationPromptFiles.join(", ");
-      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
+      const evaluationDescription = evaluationPromptFiles.length ? `\u26A0\uFE0F Evaluated prompt files: ${evaluationPromptFiles.join(", ")}` : "\u26A0\uFE0F Evaluated config-defined prompts";
+      let body = `${evaluationDescription}
 
 | Success | Failure |
 |---------|---------|
