@@ -85,6 +85,121 @@ providers:
     expect(deps).toEqual(['../config/providers/provider.py']);
   });
 
+  it('should extract an environment-templated provider file', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv('PROMPTFOO_PROVIDER_FILE', 'provider');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{{ env.PROMPTFOO_PROVIDER_FILE }}.py:café
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/provider.py']);
+    vi.unstubAllEnvs();
+  });
+
+  it('should prefer config and provider environment values when extracting templated provider files', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv('PROMPTFOO_CONFIG_PROVIDER', 'process-provider');
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  PROMPTFOO_CONFIG_PROVIDER: config-provider
+  PROMPTFOO_IGNORED_VALUE: 42
+providers:
+  - file://providers/{{ env.PROMPTFOO_CONFIG_PROVIDER }}.py:café
+  - id: file://providers/{{ env['PROMPTFOO_LOCAL_PROVIDER'] }}.py:café
+    env:
+      PROMPTFOO_LOCAL_PROVIDER: local-provider
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'providers/config-provider.py',
+      'providers/local-provider.py',
+    ]);
+    vi.unstubAllEnvs();
+  });
+
+  it('should conservatively watch the workspace for an unresolved provider path template', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{{ env.PROMPTFOO_MISSING_PROVIDER }}.py:café
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
+  it('should conservatively watch the workspace for a filtered provider path template', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{{ env.PROMPTFOO_MISSING_PROVIDER | default('provider') }}.py:café
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
+  it('should redact a rendered provider path that escapes the workspace', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv(
+      'PROMPTFOO_PROVIDER_FILE',
+      '../../OUTSIDE_PATH_SECRET_CANARY_019F62C3',
+    );
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{{ env.PROMPTFOO_PROVIDER_FILE }}.py:café
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('{{ env.PROMPTFOO_PROVIDER_FILE }}');
+    expect(warnings).not.toContain('OUTSIDE_PATH_SECRET_CANARY_019F62C3');
+    vi.unstubAllEnvs();
+  });
+
+  it('should redact rendered provider glob matches that escape the workspace', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv('PROMPTFOO_PROVIDER_DIR', 'PATH_SECRET_CANARY_019F62C3');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{{ env.PROMPTFOO_PROVIDER_DIR }}/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/outside/leaked.py']);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/PATH_SECRET_CANARY_019F62C3/']);
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('{{ env.PROMPTFOO_PROVIDER_DIR }}');
+    expect(warnings).not.toContain('PATH_SECRET_CANARY_019F62C3');
+    expect(warnings).not.toContain('/test/outside/leaked.py');
+    vi.unstubAllEnvs();
+  });
+
   it('should extract a callable Unicode Python selector and preserve an unsupported Go selector', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -500,6 +615,50 @@ providers:
     );
   });
 
+  it.each([
+    'ENOENT',
+    'ENOTDIR',
+  ])('should reject a missing provider YAML below an escaping symlink on %s without reading it', (code) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath.endsWith('/providers/external/new.yaml')) {
+        throw Object.assign(new Error('REALPATH_SECRET_CANARY'), { code });
+      }
+      if (filePath.endsWith('/providers/external')) {
+        return '/test/outside';
+      }
+      return filePath;
+    });
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/providers/external/new.yaml')) {
+        return `
+id: openai:chat:gpt-4
+config:
+  template: file://templates/from-external.txt
+secret: OUTSIDE_SECRET_CANARY_019F62C3
+`;
+      }
+      return `
+providers:
+  - file://providers/external/new.yaml
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'OUTSIDE_SECRET_CANARY_019F62C3',
+    );
+  });
+
   it('should sanitize malformed provider YAML errors before warning', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
@@ -520,6 +679,31 @@ providers:
     expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
       'PARSER_SECRET_CANARY_019F62C3',
     );
+  });
+
+  it('should redact a rendered provider YAML path when inspection fails', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv('PROMPTFOO_PROVIDER_FILE', 'PATH_SECRET_CANARY_019F62C3');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/PATH_SECRET_CANARY_019F62C3.yaml')) {
+        return 'secret: PARSER_SECRET_CANARY_019F62C3: invalid';
+      }
+      return `
+providers:
+  - file://providers/{{ env.PROMPTFOO_PROVIDER_FILE }}.yaml
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/PATH_SECRET_CANARY_019F62C3.yaml', './']);
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('{{ env.PROMPTFOO_PROVIDER_FILE }}');
+    expect(warnings).not.toContain('PATH_SECRET_CANARY_019F62C3');
+    expect(warnings).not.toContain('PARSER_SECRET_CANARY_019F62C3');
+    vi.unstubAllEnvs();
   });
 
   it.each([
@@ -547,6 +731,54 @@ providers:
     expect(deps).toEqual(expected);
     expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
       'REALPATH_SECRET_CANARY',
+    );
+  });
+
+  it('should preserve a provider dependency when all of its contained ancestors are missing', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath !== '/test/repository') {
+        throw Object.assign(new Error('REALPATH_SECRET_CANARY'), {
+          code: 'ENOENT',
+        });
+      }
+      return filePath;
+    });
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/missing/deep/provider.py
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/missing/deep/provider.py']);
+  });
+
+  it('should conservatively watch the workspace when its real path cannot be checked', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      if (String(value) === '/test/repository') {
+        throw Object.assign(new Error('ROOT_REALPATH_SECRET_CANARY'), {
+          code: 'EACCES',
+        });
+      }
+      return String(value);
+    });
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.py
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'ROOT_REALPATH_SECRET_CANARY',
     );
   });
 

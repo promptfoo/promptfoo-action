@@ -6,6 +6,7 @@ import * as path from 'path';
 import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
+  env?: { [key: string]: unknown };
   providers?: string | Array<string | { id?: string; [key: string]: unknown }>;
   targets?: string | Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
@@ -61,6 +62,34 @@ function providerFilePath(fileUrl: string, allowJavascript = false): string {
   return rawPath;
 }
 
+function renderEnvTemplate(
+  value: string,
+  environment: Record<string, string | undefined>,
+): string {
+  return value.replace(
+    /\{\{\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*\}\}/g,
+    (template, dotName: string | undefined, bracketName: string | undefined) =>
+      environment[dotName ?? (bracketName as string)] ?? template,
+  );
+}
+
+function environmentValues(
+  value: unknown,
+  baseEnvironment: Record<string, string | undefined>,
+): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, envValue]) =>
+      typeof envValue === 'string'
+        ? [[key, renderEnvTemplate(envValue, baseEnvironment)]]
+        : [],
+    ),
+  );
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -87,6 +116,11 @@ export function extractFileDependencies(configPath: string): string[] {
       return [];
     }
 
+    const configEnvironment = {
+      ...process.env,
+      ...environmentValues(config.env, process.env),
+    };
+
     let realDependencyRoot: string | undefined;
     const isSafeDependencyPath = (absolutePath: string): boolean => {
       if (!isPathInside(dependencyRoot, absolutePath)) {
@@ -97,17 +131,31 @@ export function extractFileDependencies(configPath: string): string[] {
         if (!realDependencyRoot) {
           realDependencyRoot = fs.realpathSync(dependencyRoot);
         }
-        const realPath = fs.realpathSync(absolutePath);
-        return isPathInside(realDependencyRoot, realPath);
-      } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
-        return code === 'ENOENT' || code === 'ENOTDIR';
+      } catch {
+        return false;
       }
+
+      let existingPath = absolutePath;
+      while (existingPath !== dependencyRoot) {
+        try {
+          const realPath = fs.realpathSync(existingPath);
+          return isPathInside(realDependencyRoot, realPath);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+            return false;
+          }
+
+          existingPath = path.dirname(existingPath);
+        }
+      }
+      return true;
     };
 
     const resolveConfigDependency = (
       filePath: string,
       source: string,
+      displayPath = filePath,
     ): string | undefined => {
       try {
         if (!filePath) {
@@ -127,7 +175,7 @@ export function extractFileDependencies(configPath: string): string[] {
         return absolutePath;
       } catch (error) {
         core.warning(
-          `Ignoring unsafe config dependency "${filePath}": ${String(
+          `Ignoring unsafe config dependency "${displayPath}": ${String(
             error,
           ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
         );
@@ -140,15 +188,29 @@ export function extractFileDependencies(configPath: string): string[] {
       fileUrl: string,
       isProvider = false,
       allowJavascript = false,
+      environment: Record<string, string | undefined> = configEnvironment,
     ): string[] => {
+      const renderedFileUrl = renderEnvTemplate(fileUrl, environment);
+      if (/\{\{|\{%/.test(renderedFileUrl)) {
+        dependencies.add(`${dependencyRoot}${path.sep}`);
+        return [];
+      }
+
       const filePath = isProvider
+        ? providerFilePath(renderedFileUrl, allowJavascript)
+        : renderedFileUrl.slice('file://'.length);
+      const displayPath = isProvider
         ? providerFilePath(fileUrl, allowJavascript)
         : fileUrl.slice('file://'.length);
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
+        displayPath,
       );
       if (!absolutePath) {
+        if (renderedFileUrl !== fileUrl) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+        }
         return [];
       }
 
@@ -164,7 +226,9 @@ export function extractFileDependencies(configPath: string): string[] {
             safeMatches.push(absoluteMatch);
           } else {
             core.warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+              `Ignoring unsafe config dependency match "${
+                renderedFileUrl === fileUrl ? match : displayPath
+              }": config file dependency glob match must stay within the repository workspace`,
             );
           }
         }
@@ -197,12 +261,13 @@ export function extractFileDependencies(configPath: string): string[] {
     const processProviderValue = (
       value: unknown,
       isProviderReference = false,
+      environment: Record<string, string | undefined> = configEnvironment,
     ): void => {
       if (typeof value === 'string') {
         if (!value.startsWith('file://')) {
           return;
         }
-        processProviderReference(value, isProviderReference);
+        processProviderReference(value, isProviderReference, environment);
         return;
       }
 
@@ -217,26 +282,39 @@ export function extractFileDependencies(configPath: string): string[] {
 
       if (Array.isArray(value)) {
         for (const item of value) {
-          processProviderValue(item, isProviderReference);
+          processProviderValue(item, isProviderReference, environment);
         }
         return;
       }
 
+      const providerEnvironment = {
+        ...environment,
+        ...environmentValues((value as { env?: unknown }).env, environment),
+      };
+
       for (const [key, nestedValue] of Object.entries(value)) {
         if (key.startsWith('file://')) {
-          processProviderReference(key);
+          processProviderReference(key, true, providerEnvironment);
         }
-        processProviderValue(nestedValue, key === 'id');
+        processProviderValue(nestedValue, key === 'id', providerEnvironment);
       }
     };
 
     const processProviderReference = (
       provider: string,
       isProviderReference = true,
+      environment: Record<string, string | undefined> = configEnvironment,
     ): void => {
       const allowJavascript = !isProviderReference;
-      const providerPath = providerFilePath(provider, allowJavascript);
-      const providerPaths = processFileUrl(provider, true, allowJavascript);
+      const renderedProvider = renderEnvTemplate(provider, environment);
+      const providerPath = providerFilePath(renderedProvider, allowJavascript);
+      const displayProviderPath = providerFilePath(provider, allowJavascript);
+      const providerPaths = processFileUrl(
+        provider,
+        true,
+        allowJavascript,
+        environment,
+      );
       const isProviderConfig = /\.(?:ya?ml|json)$/i.test(providerPath);
       if (providerPaths.length === 0) {
         const isContainedReference = isPathInside(
@@ -271,10 +349,10 @@ export function extractFileDependencies(configPath: string): string[] {
               schema: CORE_SCHEMA.withTags(mergeTag),
             },
           );
-          processProviderValue(providerConfig);
+          processProviderValue(providerConfig, false, environment);
         } catch {
           core.warning(
-            `Failed to inspect provider config dependency "${providerPath}". Watching the repository workspace conservatively.`,
+            `Failed to inspect provider config dependency "${displayProviderPath}". Watching the repository workspace conservatively.`,
           );
           dependencies.add(`${dependencyRoot}${path.sep}`);
         }
