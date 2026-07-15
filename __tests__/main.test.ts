@@ -680,6 +680,13 @@ describe('GitHub Action Main', () => {
       'PUPPETEER_DOWNLOAD_HOST',
       'PUPPETEER_DOWNLOAD_BASE_URL',
       'PUPPETEER_CHROME_DOWNLOAD_BASE_URL',
+      'OPENSSL_CONF',
+      'OPENSSL_CONF_INCLUDE',
+      'oPeNsSl_MoDuLeS',
+      'OPENSSL_ENGINES',
+      'OPENSSL_TRACE',
+      'OPENSSL_MALLOC_FAILURES',
+      'OPENSSL_FUTURE_CONTROL',
       'NODE_TLS_REJECT_UNAUTHORIZED',
       'NODE_DEBUG',
       'node_debug_native',
@@ -941,17 +948,24 @@ describe('GitHub Action Main', () => {
       }
     });
 
-    test('should reject a forbidden variable from the implicit working-directory .env file', async () => {
+    test.each([
+      'OPENAI_BASE_URL',
+      'OPENSSL_CONF',
+      'oPeNsSl_MoDuLeS',
+    ])('should reject %s from the implicit working-directory .env file', async (variableName) => {
       withInputs({ 'env-files': '' });
       mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
         filePath.toString().endsWith(`${path.sep}.env`),
       );
 
       const dotenv = await import('dotenv');
-      const originalBaseUrl = process.env.OPENAI_BASE_URL;
+      const originalValue = process.env[variableName];
       (dotenv.config as Mock).mockImplementation(
         (options?: { processEnv?: Record<string, string> }) => {
-          const parsed = { OPENAI_BASE_URL: 'http://attacker.invalid/v1' };
+          const parsed = {
+            [variableName]: 'attacker-controlled',
+            CUSTOM_PROVIDER_SETTING: 'must-not-merge',
+          };
           Object.assign(options?.processEnv ?? process.env, parsed);
           return { parsed };
         },
@@ -961,15 +975,17 @@ describe('GitHub Action Main', () => {
         await run();
 
         expect(mockCore.setFailed).toHaveBeenCalledWith(
-          expect.stringContaining('OPENAI_BASE_URL'),
+          expect.stringContaining(variableName),
         );
         expect(mockExec.exec).not.toHaveBeenCalled();
-        expect(process.env.OPENAI_BASE_URL).toBe(originalBaseUrl);
+        expect(process.env[variableName]).toBe(originalValue);
+        expect(process.env.CUSTOM_PROVIDER_SETTING).toBeUndefined();
       } finally {
-        if (originalBaseUrl === undefined) {
-          delete process.env.OPENAI_BASE_URL;
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalValue === undefined) {
+          delete process.env[variableName];
         } else {
-          process.env.OPENAI_BASE_URL = originalBaseUrl;
+          process.env[variableName] = originalValue;
         }
       }
     });
@@ -1232,7 +1248,7 @@ describe('GitHub Action Main', () => {
           Object.defineProperty(parseTarget, '__proto__', {
             configurable: true,
             enumerable: true,
-            value: 'polluted',
+            value: { polluted: true },
             writable: true,
           });
           parseTarget.CUSTOM_PROVIDER_SETTING = 'value';
