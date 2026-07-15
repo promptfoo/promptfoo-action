@@ -88,6 +88,91 @@ providers:
     ).toBe('/test/working/prompts/build.py');
   });
 
+  it('should reject foreign Windows drive and UNC dependencies on POSIX runners', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return String.raw`
+providers:
+  - 'file://C:\outside\provider.py'
+  - 'file://\\server\share\provider.py'
+  - 'file://providers/nested.yaml'
+  - 'exec:python C:\outside\run.py \\server\share\input.json'
+prompts:
+  - 'exec:python C:\outside\prompt.py \\server\share\context.json'
+tests:
+  - 'file://C:\outside\cases*.yaml'
+`;
+      }
+      if (candidate.endsWith('/providers/nested.yaml')) {
+        return String.raw`
+id: http
+config:
+  transformResponse: 'file://C:\outside\transform.js:parse'
+  validateStatus: 'file://\\server\share\status.mjs:validateStatus'
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+    mockFs.existsSync.mockReturnValue(false);
+
+    const dependencies = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(dependencies).toContain('evals/providers/nested.yaml');
+    expect(dependencies.join('\n')).not.toContain('C:');
+    expect(dependencies.join('\n')).not.toContain('server');
+    expect(mockGlob.sync).not.toHaveBeenCalledWith(
+      expect.stringContaining('C:'),
+      expect.any(Object),
+    );
+  });
+
+  it('should reject foreign Windows glob matches, structured prompts, and prompt execution roots', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return String.raw`
+providers:
+  - 'file://providers/*.yaml'
+prompts:
+  - raw: 'exec:C:\outside\prompt.py'
+  - raw: 'exec:python templates/prompt.py'
+    config:
+      basePath: 'C:\outside\base'
+`;
+      }
+      if (candidate.endsWith('/providers/safe.yaml')) {
+        return 'id: safe-provider\n';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      String.raw`C:\outside\provider.yaml`,
+      String.raw`\\server\share\provider.yaml`,
+      '/test/working/evals/providers/safe.yaml',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => filePath);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/safe.yaml', 'evals/providers']);
+    const warnings = vi.mocked(core.warning).mock.calls.join('\n');
+    expect(warnings).toContain('resolved path must stay within');
+    expect(warnings).not.toContain('C:');
+    expect(warnings).not.toContain('server');
+  });
+
   it('should extract prompt files', () => {
     const configContent = `
 prompts:
@@ -509,6 +594,29 @@ providers:
     const elapsedMs = performance.now() - started;
 
     expect(dependencies).toHaveLength(1);
+    expect(elapsedMs).toBeLessThan(1_000);
+  });
+
+  it('should scan adversarial function-selector-like paths in linear time', () => {
+    const selectorPath = `${'.js:'.repeat(12_000)}/`;
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'file://${selectorPath}'
+prompts:
+  - 'file://${selectorPath}'
+tests:
+  - vars:
+      adversarial: 'file://${selectorPath}'
+    assert:
+      - type: contains
+        value: 'file://${selectorPath}'
+  - '${selectorPath}'
+`);
+
+    const started = performance.now();
+    extractFileDependencies('/test/working/evals/promptfooconfig.yaml');
+    const elapsedMs = performance.now() - started;
+
     expect(elapsedMs).toBeLessThan(1_000);
   });
 
@@ -1402,6 +1510,33 @@ tests:
     );
   });
 
+  it('should extract nested assert-set validators while tolerating YAML alias cycles', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert: &assertions
+      - type: assert-set
+        assert:
+          - type: javascript
+            value: file://validators/nested.cjs:check
+          - type: python
+            value: file://validators/nested.py:check
+          - type: ruby
+            value: file://validators/nested.rb:MyModule.check
+          - type: assert-set
+            assert: *assertions
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(
+      expect.arrayContaining([
+        'evals/validators/nested.cjs',
+        'evals/validators/nested.py',
+        'evals/validators/nested.rb',
+      ]),
+    );
+  });
+
   it('should extract defaultTest files', () => {
     const configContent = `
 defaultTest:
@@ -1838,6 +1973,9 @@ providers:
   - id: http
     config:
       validateStatus: file://validators/UPPER.JS:validateStatus
+  - id: http
+    config:
+      validateStatus: file://validators/literal.xyz:validateStatus
   - id: openai:gpt-4o
     config:
       validateStatus: status >= 200 && status < 300
@@ -1850,6 +1988,7 @@ providers:
       'evals/validators/named-status.mjs',
       'evals/validators/UPPER.JS:validateStatus',
       'evals/validators/UPPER.JS',
+      'evals/validators/literal.xyz:validateStatus',
     ]);
   });
 
@@ -2254,6 +2393,49 @@ providers:
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['evals/providers/build.py', 'evals/data/context.json']);
+  });
+
+  it('should extract prefixed script providers from string, id, and mapped forms', () => {
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'providers:',
+        '  - python:providers/python.py:call_api',
+        '  - id: golang:providers/golang.go:CallApi',
+        '  - ruby:providers/ruby.rb:call_api:',
+        '      config:',
+        '        temperature: 0',
+        '  - go:providers/unsupported.go:CallApi',
+      ].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/providers/python.py',
+      'evals/providers/golang.go',
+      'evals/providers/ruby.rb',
+    ]);
+  });
+
+  it('should extract prefixed script providers from targets', () => {
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'targets:',
+        '  - id: python:targets/python.py:call_api',
+        '  - golang:targets/golang.go:CallApi:',
+        '      config:',
+        '        temperature: 0',
+        '  - ruby:targets/ruby.rb:call_api',
+      ].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/targets/python.py',
+      'evals/targets/golang.go',
+      'evals/targets/ruby.rb',
+    ]);
   });
 
   it('should extract quoted file arguments from exec-backed providers', () => {
@@ -3261,6 +3443,29 @@ prompts:
     ).toEqual(['evals/tests/cases.yaml', 'evals/tests']);
     expect(mockGlob.sync).toHaveBeenCalledWith(
       ['/test/working/evals/tests/*.yaml'],
+      expect.objectContaining({ magicalBraces: true }),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('unsafe config dependency glob alternative'),
+    );
+  });
+
+  it.each([
+    ['{foo),../providers}/*.py', '/test/working/foo)/*.py', 'foo)/'],
+    ['{foo],../providers}/*.py', '/test/working/foo]/*.py', 'foo]/'],
+    ['{foo),/absolute}/*.py', '/test/working/foo)/*.py', 'foo)/'],
+  ])('should discard an escaping brace alternative with a mismatched closer: %s', (pattern, safePattern, watchedDirectory) => {
+    mockFs.readFileSync.mockReturnValue(`providers: file://${pattern}\n`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([watchedDirectory]);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      [safePattern],
       expect.objectContaining({ magicalBraces: true }),
     );
     expect(core.warning).toHaveBeenCalledWith(

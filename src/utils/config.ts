@@ -23,6 +23,34 @@ type PromptEntry =
 
 const MAX_BRACE_EXPANSIONS = 1024;
 const MAX_GLOB_PATTERN_LENGTH = 65_536;
+const JAVASCRIPT_EXTENSIONS = new Set(['cjs', 'cts', 'js', 'mjs', 'mts', 'ts']);
+const SCRIPT_EXTENSIONS = new Set(['py', 'go', 'rb']);
+const PROMPT_FILE_EXTENSIONS = new Set([
+  'cjs',
+  'csv',
+  'cts',
+  'exe',
+  'js',
+  'json',
+  'jsonl',
+  'j2',
+  'md',
+  'mjs',
+  'mts',
+  'py',
+  'ts',
+  'txt',
+  'yml',
+  'yaml',
+  'sh',
+  'bash',
+  'zsh',
+  'bat',
+  'cmd',
+  'ps1',
+  'rb',
+  'pl',
+]);
 const HTTP_CREDENTIAL_PATH_KEYS = [
   'privateKeyPath',
   'keystorePath',
@@ -90,8 +118,66 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function isForeignWindowsAbsolutePath(filePath: string): boolean {
+  return (
+    process.platform !== 'win32' &&
+    path.win32.isAbsolute(filePath) &&
+    !path.isAbsolute(filePath)
+  );
+}
+
 function sanitizeDependencyDisplayPath(filePath: string): string {
   return /[\0\r\n]/.test(filePath) ? '[redacted]' : filePath;
+}
+
+function getPathSuffix(filePath: string):
+  | {
+      extension: string;
+      pathWithoutSelector: string;
+      hasSelector: boolean;
+    }
+  | undefined {
+  if (filePath.length > MAX_GLOB_PATTERN_LENGTH || /[\0\r\n]/.test(filePath)) {
+    return undefined;
+  }
+  const separator = Math.max(
+    filePath.lastIndexOf('/'),
+    filePath.lastIndexOf('\\'),
+  );
+  const colon = filePath.indexOf(':', separator + 1);
+  if (colon === filePath.length - 1) return undefined;
+  const filenameEnd = colon === -1 ? filePath.length : colon;
+  const extensionStart = filePath.lastIndexOf('.', filenameEnd - 1);
+  if (extensionStart <= separator) return undefined;
+  const extension = filePath.slice(extensionStart + 1, filenameEnd);
+  if (!/^[A-Za-z0-9]{1,10}$/.test(extension)) return undefined;
+  return {
+    extension,
+    pathWithoutSelector: filePath.slice(0, filenameEnd),
+    hasSelector: colon !== -1,
+  };
+}
+
+function getFileFunctionSelector(filePath: string):
+  | {
+      extension: string;
+      pathWithoutSelector: string;
+      isJavascript: boolean;
+    }
+  | undefined {
+  const suffix = getPathSuffix(filePath);
+  if (!suffix?.hasSelector) return undefined;
+  const isJavascript = JAVASCRIPT_EXTENSIONS.has(
+    suffix.extension.toLowerCase(),
+  );
+  if (!isJavascript && !SCRIPT_EXTENSIONS.has(suffix.extension)) {
+    return undefined;
+  }
+  return {
+    extension: suffix.extension,
+    pathWithoutSelector: suffix.pathWithoutSelector,
+    isJavascript,
+  };
 }
 
 export function normalizeConfigFilePath(
@@ -385,6 +471,11 @@ export function extractFileDependencies(
         if (filePath.includes('\0')) {
           throw new Error(`${source} contains an invalid null byte`);
         }
+        if (isForeignWindowsAbsolutePath(filePath)) {
+          throw new Error(
+            `${source} must stay within the repository workspace`,
+          );
+        }
 
         const absolutePath = path.resolve(configDir, filePath);
         if (!isDependencyPathInside(absolutePath)) {
@@ -463,6 +554,10 @@ export function extractFileDependencies(
       const safePatterns: string[] = [];
       let unsafeAlternative = false;
       for (const expandedPath of expandedPaths) {
+        if (isForeignWindowsAbsolutePath(expandedPath)) {
+          unsafeAlternative = true;
+          continue;
+        }
         const absolutePattern = path.resolve(configDir, expandedPath);
         if (absolutePattern.length > MAX_GLOB_PATTERN_LENGTH) {
           core.warning(`Ignoring ${source}: pattern is too long`);
@@ -496,19 +591,17 @@ export function extractFileDependencies(
           ? '[redacted]'
           : displayFileUrl.replace('file://', ''),
       );
+      const selector = stripFunctionSuffix
+        ? getFileFunctionSelector(rawFilePath)
+        : undefined;
       const hasCaseVariantJavascriptSelector =
-        stripFunctionSuffix &&
-        /\.(?:[cm]?[jt]s):[^/\\]+$/i.test(rawFilePath) &&
-        !/\.(?:[cm]?[jt]s):[^/\\]+$/.test(rawFilePath);
+        selector?.isJavascript === true &&
+        selector.extension !== selector.extension.toLowerCase();
       if (hasCaseVariantJavascriptSelector) {
         processFileUrl(fileUrl, false, displayFileUrl, redactDisplayPath);
       }
       const filePath = normalizeConfigFilePath(
-        stripFunctionSuffix
-          ? rawFilePath
-              .replace(/(\.(?:[cm]?[jt]s)):[^/\\]+$/i, '$1')
-              .replace(/(\.(?:py|go|rb)):[^/\\]+$/, '$1')
-          : rawFilePath,
+        selector?.pathWithoutSelector ?? rawFilePath,
       );
       const globPath = filePath.replace(/\\/g, '/');
       const hasGlobMagic = tryHasGlobMagic(globPath, 'config dependency');
@@ -538,6 +631,12 @@ export function extractFileDependencies(
           return;
         }
         for (const match of matches) {
+          if (isForeignWindowsAbsolutePath(match)) {
+            core.warning(
+              `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`,
+            );
+            continue;
+          }
           const absoluteMatch = path.resolve(match);
           let physicalMatch: string;
           try {
@@ -744,10 +843,10 @@ export function extractFileDependencies(
       initialEnv = templateEnv,
       failClosedOnRefs = false,
     ): void => {
-      const rawPath = promptPath
-        .replace(/^file:\/\//, '')
-        .replace(/(\.(?:[cm]?[jt]s)):[^/\\]+$/i, '$1')
-        .replace(/(\.(?:py|go|rb)):[^/\\]+$/, '$1');
+      const pathWithoutPrefix = promptPath.replace(/^file:\/\//, '');
+      const rawPath =
+        getFileFunctionSelector(pathWithoutPrefix)?.pathWithoutSelector ??
+        pathWithoutPrefix;
       const normalizedPath = normalizeConfigFilePath(rawPath).replace(
         /\\/g,
         '/',
@@ -819,7 +918,10 @@ export function extractFileDependencies(
             const providerReference =
               (providerContext || testVarsFileContext) &&
               resolveNestedProviderPaths &&
-              !path.isAbsolute(renderedReference.replace(/^file:\/\//, ''))
+              !path.isAbsolute(renderedReference.replace(/^file:\/\//, '')) &&
+              !isForeignWindowsAbsolutePath(
+                renderedReference.replace(/^file:\/\//, ''),
+              )
                 ? `file://${path.resolve(
                     path.dirname(sourcePath),
                     renderedReference.replace(/^file:\/\//, ''),
@@ -888,6 +990,12 @@ export function extractFileDependencies(
       };
 
       for (const promptFile of promptFiles) {
+        if (isForeignWindowsAbsolutePath(promptFile)) {
+          core.warning(
+            `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`,
+          );
+          continue;
+        }
         const absolutePromptFile = path.resolve(promptFile);
         if (
           !isDependencyPathInside(absolutePromptFile) ||
@@ -995,12 +1103,23 @@ export function extractFileDependencies(
               continue;
             }
             const absolutePath = resolveConfigDependency(
-              path.isAbsolute(part) ? part : path.resolve(configDir, part),
+              path.isAbsolute(part) || isForeignWindowsAbsolutePath(part)
+                ? part
+                : path.resolve(configDir, part),
               'executable provider dependency',
               '[redacted]',
             );
             if (absolutePath) dependencies.add(absolutePath);
           }
+          return;
+        }
+        for (const prefix of ['python:', 'golang:', 'ruby:']) {
+          if (!renderedReference.startsWith(prefix)) continue;
+          processFileUrl(
+            `file://${renderedReference.slice(prefix.length)}`,
+            true,
+            `file://${reference.slice(prefix.length)}`,
+          );
           return;
         }
         if (!renderedReference.startsWith('file://')) return;
@@ -1174,7 +1293,7 @@ export function extractFileDependencies(
 
     const extractPromptFile = (prompt: PromptEntry): void => {
       const processPromptReference = (reference: string): void => {
-        if (/[\r\n]/.test(reference) || reference.length > 65_536) return;
+        if (/[\0\r\n]/.test(reference) || reference.length > 65_536) return;
         const isExecutable = reference.startsWith('exec:');
         const hasPathPrefix = /^(?:\.{0,2}[\\/]|[A-Za-z]:[\\/])/.test(
           reference,
@@ -1202,8 +1321,8 @@ export function extractFileDependencies(
           ((!/\s/.test(reference) || !/[*?[\]{}]/.test(reference)) &&
             (reference.charAt(reference.length - 3) === '.' ||
               reference.charAt(reference.length - 4) === '.')) ||
-          /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|zsh|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
-            reference,
+          PROMPT_FILE_EXTENSIONS.has(
+            getPathSuffix(reference)?.extension.toLowerCase() ?? '',
           );
 
         if (looksLikePath) {
@@ -1222,6 +1341,12 @@ export function extractFileDependencies(
             typeof prompt.config === 'object'
               ? (prompt.config as Record<string, unknown>)
               : undefined;
+          if (
+            typeof promptConfig?.basePath === 'string' &&
+            isForeignWindowsAbsolutePath(promptConfig.basePath)
+          ) {
+            return;
+          }
           const promptExecutionCwd =
             typeof promptConfig?.basePath === 'string'
               ? path.resolve(executionCwd, promptConfig.basePath)
@@ -1242,13 +1367,20 @@ export function extractFileDependencies(
             return;
           }
           const promptPath = isExecutable
-            ? path.resolve(
-                promptExecutionCwd,
+            ? isForeignWindowsAbsolutePath(
                 normalizeConfigFilePath(
                   renderedPromptPath.replace(/^file:\/\//, ''),
                 ),
               )
+              ? undefined
+              : path.resolve(
+                  promptExecutionCwd,
+                  normalizeConfigFilePath(
+                    renderedPromptPath.replace(/^file:\/\//, ''),
+                  ),
+                )
             : renderedPromptPath;
+          if (!promptPath) return;
           processFileUrl(
             promptPath.startsWith('file://')
               ? promptPath
@@ -1262,6 +1394,7 @@ export function extractFileDependencies(
           );
 
           for (const executableArgument of executableParts.slice(1)) {
+            if (isForeignWindowsAbsolutePath(executableArgument)) continue;
             const argumentPath = path.isAbsolute(executableArgument)
               ? path.resolve(executableArgument)
               : path.resolve(promptExecutionCwd, executableArgument);
@@ -1345,10 +1478,8 @@ export function extractFileDependencies(
       for (const value of values) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
-          if (
-            /\.(?:[cm]?[jt]s):[^/\\]+$/i.test(value) ||
-            /\.(?:py):[^/\\]+$/.test(value)
-          ) {
+          const selector = getFileFunctionSelector(value);
+          if (selector?.isJavascript || selector?.extension === 'py') {
             processFileUrl(value, true);
           }
         } else if (
@@ -1369,6 +1500,7 @@ export function extractFileDependencies(
     };
 
     // Extract assert files
+    const visitedAssertionLists = new WeakSet<object>();
     const extractAssertFiles = (
       asserts?: Array<{
         type?: string;
@@ -1381,16 +1513,19 @@ export function extractFileDependencies(
         assert?: Array<{ type?: string; value?: unknown }>;
       }>,
     ): void => {
-      if (!asserts) return;
+      if (!asserts || visitedAssertionLists.has(asserts)) return;
+      visitedAssertionLists.add(asserts);
       for (const assert of asserts) {
         if (
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
           processFileUrl(assert.value);
+          const selector = getFileFunctionSelector(assert.value);
           if (
-            /\.(?:[cm]?[jt]s):[^/\\]+$/i.test(assert.value) ||
-            /\.(?:py|rb):[^/\\]+$/.test(assert.value)
+            selector?.isJavascript ||
+            selector?.extension === 'py' ||
+            selector?.extension === 'rb'
           ) {
             processFileUrl(assert.value, true);
           }
@@ -1468,7 +1603,7 @@ export function extractFileDependencies(
           if (
             !test.startsWith('file://') &&
             !/[\\/*?{}]/.test(test) &&
-            !/\.[A-Za-z0-9]{1,10}(?::[^\\/]+)?$/.test(test)
+            !getPathSuffix(test)
           ) {
             continue;
           }
