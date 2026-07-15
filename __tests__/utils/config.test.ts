@@ -2616,6 +2616,8 @@ tests:
     "$ref: './safe.yaml '\n",
     "commandLineOptions:\n  envPath: '../../outside.env'\n",
     "commandLineOptions:\n  envPath: '{{ env.PICK }}'\n",
+    "commandLineOptions:\n  envPath: '{% if env.PICK %}.env.late{% endif %}'\n",
+    "commandLineOptions:\n  envPath: '{# ignored #}.env.late'\n",
   ])('fails closed for an unsafe or dynamic config dependency: %s', (content) => {
     mockConfigFiles({
       '/test/working/evals/promptfooconfig.yaml': content,

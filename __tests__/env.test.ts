@@ -1175,6 +1175,27 @@ describe('loadConfigEnvironmentFiles', () => {
     ).toThrow(/cannot be safely preflighted/);
   });
 
+  test.each([
+    '{% if env.PICK %}.env.late{% endif %}',
+    '{# ignored #}.env.late',
+  ])('rejects a Nunjucks-delimited envPath before Promptfoo can render it: %s', (envPath) => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      [
+        'env:',
+        '  PICK: true',
+        'commandLineOptions:',
+        `  envPath: '${envPath}'`,
+      ].join('\n'),
+    );
+    writeFile(envPath, 'CUSTOM_PROVIDER_SETTING=safe\n');
+    writeFile('.env.late', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /Computed commandLineOptions\.envPath.*cannot be safely preflighted/,
+    );
+  });
+
   test('ignores unrelated provider parameter schemas that contain $id', () => {
     const target: NodeJS.ProcessEnv = {};
     const configPath = writeFile(

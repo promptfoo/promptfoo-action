@@ -844,7 +844,7 @@ export function loadConfigEnvironmentFiles(
         if (entry.split(',').every((part) => part.trim().length === 0)) {
           continue;
         }
-        if (entry.includes('{{')) {
+        if (/\{[{%#]/.test(entry)) {
           throw new PromptfooActionError(
             `Computed commandLineOptions.envPath in ${configPath} cannot be safely preflighted`,
             ErrorCodes.INVALID_CONFIGURATION,

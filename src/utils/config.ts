@@ -960,7 +960,7 @@ export function extractFileDependencies(
           if (rawEntry.split(',').every((part) => part.trim().length === 0)) {
             continue;
           }
-          if (rawEntry.includes('{{')) {
+          if (/\{[{%#]/.test(rawEntry)) {
             throw new Error(
               'Dynamic commandLineOptions.envPath cannot be safely inspected',
             );
