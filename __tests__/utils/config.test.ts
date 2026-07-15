@@ -177,6 +177,45 @@ prompts:
     expect(deps).toEqual([]);
   });
 
+  it.each([
+    'prompts: |\n  Return **bold** output for the user.\n',
+    'prompts: |\n  Calculate price * discount_percent.\n',
+    'prompts: portkey://workspace/*\n',
+    'prompts: langfuse://workspace/*\n',
+    'prompts: helicone://workspace/*\n',
+  ])('should not treat an inline prompt as a filesystem glob', (config) => {
+    mockFs.readFileSync.mockReturnValue(config);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should preserve provider dependencies for a very long inline prompt', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.py
+prompts: ${'A'.repeat(70_000)}
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.length > 65_536) {
+        throw new Error('pattern is too long');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.py']);
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('pattern is too long'),
+    );
+  });
+
   it('should extract scalar prompt functions without the function suffix', () => {
     mockFs.readFileSync.mockReturnValue(
       'prompts: file://prompts/build.py:create_prompt\n',
@@ -294,6 +333,56 @@ prompts:
       'evals/scripts/generate.sh',
       'custom/templates/input.txt',
     ]);
+  });
+
+  it.each([
+    './custom',
+    '/test/working/custom',
+  ])('should resolve executable prompt-object arguments from config.basePath', (basePath) => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - label: Custom prompt
+    raw: exec:./scripts/generate.sh ./templates/input.txt
+    config:
+      basePath: ${basePath}
+`);
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('custom/templates/input.txt'),
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o644,
+    } as fs.Stats);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/scripts/generate.sh',
+      'custom/templates/input.txt',
+    ]);
+  });
+
+  it('should not probe an executable prompt basePath outside the workspace', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - label: Custom prompt
+    raw: exec:./scripts/generate.sh ./templates/input.txt
+    config:
+      basePath: /private/tmp/SENSITIVE-REVIEW-TOKEN
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/scripts/generate.sh']);
+    expect(mockFs.existsSync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+    );
   });
 
   it('should ignore directory arguments passed to an executable prompt', () => {

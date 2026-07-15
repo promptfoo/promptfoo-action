@@ -191,9 +191,21 @@ export function extractFileDependencies(
       const processPromptReference = (
         reference: string,
         declaredFile = false,
+        promptExecutionCwd = executionCwd,
       ): void => {
         const isExecutable = reference.startsWith('exec:');
         const isFileUrl = reference.startsWith('file://');
+        if (
+          !declaredFile &&
+          !isExecutable &&
+          !isFileUrl &&
+          (reference.length > 65_536 ||
+            ['\n', 'portkey://', 'langfuse://', 'helicone://'].some((value) =>
+              reference.includes(value),
+            ))
+        ) {
+          return;
+        }
         const looksLikePath =
           declaredFile ||
           isExecutable ||
@@ -239,7 +251,7 @@ export function extractFileDependencies(
         for (const executableArgument of executableParts.slice(1)) {
           const argumentPath = resolvePromptProbe(
             executableArgument,
-            executionCwd,
+            promptExecutionCwd,
           );
           if (!argumentPath || !fs.existsSync(argumentPath)) {
             continue;
@@ -345,7 +357,21 @@ export function extractFileDependencies(
         } else if (typeof prompt === 'object' && prompt !== null) {
           const promptReference = prompt.file || prompt.raw || prompt.id;
           if (typeof promptReference === 'string') {
-            processPromptReference(promptReference, Boolean(prompt.file));
+            const promptConfig = prompt.config;
+            const promptBasePath =
+              typeof promptConfig === 'object' &&
+              promptConfig !== null &&
+              'basePath' in promptConfig &&
+              typeof promptConfig.basePath === 'string'
+                ? promptConfig.basePath
+                : undefined;
+            processPromptReference(
+              promptReference,
+              Boolean(prompt.file),
+              promptBasePath
+                ? path.resolve(executionCwd, promptBasePath)
+                : executionCwd,
+            );
           }
         }
       }

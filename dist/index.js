@@ -36385,9 +36385,14 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         const absolutePath = path5.isAbsolute(filePath) ? path5.resolve(filePath) : path5.resolve(path5.join(baseDir, filePath));
         return isPathInside(dependencyRoot, absolutePath) ? absolutePath : void 0;
       };
-      const processPromptReference = (reference, declaredFile = false) => {
+      const processPromptReference = (reference, declaredFile = false, promptExecutionCwd = executionCwd) => {
         const isExecutable = reference.startsWith("exec:");
         const isFileUrl = reference.startsWith("file://");
+        if (!declaredFile && !isExecutable && !isFileUrl && (reference.length > 65536 || ["\n", "portkey://", "langfuse://", "helicone://"].some(
+          (value) => reference.includes(value)
+        ))) {
+          return;
+        }
         const looksLikePath = declaredFile || isExecutable || isFileUrl || le(reference) || /[\\/]/.test(reference) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
           reference
         );
@@ -36411,7 +36416,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         for (const executableArgument of executableParts.slice(1)) {
           const argumentPath = resolvePromptProbe(
             executableArgument,
-            executionCwd
+            promptExecutionCwd
           );
           if (!argumentPath || !fs6.existsSync(argumentPath)) {
             continue;
@@ -36502,7 +36507,13 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         } else if (typeof prompt === "object" && prompt !== null) {
           const promptReference = prompt.file || prompt.raw || prompt.id;
           if (typeof promptReference === "string") {
-            processPromptReference(promptReference, Boolean(prompt.file));
+            const promptConfig = prompt.config;
+            const promptBasePath = typeof promptConfig === "object" && promptConfig !== null && "basePath" in promptConfig && typeof promptConfig.basePath === "string" ? promptConfig.basePath : void 0;
+            processPromptReference(
+              promptReference,
+              Boolean(prompt.file),
+              promptBasePath ? path5.resolve(executionCwd, promptBasePath) : executionCwd
+            );
           }
         }
       }
