@@ -1824,6 +1824,38 @@ providers:
     ]);
   });
 
+  it.each([
+    'providers',
+    'targets',
+  ] as const)('should extract HTTP ProviderOptionsMap dependencies under %s', (providerField) => {
+    mockFs.readFileSync.mockReturnValue(`
+${providerField}:
+  - https://example.test/api:
+      config:
+        validateStatus: file://validators/status.mjs:validateStatus
+        auth:
+          type: file
+          path: credentials/token.txt
+        tls:
+          keyPath: credentials/client.key
+  - openai:gpt-4o:
+      config:
+        auth:
+          type: file
+          path: ignored/non-http-token.txt
+        tls:
+          keyPath: ignored/non-http-client.key
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/credentials/token.txt',
+      'evals/credentials/client.key',
+      'evals/validators/status.mjs',
+    ]);
+  });
+
   it('should conservatively watch an unresolved multipart source path', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:

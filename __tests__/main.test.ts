@@ -786,6 +786,31 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should preserve outer whitespace in the action prompts input', async () => {
+      const rawPrompts = ' prompts/*.txt ';
+      mockCore.getInput.mockImplementation(
+        (name: string, options?: core.InputOptions) => {
+          const value =
+            name === 'prompts' ? rawPrompts : DEFAULT_INPUTS[name] || '';
+          return options?.trimWhitespace === false ? value : value.trim();
+        },
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' prompts/prompt.txt ' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === rawPrompts ? [' prompts/prompt.txt '] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        rawPrompts,
+        expect.any(Object),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should match whitespace-padded CRLF workflow_dispatch file inputs', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',
@@ -848,6 +873,31 @@ describe('GitHub Action Main', () => {
       mockConfig.extractFileDependencies.mockReturnValue([
         ' data/context.json ',
       ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve outer whitespace in the workflow-files action input', async () => {
+      const rawFile = ' data/context.json ';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockCore.getInput.mockImplementation(
+        (name: string, options?: core.InputOptions) => {
+          const value =
+            name === 'workflow-files' ? rawFile : DEFAULT_INPUTS[name] || '';
+          return options?.trimWhitespace === false ? value : value.trim();
+        },
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([rawFile]);
 
       await run();
 
