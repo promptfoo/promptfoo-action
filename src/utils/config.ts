@@ -134,8 +134,11 @@ export function extractFileDependencies(
           ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1')
           : rawFilePath,
       );
+      const globPath = filePath.replace(/\\/g, '/');
+      const globOptions = { windowsPathsNoEscape: true };
+      const hasGlobMagic = glob.hasMagic(globPath, globOptions);
       const absolutePath = resolveConfigDependency(
-        filePath,
+        hasGlobMagic ? globPath : filePath,
         'config file dependency',
       );
       if (!absolutePath) {
@@ -143,10 +146,7 @@ export function extractFileDependencies(
       }
 
       // Check if the path contains glob patterns
-      const globOptions = {
-        windowsPathsNoEscape: process.platform === 'win32',
-      };
-      if (glob.hasMagic(filePath, globOptions)) {
+      if (hasGlobMagic) {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, {
           nodir: true,
@@ -165,8 +165,8 @@ export function extractFileDependencies(
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const root = path.parse(filePath).root;
-        const pathParts = filePath
+        const root = path.parse(globPath).root;
+        const pathParts = globPath
           .slice(root.length)
           .split(/[\\/]/)
           .filter(Boolean);
@@ -195,6 +195,62 @@ export function extractFileDependencies(
       }
     };
 
+    const extractNestedPromptFileUrls = (promptPath: string): void => {
+      const rawPath = promptPath
+        .replace(/^file:\/\//, '')
+        .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1');
+      const normalizedPath = normalizeConfigFilePath(rawPath).replace(
+        /\\/g,
+        '/',
+      );
+      if (!/\.(?:json|ya?ml)$/i.test(normalizedPath)) {
+        return;
+      }
+
+      const absolutePath = resolveConfigDependency(
+        normalizedPath,
+        'nested prompt file dependency',
+      );
+      if (!absolutePath) return;
+
+      const promptFiles = glob.hasMagic(normalizedPath, {
+        windowsPathsNoEscape: true,
+      })
+        ? glob.sync(absolutePath, {
+            nodir: true,
+            windowsPathsNoEscape: true,
+          })
+        : [absolutePath];
+
+      const visited = new WeakSet<object>();
+      const walk = (value: unknown): void => {
+        if (typeof value === 'string' && value.startsWith('file://')) {
+          processFileUrl(value);
+        } else if (Array.isArray(value)) {
+          for (const entry of value) walk(entry);
+        } else if (typeof value === 'object' && value !== null) {
+          if (visited.has(value)) return;
+          visited.add(value);
+          for (const entry of Object.values(value)) walk(entry);
+        }
+      };
+
+      for (const promptFile of promptFiles) {
+        if (!isPathInside(dependencyRoot, promptFile)) continue;
+        try {
+          const promptContent = fs.readFileSync(promptFile, 'utf8');
+          const parsed = promptFile.endsWith('.json')
+            ? JSON.parse(promptContent)
+            : loadYaml(promptContent, {
+                schema: CORE_SCHEMA.withTags(mergeTag),
+              });
+          walk(parsed);
+        } catch {
+          // Promptfoo falls back to raw prompt content when structured parsing fails.
+        }
+      }
+    };
+
     // Extract provider files
     if (config.providers) {
       for (const provider of config.providers) {
@@ -211,13 +267,14 @@ export function extractFileDependencies(
 
     const extractPromptFile = (prompt: PromptEntry): void => {
       const processPromptReference = (reference: string): void => {
+        if (/[\r\n]/.test(reference) || reference.length > 65_536) return;
         const isExecutable = reference.startsWith('exec:');
         const looksLikePath =
           isExecutable ||
           reference.startsWith('file://') ||
-          glob.hasMagic(reference) ||
+          reference.includes('*') ||
           /[\\/]/.test(reference) ||
-          /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
+          /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|zsh|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
             reference,
           );
 
@@ -238,11 +295,23 @@ export function extractFileDependencies(
               : `file://${promptPath}`,
             true,
           );
+          extractNestedPromptFileUrls(promptPath);
+
+          const promptConfig =
+            typeof prompt === 'object' &&
+            prompt.config !== null &&
+            typeof prompt.config === 'object'
+              ? (prompt.config as Record<string, unknown>)
+              : undefined;
+          const promptExecutionCwd =
+            typeof promptConfig?.basePath === 'string'
+              ? path.resolve(executionCwd, promptConfig.basePath)
+              : executionCwd;
 
           for (const executableArgument of executableParts.slice(1)) {
             const argumentPath = path.isAbsolute(executableArgument)
               ? path.resolve(executableArgument)
-              : path.resolve(executionCwd, executableArgument);
+              : path.resolve(promptExecutionCwd, executableArgument);
             if (
               !isPathInside(dependencyRoot, argumentPath) ||
               !fs.existsSync(argumentPath)

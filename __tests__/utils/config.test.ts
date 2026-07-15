@@ -157,6 +157,121 @@ prompts:
     ]);
   });
 
+  it('should ignore multiline inline prompt-map keys containing glob syntax', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  ? |-
+    What does [a-z] match?
+    Explain with an example.
+  : inline prompt
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('[a-z]'),
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should ignore long inline prompt-map keys without passing them to glob', () => {
+    const longPrompt = `Explain this passage: ${'a'.repeat(70_000)}`;
+    mockFs.readFileSync.mockReturnValue(
+      `prompts:\n  "${longPrompt}": inline\n`,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.length > 65_536) {
+        throw new Error('pattern is too long');
+      }
+      return false;
+    });
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should extract nested file references from mapped YAML and JSON prompts', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return `
+prompts:
+  file://prompts/chat.yaml: yaml prompt
+  file://prompts/chat.json: json prompt
+`;
+      }
+      if (candidate.endsWith('/prompts/chat.yaml')) {
+        return 'system: file://partials/system.txt\n';
+      }
+      if (candidate.endsWith('/prompts/chat.json')) {
+        return '{"messages":[{"content":"file://partials/user.txt"}]}';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/prompts/chat.yaml',
+      '../config/partials/system.txt',
+      '../config/prompts/chat.json',
+      '../config/partials/user.txt',
+    ]);
+  });
+
+  it('should extract safe globbed YAML prompts while tolerating cycles and unsafe matches', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return `
+prompts:
+  file://prompts/*.yaml: mapped prompts
+`;
+      }
+      if (candidate.endsWith('/prompts/chat.yaml')) {
+        return `
+node: &node
+  system: file://partials/system.txt
+  self: *node
+  optional: null
+  count: 2
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/prompts/chat.yaml',
+      '/outside/prompts/unsafe.yaml',
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'prompts', 'partials/system.txt']);
+  });
+
+  it('should ignore unsafe and malformed mapped structured prompts', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return `
+prompts:
+  file://../outside.yaml: unsafe prompt
+  file://prompts/broken.json: malformed prompt
+`;
+      }
+      if (candidate.endsWith('/prompts/broken.json')) return '{not json';
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/broken.json']);
+  });
+
   it('should extract executable prompt-map keys without command arguments', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
@@ -217,6 +332,41 @@ prompts:
     );
 
     expect(deps).toEqual(['bin/python', 'prompts/generate.py']);
+  });
+
+  it('should resolve mapped executable prompt arguments from prompt config basePath', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - raw: exec:../bin/python templates/generate.py
+    config:
+      basePath: custom
+`);
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('/custom/templates/generate.py'),
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o644,
+    } as fs.Stats);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+      '/test/working',
+    );
+
+    expect(deps).toEqual(['bin/python', 'custom/templates/generate.py']);
+  });
+
+  it('should extract uncommon root-level executable prompt-map keys', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  generate.zsh: generated prompt
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['generate.zsh']);
   });
 
   it('should extract file-backed prompt ids', () => {
@@ -503,20 +653,22 @@ shared: &shared
     );
   });
 
-  it('should preserve escaped glob literals on POSIX', () => {
+  it('should match Promptfoo backslash-separated prompt globs on POSIX', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
-  file://prompts/\\*.txt: mapped prompts
+  file://prompts\\*.txt: mapped prompts
 `);
-    mockGlob.hasMagic.mockImplementation(
-      (filePath: string, options?: { windowsPathsNoEscape?: boolean }) =>
-        filePath.includes('*') && options?.windowsPathsNoEscape === true,
+    mockGlob.hasMagic.mockImplementation((filePath: string) =>
+      filePath.includes('*'),
     );
+    mockGlob.sync.mockReturnValue(['/test/working/prompts/example.txt']);
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['prompts/\\*.txt']);
-    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(deps).toEqual(['prompts/example.txt', 'prompts']);
+    expect(mockGlob.hasMagic).toHaveBeenCalledWith('prompts/*.txt', {
+      windowsPathsNoEscape: true,
+    });
   });
 
   it('should recognize Windows backslash-separated prompt globs', () => {
