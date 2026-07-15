@@ -374,7 +374,8 @@ export async function run(): Promise<void> {
               ? [file.filename, file.previous_filename]
               : [file.filename],
           )
-          .join('\n');
+          .join('\0');
+        changedFiles = `${changedFiles}\0`;
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -404,12 +405,13 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${JSON.stringify(changedFiles)}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -437,12 +439,13 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${JSON.stringify(changedFiles)}`,
           );
         } catch (error) {
           core.warning(
@@ -465,7 +468,9 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split(/\r?\n/).filter((file) => file);
+    const changedFilesList = changedFiles
+      .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
+      .filter((file) => file);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {

@@ -617,6 +617,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -689,6 +690,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -882,6 +884,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -1012,6 +1015,88 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve a leading-space and newline PR dependency filename', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' providers/custom\nprovider.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' providers/custom\nprovider.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'push',
+      'workflow_dispatch',
+    ])('should preserve tab and whitespace filenames from a %s diff', async (eventName) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: eventName,
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value:
+          eventName === 'push'
+            ? { before: 'a'.repeat(40), after: 'b'.repeat(40) }
+            : { inputs: { base: 'feature-branch' } },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockImplementationOnce(async (options) =>
+        options.includes('-z')
+          ? 'providers/custom\tprovider.py\0 archive/renamed provider.py \0'
+          : '"providers/custom\\tprovider.py"\n archive/renamed provider.py ',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom\tprovider.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'push',
+      'workflow_dispatch',
+    ])('should not emit a workflow command from a %s diff filename', async (eventName) => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: eventName,
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value:
+          eventName === 'push'
+            ? { before: 'a'.repeat(40), after: 'b'.repeat(40) }
+            : { inputs: { base: 'feature-branch' } },
+        configurable: true,
+      });
+      const injectedFilename =
+        'providers/custom\n::warning::SENSITIVE-REVIEW-TOKEN.py';
+      mockGitInterface.diff.mockResolvedValueOnce(`${injectedFilename}\0`);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([injectedFilename]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('\n::warning::SENSITIVE-REVIEW-TOKEN.py'),
       );
       expect(mockExec.exec).toHaveBeenCalled();
     });
@@ -1705,6 +1790,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',
