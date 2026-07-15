@@ -36716,6 +36716,14 @@ function extractFileDependencies(configPath) {
             processFileUrl(fileUrl);
           }
         }
+        const isFileAuth = inspectNestedFiles && "type" in value && value.type === "file" && "path" in value && typeof value.path === "string";
+        if (isFileAuth) {
+          const authPath = value.path;
+          const fileUrl = authPath.startsWith("file://") ? authPath : `file://${authPath}`;
+          processFileUrl(
+            fileUrl.replace(/(\.(?:[cm]?[jt]s|py|rb|go)):[^/\\:]+$/i, "$1")
+          );
+        }
         for (const [key, item] of Object.entries(value)) {
           if (inspectNestedFiles && key.startsWith("file://")) {
             const fileUrl = key.replace(
@@ -36728,7 +36736,7 @@ function extractFileDependencies(configPath) {
               processFileUrl(fileUrl);
             }
           }
-          if (key !== "file" && key !== "id") {
+          if (key !== "file" && key !== "id" && !(isFileAuth && key === "path")) {
             extractFileReferences(item, inspectNestedFiles);
           }
         }
@@ -36835,6 +36843,7 @@ function extractFileDependencies(configPath) {
         if (!assert || typeof assert !== "object") continue;
         extractFileReferences(assert.value);
         extractFileReferences(assert.provider, true);
+        extractFileReferences(assert.config);
         extractFileReferences(assert.rubricPrompt);
         extractFileReferences(assert.transform);
         extractFileReferences(assert.contextTransform);
