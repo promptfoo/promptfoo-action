@@ -17,6 +17,7 @@ import {
 
 // Get actual fs module for tests that need to read real files
 const actualFs = await vi.importActual<typeof import('fs')>('fs');
+const actualGlob = await vi.importActual<typeof import('glob')>('glob');
 
 // Type definitions for mocks
 type MockOctokit = {
@@ -1788,6 +1789,7 @@ describe('GitHub Action Main', () => {
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['providers\\*.yaml']);
+      mockGlob.hasMagic.mockImplementation(actualGlob.hasMagic);
 
       await run();
 

@@ -227,16 +227,17 @@ function matchesDependencyGlob(
   changedFiles: string[],
 ): boolean {
   try {
-    if (!safelyExpandGlob(dependency)) return false;
+    const normalizedDependency = dependency.replace(/\\/g, '/');
+    if (!safelyExpandGlob(normalizedDependency)) return false;
     if (
-      !glob.hasMagic(dependency, {
+      !glob.hasMagic(normalizedDependency, {
         magicalBraces: true,
         braceExpandMax: MAX_BRACE_EXPANSIONS,
       })
     ) {
       return false;
     }
-    const matcher = new Minimatch(dependency.replace(/\\/g, '/'), {
+    const matcher = new Minimatch(normalizedDependency, {
       braceExpandMax: MAX_BRACE_EXPANSIONS,
       platform: 'linux',
     });
