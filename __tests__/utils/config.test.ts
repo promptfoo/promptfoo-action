@@ -785,6 +785,24 @@ providers:
     expect(deps).toEqual(['./']);
   });
 
+  it('should conservatively watch an env-built file template in a provider-specific config field', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: custom:provider
+    env:
+      CONFIG_DIR: file://config
+      SETTINGS_FILE: settings.json
+    config:
+      settings: "{{ env.CONFIG_DIR + '/' + env.SETTINGS_FILE }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+  });
+
   it('should conservatively watch computed nested response-schema templates', () => {
     process.env.PROVIDER_FILE = 'current.json';
     mockFs.readFileSync.mockReturnValue(`

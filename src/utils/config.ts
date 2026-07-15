@@ -397,9 +397,8 @@ export function extractFileDependencies(configPath: string): string[] {
         if (!renderedProvider.startsWith('file://')) {
           if (
             (isProviderReference && /\{\{|\{%|\{#/.test(renderedProvider)) ||
-            (isFileBearingConfigValue && unresolvedLeadingEnvTemplate) ||
-            (unresolvedComputedFileTemplate &&
-              (grandparentKey === 'config' || isFileBearingConfigValue))
+            ((grandparentKey === 'config' || isFileBearingConfigValue) &&
+              (unresolvedLeadingEnvTemplate || unresolvedComputedFileTemplate))
           ) {
             dependencies.add(
               `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
