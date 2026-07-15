@@ -352,6 +352,66 @@ providers:
     ).toBe(true);
   });
 
+  it.each([
+    'C:\\outside\\provider.py',
+    'C:/outside/provider.py',
+    'C:relative-provider.py',
+    '\\\\server\\share\\provider.py',
+    '\\root-relative\\provider.py',
+  ])('rejects a foreign Windows dependency path %s', (providerPath) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': JSON.stringify({
+        providers: [`file://${providerPath}`],
+      }),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('uses an unsupported Windows path'),
+    );
+  });
+
+  it.each([
+    'C:\\outside\\options.yaml',
+    'C:/outside/options.yaml',
+    'C:relative-options.yaml',
+    '\\\\server\\share\\options.yaml',
+  ])('fails closed for a foreign Windows config ref %s', (refPath) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': JSON.stringify({ $ref: refPath }),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('unsafe Promptfoo config refs are unsupported'),
+    );
+  });
+
+  it.each([
+    'C:\\outside\\.env',
+    'C:/outside/.env',
+    'C:relative.env',
+    '\\\\server\\share\\.env',
+    '.env.safe, C:\\outside\\.env',
+  ])('fails closed for a foreign Windows config envPath %s', (envPath) => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': JSON.stringify({
+        commandLineOptions: { envPath },
+      }),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('uses an unsupported Windows path'),
+    );
+  });
+
   it('should ignore expanded glob matches that escape the dependency root', () => {
     const configContent = `
 providers:
@@ -1100,7 +1160,7 @@ providers:
     ]);
   });
 
-  it('tracks executable function files referenced by vars and assertions', () => {
+  it('preserves literal var filenames and tracks executable assertion files', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': [
         'defaultTest:',
@@ -1116,23 +1176,29 @@ providers:
         '        value: file://assert/check.go:Check',
         '      - type: javascript',
         '        value: file://assert/check.rb:check',
+        '      - type: javascript',
+        '        value: file://assert/check.js:check',
+        '      - type: python',
+        '        value: file://assert/check.py:check',
       ].join('\n'),
     });
 
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([
-      'vars/build.rb',
-      'vars/build.go',
-      'vars/build.js',
-      'vars/build.py',
-      'assert/check.go',
+      'vars/build.rb:build',
+      'vars/build.go:Build',
+      'vars/build.js:build',
+      'vars/build.py:build',
+      'assert/check.go:Check',
       'assert/check.rb',
+      'assert/check.js',
+      'assert/check.py',
       ...implicitConfigDependencies('promptfooconfig.yaml'),
     ]);
   });
 
-  it('tracks executable function files inherited through a local ref', () => {
+  it('preserves literal vars and tracks Ruby namespaces inherited through a local ref', () => {
     mockConfigFiles({
       '/test/working/evals/promptfooconfig.yaml':
         "$ref: './defs.yaml#/suite'\n",
@@ -1143,7 +1209,7 @@ providers:
         '      build: file://vars/build.go:Build',
         '    assert:',
         '      - type: javascript',
-        '        value: file://assert/check.rb:check',
+        '        value: file://assert/check.rb:Policy::check',
       ].join('\n'),
     });
 
@@ -1152,12 +1218,12 @@ providers:
     ).toEqual([
       'defs.yaml',
       'evals/assert/check.rb',
-      'evals/vars/build.go',
+      'evals/vars/build.go:Build',
       ...implicitConfigDependencies('evals/promptfooconfig.yaml'),
     ]);
   });
 
-  it('tracks both uppercase JavaScript selector interpretations while preserving non-JavaScript literals', () => {
+  it('preserves uppercase and non-executable selector-like var filenames', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': [
         'tests:',
@@ -1172,11 +1238,115 @@ providers:
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([
       'vars/build.JS:Build',
-      'vars/build.JS',
       'vars/build.GO:Build',
       'vars/context.json:literal',
       ...implicitConfigDependencies('promptfooconfig.yaml'),
     ]);
+  });
+
+  it('tracks both uppercase JavaScript assertion selector interpretations across Promptfoo versions', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'tests:',
+        '  - assert:',
+        '      - type: javascript',
+        '        value: file://assert/check.JS:Policy::check',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'assert/check.JS:Policy::check',
+      'assert/check.JS',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('tracks executable provider paths across strings, ids, and mapped targets', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - file://providers/build.py:call_api',
+        '  - id: file://providers/build.go:CallApi',
+        "  - 'file://providers/build.rb:call_api':",
+        '      config: {}',
+        '  - file://providers/build.JS:callApi',
+        'targets:',
+        '  - file://targets/build.js:callApi',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'providers/build.py',
+      'providers/build.go',
+      'providers/build.JS:callApi',
+      'providers/build.JS',
+      'providers/build.rb',
+      'targets/build.js',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('tracks nested assert-set validators and safely handles cyclic aliases', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'shared: &set',
+        '  type: assert-set',
+        '  assert:',
+        '    - *set',
+        '    - type: javascript',
+        '      value: file://assert/check.js:check',
+        '    - type: python',
+        '      value: file://assert/check.py:check',
+        '    - type: ruby',
+        '      value: file://assert/check.rb:Policy::check',
+        '    - type: javascript',
+        '      value:',
+        '        file: assert/object-check.js',
+        'tests:',
+        '  - assert:',
+        '      - *set',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'assert/check.js',
+      'assert/check.py',
+      'assert/check.rb',
+      'assert/object-check.js',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('safely ignores malformed nested assertion shapes while tracking valid siblings', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'tests:',
+        '  - assert:',
+        '      - null',
+        '      - []',
+        '      - type: assert-set',
+        '        assert: invalid',
+        '      - type: assert-set',
+        '        assert:',
+        '          - type: javascript',
+        '            value: file://assert/check.js:check',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'assert/check.js',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('tracks both uppercase HTTP file-auth selector interpretations across Promptfoo versions', () => {

@@ -472,6 +472,13 @@ function assertWorkspacePath(
   return realPath;
 }
 
+function isUnsupportedWindowsPath(filePath: string): boolean {
+  return (
+    /^[A-Za-z]:(?![\\/])/.test(filePath) ||
+    (!path.isAbsolute(filePath) && path.win32.isAbsolute(filePath))
+  );
+}
+
 /** Preflight environment files that Promptfoo loads after resolving config. */
 export function loadConfigEnvironmentFiles(
   configPath: string,
@@ -479,6 +486,7 @@ export function loadConfigEnvironmentFiles(
   targetEnvironment: NodeJS.ProcessEnv = process.env,
 ): void {
   if (
+    isUnsupportedWindowsPath(configPath) ||
     hasGlobMagic(configPath, {
       magicalBraces: true,
       windowsPathsNoEscape: true,
@@ -833,6 +841,15 @@ export function loadConfigEnvironmentFiles(
             `Computed commandLineOptions.envPath in ${configPath} cannot be safely preflighted`,
             ErrorCodes.INVALID_CONFIGURATION,
             "Use a literal envPath or move environment files to the action's env-files input.",
+          );
+        }
+        if (
+          entry.split(',').some((part) => isUnsupportedWindowsPath(part.trim()))
+        ) {
+          throw new PromptfooActionError(
+            'commandLineOptions.envPath uses an unsupported Windows path',
+            ErrorCodes.INVALID_CONFIGURATION,
+            'Use repository-local POSIX paths when the action runs on a POSIX runner.',
           );
         }
         const resolvedEntry = path.isAbsolute(entry)

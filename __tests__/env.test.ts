@@ -670,6 +670,23 @@ describe('loadConfigEnvironmentFiles', () => {
     );
   });
 
+  test.each([
+    'C:\\outside\\.env',
+    'C:/outside/.env',
+    'C:relative.env',
+    '\\\\server\\share\\.env',
+    '.env.safe, C:\\outside\\.env',
+  ])('rejects a foreign Windows config envPath %s before loading', (envPath) => {
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      JSON.stringify({ commandLineOptions: { envPath } }),
+    );
+
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /commandLineOptions\.envPath uses an unsupported Windows path/,
+    );
+  });
+
   test('follows local commandLineOptions fragment refs', () => {
     const configPath = writeFile(
       'promptfooconfig.yaml',

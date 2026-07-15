@@ -36276,9 +36276,12 @@ function isPathInside(baseDir, targetPath) {
 function sanitizeLogText(value) {
   return value.replace(/\t/g, "\\t").replace(/\r/g, "\\r").replace(/\n/g, "\\n");
 }
-function normalizeFileUrlSelectors(fileUrl, executableExtensions, requireFunctionName = false) {
+function isUnsupportedWindowsPath(filePath) {
+  return /^[A-Za-z]:(?![\\/])/.test(filePath) || !path5.isAbsolute(filePath) && path5.win32.isAbsolute(filePath);
+}
+function normalizeFileUrlSelectors(fileUrl, executableExtensions, requireFunctionName = false, useFirstColon = false) {
   const rawFilename = fileUrl.slice("file://".length);
-  const lastColonIndex = rawFilename.lastIndexOf(":");
+  const lastColonIndex = useFirstColon ? rawFilename.indexOf(":") : rawFilename.lastIndexOf(":");
   if (lastColonIndex <= 1 || requireFunctionName && lastColonIndex === rawFilename.length - 1) {
     return [fileUrl];
   }
@@ -36321,7 +36324,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         "Promptfoo working directory must stay within the repository workspace"
       );
     }
-    if (configPath.length > maxGlobPatternLength || le(configPath, {
+    if (configPath.length > maxGlobPatternLength || isUnsupportedWindowsPath(configPath) || le(configPath, {
       magicalBraces: true,
       windowsPathsNoEscape: true
     }) || configPath.includes("{{")) {
@@ -36513,6 +36516,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
     const inspectedObjects = /* @__PURE__ */ new Map();
     const httpValidateStatusParents = /* @__PURE__ */ new WeakSet();
     const httpFileAuthParents = /* @__PURE__ */ new WeakSet();
+    const providerIdParents = /* @__PURE__ */ new WeakSet();
     const nestedFileUrls = [];
     const nestedFilePaths = [];
     const pending = [{ value: config2, file: lexicalConfigPath, context: "general" }];
@@ -36524,7 +36528,9 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
           nestedFileUrls.push(
             ...next.context === "general" ? [next.value] : normalizeFileUrlSelectors(
               next.value,
-              /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+              next.context === "assertion" ? /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/ : /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/,
+              false,
+              next.context === "assertion"
             )
           );
         }
@@ -36551,6 +36557,15 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
           continue;
         }
         for (const entry of providers) {
+          if (typeof entry === "string" && entry.startsWith("file://")) {
+            nestedFileUrls.push(
+              ...normalizeFileUrlSelectors(
+                entry,
+                /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+              )
+            );
+            continue;
+          }
           if (typeof entry !== "object" || entry === null) {
             continue;
           }
@@ -36559,11 +36574,22 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
           let providerConfig = provider.config;
           if (typeof providerId !== "string") {
             const mappedProvider = Object.entries(provider).find(
-              ([id]) => /^https?(?::|$)/i.test(id)
+              ([id]) => /^https?(?::|$)/i.test(id) || id.startsWith("file://")
             );
             providerId = mappedProvider?.[0];
             const mappedValue = mappedProvider?.[1];
             providerConfig = typeof mappedValue === "object" && mappedValue !== null ? mappedValue.config : void 0;
+          }
+          if (typeof providerId === "string" && providerId.startsWith("file://")) {
+            nestedFileUrls.push(
+              ...normalizeFileUrlSelectors(
+                providerId,
+                /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+              )
+            );
+            if (provider.id === providerId) {
+              providerIdParents.add(provider);
+            }
           }
           if (typeof providerId !== "string" || !/^https?(?::|$)/i.test(providerId) || typeof providerConfig !== "object" || providerConfig === null) {
             continue;
@@ -36654,12 +36680,14 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       }
       pending.push(
         ...Object.entries(record).filter(
-          ([key]) => (key !== "parameters" || !excludedParameterParents.has(record)) && (key !== "validateStatus" || !httpValidateStatusParents.has(record)) && (key !== "path" || !httpFileAuthParents.has(record))
-        ).map(([key, value]) => ({
-          value,
-          file: next.file,
-          context: key === "vars" ? "vars" : key === "assert" ? "assertion" : next.context
-        }))
+          ([key]) => (key !== "parameters" || !excludedParameterParents.has(record)) && (key !== "validateStatus" || !httpValidateStatusParents.has(record)) && (key !== "path" || !httpFileAuthParents.has(record)) && (key !== "id" || !providerIdParents.has(record))
+        ).map(
+          ([key, value]) => ({
+            value,
+            file: next.file,
+            context: key === "providers" || key === "targets" ? "provider-list" : key === "assert" ? "assertion" : next.context === "provider-list" ? Array.isArray(record) ? "provider-list" : "general" : next.context
+          })
+        )
       );
     }
     const inspectEnvironmentDependencies = (value, sourceFile, isCommandLineOptions, depth) => {
@@ -36687,6 +36715,11 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
           if (rawEntry.includes("{{")) {
             throw new Error(
               "Dynamic commandLineOptions.envPath cannot be safely inspected"
+            );
+          }
+          if (rawEntry.split(",").some((part) => isUnsupportedWindowsPath(part.trim()))) {
+            throw new Error(
+              "commandLineOptions.envPath uses an unsupported Windows path"
             );
           }
           const resolvedEntry = path5.isAbsolute(rawEntry) ? rawEntry : path5.resolve(configDir, rawEntry);
@@ -36744,6 +36777,9 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         }
         if (/[\r\n]/.test(filePath)) {
           throw new Error(`${source} contains an invalid line break`);
+        }
+        if (isUnsupportedWindowsPath(filePath)) {
+          throw new Error(`${source} uses an unsupported Windows path`);
         }
         const absolutePath = path5.resolve(configDir, filePath);
         if (!isSafeDependency(absolutePath)) {
@@ -36870,9 +36906,19 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
     if (config2.providers) {
       for (const provider of config2.providers) {
         if (typeof provider === "string" && provider.startsWith("file://")) {
-          processFileUrl(provider);
+          for (const fileUrl of normalizeFileUrlSelectors(
+            provider,
+            /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+          )) {
+            processFileUrl(fileUrl);
+          }
         } else if (typeof provider === "object" && provider.id?.startsWith("file://")) {
-          processFileUrl(provider.id);
+          for (const fileUrl of normalizeFileUrlSelectors(
+            provider.id,
+            /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+          )) {
+            processFileUrl(fileUrl);
+          }
         }
       }
     }
@@ -36895,12 +36941,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       if (!vars) return;
       for (const value of Object.values(vars)) {
         if (typeof value === "string" && value.startsWith("file://")) {
-          for (const fileUrl of normalizeFileUrlSelectors(
-            value,
-            /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
-          )) {
-            processFileUrl(fileUrl);
-          }
+          processFileUrl(value);
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
           const absolutePath = resolveConfigDependency(
             value.file,
@@ -36912,24 +36953,37 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         }
       }
     };
+    const inspectedAsserts = /* @__PURE__ */ new WeakSet();
     const extractAssertFiles = (asserts) => {
-      if (!asserts) return;
-      for (const assert of asserts) {
-        if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
+      if (!Array.isArray(asserts)) return;
+      const pendingAsserts = [...asserts];
+      for (let index = 0; index < pendingAsserts.length; index++) {
+        const assert = pendingAsserts[index];
+        if (typeof assert !== "object" || assert === null || Array.isArray(assert) || inspectedAsserts.has(assert)) {
+          continue;
+        }
+        inspectedAsserts.add(assert);
+        const assertion = assert;
+        if (typeof assertion.value === "string" && assertion.value.startsWith("file://")) {
           for (const fileUrl of normalizeFileUrlSelectors(
-            assert.value,
-            /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/
+            assertion.value,
+            /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/,
+            false,
+            true
           )) {
             processFileUrl(fileUrl);
           }
-        } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
+        } else if (typeof assertion.value === "object" && assertion.value !== null && "file" in assertion.value && typeof assertion.value.file === "string") {
           const absolutePath = resolveConfigDependency(
-            assert.value.file,
+            assertion.value.file,
             "assertion file dependency"
           );
           if (absolutePath) {
             dependencies.add(absolutePath);
           }
+        }
+        if (assertion.type === "assert-set" && Array.isArray(assertion.assert)) {
+          pendingAsserts.push(...assertion.assert);
         }
       }
     };
@@ -37411,8 +37465,11 @@ function assertWorkspacePath(filePath, workingDirectory, source) {
   }
   return realPath;
 }
+function isUnsupportedWindowsPath2(filePath) {
+  return /^[A-Za-z]:(?![\\/])/.test(filePath) || !path6.isAbsolute(filePath) && path6.win32.isAbsolute(filePath);
+}
 function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironment = process.env) {
-  if (le(configPath, {
+  if (isUnsupportedWindowsPath2(configPath) || le(configPath, {
     magicalBraces: true,
     windowsPathsNoEscape: true
   })) {
@@ -37711,6 +37768,13 @@ function loadConfigEnvironmentFiles(configPath, workingDirectory, targetEnvironm
             `Computed commandLineOptions.envPath in ${configPath} cannot be safely preflighted`,
             ErrorCodes.INVALID_CONFIGURATION,
             "Use a literal envPath or move environment files to the action's env-files input."
+          );
+        }
+        if (entry.split(",").some((part) => isUnsupportedWindowsPath2(part.trim()))) {
+          throw new PromptfooActionError(
+            "commandLineOptions.envPath uses an unsupported Windows path",
+            ErrorCodes.INVALID_CONFIGURATION,
+            "Use repository-local POSIX paths when the action runs on a POSIX runner."
           );
         }
         const resolvedEntry = path6.isAbsolute(entry) ? entry : path6.resolve(path6.dirname(lexicalConfigPath), entry);
