@@ -94,6 +94,7 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn(),
     unlinkSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -129,6 +130,7 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
+  realpathSync: Mock;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
@@ -245,6 +247,7 @@ function setupCommonMocks(): MockOctokit {
     }),
   );
   mockFs.existsSync.mockReturnValue(false);
+  mockFs.realpathSync.mockImplementation((value: fs.PathLike) => String(value));
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -404,6 +407,34 @@ describe('GitHub Action Main', () => {
         expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
+    });
+
+    test('should handle CRLF-separated prompt globs without trimming intentional spaces', async () => {
+      withInputs({
+        prompts: 'prompts/*.txt\r\n prompts/spaced *.txt \r\n\r\n',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/*.txt' ? ['prompts/prompt1.txt'] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/*.txt',
+        expect.any(Object),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        ' prompts/spaced *.txt ',
+        expect.any(Object),
+      );
+      expect(mockCore.getInput).toHaveBeenCalledWith('prompts', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should resolve prompt changes relative to working-directory', async () => {
@@ -852,6 +883,37 @@ describe('GitHub Action Main', () => {
 
       await run();
 
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve outer spaces in a workflow-files action input dependency path', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockCore.getInput.mockImplementation((name, options) => {
+        const value =
+          name === 'workflow-files'
+            ? ' hooks/policy.js '
+            : DEFAULT_INPUTS[name] || '';
+        return options?.trimWhitespace === false ? value : value.trim();
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([' hooks/policy.js ']);
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('workflow-files', {
+        required: false,
+        trimWhitespace: false,
+      });
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
       );
@@ -1764,6 +1826,68 @@ describe('GitHub Action Main', () => {
   });
 
   describe('security validation', () => {
+    test('should not evaluate an in-checkout config that resolves outside the checkout', async () => {
+      withInputs({ config: 'shared-link/promptfooconfig.yaml' });
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        if (resolved.endsWith('/shared-link/promptfooconfig.yaml')) {
+          return '/private/tmp/outside/promptfooconfig.yaml';
+        }
+        return resolved;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: In-checkout config path resolves outside the checkout.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should fail closed with a constant error when an in-checkout config cannot be resolved', async () => {
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        if (resolved.endsWith('/promptfooconfig.yaml')) {
+          throw new Error('EACCES: denied\n::error::forged-config-path');
+        }
+        return resolved;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Unable to resolve the in-checkout config path.',
+      );
+      expect(
+        mockCore.setFailed.mock.calls.map((call) => String(call[0])).join('\n'),
+      ).not.toContain('::error::forged-config-path');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should allow an explicitly external config path', async () => {
+      withInputs({ config: '/private/tmp/shared/promptfooconfig.yaml' });
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const resolved = String(value);
+        return resolved.startsWith('/private/tmp/shared')
+          ? resolved.replace('/private/tmp/shared', '/private/tmp/shared-real')
+          : resolved;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          'promptfoo@latest',
+          'eval',
+          '-c',
+          '/private/tmp/shared/promptfooconfig.yaml',
+        ]),
+        expect.any(Object),
+      );
+    });
+
     test('should use the GitHub API instead of PR refs for changed files', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {

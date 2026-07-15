@@ -10,7 +10,8 @@ const MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 export interface PromptfooConfig {
   extensions?: unknown;
   commandLineOptions?: unknown;
-  providers?: Array<string | { id?: string; [key: string]: unknown }>;
+  providers?: string | Array<string | { id?: string; [key: string]: unknown }>;
+  targets?: string | Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
@@ -41,7 +42,8 @@ export function extractFileDependencies(configPath: string): string[] {
   const dependencies = new Set<string>();
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
-  const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const configIsInCheckout = isPathInside(cwd, configDir);
+  const dependencyRoot = configIsInCheckout ? cwd : configDir;
   const isSafeDependency = (targetPath: string): boolean =>
     isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
   let configParsed = false;
@@ -71,6 +73,25 @@ export function extractFileDependencies(configPath: string): string[] {
     configParsed = true;
 
     let resolvedDependencyRoots: string[] | undefined;
+    if (configIsInCheckout) {
+      try {
+        const resolvedCwd = fs.realpathSync(cwd);
+        const resolvedConfigDir = fs.realpathSync(configDir);
+        if (!isPathInside(resolvedCwd, resolvedConfigDir)) {
+          core.warning(
+            'Ignoring an in-checkout config directory that resolves outside the checkout.',
+          );
+          return [];
+        }
+        resolvedDependencyRoots = [resolvedCwd];
+      } catch {
+        core.warning(
+          'Unable to resolve an in-checkout config directory. Ignoring its dependencies.',
+        );
+        return [];
+      }
+    }
+
     const getResolvedDependencyRoots = (): string[] => {
       if (resolvedDependencyRoots) {
         return resolvedDependencyRoots;
@@ -255,16 +276,71 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Extract provider files
-    if (config.providers) {
-      for (const provider of config.providers) {
-        if (typeof provider === 'string' && provider.startsWith('file://')) {
-          processFileUrl(provider);
-        } else if (
-          typeof provider === 'object' &&
-          provider.id?.startsWith('file://')
-        ) {
-          processFileUrl(provider.id);
+    const processProviderFileUrl = (fileUrl: string): void => {
+      const selectorSeparator = fileUrl.lastIndexOf(':');
+      const candidateFileUrl = fileUrl.slice(0, selectorSeparator);
+      const hasSelector =
+        selectorSeparator > 'file://'.length &&
+        /\.(?:py|go|rb)$/.test(candidateFileUrl);
+      processFileUrl(hasSelector ? candidateFileUrl : fileUrl);
+    };
+
+    const providers = [config.providers, config.targets].flatMap((value) =>
+      Array.isArray(value) ? value : value == null ? [] : [value],
+    );
+    for (const provider of providers) {
+      let providerPath: string | undefined;
+      let providerConfig: unknown;
+      if (typeof provider === 'string') {
+        providerPath = provider;
+      } else if (provider !== null && typeof provider === 'object') {
+        if (provider.id) {
+          providerPath = provider.id;
+          providerConfig = provider.config;
+        } else {
+          const mapEntries = Object.entries(provider);
+          if (mapEntries.length === 1) {
+            const [mapPath, mapProvider] = mapEntries[0];
+            if (mapProvider !== null && typeof mapProvider === 'object') {
+              providerPath = mapPath;
+              providerConfig = (mapProvider as { config?: unknown }).config;
+            }
+          }
         }
+      }
+
+      if (providerPath?.startsWith('file://')) {
+        processProviderFileUrl(providerPath);
+      } else {
+        const scriptProviderPath = providerPath?.match(
+          /^(?:python|golang|ruby):([\s\S]*)$/,
+        )?.[1];
+        if (scriptProviderPath) {
+          processProviderFileUrl(`file://${scriptProviderPath}`);
+        }
+      }
+      if (
+        !providerPath ||
+        !/^https?(?::|$)/.test(providerPath) ||
+        providerConfig === null ||
+        typeof providerConfig !== 'object' ||
+        !('validateStatus' in providerConfig) ||
+        typeof providerConfig.validateStatus !== 'string' ||
+        !providerConfig.validateStatus.startsWith('file://')
+      ) {
+        continue;
+      }
+
+      const statusValidator = providerConfig.validateStatus;
+      const selectorSeparator = statusValidator.lastIndexOf(':');
+      const candidateFileUrl = statusValidator.slice(0, selectorSeparator);
+      const hasSelector =
+        selectorSeparator > 'file://'.length &&
+        selectorSeparator < statusValidator.length - 1 &&
+        /\.(?:[cm]?js|[cm]?ts)$/i.test(candidateFileUrl);
+      processFileUrl(hasSelector ? candidateFileUrl : statusValidator);
+      if (hasSelector && !/\.(?:[cm]?js|[cm]?ts)$/.test(candidateFileUrl)) {
+        processFileUrl(statusValidator);
       }
     }
 
@@ -284,6 +360,25 @@ export function extractFileDependencies(configPath: string): string[] {
         }
       }
     }
+
+    const processAssertionFileUrl = (fileUrl: string): void => {
+      const selectorSeparator = fileUrl.indexOf(':', 'file://'.length);
+      const candidateFileUrl = fileUrl.slice(0, selectorSeparator);
+      const hasJavascriptSelector = /\.(?:[cm]?js|[cm]?ts)$/i.test(
+        candidateFileUrl,
+      );
+      const hasSelector =
+        selectorSeparator > 'file://'.length &&
+        (hasJavascriptSelector || /\.(?:py|rb)$/.test(candidateFileUrl));
+      processFileUrl(hasSelector ? candidateFileUrl : fileUrl);
+      if (
+        hasSelector &&
+        hasJavascriptSelector &&
+        !/\.(?:[cm]?js|[cm]?ts)$/.test(candidateFileUrl)
+      ) {
+        processFileUrl(fileUrl);
+      }
+    };
 
     // Extract test variable files
     const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
@@ -309,16 +404,17 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Extract assert files
-    const extractAssertFiles = (
-      asserts?: Array<{ type?: string; value?: unknown }>,
-    ): void => {
-      if (!asserts) return;
+    const extractAssertFiles = (asserts?: unknown): void => {
+      if (!Array.isArray(asserts)) return;
       for (const assert of asserts) {
+        if (assert === null || typeof assert !== 'object') {
+          continue;
+        }
         if (
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
-          processFileUrl(assert.value);
+          processAssertionFileUrl(assert.value);
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&
@@ -332,6 +428,9 @@ export function extractFileDependencies(configPath: string): string[] {
           if (absolutePath) {
             dependencies.add(absolutePath);
           }
+        }
+        if ('assert' in assert) {
+          extractAssertFiles(assert.assert);
         }
       }
     };
@@ -402,12 +501,21 @@ export function extractFileDependencies(configPath: string): string[] {
         ? extension.indexOf(':', fileSchemeLength)
         : -1;
       const candidateFileUrl = extension.slice(0, hookSeparator);
+      const hasJavascriptHook = /\.(?:[cm]?js|[cm]?ts)$/i.test(
+        candidateFileUrl,
+      );
       const hasHookSuffix =
         hookSeparator > fileSchemeLength &&
         hookSeparator !== windowsDriveSeparator &&
-        (/\.(?:[cm]?js|[cm]?ts)$/i.test(candidateFileUrl) ||
-          candidateFileUrl.endsWith('.py'));
+        (hasJavascriptHook || candidateFileUrl.endsWith('.py'));
       processFileUrl(hasHookSuffix ? candidateFileUrl : extension);
+      if (
+        hasHookSuffix &&
+        hasJavascriptHook &&
+        !/\.(?:[cm]?js|[cm]?ts)$/.test(candidateFileUrl)
+      ) {
+        processFileUrl(extension);
+      }
     }
 
     if (watchWorkspace) {

@@ -68,6 +68,173 @@ providers:
     expect(deps).toContain('../config/another_provider.js');
   });
 
+  it('should extract HTTP validateStatus file dependencies and named exports', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https
+    config:
+      validateStatus: file://validators/default.js
+  - id: http://example.test
+    config:
+      validateStatus: file://validators/team:blue/status.mts:validateStatus
+  - id: openai:gpt-4
+    config:
+      validateStatus: file://validators/ignored.js
+  - id: https
+    config:
+      validateStatus: status >= 200 && status < 300
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'validators/default.js',
+      'validators/team:blue/status.mts',
+    ]);
+  });
+
+  it('should extract HTTP validateStatus dependencies from provider maps and targets', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - 'https://provider.example.test':
+      config:
+        validateStatus: file://validators/provider-map.mjs:validateStatus
+  - 'openai:gpt-4':
+      config:
+        validateStatus: file://validators/ignored.js
+targets:
+  - id: http
+    config:
+      validateStatus: file://validators/target.cts:check
+  - 'https://target.example.test':
+      id: friendly-target-label
+      config:
+        validateStatus: file://validators/target-map.js
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'validators/provider-map.mjs',
+      'validators/target.cts',
+      'validators/target-map.js',
+    ]);
+  });
+
+  it('should ignore malformed provider map entries', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - null
+  - 42
+  - {}
+  - 'https://null.example.test': null
+  - 'https://scalar.example.test': inline
+  - 'https://first.example.test':
+      config:
+        validateStatus: file://validators/ignored-first.js
+    'https://second.example.test':
+      config:
+        validateStatus: file://validators/ignored-second.js
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
+  it('should extract scalar provider and target file dependencies', () => {
+    mockFs.readFileSync.mockReturnValue('providers: file://providers.yaml');
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['providers.yaml']);
+
+    mockFs.readFileSync.mockReturnValue('targets: file://targets.yaml');
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['targets.yaml']);
+  });
+
+  it('should extract executable provider and target selector dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/python.py:call_api
+  - id: file://providers/go.go:CallApi
+  - 'file://providers/ruby.rb:call_api':
+      config:
+        temperature: 0
+  - file://providers/uppercase.RB:call_api
+targets:
+  - id: file://targets/python.py:call_api
+  - 'file://targets/go.go:CallApi':
+      id: friendly-go-target
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/python.py',
+      'providers/go.go',
+      'providers/ruby.rb',
+      'providers/uppercase.RB:call_api',
+      'targets/python.py',
+      'targets/go.go',
+    ]);
+  });
+
+  it('should extract prefixed executable provider and target selector dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - python:providers/python.py:call_api
+  - id: golang:providers/go.go:CallApi
+  - 'ruby:providers/ruby.rb:call_api':
+      config:
+        temperature: 0
+  - python:providers/uppercase.PY:call_api
+  - go:providers/not-supported.go:CallApi
+targets:
+  - id: python:targets/python.py:call_api
+  - 'golang:targets/go.go:CallApi':
+      id: friendly-go-target
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/python.py',
+      'providers/go.go',
+      'providers/ruby.rb',
+      'providers/uppercase.PY:call_api',
+      'targets/python.py',
+      'targets/go.go',
+    ]);
+  });
+
+  it('should preserve newlines in prefixed executable provider paths', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers:\n  - "python:providers/team\\nblue.py:call_api"',
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/team\nblue.py']);
+  });
+
+  it('should preserve uppercase HTTP validateStatus selector paths like the pinned runtime', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https
+    config:
+      validateStatus: file://validators/status.MTS:validateStatus
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'validators/status.MTS',
+      'validators/status.MTS:validateStatus',
+    ]);
+  });
+
   it('should extract prompt files', () => {
     const configContent = `
 prompts:
@@ -100,6 +267,115 @@ tests:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/data/context.txt');
     expect(deps).toContain('../config/data/examples.json');
+  });
+
+  it('should preserve literal variable selectors and extract executable assertion selectors', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  vars:
+    defaultRuby: file://vars/default.rb:build
+  assert:
+    - type: javascript
+      value: file://validators/default.cts:check
+tests:
+  - vars:
+      ruby: file://vars/build.rb:build
+      go: file://vars/build.go:Build
+      javascript: file://vars/build.mts:build
+      python: file://vars/build.py:build
+      uppercase: file://vars/build.RB:build
+      literal: file://vars/literal.txt:value
+    assert:
+      - type: javascript
+        value: file://validators/check.go:Check
+      - type: javascript
+        value: file://validators/check.rb:Validators::Format.check
+      - type: javascript
+        value: file://validators/check.mjs:check
+      - type: python
+        value: file://validators/check.py:check
+      - type: javascript
+        value: file://validators/check.GO:Check
+      - type: javascript
+        value: file://validators/check.MTS:check
+      - type: python
+        value: file://validators/check.PY:check
+      - type: ruby
+        value: file://validators/check.RB:Validators::Format.check
+      - type: contains
+        value: file://validators/literal.txt:value
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'vars/default.rb:build',
+      'validators/default.cts',
+      'vars/build.rb:build',
+      'vars/build.go:Build',
+      'vars/build.mts:build',
+      'vars/build.py:build',
+      'vars/build.RB:build',
+      'vars/literal.txt:value',
+      'validators/check.go:Check',
+      'validators/check.rb',
+      'validators/check.mjs',
+      'validators/check.py',
+      'validators/check.GO:Check',
+      'validators/check.MTS',
+      'validators/check.MTS:check',
+      'validators/check.PY:check',
+      'validators/check.RB:Validators::Format.check',
+      'validators/literal.txt:value',
+    ]);
+  });
+
+  it('should extract executable selectors from nested assertion sets', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  assert:
+    - type: assert-set
+      assert:
+        - type: javascript
+          value: file://validators/default.js:check
+tests:
+  - assert:
+      - type: assert-set
+        assert:
+          - type: ruby
+            value: file://validators/nested.rb:Validators::Format.check
+          - type: assert-set
+            assert:
+              - type: python
+                value: file://validators/deep.py:check
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'validators/default.js',
+      'validators/nested.rb',
+      'validators/deep.py',
+    ]);
+  });
+
+  it('should ignore malformed nested assertion entries', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert:
+      - null
+      - 42
+      - type: assert-set
+        assert: inline
+      - type: assert-set
+        assert:
+          - type: javascript
+            value: file://validators/safe.js:check
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['validators/safe.js']);
   });
 
   it('should extract assert files', () => {
@@ -157,6 +433,17 @@ extensions:
       '../config/hooks/result.js',
       '../config/hooks/report.py',
     ]);
+  });
+
+  it('should preserve uppercase extension hook selector paths like the pinned runtime', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/setup.MTS:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['hooks/setup.MTS', 'hooks/setup.MTS:beforeAll']);
   });
 
   it('should extract extension hooks from commandLineOptions', () => {
@@ -822,7 +1109,7 @@ extensions:
     ).not.toContain('::error::forged-annotation');
   });
 
-  it('should preserve safe glob matches from a symlinked config root', () => {
+  it('should ignore dependencies from an in-checkout config root that resolves outside the checkout', () => {
     mockFs.readFileSync.mockReturnValue(`
 extensions:
   - file://hooks/*.js
@@ -841,8 +1128,41 @@ extensions:
       '/test/working/shared-link/promptfooconfig.yaml',
     );
 
-    expect(deps).toContain('shared-link/hooks/safe.js');
-    expect(deps).toContain('shared-link/hooks/');
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring an in-checkout config directory that resolves outside the checkout.',
+    );
+  });
+
+  it('should fail closed with a constant warning when an in-checkout config root cannot be resolved', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/shared-link/hooks/safe.js']);
+    mockFs.realpathSync.mockImplementation((value: string) => {
+      if (value === '/test/working/shared-link') {
+        throw new Error('EACCES: denied\n::error::forged-config-root');
+      }
+      return value;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/shared-link/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Unable to resolve an in-checkout config directory. Ignoring its dependencies.',
+    );
+    expect(
+      (core.warning as unknown as Mock).mock.calls
+        .map((call) => String(call[0]))
+        .join('\n'),
+    ).not.toContain('::error::forged-config-root');
   });
 
   it('should preserve checkout glob matches when an unused external root is denied', () => {

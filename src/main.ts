@@ -38,6 +38,15 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function isPathInside(baseDir: string, targetPath: string): boolean {
+  const relativePath = path.relative(baseDir, targetPath);
+  return (
+    relativePath !== '..' &&
+    !relativePath.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativePath)
+  );
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -186,9 +195,12 @@ export async function run(): Promise<void> {
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
-    const promptsInput = core.getInput('prompts', { required: false });
+    const promptsInput = core.getInput('prompts', {
+      required: false,
+      trimWhitespace: false,
+    });
     const promptFilesGlobs: string[] = promptsInput
-      ? promptsInput.split('\n').filter((line) => line.trim())
+      ? promptsInput.split(/\r?\n/).filter((line) => line.trim())
       : [];
     const configPath: string = core.getInput('config', {
       required: true,
@@ -205,6 +217,21 @@ export async function run(): Promise<void> {
       ),
     );
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
+    if (isPathInside(workspaceRoot, configAbsolutePath)) {
+      let resolvedWorkspaceRoot: string;
+      let resolvedConfigPath: string;
+      try {
+        resolvedWorkspaceRoot = fs.realpathSync(workspaceRoot);
+        resolvedConfigPath = fs.realpathSync(configAbsolutePath);
+      } catch {
+        throw new Error('Unable to resolve the in-checkout config path.');
+      }
+      if (!isPathInside(resolvedWorkspaceRoot, resolvedConfigPath)) {
+        throw new Error(
+          'In-checkout config path resolves outside the checkout.',
+        );
+      }
+    }
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
     );
@@ -238,6 +265,7 @@ export async function run(): Promise<void> {
     });
     const workflowFiles: string = core.getInput('workflow-files', {
       required: false,
+      trimWhitespace: false,
     });
     const workflowBase: string = core.getInput('workflow-base', {
       required: false,
