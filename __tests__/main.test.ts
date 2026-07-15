@@ -647,6 +647,37 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test('should escape forged workflow commands in push changed-file logs', async () => {
+      const forgedPrompt =
+        'prompts/policy\r\n::error::PUSH_ANNOTATION_CANARY_019F62C3\t.txt';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          before: 'a'.repeat(40),
+          after: 'b'.repeat(40),
+        },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(`M\0${forgedPrompt}\0`);
+      mockGlob.sync.mockReturnValue([forgedPrompt]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        `Comparing ${'a'.repeat(40)}..${'b'.repeat(40)}, found changed files: ${JSON.stringify([forgedPrompt])}`,
+      );
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        '\n::error::PUSH_ANNOTATION_CANARY_019F62C3',
+      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths cannot contain carriage returns or line feeds.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should process all prompts when push diff fails', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'push',
@@ -761,9 +792,41 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using manually specified files: ["prompts/file1.txt","prompts/file2.txt"]',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
+    });
+
+    test('should escape forged workflow commands in manual file logs', async () => {
+      const forgedPrompt = '::error::MANUAL_ANNOTATION_CANARY_019F62C3\t.txt';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: `prompts/file1.txt\r\n${forgedPrompt}`,
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([forgedPrompt]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        `Using manually specified files: ${JSON.stringify(['prompts/file1.txt', forgedPrompt])}`,
+      );
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        '\n::error::MANUAL_ANNOTATION_CANARY_019F62C3',
+      );
+      expect(mockGitInterface.diff).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['--prompts', forgedPrompt]),
+        expect.any(Object),
+      );
     });
 
     test('should handle workflow_dispatch with custom base comparison', async () => {
@@ -788,6 +851,38 @@ describe('GitHub Action Main', () => {
         expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
+    });
+
+    test('should escape forged workflow commands in workflow diff logs', async () => {
+      const forgedPrompt =
+        'prompts/policy\n::error::WORKFLOW_ANNOTATION_CANARY_019F62C3\t.txt';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            base: 'main',
+          },
+        },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(`M\0${forgedPrompt}\0`);
+      mockGlob.sync.mockReturnValue([forgedPrompt]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        `Comparing against main, found changed files: ${JSON.stringify([forgedPrompt])}`,
+      );
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        '\n::error::WORKFLOW_ANNOTATION_CANARY_019F62C3',
+      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths cannot contain carriage returns or line feeds.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should handle workflow_dispatch when diff comparison fails', async () => {
@@ -856,7 +951,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: action-input-file.txt',
+        'Using manually specified files: ["action-input-file.txt"]',
       );
       // Since we're providing files directly, diff shouldn't be called
       expect(mockGitInterface.diff).not.toHaveBeenCalled();

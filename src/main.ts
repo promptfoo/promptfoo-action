@@ -412,7 +412,9 @@ export async function run(): Promise<void> {
           .split(/\r?\n/)
           .map((file: string) => file.trim())
           .filter(Boolean);
-        core.info(`Using manually specified files: ${filesInput}`);
+        core.info(
+          `Using manually specified files: ${JSON.stringify(changedFiles)}`,
+        );
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
@@ -427,7 +429,7 @@ export async function run(): Promise<void> {
           ]);
           changedFiles = parseGitDiffPaths(diff);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${JSON.stringify(changedFiles)}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -462,7 +464,7 @@ export async function run(): Promise<void> {
           ]);
           changedFiles = parseGitDiffPaths(diff);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${JSON.stringify(changedFiles)}`,
           );
         } catch (error) {
           core.warning(
