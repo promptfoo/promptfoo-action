@@ -326,9 +326,12 @@ export function extractFileDependencies(configPath: string): string[] {
     const processFileUrlUnchecked = (fileUrl: string): string[] | undefined => {
       const filePath = fileUrl.replace('file://', '');
       if (isForeignWindowsPath(filePath)) {
-        core.warning(
-          'Skipping unsafe config dependency content; its path may still be tracked for change detection',
-        );
+        if (!dependencyRootWarningEmitted) {
+          core.warning(
+            'Skipping unsafe config dependency content; its path may still be tracked for change detection',
+          );
+          dependencyRootWarningEmitted = true;
+        }
         return [];
       }
       const isGlob = glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS);

@@ -609,8 +609,11 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const promptsToEvaluate =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const promptsToEvaluate = [
+      ...new Set(
+        configChanged || dependencyChanged ? allPromptFiles : promptFiles,
+      ),
+    ];
     const evaluatedPromptFiles = useConfigPrompts ? [] : promptsToEvaluate;
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(

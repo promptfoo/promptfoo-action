@@ -1221,6 +1221,57 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should deduplicate changed prompts matched by overlapping action globs', async () => {
+      withInputs({
+        prompts: 'prompts/*.txt\nprompts/prompt1.*',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      const promptfooArgs = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(
+        promptfooArgs.filter((arg) => arg === 'prompts/prompt1.txt'),
+      ).toHaveLength(1);
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluated prompt files: prompts/prompt1.txt',
+          ),
+        }),
+      );
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body;
+      expect(commentBody).not.toContain(
+        'prompts/prompt1.txt, prompts/prompt1.txt',
+      );
+    });
+
+    test('should deduplicate all prompts matched by overlapping action globs on a config change', async () => {
+      withInputs({
+        prompts: 'prompts/*.txt\nprompts/prompt1.*',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      const promptfooArgs = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(
+        promptfooArgs.filter((arg) => arg === 'prompts/prompt1.txt'),
+      ).toHaveLength(1);
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body;
+      expect(commentBody).not.toContain(
+        'prompts/prompt1.txt, prompts/prompt1.txt',
+      );
+    });
+
     test('should run when the last file from an extension-style dependency directory is deleted', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers.v1/deleted.py', status: 'removed' },

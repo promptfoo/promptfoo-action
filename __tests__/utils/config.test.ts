@@ -2064,6 +2064,7 @@ prompts:
         .mocked(core.warning)
         .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
     ).toBe(false);
+    expect(core.warning).toHaveBeenCalledTimes(1);
   });
 
   it('should bound brace expansion before glob enumeration', () => {
