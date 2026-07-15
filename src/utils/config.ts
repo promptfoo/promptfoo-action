@@ -44,6 +44,13 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function sanitizeLogText(value: string): string {
+  return value
+    .replace(/\t/g, '\\t')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n');
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -59,6 +66,17 @@ export function extractFileDependencies(
   const cwd = path.resolve(workspaceRoot);
   const resolvedWorkingDirectory = path.resolve(workingDirectory);
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const isSafeDependency = (targetPath: string): boolean =>
+    isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
+  const getRealDependencyRoots = (): string[] => {
+    const roots: string[] = [];
+    for (const root of new Set([configDir, cwd])) {
+      try {
+        roots.push(path.resolve(fs.realpathSync(root)));
+      } catch {}
+    }
+    return roots;
+  };
   const maxConfigBytes = 2 * 1024 * 1024;
   const maxConfigNodes = 10_000;
   const maxConfigRefs = 100;
@@ -348,6 +366,7 @@ export function extractFileDependencies(
 
     const discoveredRefs = new Set<string>();
     const inspectedObjects = new Map<string, WeakSet<object>>();
+    const httpValidateStatusParents = new WeakSet<object>();
     const nestedFileUrls: string[] = [];
     const nestedFilePaths: string[] = [];
     const pending: Array<{ value: unknown; file: string }> = [
@@ -388,6 +407,55 @@ export function extractFileDependencies(
       }
 
       const record = next.value as Record<string, unknown>;
+      if (Array.isArray(record.providers)) {
+        for (const entry of record.providers) {
+          if (typeof entry !== 'object' || entry === null) {
+            continue;
+          }
+          const provider = entry as Record<string, unknown>;
+          let providerId = provider.id;
+          let providerConfig = provider.config;
+          if (typeof providerId !== 'string') {
+            const mappedProvider = Object.entries(provider).find(([id]) =>
+              /^https?(?::|$)/i.test(id),
+            );
+            providerId = mappedProvider?.[0];
+            const mappedValue = mappedProvider?.[1];
+            providerConfig =
+              typeof mappedValue === 'object' && mappedValue !== null
+                ? (mappedValue as Record<string, unknown>).config
+                : undefined;
+          }
+          if (
+            typeof providerId !== 'string' ||
+            !/^https?(?::|$)/i.test(providerId) ||
+            typeof providerConfig !== 'object' ||
+            providerConfig === null
+          ) {
+            continue;
+          }
+          const configRecord = providerConfig as Record<string, unknown>;
+          const validateStatus = configRecord.validateStatus;
+          if (
+            typeof validateStatus !== 'string' ||
+            !validateStatus.startsWith('file://')
+          ) {
+            continue;
+          }
+          const rawFilename = validateStatus.slice('file://'.length);
+          const lastColonIndex = rawFilename.lastIndexOf(':');
+          const candidateFilename = rawFilename.slice(0, lastColonIndex);
+          const candidateFunctionName = rawFilename.slice(lastColonIndex + 1);
+          const filename =
+            lastColonIndex !== -1 &&
+            candidateFunctionName &&
+            /\.(?:js|cjs|mjs|ts|cts|mts)$/.test(candidateFilename)
+              ? candidateFilename
+              : rawFilename;
+          nestedFileUrls.push(`file://${filename}`);
+          httpValidateStatusParents.add(configRecord);
+        }
+      }
       if (typeof record.file === 'string') {
         nestedFilePaths.push(record.file);
       }
@@ -417,7 +485,9 @@ export function extractFileDependencies(
         ...Object.entries(record)
           .filter(
             ([key]) =>
-              key !== 'parameters' || !excludedParameterParents.has(record),
+              (key !== 'parameters' || !excludedParameterParents.has(record)) &&
+              (key !== 'validateStatus' ||
+                !httpValidateStatusParents.has(record)),
           )
           .map(([, value]) => ({
             value,
@@ -544,20 +614,57 @@ export function extractFileDependencies(
         if (filePath.includes('\0')) {
           throw new Error(`${source} contains an invalid null byte`);
         }
+        if (/[\r\n]/.test(filePath)) {
+          throw new Error(`${source} contains an invalid line break`);
+        }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
-        if (!isPathInside(dependencyRoot, absolutePath)) {
+        const absolutePath = path.resolve(configDir, filePath);
+        if (!isSafeDependency(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
           );
         }
 
+        let lexicalStats: fs.Stats | undefined;
+        try {
+          lexicalStats = fs.lstatSync(absolutePath);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT' && code !== 'ENOTDIR') {
+            throw error;
+          }
+        }
+        if (lexicalStats) {
+          let realPath: string | undefined;
+          try {
+            realPath = path.resolve(fs.realpathSync(absolutePath));
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (
+              lexicalStats.isSymbolicLink() ||
+              (code !== 'ENOENT' && code !== 'ENOTDIR')
+            ) {
+              throw new Error(`${source} resolved path cannot be verified`);
+            }
+          }
+          if (
+            realPath &&
+            !getRealDependencyRoots().some((root) =>
+              isPathInside(root, realPath),
+            )
+          ) {
+            throw new Error(
+              `${source} resolved path must stay within the repository workspace`,
+            );
+          }
+        }
+
         return absolutePath;
       } catch (error) {
         core.warning(
-          `Ignoring unsafe config dependency "${filePath}": ${String(
-            error,
-          ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
+          `Ignoring unsafe config dependency "${sanitizeLogText(filePath)}": ${sanitizeLogText(
+            String(error).replace(/^(?:[A-Za-z]+)?Error: /, ''),
+          )}`,
         );
         return undefined;
       }
@@ -600,30 +707,52 @@ export function extractFileDependencies(
         }
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, { nodir: true });
+        const realDependencyRoots = getRealDependencyRoots();
         for (const match of matches) {
-          const absoluteMatch = path.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
-            dependencies.add(absoluteMatch);
-          } else {
+          if (/[\r\n]/.test(match)) {
             core.warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+              'Ignoring unsafe config dependency glob match: resolved path contains an invalid line break',
+            );
+            continue;
+          }
+          const absoluteMatch = path.resolve(match);
+          if (!isSafeDependency(absoluteMatch)) {
+            core.warning(
+              'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
+            );
+            continue;
+          }
+          try {
+            const realMatch = path.resolve(fs.realpathSync(absoluteMatch));
+            if (
+              !realDependencyRoots.some((root) => isPathInside(root, realMatch))
+            ) {
+              core.warning(
+                'Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace',
+              );
+              continue;
+            }
+            dependencies.add(absoluteMatch);
+          } catch {
+            core.warning(
+              'Ignoring unsafe config dependency glob match: resolved path cannot be verified',
             );
           }
         }
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathParts = filePath.split('/');
-        let basePath = '';
+        const filePathRoot = path.parse(filePath).root;
+        const pathParts = filePath.slice(filePathRoot.length).split(/[\\/]/);
+        let basePath = filePathRoot;
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
             break;
           }
           basePath = basePath ? path.join(basePath, part) : part;
         }
-        if (basePath) {
-          dependencies.add(path.resolve(path.join(configDir, basePath)));
-        }
+        const baseDirectory = path.resolve(configDir, basePath || '.');
+        dependencies.add(`${baseDirectory.replace(/[\\/]+$/, '')}${path.sep}`);
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = fileUrl.endsWith('/')
@@ -777,6 +906,9 @@ export function extractFileDependencies(
     // Convert absolute paths back to repository-relative paths.
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
+      if (relativePath === '') {
+        return './';
+      }
       const repositoryPath = relativePath.split(path.sep).join('/');
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
@@ -786,7 +918,9 @@ export function extractFileDependencies(
     });
   } catch (error) {
     core.warning(
-      `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
+      `Failed to extract dependencies from config: ${sanitizeLogText(
+        error instanceof Error ? error.message : String(error),
+      )}`,
     );
     return ['./'];
   }

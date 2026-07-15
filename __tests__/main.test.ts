@@ -478,6 +478,27 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should accept CRLF-separated prompt glob inputs', async () => {
+      withInputs({
+        prompts: 'prompts/**/*.txt\r\nprompts/**/*.md\r\n',
+      });
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern.endsWith('.txt') ? ['prompts/prompt1.txt'] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/**/*.txt',
+        expect.objectContaining({ nodir: true }),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/**/*.md',
+        expect.objectContaining({ nodir: true }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should handle empty prompts input', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
@@ -946,6 +967,8 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_REMOTE_APP_BASE_URL',
       'PROMPTFOO_SHARING_APP_BASE_URL',
       'PROMPTFOO_CACHE_PATH',
+      'PROMPTFOO_CACHE_ENABLED',
+      'PROMPTFOO_CACHE_TYPE',
       'PROMPTFOO_CACHE_MAX_FILE_COUNT',
       'PROMPTFOO_CACHE_MAX_SIZE',
       'PROMPTFOO_CONFIG_DIR',
@@ -2528,7 +2551,7 @@ describe('GitHub Action Main', () => {
         dependencies: ['data/context.json'],
         reason: 'a config dependency changes',
       },
-    ])('should evaluate all config prompts when $reason and one prompt changes', async ({
+    ])('should evaluate all action prompts when $reason and one prompt changes', async ({
       changedFile,
       dependencies,
     }) => {
@@ -2536,13 +2559,60 @@ describe('GitHub Action Main', () => {
         { filename: changedFile },
         { filename: 'prompts/prompt1.txt' },
       ]);
-      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
       mockConfig.extractFileDependencies.mockReturnValue(dependencies);
 
       await run();
 
       const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args).not.toContain('--prompts');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
+      );
+      expect(
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body,
+      ).toContain('prompts/prompt1.txt, prompts/prompt2.txt');
+    });
+
+    test('should report all action prompts in a non-PR summary when a dependency changes', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: 'data/context.json\nprompts/prompt1.txt',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
+      );
+      expect(mockCore.summary.addList).toHaveBeenCalledWith([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
     });
 
     test('should run when a file inside a dependency directory changes', async () => {
@@ -3185,6 +3255,30 @@ describe('GitHub Action Main', () => {
       // Should NOT have these
       expect(args).not.toContain('--share');
       expect(args).not.toContain('--prompts'); // because use-config-prompts is true
+    });
+
+    test('should not report action prompt files when config prompts are selected', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'promptfooconfig.yaml' } },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts' || name === 'no-share',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(mockCore.summary.addHeading).not.toHaveBeenCalledWith(
+        'Evaluated Files',
+        3,
+      );
     });
 
     test('should use console guidance in PR comments without a share URL', async () => {
