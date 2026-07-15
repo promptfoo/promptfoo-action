@@ -391,7 +391,7 @@ export function extractFileDependencies(configPath: string): string[] {
           dependencies.add(`${containingRoot}${path.sep}`);
         }
         core.warning(
-          `Ignoring unsafe config dependency "${displayPath}": ${String(
+          `Ignoring unsafe config dependency "${JSON.stringify(displayPath).slice(1, -1)}": ${String(
             error,
           ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
         );
@@ -419,7 +419,9 @@ export function extractFileDependencies(configPath: string): string[] {
         ? fileUrl.startsWith('file://')
           ? providerFilePath(fileUrl, allowJavascript)
           : fileUrl
-        : fileUrl.slice('file://'.length);
+        : fileUrl.startsWith('file://')
+          ? fileUrl.slice('file://'.length)
+          : fileUrl;
       if (filePath.includes('\0')) {
         resolveConfigDependency(
           filePath,
@@ -500,7 +502,7 @@ export function extractFileDependencies(configPath: string): string[] {
               `Ignoring unsafe config dependency match "${
                 renderedFileUrl === fileUrl
                   ? '<redacted unsafe config dependency match>'
-                  : displayPath
+                  : JSON.stringify(displayPath).slice(1, -1)
               }": config file dependency glob match must stay within the repository workspace`,
             );
           }
@@ -915,7 +917,7 @@ export function extractFileDependencies(configPath: string): string[] {
           );
         } catch {
           core.warning(
-            `Failed to inspect provider config dependency "${displayProviderPath}". Watching the repository workspace conservatively.`,
+            `Failed to inspect provider config dependency "${JSON.stringify(displayProviderPath).slice(1, -1)}". Watching the repository workspace conservatively.`,
           );
           dependencies.add(`${dependencyRoot}${path.sep}`);
         }

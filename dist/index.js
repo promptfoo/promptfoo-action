@@ -38331,7 +38331,7 @@ function extractFileDependencies(configPath) {
           dependencies.add(`${containingRoot}${path6.sep}`);
         }
         warning(
-          `Ignoring unsafe config dependency "${displayPath}": ${String(
+          `Ignoring unsafe config dependency "${JSON.stringify(displayPath).slice(1, -1)}": ${String(
             error2
           ).replace(/^(?:[A-Za-z]+)?Error: /, "")}`
         );
@@ -38345,7 +38345,7 @@ function extractFileDependencies(configPath) {
         return [];
       }
       const filePath = isProvider ? providerFilePath(renderedFileUrl, allowJavascript) : renderedFileUrl.slice("file://".length);
-      const displayPath = isProvider ? fileUrl.startsWith("file://") ? providerFilePath(fileUrl, allowJavascript) : fileUrl : fileUrl.slice("file://".length);
+      const displayPath = isProvider ? fileUrl.startsWith("file://") ? providerFilePath(fileUrl, allowJavascript) : fileUrl : fileUrl.startsWith("file://") ? fileUrl.slice("file://".length) : fileUrl;
       if (filePath.includes("\0")) {
         resolveConfigDependency(
           filePath,
@@ -38418,7 +38418,7 @@ function extractFileDependencies(configPath) {
             safeMatches.push(absoluteMatch);
           } else {
             warning(
-              `Ignoring unsafe config dependency match "${renderedFileUrl === fileUrl ? "<redacted unsafe config dependency match>" : displayPath}": config file dependency glob match must stay within the repository workspace`
+              `Ignoring unsafe config dependency match "${renderedFileUrl === fileUrl ? "<redacted unsafe config dependency match>" : JSON.stringify(displayPath).slice(1, -1)}": config file dependency glob match must stay within the repository workspace`
             );
           }
         }
@@ -38717,7 +38717,7 @@ function extractFileDependencies(configPath) {
           );
         } catch {
           warning(
-            `Failed to inspect provider config dependency "${displayProviderPath}". Watching the repository workspace conservatively.`
+            `Failed to inspect provider config dependency "${JSON.stringify(displayProviderPath).slice(1, -1)}". Watching the repository workspace conservatively.`
           );
           dependencies.add(`${dependencyRoot}${path6.sep}`);
         }

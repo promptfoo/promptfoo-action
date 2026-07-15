@@ -1145,6 +1145,30 @@ providers:
     vi.unstubAllEnvs();
   });
 
+  it('should preserve a rendered non-provider template in unsafe-path warnings', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv(
+      'PROMPTFOO_PROMPT_REF',
+      'file://../OUTSIDE_PROMPT_SECRET_CANARY_019F62C3.txt',
+    );
+    const forgedAnnotation = 'PROMPT_WARNING_CANARY_019F62C3';
+    const templatedPrompt = `{{ env.PROMPTFOO_PROMPT_REF }}\n::error::${forgedAnnotation}`;
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - ${JSON.stringify(templatedPrompt)}
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('{{ env.PROMPTFOO_PROMPT_REF }}');
+    expect(warnings).not.toContain('OUTSIDE_PROMPT_SECRET_CANARY_019F62C3');
+    expect(warnings).not.toContain(`\n::error::${forgedAnnotation}`);
+    expect(warnings).toContain(`\\n::error::${forgedAnnotation}`);
+    vi.unstubAllEnvs();
+  });
+
   it('should redact a rendered provider path that escapes the workspace', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     vi.stubEnv(
@@ -1188,6 +1212,29 @@ providers:
     expect(warnings).toContain('{{ env.PROMPTFOO_PROVIDER_DIR }}');
     expect(warnings).not.toContain('PATH_SECRET_CANARY_019F62C3');
     expect(warnings).not.toContain('/test/outside/leaked.py');
+    vi.unstubAllEnvs();
+  });
+
+  it('should escape rendered provider glob warnings that could forge annotations', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv('PROMPTFOO_PROVIDER_DIR', 'current');
+    const forgedAnnotation = 'TEMPLATED_GLOB_CANARY_019F62C3';
+    const templatedGlob = `file://providers/{{ env.PROMPTFOO_PROVIDER_DIR }}/*.py\n::error::${forgedAnnotation}`;
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - ${JSON.stringify(templatedGlob)}
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/outside/leaked.py']);
+
+    extractFileDependencies('/test/repository/promptfooconfig.yaml');
+
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('{{ env.PROMPTFOO_PROVIDER_DIR }}');
+    expect(warnings).not.toContain(`\n::error::${forgedAnnotation}`);
+    expect(warnings).toContain(`\\n::error::${forgedAnnotation}`);
     vi.unstubAllEnvs();
   });
 
@@ -2833,6 +2880,15 @@ prompts:
 
   it('should keep absolute checkout provider dependencies for an external config', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath === '/private/configs') {
+        throw Object.assign(new Error('UNUSED_ROOT_SECRET_CANARY'), {
+          code: 'EACCES',
+        });
+      }
+      return filePath;
+    });
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file:///test/repository/providers/direct.py
@@ -2846,6 +2902,11 @@ providers:
     expect(
       extractFileDependencies('/private/configs/promptfooconfig.yaml'),
     ).toEqual(['providers/direct.py', 'providers/matched.py', 'providers/']);
+    expect(
+      mockFs.realpathSync.mock.calls.filter(
+        ([value]) => String(value) === '/private/configs',
+      ),
+    ).toHaveLength(0);
   });
 
   it('should keep dependencies whose names begin with two dots', () => {
