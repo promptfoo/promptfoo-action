@@ -966,6 +966,21 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should run when a repository-root directory sentinel is returned', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/dynamic.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['/']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should detect dependency directories without a trailing slash', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },

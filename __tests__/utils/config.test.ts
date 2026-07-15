@@ -124,6 +124,32 @@ prompts:
     expect(deps).toEqual(['../config/prompts/build.rb']);
   });
 
+  it('should extract bare file and function prompt-map keys', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  prompts/main.txt: main prompt
+  prompts/build.py:create_prompt: generated prompt
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/prompts/main.txt',
+      '../config/prompts/build.py',
+    ]);
+  });
+
+  it('should extract executable prompt-map keys without command arguments', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  exec:./prompts/generate.sh --tone formal: generated prompt
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/prompts/generate.sh']);
+  });
+
   it('should extract file-backed prompt ids', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
@@ -134,6 +160,55 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/prompts/main.txt']);
+  });
+
+  it('should extract bare file and function prompt ids', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - id: prompts/main.txt
+    label: main prompt
+  - id: prompts/build.py:create_prompt
+    label: generated prompt
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/prompts/main.txt',
+      '../config/prompts/build.py',
+    ]);
+  });
+
+  it('should prefer file-backed and executable prompt raw values over ids', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - raw: file://prompts/from-raw.txt
+    id: prompts/ignored.txt
+    label: raw prompt
+  - raw: exec:./prompts/generate.sh --tone formal
+    label: generated prompt
+  - raw: inline prompt
+    label: inline
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/prompts/from-raw.txt',
+      '../config/prompts/generate.sh',
+    ]);
+  });
+
+  it('should ignore empty executable prompts and unsupported prompt objects', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - "exec:"
+  - label: unsupported prompt object
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
   });
 
   it('should extract dependencies from a singleton test generator', () => {
@@ -399,6 +474,53 @@ prompts:
     expect(deps).toEqual(['prompts/absolute.txt']);
   });
 
+  it('should preserve the watch root for an unmatched absolute prompt glob', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file:///test/working/prompts/*.txt: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['prompts']);
+  });
+
+  it('should preserve the config directory for an unmatched root-level prompt glob', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file://*.txt: mapped prompts
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals']);
+  });
+
+  it('should preserve a repository-root directory sentinel', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  file:///test/working/: repository prompts
+`);
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.statSync.mockReturnValue({ isDirectory: () => true } as fs.Stats);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['/']);
+  });
+
   it('should keep dependencies whose names begin with two dots', () => {
     const configContent = `
 providers:
@@ -445,7 +567,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py']);
+    expect(deps).toEqual(['../config/providers/custom.py', '../config']);
   });
 
   it('should extract all file types from complex config', () => {
@@ -557,7 +679,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/provider.py']);
+    expect(deps).toEqual(['../config/provider.py', '../config']);
   });
 
   it('should build nested base directories for globs', () => {

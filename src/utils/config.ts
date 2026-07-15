@@ -7,7 +7,7 @@ import { isDirectory } from './fs';
 
 type PromptEntry =
   | string
-  | { file?: string; id?: string; [key: string]: unknown };
+  | { file?: string; id?: string; raw?: string; [key: string]: unknown };
 
 type TestEntry = {
   path?: string;
@@ -130,17 +130,19 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathParts = filePath.split('/');
-        let basePath = '';
+        const root = path.parse(filePath).root;
+        const pathParts = filePath
+          .slice(root.length)
+          .split(/[\\/]/)
+          .filter(Boolean);
+        let basePath = root;
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
             break;
           }
           basePath = basePath ? path.join(basePath, part) : part;
         }
-        if (basePath) {
-          dependencies.add(path.resolve(path.join(configDir, basePath)));
-        }
+        dependencies.add(path.resolve(configDir, basePath || '.'));
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = fileUrl.endsWith('/')
@@ -168,8 +170,37 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     const extractPromptFile = (prompt: PromptEntry): void => {
-      if (typeof prompt === 'string' && prompt.startsWith('file://')) {
-        processFileUrl(prompt);
+      const processPromptReference = (reference: string): void => {
+        const isExecutable = reference.startsWith('exec:');
+        const looksLikePath =
+          isExecutable ||
+          reference.startsWith('file://') ||
+          glob.hasMagic(reference) ||
+          /[\\/]/.test(reference) ||
+          /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
+            reference,
+          );
+
+        if (looksLikePath) {
+          const executablePath = reference
+            .replace(/^exec:/, '')
+            .match(/^[^\s"']+|"([^"]*)"|'([^']*)'/)?.[0]
+            ?.replace(/^['"]|['"]$/g, '');
+          const promptPath = isExecutable ? (executablePath ?? '') : reference;
+          processFileUrl(
+            promptPath.startsWith('file://')
+              ? promptPath
+              : `file://${promptPath}`,
+          );
+        }
+      };
+
+      if (typeof prompt === 'string') {
+        processPromptReference(prompt);
+      } else if (typeof prompt === 'object' && typeof prompt.raw === 'string') {
+        processPromptReference(prompt.raw);
+      } else if (typeof prompt === 'object' && typeof prompt.id === 'string') {
+        processPromptReference(prompt.id);
       } else if (
         typeof prompt === 'object' &&
         typeof prompt.file === 'string'
@@ -181,12 +212,6 @@ export function extractFileDependencies(configPath: string): string[] {
         if (absolutePath) {
           dependencies.add(absolutePath);
         }
-      } else if (
-        typeof prompt === 'object' &&
-        typeof prompt.id === 'string' &&
-        prompt.id.startsWith('file://')
-      ) {
-        processFileUrl(prompt.id);
       }
     };
 

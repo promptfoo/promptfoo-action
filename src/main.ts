@@ -497,7 +497,7 @@ export async function run(): Promise<void> {
 
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
-          if (dep === '.' || dep === '') {
+          if (dep === '.' || dep === '' || dep === '/') {
             return true;
           }
 
