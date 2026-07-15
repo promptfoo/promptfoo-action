@@ -36310,7 +36310,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = path5.isAbsolute(filePath) ? path5.resolve(filePath) : path5.resolve(path5.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36380,52 +36380,93 @@ function extractFileDependencies(configPath) {
       const processPromptReference = (reference, declaredFile = false) => {
         const isExecutable = reference.startsWith("exec:");
         const isFileUrl = reference.startsWith("file://");
-        const looksLikePath = declaredFile || isExecutable || isFileUrl || le(reference) || /[\\/]/.test(reference) || /\.(?:cjs|cts|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[\w.]+)?$/i.test(
+        const looksLikePath = declaredFile || isExecutable || isFileUrl || le(reference) || /[\\/]/.test(reference) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
           reference
         );
         if (!looksLikePath) {
           return;
         }
-        const promptPath = reference.replace(/^exec:/, "").replace(/^file:\/\//, "").replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[\w.]+$/i, "$1");
+        const executablePath = reference.replace(/^exec:/, "").match(/^[^\s"']+|"([^"]*)"|'([^']*)'/)?.[0]?.replace(/^['"]|['"]$/g, "");
+        const promptPath = (isExecutable ? executablePath ?? "" : reference).replace(/^file:\/\//, "").replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, "$1");
         processFileUrl(`file://${promptPath}`);
-        if (!/\.(?:json|ya?ml)$/i.test(promptPath)) {
+        if (/\{[{%]/.test(promptPath)) {
+          const staticSegments = [];
+          for (const segment of promptPath.split(/[\\/]/)) {
+            if (/\{[{%]/.test(segment)) {
+              break;
+            }
+            staticSegments.push(segment);
+          }
+          const staticPath = staticSegments.join(path5.sep) || ".";
+          const watchedDirectory = resolveConfigDependency(
+            staticPath,
+            "prompt file dependency"
+          );
+          if (watchedDirectory) {
+            dependencies.add(
+              `${watchedDirectory.replace(/[\\/]+$/, "")}${path5.sep}`
+            );
+          }
+          return;
+        }
+        const isPromptGlob = le(promptPath);
+        if (!isPromptGlob && !/\.(?:json|ya?ml)$/i.test(promptPath)) {
           return;
         }
         const absolutePath = resolveConfigDependency(
           promptPath,
           "prompt file dependency"
         );
-        if (!absolutePath || visitedPromptFiles.has(absolutePath)) {
+        if (!absolutePath) {
           return;
         }
-        visitedPromptFiles.add(absolutePath);
-        try {
-          const nestedConfig = load(fs6.readFileSync(absolutePath, "utf8"));
-          const visitNestedReferences = (value) => {
-            if (typeof value === "string" && value.startsWith("file://")) {
-              processPromptReference(value);
-            } else if (Array.isArray(value)) {
-              for (const nestedValue of value) {
-                visitNestedReferences(nestedValue);
-              }
-            } else if (typeof value === "object" && value !== null) {
-              for (const nestedValue of Object.values(value)) {
-                visitNestedReferences(nestedValue);
-              }
+        const promptFiles = isPromptGlob ? Ui(absolutePath, { nodir: true }) : [absolutePath];
+        for (const promptFile of promptFiles) {
+          const absolutePromptFile = path5.resolve(promptFile);
+          if (!isPathInside(dependencyRoot, absolutePromptFile) || !/\.(?:json|ya?ml)$/i.test(absolutePromptFile)) {
+            continue;
+          }
+          try {
+            const physicalPromptFile = fs6.existsSync(absolutePromptFile) ? fs6.realpathSync(absolutePromptFile) : absolutePromptFile;
+            if (!isPathInside(dependencyRoot, physicalPromptFile)) {
+              warning(
+                `Ignoring unsafe prompt file dependency "${promptPath}": resolved path must stay within the repository workspace`
+              );
+              continue;
             }
-          };
-          visitNestedReferences(nestedConfig);
-        } catch (error2) {
-          warning(
-            `Failed to inspect prompt file dependency "${promptPath}": ${error2 instanceof Error ? error2.message : String(error2)}`
-          );
+            if (visitedPromptFiles.has(physicalPromptFile)) {
+              continue;
+            }
+            visitedPromptFiles.add(physicalPromptFile);
+            const nestedConfig = load(
+              fs6.readFileSync(physicalPromptFile, "utf8")
+            );
+            const visitNestedReferences = (value) => {
+              if (typeof value === "string" && value.startsWith("file://")) {
+                processPromptReference(value);
+              } else if (Array.isArray(value)) {
+                for (const nestedValue of value) {
+                  visitNestedReferences(nestedValue);
+                }
+              } else if (typeof value === "object" && value !== null) {
+                for (const nestedValue of Object.values(value)) {
+                  visitNestedReferences(nestedValue);
+                }
+              }
+            };
+            visitNestedReferences(nestedConfig);
+          } catch {
+            warning(
+              `Failed to inspect prompt file dependency "${promptPath}": unable to read or parse file`
+            );
+          }
         }
       };
       for (const prompt of prompts) {
         if (typeof prompt === "string") {
           processPromptReference(prompt);
         } else if (typeof prompt === "object" && prompt !== null) {
-          const promptReference = prompt.file ?? prompt.raw ?? prompt.id;
+          const promptReference = prompt.file || prompt.raw || prompt.id;
           if (typeof promptReference === "string") {
             processPromptReference(promptReference, Boolean(prompt.file));
           }
