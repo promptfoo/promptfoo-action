@@ -920,6 +920,30 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should trim CRLF workflow file entries when matching dependencies', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: ' tests/cases.yaml  \r\n docs/readme.md \r\n',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['tests/cases.yaml']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should run when a pull request renames a referenced dependency', async () => {
       mockOctokit.paginate.mockResolvedValue([
         {

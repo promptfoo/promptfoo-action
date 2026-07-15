@@ -408,7 +408,10 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput.split('\n').filter(Boolean);
+        changedFiles = filesInput
+          .split(/\r?\n/)
+          .map((file: string) => file.trim())
+          .filter(Boolean);
         core.info(`Using manually specified files: ${filesInput}`);
       } else {
         // Option 2: Compare against base (default to previous commit)
