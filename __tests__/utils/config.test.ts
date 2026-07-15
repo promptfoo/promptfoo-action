@@ -3107,6 +3107,27 @@ providers:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
+  it.each([
+    '{foo),../../outside}/*.py',
+    '{foo),/absolute}/*.py',
+    '{foo),[.][.]/[.][.]/outside}/*.py',
+  ])('should reject an unsafe brace alternative with a mismatched closer before globbing %s', (pattern) => {
+    mockFs.readFileSync.mockReturnValue(
+      `providers: ${JSON.stringify(`file://${pattern}`)}`,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      /[*{}]/.test(value),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
   it('should filter an escaping match returned for a contained glob pattern', () => {
     mockFs.readFileSync.mockReturnValue('providers: [file://providers/*.py]');
     mockGlob.hasMagic.mockImplementation((value: string) =>
