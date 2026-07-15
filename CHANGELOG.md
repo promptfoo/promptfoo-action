@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.5](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.4...promptfoo-action-v1.3.5) (2026-07-15)
+
+
+### Bug Fixes
+
+* **deps:** repair js-yaml v5 upgrade ([#984](https://github.com/promptfoo/promptfoo-action/issues/984)) ([02e1cfc](https://github.com/promptfoo/promptfoo-action/commit/02e1cfcb91889c776c75bc8c12e3ec4640783f32))
+
 ## [1.3.4](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.3...promptfoo-action-v1.3.4) (2026-06-15)
 
 
