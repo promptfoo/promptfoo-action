@@ -278,10 +278,13 @@ export function extractFileDependencies(configPath: string): string[] {
             if (path.relative(cwd, absoluteBasePath) === '') {
               dependencies.add(safePattern);
             } else {
+              const hasBaseMatch = safeMatches.some((match) =>
+                isPathInside(absoluteBasePath, match),
+              );
               dependencies.add(
-                matches.length === 0
-                  ? `${absoluteBasePath}${path.sep}`
-                  : absoluteBasePath,
+                hasBaseMatch
+                  ? absoluteBasePath
+                  : `${absoluteBasePath}${path.sep}`,
               );
             }
           } else {

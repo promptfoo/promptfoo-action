@@ -2510,6 +2510,40 @@ assert: &asserts
     expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/fixturegone/']);
   });
 
+  it('should preserve the slash for an unmatched brace-glob base', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: ["data/{kept,removed}/*.yaml"]';
+      }
+      if (String(filePath).endsWith('evals/data/kept/a.yaml')) {
+        return 'context: kept';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/evals/data/kept/a.yaml']);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(mockGlob.sync.mock.calls[0]?.[0]).toEqual([
+      '/test/working/evals/data/kept/*.yaml',
+      '/test/working/evals/data/removed/*.yaml',
+    ]);
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/kept/a.yaml',
+      'evals/data/kept',
+      'evals/data/removed/',
+    ]);
+  });
+
   it('should watch the real parent for deleted concrete brace dependencies', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
