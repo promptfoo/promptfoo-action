@@ -418,6 +418,66 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      ['prompt', 'prompts/prompt1.txt', ['prompts/prompt1.txt']],
+      [
+        'dependency',
+        'providers/current.py',
+        ['prompts/prompt1.txt', 'prompts/prompt2.txt'],
+      ],
+    ])('should deduplicate overlapping action prompt globs for a %s change', async (_kind, changedFile, expectedPrompts) => {
+      withInputs({ prompts: 'prompts/*.txt\nprompts/prompt*.txt' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/current.py',
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0]?.[1] as string[];
+      const promptIndex = args.indexOf('--prompts');
+      expect(
+        args.slice(promptIndex + 1, promptIndex + 1 + expectedPrompts.length),
+      ).toEqual(expectedPrompts);
+      expect(args.filter((arg) => expectedPrompts.includes(arg))).toHaveLength(
+        expectedPrompts.length,
+      );
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0]?.[0]
+        .body as string;
+      for (const prompt of expectedPrompts) {
+        expect(body.split(prompt)).toHaveLength(2);
+      }
+    });
+
+    test('should deduplicate relative and absolute prompt glob matches for the same file', async () => {
+      const absolutePrompt = path.resolve('prompts/prompt1.txt');
+      const absoluteGlob = path.resolve('prompts/*.txt');
+      withInputs({ prompts: `prompts/*.txt\n${absoluteGlob}` });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === absoluteGlob ? [absolutePrompt] : ['prompts/prompt1.txt'],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(
+        args.filter((arg) => path.resolve(arg) === absolutePrompt),
+      ).toEqual(['prompts/prompt1.txt']);
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0]?.[0]
+        .body as string;
+      expect(body).toContain(
+        'LLM prompt was modified in these files: prompts/prompt1.txt',
+      );
+      expect(body).not.toContain(absolutePrompt);
+    });
+
     test('should reject an unchanged prompt filename before a dependency-triggered full evaluation', async () => {
       const forgedAnnotation = 'UNCHANGED_PROMPT_CANARY_019F62C3';
       const unsafePrompt = `prompts/prompt\n::error::${forgedAnnotation}.txt`;

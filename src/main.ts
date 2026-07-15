@@ -650,8 +650,15 @@ export async function run(): Promise<void> {
       }
     }
 
-    const evaluationPromptFiles =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    const seenPromptFiles = new Set<string>();
+    const evaluationPromptFiles = (
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles
+    ).filter((file) => {
+      const resolvedFile = path.resolve(workingDirectory, file);
+      if (seenPromptFiles.has(resolvedFile)) return false;
+      seenPromptFiles.add(resolvedFile);
+      return true;
+    });
     if (
       !useConfigPrompts &&
       evaluationPromptFiles.some((file) => /[\r\n]/.test(file))

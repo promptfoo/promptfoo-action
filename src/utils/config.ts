@@ -495,11 +495,13 @@ export function extractFileDependencies(configPath: string): string[] {
       return true;
     };
 
+    let warnedForeignWindowsDependency = false;
     const resolveConfigDependency = (
       filePath: string,
       source: string,
       displayPath = filePath,
     ): string | undefined => {
+      const isForeignPath = isForeignWindowsPath(filePath);
       try {
         if (!filePath) {
           throw new Error(`${source} is empty`);
@@ -507,7 +509,7 @@ export function extractFileDependencies(configPath: string): string[] {
         if (filePath.includes('\0')) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        if (isForeignWindowsPath(filePath)) {
+        if (isForeignPath) {
           throw new Error(
             `${source} must stay within the repository workspace`,
           );
@@ -530,6 +532,10 @@ export function extractFileDependencies(configPath: string): string[] {
             : undefined;
         if (containingRoot) {
           dependencies.add(`${containingRoot}${path.sep}`);
+        }
+        if (isForeignPath) {
+          if (warnedForeignWindowsDependency) return undefined;
+          warnedForeignWindowsDependency = true;
         }
         core.warning(
           `Ignoring unsafe config dependency "${JSON.stringify(displayPath).slice(1, -1)}": ${String(

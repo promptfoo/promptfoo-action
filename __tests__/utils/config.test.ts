@@ -3142,6 +3142,30 @@ providers:
     }
   });
 
+  it('should avoid warning amplification from many foreign Windows provider paths', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    try {
+      vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+      const providers = Array.from(
+        { length: 64 },
+        (_, index) =>
+          `  - ${JSON.stringify(`file://C:\\outside\\provider-${index}.py`)}`,
+      ).join('\n');
+      mockFs.readFileSync.mockReturnValue(`providers:\n${providers}\n`);
+
+      expect(
+        extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+      ).toEqual(['./']);
+      expect(core.warning).toHaveBeenCalledTimes(1);
+      expect(core.warning).toHaveBeenCalledWith(
+        expect.stringContaining('must stay within the repository workspace'),
+      );
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
   it('should not reinterpret an invalid provider function selector', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
