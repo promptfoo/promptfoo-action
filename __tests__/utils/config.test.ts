@@ -1256,6 +1256,10 @@ providers:
       auth:
         type: file
         path: "{{ env.MISSING_AUTH }}"
+      tls:
+        keyPath: "{{ env.MISSING_KEY }}"
+      tls:
+        keyPath: "{{ env.MISSING_KEY }}"
 tests:
   - assert:
       - type: llm-rubric
@@ -1271,6 +1275,66 @@ tests:
         'Templated prompt file dependencies cannot be extracted statically',
       ),
     );
+  });
+
+  it('should extract plain and env-templated HTTP credential paths through YAML aliases', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/signature
+    env:
+      PRIVATE_KEY_PATH: ./credentials/from-env.pem
+    config:
+      other: &signature_auth
+        privateKeyPath: "{{ env.PRIVATE_KEY_PATH }}"
+        keystorePath: ./credentials/keystore.jks
+        pfxPath: ./credentials/signature.pfx
+        certPath: ./credentials/signature.crt
+        keyPath: ./credentials/signature.key
+      signatureAuth: *signature_auth
+  - id: https://example.test/tls
+    config:
+      tls:
+        caPath: ./credentials/ca.pem
+        certPath: ./credentials/client.crt
+        keyPath: ./credentials/client.key
+        pfxPath: ./credentials/client.pfx
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/credentials/from-env.pem',
+      'evals/credentials/keystore.jks',
+      'evals/credentials/signature.pfx',
+      'evals/credentials/signature.crt',
+      'evals/credentials/signature.key',
+      'evals/credentials/client.pfx',
+      'evals/credentials/client.crt',
+      'evals/credentials/client.key',
+      'evals/credentials/ca.pem',
+    ]);
+  });
+
+  it('should conservatively watch computed nested response-schema templates', () => {
+    process.env.PROVIDER_FILE = 'current.json';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    config:
+      response_format:
+        type: json_schema
+        schema: "{{ 'file://schemas/' + env.PROVIDER_FILE }}"
+  - id: openai:gpt-4
+    config:
+      response_format:
+        type: json_schema
+        json_schema:
+          schema: "{{ 'file://schemas/' + env.PROVIDER_FILE }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
   });
 
   it('should extract dependencies inherited through YAML merge keys', () => {

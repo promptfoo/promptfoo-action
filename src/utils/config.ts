@@ -22,6 +22,14 @@ type PromptEntry =
   | { file?: string; id?: string; raw?: string; [key: string]: unknown };
 
 const MAX_BRACE_EXPANSIONS = 1024;
+const HTTP_CREDENTIAL_PATH_KEYS = [
+  'privateKeyPath',
+  'keystorePath',
+  'pfxPath',
+  'certPath',
+  'keyPath',
+  'caPath',
+] as const;
 
 type TestEntry = {
   path?: string;
@@ -538,7 +546,16 @@ export function extractFileDependencies(
       const pending = [root];
       while (pending.length > 0) {
         const value = pending.pop();
-        if (typeof value === 'string' && value.startsWith('file://')) {
+        if (typeof value === 'string') {
+          if (!value.startsWith('file://')) {
+            if (
+              value.includes('file://') &&
+              /\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(value)
+            ) {
+              hasDynamicPromptDependencies = true;
+            }
+            continue;
+          }
           const renderedReference = renderEnvironmentTemplates(value, env);
           if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedReference)) {
             hasDynamicPromptDependencies = true;
@@ -567,6 +584,21 @@ export function extractFileDependencies(
                 : `file://${fileConfig.path}`,
             );
           }
+        }
+
+        for (const key of HTTP_CREDENTIAL_PATH_KEYS) {
+          const credentialPath = (value as Record<string, unknown>)[key];
+          if (typeof credentialPath !== 'string') continue;
+          const renderedPath = renderEnvironmentTemplates(credentialPath, env);
+          if (/\{(?:\{|%)[\s\S]*?(?:\}\}|%\})/.test(renderedPath)) {
+            hasDynamicPromptDependencies = true;
+            continue;
+          }
+          processFileUrl(
+            `file://${renderedPath}`,
+            false,
+            `file://${credentialPath}`,
+          );
         }
 
         for (const entry of Object.values(value).reverse()) {
