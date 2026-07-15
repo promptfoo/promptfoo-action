@@ -595,7 +595,7 @@ export function extractFileDependencies(
           continue;
         }
         processFileUrl(
-          `file://${expandedPromptPath.replace(/^file:\/\//, '')}`,
+          `file://${expandedPromptPath.replace(/^(?:file:\/\/|exec:)/, '')}`,
         );
       }
     }

@@ -468,6 +468,76 @@ prompts:
     expect(deps).toContain('../config/prompts/prompt2.txt');
   });
 
+  it('should not treat an inline prompt question as a dependency glob', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: "What is 2+2?"');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should track executable prompt scripts without the exec prefix or selector', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - 'exec:prompts/foo.py:build'
+  - 'exec:prompts/foo.sh'
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompts/foo.py', '../config/prompts/foo.sh']);
+  });
+
+  it.each([
+    '{foo,bar}/[!)]*.py',
+    '{foo,bar}/[!}]*.py',
+  ])('should preserve a safe prompt brace glob containing a literal closer %s', (pattern) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
+    mockFs.readFileSync.mockReturnValue(
+      `prompts: ${JSON.stringify(`file://${pattern}`)}`,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      /[*{}[]/.test(value),
+    );
+    mockGlob.sync.mockReturnValue(['/test/workspace/foo/matched.py']);
+
+    const deps = extractFileDependencies(
+      '/test/workspace/promptfooconfig.yaml',
+    );
+
+    expect(deps).toContain('foo/matched.py');
+    expect(deps).not.toContain('/');
+    expect(mockGlob.sync).toHaveBeenCalled();
+  });
+
+  it('should preserve a prompt path containing a literal closing parenthesis', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: file://prompts/literal).py');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompts/literal).py']);
+  });
+
+  it.each([
+    '{foo),../../outside}/*.py',
+    '{foo),/absolute}/*.py',
+    '{foo),[.][.]/[.][.]/outside}/*.py',
+  ])('should reject an unsafe prompt brace alternative before globbing %s', (pattern) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
+    mockFs.readFileSync.mockReturnValue(
+      `prompts: ${JSON.stringify(`file://${pattern}`)}`,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      /[*{}[]/.test(value),
+    );
+
+    expect(
+      extractFileDependencies('/test/workspace/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it('should extract executable prompt, scenario, filter, and HTTP-transform dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
