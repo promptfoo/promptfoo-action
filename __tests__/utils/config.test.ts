@@ -1723,6 +1723,30 @@ tests:
     ).toEqual(['../config/validators/safe.js']);
   });
 
+  it('should inspect a shared assertion alias graph without repeated traversal', () => {
+    const levels = Array.from({ length: 18 }, (_, index) => {
+      const previous = index === 0 ? 'leaf' : `level${index - 1}`;
+      return [
+        `      - &level${index}`,
+        '        type: assert-set',
+        `        assert: [*${previous}, *${previous}]`,
+      ].join('\n');
+    }).join('\n');
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert:
+      - &leaf
+        type: javascript
+        value: file://validators/shared.js:check
+${levels}
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/validators/shared.js']);
+    expect(mockFs.lstatSync.mock.calls.length).toBeLessThan(100);
+  });
+
   it('should conservatively track literal and underlying uppercase JavaScript provider and assertion files', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers: file://providers/custom.JS:call_api

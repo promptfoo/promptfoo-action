@@ -558,12 +558,6 @@ export async function run(): Promise<void> {
       }
     }
 
-    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
-      throw new Error(
-        'Prompt file paths cannot contain carriage returns or line feeds.',
-      );
-    }
-
     const configChanged =
       changedFilesList.length > 0 &&
       changedFilesList.includes(configRepositoryPath);
@@ -650,6 +644,46 @@ export async function run(): Promise<void> {
       return;
     }
 
+    const evaluationPromptFiles =
+      forceRun || configChanged || dependencyChanged
+        ? allPromptFiles
+        : promptFiles;
+    if (evaluationPromptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error(
+        'Prompt file paths cannot contain carriage returns or line feeds.',
+      );
+    }
+    const promptRoots = Array.from(new Set([workspaceRoot, workingDirectory]));
+    const absolutePromptFiles = evaluationPromptFiles.map((file) =>
+      path.resolve(workingDirectory, file),
+    );
+    if (
+      absolutePromptFiles.some(
+        (file) => !promptRoots.some((root) => isPathInside(root, file)),
+      )
+    ) {
+      throw new Error(
+        'Prompt file paths must stay within the repository workspace.',
+      );
+    }
+    try {
+      const realPromptRoots = promptRoots.map((root) => fs.realpathSync(root));
+      if (
+        absolutePromptFiles.some((file) => {
+          const realFile = fs.realpathSync(file);
+          return !realPromptRoots.some((root) => isPathInside(root, realFile));
+        })
+      ) {
+        throw new Error(
+          'Prompt file resolves outside the repository workspace.',
+        );
+      }
+    } catch {
+      throw new Error(
+        'Prompt file paths must stay within the repository workspace.',
+      );
+    }
+
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');
     }
@@ -695,8 +729,6 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    const evaluationPromptFiles =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
     if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         '--prompts',

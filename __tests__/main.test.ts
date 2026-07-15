@@ -335,6 +335,63 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      '\n',
+      '\r',
+    ])('should skip an unrelated change when an unchanged action-input prompt contains a line break', async (lineBreak) => {
+      const unsafePrompt = `prompts/unchanged${lineBreak}::error::UNCHANGED_PROMPT_CANARY_019F62C3.txt`;
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([unsafePrompt]);
+      mockConfig.extractFileDependencies.mockReturnValue([]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should reject an action-input prompt glob match outside the workspace during a full evaluation', async () => {
+      withInputs({ prompts: '../secrets/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../secrets/leaked.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must stay within the repository workspace.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should reject an action-input prompt symlink that resolves outside the workspace during a full evaluation', async () => {
+      const workspaceRoot = process.cwd();
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'data/cases.yaml' }]);
+      mockGlob.sync.mockReturnValue(['prompts/safe.txt', 'prompts/leaked.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/cases.yaml']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = String(filePath);
+        if (value.endsWith('/prompts/leaked.txt')) {
+          return '/private/tmp/outside/leaked.txt';
+        }
+        return value === workspaceRoot ? workspaceRoot : value;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths must stay within the repository workspace.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
     test('should skip evaluation when no relevant files change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'README.md' },
@@ -1724,6 +1781,28 @@ describe('GitHub Action Main', () => {
         'Force run enabled - running evaluation regardless of changes',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run all action-input prompts when force-run is enabled', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
     test('should clean old cache entries in CI', async () => {
