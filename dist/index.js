@@ -38799,6 +38799,7 @@ function formatRepeatCommentMarkdown(summary2) {
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 var MAX_PROMPT_GLOB_VARIANTS = 1e3;
+var MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
@@ -38972,21 +38973,24 @@ async function run() {
       toRepositoryPath(workingDirectory),
       { windowsPathsNoEscape: false, magicalBraces: true }
     );
-    let promptGlobMatchingCapped = false;
+    const validPromptFilesGlobs = promptFilesGlobs.filter(
+      (pattern) => pattern.length <= MAX_PROMPT_GLOB_LENGTH
+    );
+    let promptGlobMatchingCapped = validPromptFilesGlobs.length !== promptFilesGlobs.length;
     let promptGlobMatchers;
     const getPromptGlobMatchers = () => {
       if (promptGlobMatchers) {
         return promptGlobMatchers;
       }
       const matchers = [];
-      for (const pattern of promptFilesGlobs) {
+      for (const pattern of validPromptFilesGlobs) {
         const traversalPatterns = braceExpand(pattern, {
           braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1
         }).map(
           (traversalPattern) => path7.isAbsolute(traversalPattern) ? traversalPattern : `${workingDirectoryPattern}/${traversalPattern}`
         );
         for (const traversalPattern of traversalPatterns) {
-          if (traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS || matchers.length >= MAX_PROMPT_GLOB_VARIANTS) {
+          if (traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS || matchers.length >= MAX_PROMPT_GLOB_VARIANTS || traversalPattern.length > MAX_PROMPT_GLOB_LENGTH) {
             promptGlobMatchingCapped = true;
             promptGlobMatchers = [];
             return promptGlobMatchers;
@@ -39280,7 +39284,7 @@ async function run() {
     }
     const promptFiles = [];
     const changedFilesList = changedFiles.split("\n").filter((f) => f);
-    for (const globPattern of promptFilesGlobs) {
+    for (const globPattern of validPromptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
         nodir: true
