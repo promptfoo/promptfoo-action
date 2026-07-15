@@ -1672,11 +1672,7 @@ describe('GitHub Action Main', () => {
         'a config dependency',
         ['providers/custom.py'],
         ['providers/custom.py'],
-        [
-          'prompts/shared.txt',
-          'prompts/first.txt',
-          path.join(process.cwd(), 'prompts/second.txt'),
-        ],
+        ['prompts/shared.txt', 'prompts/first.txt', 'prompts/second.txt'],
         'Evaluated prompt files',
       ],
     ])('should deduplicate overlapping prompt globs for %s', async (_trigger, changedFiles, dependencies, expectedPrompts, description) => {
@@ -1704,6 +1700,31 @@ describe('GitHub Action Main', () => {
       );
       const body = mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
       expect(body).toContain(`${description}: ${expectedPrompts.join(', ')}`);
+    });
+
+    test('should not expose an absolute action prompt glob match in argv or PR comments', async () => {
+      const absolutePrompt = path.join(
+        process.cwd(),
+        'prompts/absolute-prompt.txt',
+      );
+      withInputs({
+        prompts: path.join(process.cwd(), 'prompts/*.txt'),
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/absolute-prompt.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/absolute-prompt.txt');
+      expect(args).not.toContain(absolutePrompt);
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(body).toContain(
+        'LLM prompt was modified in these files: prompts/absolute-prompt.txt',
+      );
+      expect(body).not.toContain(absolutePrompt);
     });
 
     test('should exclude the config file before recording prompt-glob matches', async () => {

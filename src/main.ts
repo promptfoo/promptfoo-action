@@ -546,45 +546,54 @@ export async function run(): Promise<void> {
         nodir: true,
         braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
       });
-      const allMatches = matches.filter((file) => {
-        const absoluteFile = path.resolve(workingDirectory, file);
-        if (
-          !isPathInside(workspaceRoot, absoluteFile) ||
-          !isPathInside(workingDirectory, absoluteFile)
-        ) {
-          core.warning(
-            'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+      const allMatches = matches
+        .filter((file) => {
+          const absoluteFile = path.resolve(workingDirectory, file);
+          if (
+            !isPathInside(workspaceRoot, absoluteFile) ||
+            !isPathInside(workingDirectory, absoluteFile)
+          ) {
+            core.warning(
+              'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+            );
+            return false;
+          }
+          let physicalFile: string;
+          try {
+            physicalFile = fs.realpathSync(absoluteFile);
+          } catch {
+            core.warning(
+              'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+            );
+            return false;
+          }
+          if (
+            !isPathInside(physicalWorkspaceRoot, physicalFile) ||
+            !isPathInside(physicalWorkingDirectory, physicalFile)
+          ) {
+            core.warning(
+              'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+            );
+            return false;
+          }
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, absoluteFile),
           );
-          return false;
-        }
-        let physicalFile: string;
-        try {
-          physicalFile = fs.realpathSync(absoluteFile);
-        } catch {
-          core.warning(
-            'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
-          );
-          return false;
-        }
-        if (
-          !isPathInside(physicalWorkspaceRoot, physicalFile) ||
-          !isPathInside(physicalWorkingDirectory, physicalFile)
-        ) {
-          core.warning(
-            'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
-          );
-          return false;
-        }
-        const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, absoluteFile),
-        );
-        if (repositoryFile === configRepositoryPath) return false;
+          if (repositoryFile === configRepositoryPath) return false;
 
-        const promptPathKey = path.normalize(absoluteFile);
-        if (seenPromptPaths.has(promptPathKey)) return false;
-        seenPromptPaths.add(promptPathKey);
-        return true;
-      });
+          const promptPathKey = path.normalize(absoluteFile);
+          if (seenPromptPaths.has(promptPathKey)) return false;
+          seenPromptPaths.add(promptPathKey);
+          return true;
+        })
+        .map((file) =>
+          toRepositoryPath(
+            path.relative(
+              workingDirectory,
+              path.resolve(workingDirectory, file),
+            ),
+          ),
+        );
       allPromptFiles.push(...allMatches);
 
       if (changedFilesList.length > 0) {
