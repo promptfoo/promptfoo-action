@@ -599,7 +599,9 @@ export function extractFileDependencies(configPath: string): string[] {
           ? httpTransformFilePath(fileUrl)
           : fileUrl
         : isScriptProvider
-          ? scriptProviderFilePath(fileUrl)
+          ? fileUrl.startsWith('file://')
+            ? scriptProviderFilePath(fileUrl)
+            : fileUrl
           : isProvider
             ? fileUrl.startsWith('file://')
               ? providerFilePath(fileUrl, allowJavascript)

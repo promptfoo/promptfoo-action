@@ -1675,6 +1675,27 @@ providers:
     ).toEqual(['providers/from-env.py', 'providers/from-map.rb']);
   });
 
+  it('should preserve an env-templated script reference in an unsafe-path warning', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    vi.stubEnv(
+      'UNSAFE_TRANSFORM',
+      'file://../SCRIPT_PATH_SECRET_CANARY_019F62C3.py:transform',
+    );
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - options:
+      transform: "{{ env.UNSAFE_TRANSFORM }}"
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('{{ env.UNSAFE_TRANSFORM }}');
+    expect(warnings).not.toContain('SCRIPT_PATH_SECRET_CANARY_019F62C3');
+    vi.unstubAllEnvs();
+  });
+
   it('should preserve literal prefixed provider paths and normalize Windows file URLs', () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
