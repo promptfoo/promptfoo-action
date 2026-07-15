@@ -2367,6 +2367,33 @@ describe('GitHub Action Main', () => {
       ]);
     });
 
+    test('should not list action prompts in a non-PR summary when config prompts are used', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'data/context.json' } },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(mockCore.summary.addHeading).not.toHaveBeenCalledWith(
+        'Evaluated Files',
+        3,
+      );
+      expect(mockCore.summary.addList).not.toHaveBeenCalled();
+      expect(mockCore.summary.write).toHaveBeenCalled();
+    });
+
     test('should omit evaluated files when a non-PR run uses config prompts', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',

@@ -5454,7 +5454,7 @@ assert:
     );
   });
 
-  it('should ignore a glob rejected by magic detection without dropping later dependencies', () => {
+  it('should conservatively watch the dependency root when glob magic detection rejects a provider path', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file://providers/invalid*.py
@@ -5469,13 +5469,13 @@ providers:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['evals/providers/safe.py']);
+    expect(deps).toEqual(['./', 'evals/providers/safe.py']);
     expect(core.warning).toHaveBeenCalledWith(
-      'Skipping invalid config dependency glob pattern',
+      'Skipping invalid config dependency glob pattern; conservatively watching the dependency root',
     );
   });
 
-  it('should ignore a vars glob rejected by magic detection without dropping later dependencies', () => {
+  it('should conservatively watch the dependency root when glob magic detection rejects a vars path', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
         return 'defaultTest: file://defaults/default.yaml';
@@ -5499,11 +5499,12 @@ providers:
 
     expect(deps).toEqual([
       'evals/defaults/default.yaml',
+      './',
       'evals/data/safe.yaml',
       'evals/fixtures/context.txt',
     ]);
     expect(core.warning).toHaveBeenCalledWith(
-      'Skipping invalid config dependency glob pattern',
+      'Skipping invalid config dependency glob pattern; conservatively watching the dependency root',
     );
   });
 
@@ -5553,7 +5554,7 @@ providers:
     );
   });
 
-  it('should skip a glob rejected during base-directory inspection', () => {
+  it('should conservatively watch the dependency root when base-directory glob inspection fails', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file://./providers/invalid*.py
@@ -5570,9 +5571,9 @@ providers:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['evals/providers/safe.py']);
+    expect(deps).toEqual(['./', 'evals/providers/safe.py']);
     expect(core.warning).toHaveBeenCalledWith(
-      'Skipping invalid config dependency glob pattern',
+      'Skipping invalid config dependency glob pattern; conservatively watching the dependency root',
     );
   });
 

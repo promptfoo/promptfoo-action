@@ -544,7 +544,10 @@ export function extractFileDependencies(configPath: string): string[] {
       try {
         return glob.hasMagic(filePath, globOptions);
       } catch {
-        core.warning('Skipping invalid config dependency glob pattern');
+        addDependencyRootWatchers();
+        core.warning(
+          'Skipping invalid config dependency glob pattern; conservatively watching the dependency root',
+        );
         return undefined;
       }
     };

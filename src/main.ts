@@ -1053,7 +1053,7 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (evaluationPromptFiles.length > 0) {
+      if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
         summary.addList(evaluationPromptFiles);
       }
