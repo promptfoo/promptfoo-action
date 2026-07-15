@@ -538,6 +538,44 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      '.prompts',
+      '-prompts',
+      ',prompts',
+      '^prompts',
+    ])('should detect a removed prompt under a native Windows punctuation directory %s', async (promptDirectory) => {
+      const currentPlatform = process.platform;
+      const nativeRoot = process.cwd().split(path.sep).join('\\');
+      const promptPattern = `${nativeRoot}\\${promptDirectory}\\*.txt`;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: `${promptDirectory}/removed.txt`, status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue([`${promptDirectory}/remaining.txt`]);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(
+          `${process.cwd()}/${promptDirectory}/*.txt`,
+          { cwd: process.cwd(), nodir: true },
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
+    test.each([
       ['[tr]', 't'],
       ['*', 't'],
       ['{t,r}', 't'],

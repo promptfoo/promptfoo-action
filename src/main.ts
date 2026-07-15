@@ -61,9 +61,12 @@ function normalizeWindowsPromptGlob(pattern: string): string {
     firstForwardSlash === -1 ? '' : pattern.slice(firstForwardSlash);
   return (
     nativePrefix
+      .replace(/\\(?=[,.\-|^][^,[\]{}()\\/]*(?:[\\/]|$))/g, '/')
       .replace(/\\(\[[^\\]*\\\])(?=\\|$)/g, '/\\$1')
       .replace(/(?<!\/)\\(?![,.\-|^\]})])/g, '/') +
-    escapedSuffix.replace(/\\(?![()[\]{}+@!,.\-|^])/g, '/')
+    escapedSuffix
+      .replace(/\\(?=[,.\-|^][^,[\]{}()\\/]*(?:[\\/]|$))/g, '/')
+      .replace(/\\(?![()[\]{}+@!,.\-|^])/g, '/')
   );
 }
 
