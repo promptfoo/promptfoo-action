@@ -219,6 +219,9 @@ export function normalizeConfigFilePath(
 }
 
 function stripSpreadsheetSheetSelector(filePath: string): string {
+  if (filePath.length > MAX_GLOB_PATTERN_LENGTH || /[\0\r\n]/.test(filePath)) {
+    return filePath;
+  }
   const hashIndex = filePath.indexOf('#');
   if (hashIndex === -1) return filePath;
 
@@ -614,7 +617,9 @@ export function extractFileDependencies(
       displayFileUrl = fileUrl,
       redactDisplayPath = false,
     ): void => {
-      const rawFilePath = fileUrl.replace('file://', '');
+      const rawFilePath = stripSpreadsheetSheetSelector(
+        fileUrl.replace('file://', ''),
+      );
       const displayFilePath = sanitizeDependencyDisplayPath(
         redactDisplayPath
           ? '[redacted]'

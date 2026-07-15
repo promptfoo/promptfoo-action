@@ -702,6 +702,19 @@ tests:
     expect(elapsedMs).toBeLessThan(1_000);
   });
 
+  it('should reject adversarial spreadsheet-selector-like paths before pattern parsing', () => {
+    const selectorPath = `${'.xls#'.repeat(14_000)}\n`;
+    mockFs.readFileSync.mockReturnValue(
+      `tests:\n  - ${JSON.stringify(selectorPath)}\n`,
+    );
+
+    const started = performance.now();
+    extractFileDependencies('/test/working/evals/promptfooconfig.yaml');
+    const elapsedMs = performance.now() - started;
+
+    expect(elapsedMs).toBeLessThan(1_000);
+  });
+
   it.each([
     'cjs',
     'cts',
@@ -1982,6 +1995,27 @@ config:
     ]);
   });
 
+  it('should strip spreadsheet sheet selectors from nested external test references', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'tests:\n  - file://tests/cases.yaml\n';
+      }
+      if (candidate.endsWith('/tests/cases.yaml')) {
+        return '- vars:\n    current: file://data/current.xlsx#Sheet1\n    legacy: file://data/legacy.xls#Cases\n';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/tests/cases.yaml',
+      'evals/data/current.xlsx',
+      'evals/data/legacy.xls',
+    ]);
+  });
+
   it('should extract assertion-level transform and grading-provider dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
@@ -3197,6 +3231,40 @@ shared: &shared
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('YAML $ref dependencies'),
     );
+  });
+
+  it('should extract arbitrary-extension HTTP credential and multipart paths from external provider YAML', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'providers:\n  - file://providers/http.yaml\n';
+      }
+      if (candidate.endsWith('/providers/http.yaml')) {
+        return `
+id: http
+config:
+  tls:
+    keyPath: credentials/private.custom
+  signatureAuth:
+    certPath: credentials/certificate.data
+  multipart:
+    parts:
+      - source:
+          type: path
+          path: uploads/document.blob
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/providers/http.yaml',
+      'evals/credentials/certificate.data',
+      'evals/credentials/private.custom',
+      'evals/uploads/document.blob',
+    ]);
   });
 
   it.each([
