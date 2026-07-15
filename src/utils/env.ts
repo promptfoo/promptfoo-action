@@ -3,7 +3,7 @@ import { ErrorCodes, PromptfooActionError } from './errors';
 
 // Variables that let a repository-controlled env file execute code, redirect an
 // inherited provider credential, or change the action's pass/fail/filesystem
-// behavior. Keep this explicit and alphabetized so the trust boundary is easy
+// behavior. Keep this explicit and grouped so the trust boundary is easy
 // to audit. Legitimate overrides belong in the trusted workflow environment.
 const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'ABLIT_API_BASE_URL',
@@ -24,6 +24,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'AZURE_OPENAI_API_BASE_URL',
   'AZURE_OPENAI_API_HOST',
   'AZURE_OPENAI_BASE_URL',
+  'AR',
   'BASH_ENV',
   'CC',
   'CGO_CFLAGS',
@@ -34,16 +35,29 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'CLAWDBOT_GATEWAY_URL',
   'CLOUDFLARE_ACCOUNT_ID',
   'CLOUDFLARE_GATEWAY_ID',
+  'COMPILER_PATH',
   'CODEX_HOME',
   'COMSPEC',
   'CURL_CA_BUNDLE',
+  'CPATH',
+  'CPLUS_INCLUDE_PATH',
+  'C_INCLUDE_PATH',
   'CXX',
   'DATABRICKS_WORKSPACE_URL',
   'DOCKER_MODEL_RUNNER_BASE_URL',
   'ENVOY_API_BASE_URL',
   'ENV',
   'FIREWORKS_API_BASE_URL',
+  'FC',
+  'GCCGO',
+  'GCCGOTOOLDIR',
+  'GCC_EXEC_PREFIX',
+  'GOAUTH',
+  'GOBIN',
   'GOCACHE',
+  'GOCACHEPROG',
+  'GOCOVERDIR',
+  'GODEBUG',
   'GOENV',
   'GOFLAGS',
   'GOINSECURE',
@@ -55,7 +69,12 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'GOPROXY',
   'GOROOT',
   'GOSUMDB',
+  'GOTELEMETRYDIR',
+  'GOTMPDIR',
+  'GOTOOLDIR',
   'GOTOOLCHAIN',
+  'GOVCS',
+  'GOWORK',
   'GOOGLE_API_BASE_URL',
   'GOOGLE_API_HOST',
   'HOME',
@@ -63,6 +82,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'HTTPS_PROXY',
   'LANGFUSE_HOST',
   'LITELLM_API_BASE',
+  'LIBRARY_PATH',
   'LLAMA_BASE_URL',
   'LOCALAPPDATA',
   'LOCALAI_BASE_URL',
@@ -76,6 +96,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'NODE_TLS_REJECT_UNAUTHORIZED',
   'NO_PROXY',
   'OLLAMA_BASE_URL',
+  'OBJC_INCLUDE_PATH',
   'OPENAI_API_BASE_URL',
   'OPENAI_API_HOST',
   'OPENAI_BASE_URL',
@@ -91,6 +112,9 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PATH',
   'PATHEXT',
   'PKG_CONFIG',
+  'PKG_CONFIG_LIBDIR',
+  'PKG_CONFIG_PATH',
+  'PKG_CONFIG_SYSROOT_DIR',
   'PERL5LIB',
   'PERL5OPT',
   'PERLLIB',
@@ -146,10 +170,11 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'XDG_CONFIG_HOME',
 ]);
 
-// Cover AWS service endpoint overrides, all native-loader controls (including
-// LD_AUDIT), and all git/npm process controls inherited by child processes.
+// Cover AWS service endpoint overrides, all cgo/native-loader controls
+// (including LD_AUDIT), and git/npm controls inherited by child processes.
 const FORBIDDEN_ENV_FILE_PREFIXES = [
   'AWS_ENDPOINT_URL_',
+  'CGO_',
   'DYLD_',
   'GIT_',
   'LD_',
