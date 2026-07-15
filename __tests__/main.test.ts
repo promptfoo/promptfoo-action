@@ -1984,6 +1984,30 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test.each([
+      '\n',
+      '\r',
+      '\0',
+    ])('should reject an env-files path containing %j before logging it', async (control) => {
+      withInputs({
+        'env-files': `.env.safe${control}::error::forged`,
+        'force-run': 'true',
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid environment file path: null bytes and line breaks are not allowed.\n\nHelp: Remove null bytes and line breaks from environment file paths.',
+      );
+      expect(
+        mockCore.info.mock.calls.map(([message]) => message).join('\n'),
+      ).not.toContain('::error::forged');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should fail when an environment file does not exist', async () => {
       withInputs({ 'env-files': '.env.missing' });
       mockFs.existsSync.mockReturnValue(false);

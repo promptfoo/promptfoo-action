@@ -142,6 +142,7 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
 
 function sanitizeLogText(value: string): string {
   return value
+    .replace(/\0/g, '\\0')
     .replace(/\t/g, '\\t')
     .replace(/\r/g, '\\r')
     .replace(/\n/g, '\\n');
@@ -1356,6 +1357,16 @@ export function extractFileDependencies(
       if (
         ['\n', 'portkey://', 'langfuse://', 'helicone://'].some((value) =>
           reference.includes(value),
+        )
+      ) {
+        return false;
+      }
+      if (
+        reference.includes('*') &&
+        /\s/.test(reference) &&
+        !/[\\/]/.test(reference) &&
+        !/\.(?:cjs|cts|j2|js|json|jsonl|md|mjs|mts|py|ts|txt|yml|yaml)(?::[^:]*)?$/.test(
+          reference,
         )
       ) {
         return false;

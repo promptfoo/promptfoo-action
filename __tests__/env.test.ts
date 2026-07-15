@@ -466,6 +466,20 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
   });
 
   test.each([
+    '/tmp/.env\n::error::forged',
+    '/tmp/.env\r::error::forged',
+    '/tmp/.env\0::error::forged',
+    ['/tmp/.env.safe', '/tmp/.env\n::error::forged'],
+  ])('rejects a control character in an environment-file path before parsing', (filePath) => {
+    const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
+
+    expect(() => loadEnvironmentFile(filePath, target)).toThrow(
+      'Invalid environment file path: null bytes and line breaks are not allowed.',
+    );
+    expect(target).toEqual({ EXISTING: 'keep' });
+  });
+
+  test.each([
     'PROMPTFOO_DISABLE_TELEMETRY',
     'PROMPTFOO_DISABLE_REMOTE_GENERATION',
     'PROMPTFOO_DISABLE_REDTEAM_MODERATION',

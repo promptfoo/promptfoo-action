@@ -380,6 +380,14 @@ export function loadEnvironmentFile(
   targetEnvironment: NodeJS.ProcessEnv = process.env,
   override = true,
 ): void {
+  const filePaths = Array.isArray(envFilePath) ? envFilePath : [envFilePath];
+  if (filePaths.some((filePath) => /[\0\r\n]/.test(filePath))) {
+    throw new PromptfooActionError(
+      'Invalid environment file path: null bytes and line breaks are not allowed.',
+      ErrorCodes.INVALID_CONFIGURATION,
+      'Remove null bytes and line breaks from environment file paths.',
+    );
+  }
   // Parse into an isolated object so untrusted values cannot affect this action
   // or a child process before they have passed the process-control check.
   const fileEnvironment: Record<string, string> = Object.create(null);

@@ -3013,6 +3013,17 @@ tests:
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
+  it('does not treat an inline prompt containing a spaced wildcard as a path glob', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml':
+        "prompts:\n  - 'Return * when unknown'",
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(implicitConfigDependencies('promptfooconfig.yaml'));
+  });
+
   it('fails closed for a deleted dependency beneath an escaping symlink ancestor', () => {
     const configPath = '/test/working/promptfooconfig.yaml';
     const missing = '/test/working/providers/nested/deleted.py';
@@ -3100,5 +3111,174 @@ tests:
       'hooks/extension.js',
       ...implicitConfigDependencies('promptfooconfig.yaml'),
     ]);
+  });
+
+  it('handles escaped magic and plain exec providers while rejecting command-style exec providers', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'providers:',
+        '  - exec:providers/run.sh',
+        'nunjucksFilters:',
+        "  format: 'filters/literal\\*.js'",
+      ].join('\n'),
+    });
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'providers/run.sh',
+      'filters/literal\\*.js',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml':
+        "providers:\n  - 'exec:node providers/run.js'",
+    });
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
+  it.each([
+    "metadata:\n  file: ''",
+    'metadata:\n  file: "\\0bad.txt"',
+    'metadata:\n  file: "bad\\nname.txt"',
+  ])('sanitizes an invalid raw file dependency: %s', (content) => {
+    mockConfigFiles({ '/test/working/promptfooconfig.yaml': content });
+    extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(
+      (core.warning as Mock).mock.calls.every(
+        ([message]) => !/[\0\r\n]/.test(String(message)),
+      ),
+    ).toBe(true);
+  });
+
+  it('fails closed when a missing dependency exhausts its ancestors or an ancestor is unreadable', () => {
+    const configPath = '/test/working/promptfooconfig.yaml';
+    mockConfigFiles({
+      [configPath]: 'providers:\n  - file://providers/nested/deleted.py',
+    });
+    mockFs.lstatSync.mockImplementation((filePath: string) => {
+      if (filePath === configPath) {
+        return { isFile: () => true, isSymbolicLink: () => false, size: 64 };
+      }
+      throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    });
+    expect(extractFileDependencies(configPath)).toEqual([
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+
+    mockFs.lstatSync.mockImplementation((filePath: string) => {
+      if (filePath === configPath) {
+        return { isFile: () => true, isSymbolicLink: () => false, size: 64 };
+      }
+      throw Object.assign(new Error('denied'), {
+        code: filePath.endsWith('/deleted.py') ? 'ENOENT' : 'EACCES',
+      });
+    });
+    expect(extractFileDependencies(configPath)).toEqual([
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+  });
+
+  it('handles transitive selector suffixes and fails closed for unsafe or oversized references', () => {
+    const configPath = '/test/working/promptfooconfig.yaml';
+    mockConfigFiles({
+      [configPath]: "tests: 'test-data/cases.yaml:sheet'",
+      '/test/working/test-data/cases.yaml': 'key: value',
+    });
+    expect(extractFileDependencies(configPath)).toEqual([
+      'test-data/cases.yaml:sheet',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+
+    mockConfigFiles({ [configPath]: 'tests: /etc/cases.yaml' });
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
+
+    mockConfigFiles({
+      [configPath]: `metadata: file://providers/${'a'.repeat(70_000)}.py`,
+    });
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
+  });
+
+  it('fails closed for a mapped external-provider config and malformed vars or extensions', () => {
+    const configPath = '/test/working/promptfooconfig.yaml';
+    mockConfigFiles({
+      [configPath]: 'providers:\n  - id: file://providers/http.yaml',
+      '/test/working/providers/http.yaml': 'key: value',
+    });
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
+
+    for (const content of [
+      'tests:\n  - vars: [false]',
+      'tests:\n  - vars: 42',
+      'extensions: invalid',
+      'extensions:\n  - false',
+    ]) {
+      mockConfigFiles({ [configPath]: content });
+      expect(extractFileDependencies(configPath)).toEqual(['./']);
+    }
+  });
+
+  it('tracks default-test and nested assertion hooks and fails closed on a circular rubric', () => {
+    const configPath = '/test/working/promptfooconfig.yaml';
+    mockConfigFiles({
+      [configPath]: [
+        'defaultTest:',
+        '  assertScoringFunction: file://hooks/default-score.py:run',
+        '  provider:',
+        '    id: providers/default.js',
+        '    transform: file://hooks/default-provider.py:run',
+        '  options:',
+        '    postprocess: file://hooks/default-post.js:run',
+        '    transform: file://hooks/default-transform.py:run',
+        '    transformVars: file://hooks/default-vars.js:run',
+        '    provider:',
+        '      id: providers/options.js',
+        '      transform: file://hooks/options-provider.py:run',
+        '    rubricPrompt:',
+        '      - file://hooks/default-rubric.js:run',
+        'tests:',
+        '  - assert:',
+        '      - type: javascript',
+        '        value: file://validators/check.js:run',
+        '        provider:',
+        '          id: providers/assert.js',
+        '          transform: file://hooks/assert-provider.py:run',
+        '        rubricPrompt: file://hooks/assert-rubric.py:run',
+      ].join('\n'),
+    });
+    expect(extractFileDependencies(configPath)).toEqual(
+      expect.arrayContaining([
+        'hooks/default-score.py',
+        'hooks/default-provider.py',
+        'hooks/default-post.js',
+        'hooks/default-transform.py',
+        'hooks/default-vars.js',
+        'hooks/options-provider.py',
+        'hooks/default-rubric.js',
+        'hooks/assert-provider.py',
+        'hooks/assert-rubric.py',
+      ]),
+    );
+
+    mockConfigFiles({
+      [configPath]: [
+        'tests:',
+        '  - options:',
+        '      rubricPrompt: &cycle',
+        '        nested: *cycle',
+      ].join('\n'),
+    });
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
+
+    const oversizedRubric = Array.from({ length: 100_001 }, () => '0').join(
+      ',',
+    );
+    mockConfigFiles({
+      [configPath]: `tests:\n  - options:\n      rubricPrompt: [${oversizedRubric}]`,
+    });
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
   });
 });

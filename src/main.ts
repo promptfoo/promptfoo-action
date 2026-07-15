@@ -377,6 +377,13 @@ export async function run(): Promise<void> {
 
     const loadEnvironmentFiles = (): void => {
       const resolveContainedEnvFile = (envFilePath: string): string => {
+        if (/[\0\r\n]/.test(envFilePath)) {
+          throw new PromptfooActionError(
+            'Invalid environment file path: null bytes and line breaks are not allowed.',
+            ErrorCodes.INVALID_CONFIGURATION,
+            'Remove null bytes and line breaks from environment file paths.',
+          );
+        }
         const resolvedPath = path.resolve(envFilePath);
         const relativePath = path.relative(workingDirectory, resolvedPath);
         if (
@@ -430,7 +437,9 @@ export async function run(): Promise<void> {
         .split(',')
         .map((envFile) => envFile.trim())
         .filter(Boolean)
-        .map((envFile) => path.resolve(path.join(workingDirectory, envFile)))
+        .map((envFile) =>
+          resolveContainedEnvFile(path.join(workingDirectory, envFile)),
+        )
         .map((envFilePath) => {
           resolveContainedEnvFile(envFilePath);
           const vaultPath = envFilePath.endsWith('.vault')
