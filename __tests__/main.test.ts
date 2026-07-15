@@ -644,6 +644,49 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should reject a prompt glob with excessive comma-brace expansion before enumeration', async () => {
+      const alternatives = Array.from(
+        { length: 1025 },
+        (_, index) => `prompt-${index}`,
+      ).join(',');
+      withInputs({ prompts: `prompts/{${alternatives}}.txt` });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test.each([
+      'evals/**/../../outside/*.yaml',
+      'evals/**/[.][.]/[.][.]/outside/*.yaml',
+      'evals/**/{.,.}{.,.}/{.,.}{.,.}/outside/*.yaml',
+      'evals/**/@(.)@(.)/@(.)@(.)/outside/*.yaml',
+      'evals/**/!(safe)/!(safe)/outside/*.yaml',
+      'evals/{safe,../../outside}/*.yaml',
+      'evals/@(safe|../outside)/*.yaml',
+      'evals/@(safe|../../outside)/*.yaml',
+    ])('should reject post-magic traversal in a primary-config glob %s before enumeration', async (config) => {
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
     test('should permit escaped braces and braces inside a character class', async () => {
       const globPattern = 'prompts/\\{literal\\}-[{}]-{1..3}.txt';
       withInputs({ prompts: globPattern });
@@ -799,6 +842,201 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should pass every expanded primary-config glob match to Promptfoo', async () => {
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) => {
+        if (pattern === 'evals/*.yaml') {
+          return ['evals/first.yaml', 'evals/second.yaml'];
+        }
+        return ['prompts/changed.txt'];
+      });
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const configIndex = args.indexOf('-c');
+      expect(args.slice(configIndex + 1, configIndex + 3)).toEqual([
+        'evals/first.yaml',
+        'evals/second.yaml',
+      ]);
+      expect(args).not.toContain('evals/*.yaml');
+    });
+
+    test.each([
+      'evals/@(first|second).yaml',
+      'evals/+(first|second).yaml',
+      'evals/!(draft).yaml',
+    ])('should expand an extglob-only primary-config pattern %s', async (config) => {
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/second.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === config
+          ? ['evals/first.yaml', 'evals/second.yaml']
+          : ['prompts/unchanged.txt'],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const configIndex = args.indexOf('-c');
+      expect(args.slice(configIndex + 1, configIndex + 3)).toEqual([
+        'evals/first.yaml',
+        'evals/second.yaml',
+      ]);
+      expect(args).not.toContain(config);
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.resolve(process.cwd(), 'evals/first.yaml'),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.resolve(process.cwd(), 'evals/second.yaml'),
+      );
+    });
+
+    test.each([
+      {
+        reason: 'second config changes',
+        changedFile: 'evals/second.yaml',
+        dependency: undefined,
+      },
+      {
+        reason: 'second config dependency changes',
+        changedFile: 'data/context.json',
+        dependency: 'data/context.json',
+      },
+    ])('should evaluate when an expanded primary-config $reason', async ({
+      changedFile,
+      dependency,
+    }) => {
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'evals/*.yaml'
+          ? ['evals/first.yaml', 'evals/second.yaml']
+          : ['prompts/unchanged.txt'],
+      );
+      mockConfig.extractFileDependencies.mockImplementation((configPath) =>
+        dependency && configPath.endsWith('evals/second.yaml')
+          ? [dependency]
+          : [],
+      );
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.resolve(process.cwd(), 'evals/second.yaml'),
+      );
+    });
+
+    test('should reject an expanded primary-config symlink that escapes the workspace', async () => {
+      const linkedConfig = path.resolve(process.cwd(), 'evals/linked.yaml');
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'evals/*.yaml'
+          ? ['evals/linked.yaml']
+          : ['prompts/changed.txt'],
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString() === linkedConfig
+          ? '/private/tmp/outside/config.yaml'
+          : filePath.toString(),
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid config file path: config files must stay within the working directory.\n\nHelp: Use readable config files contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an expanded primary-config path that lexically escapes the workspace', async () => {
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'evals/*.yaml'
+          ? ['../outside/config.yaml']
+          : ['prompts/changed.txt'],
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid config file path: config files must stay within the working directory.\n\nHelp: Use readable config files contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      {
+        reason: 'lexical parent traversal',
+        config: '../outside/**/*.yaml',
+        linkedRoot: undefined,
+      },
+      {
+        reason: 'escaping static-prefix symlink',
+        config: 'evals-link/**/../outside/*.yaml',
+        linkedRoot: 'evals-link',
+      },
+    ])('should reject a primary-config glob with $reason before enumeration', async ({
+      config,
+      linkedRoot,
+    }) => {
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      if (linkedRoot) {
+        const linkedPath = path.resolve(process.cwd(), linkedRoot);
+        mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+          filePath.toString() === linkedPath
+            ? '/private/tmp/outside/evals'
+            : filePath.toString(),
+        );
+      }
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test('should sanitize a primary-config glob expansion failure', async () => {
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) => {
+        if (pattern === 'evals/*.yaml') {
+          throw new Error('invalid config glob\n::error::forged');
+        }
+        return ['prompts/changed.txt'];
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+        '::error::forged',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test.each([
       ['config', 'evals/promptfooconfig.yaml'],
       ['prompt', 'evals/prompts/first.txt'],
@@ -837,10 +1075,179 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.setFailed).toHaveBeenCalledWith(
-        'Error: Invalid prompt file path: prompt files must stay within the working directory.\n\nHelp: Use readable prompt files and glob patterns contained within the working directory.',
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
       );
       expect(mockExec.exec).not.toHaveBeenCalled();
       expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should reject a parent-traversing prompt glob before enumeration', async () => {
+      withInputs({ prompts: '../outside/**' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an escaping prompt-prefix symlink before enumeration', async () => {
+      const linkedRoot = path.resolve(process.cwd(), 'prompts-link');
+      withInputs({ prompts: 'prompts-link/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString() === linkedRoot
+          ? '/private/tmp/outside/prompts'
+          : filePath.toString(),
+      );
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'evals/**/../../outside/*.txt',
+      'evals/**/[.][.]/[.][.]/outside/*.txt',
+      'evals/**/{.,.}{.,.}/{.,.}{.,.}/outside/*.txt',
+      'evals/**/@(.)@(.)/@(.)@(.)/outside/*.txt',
+      'evals/**/!(safe)/!(safe)/outside/*.txt',
+      'evals/{safe,../../outside}/*.txt',
+      'evals/@(safe|../outside)/*.txt',
+      'evals/@(safe|../../outside)/*.txt',
+    ])('should reject post-magic traversal in a prompt glob %s before enumeration', async (prompts) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test('should reject traversal before enumerating a normalized POSIX prompt-glob fallback', async () => {
+      const configured = './evals\\**\\..\\..\\outside/*.txt';
+      const normalized = './evals/**/../../outside/*.txt';
+      withInputs({ prompts: configured });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) => {
+        if (pattern === configured) return [];
+        throw new Error('unsafe fallback reached glob.sync');
+      });
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        configured,
+        expect.objectContaining({ cwd: process.cwd() }),
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalledWith(
+        normalized,
+        expect.anything(),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test('should safely preflight a missing prompt-prefix before enumeration', async () => {
+      const missingRoot = path.resolve(process.cwd(), 'missing');
+      withInputs({ prompts: 'missing/nested/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().startsWith(missingRoot)) {
+          throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+        }
+        return filePath.toString();
+      });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'missing/nested/**/*.txt',
+        expect.objectContaining({ cwd: process.cwd() }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      { code: 'ENOTDIR', shouldExpand: true },
+      { code: 'EACCES', shouldExpand: false },
+    ])('should handle a $code prompt-prefix preflight failure safely', async ({
+      code,
+      shouldExpand,
+    }) => {
+      const prefix = path.resolve(process.cwd(), 'unavailable');
+      withInputs({ prompts: 'unavailable/nested/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().startsWith(prefix)) {
+          throw Object.assign(new Error('unavailable'), { code });
+        }
+        return filePath.toString();
+      });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      if (shouldExpand) {
+        expect(mockGlob.sync).toHaveBeenCalled();
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+      } else {
+        expect(mockGlob.sync).not.toHaveBeenCalled();
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+        );
+      }
+    });
+
+    test('should reject an escaping expanded prompt match after a safe-prefix preflight', async () => {
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../outside/private.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: prompt files must stay within the working directory.\n\nHelp: Use readable prompt files and glob patterns contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an absolute prompt-glob prefix outside the workspace before enumeration', async () => {
+      withInputs({ prompts: '/private/tmp/outside/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
     });
 
     test('should resolve canonical prompt roots only once for a large prompt set', async () => {
@@ -867,7 +1274,18 @@ describe('GitHub Action Main', () => {
       expect(
         realpathInputs.filter((filePath) => filePath === workingDirectory),
       ).toHaveLength(1);
-      expect(realpathInputs).toHaveLength(prompts.length + 2);
+      expect(
+        realpathInputs.filter(
+          (filePath) =>
+            filePath === path.resolve(workingDirectory, 'promptfooconfig.yaml'),
+        ),
+      ).toHaveLength(1);
+      expect(realpathInputs).toHaveLength(prompts.length + 4);
+      expect(
+        realpathInputs.filter(
+          (filePath) => filePath === path.resolve(workingDirectory, 'prompts'),
+        ),
+      ).toHaveLength(1);
       for (const prompt of prompts) {
         expect(
           realpathInputs.filter(
@@ -2922,12 +3340,17 @@ describe('GitHub Action Main', () => {
         },
         configurable: true,
       });
-      mockGitInterface.diff.mockRejectedValueOnce(new Error('shallow clone'));
+      mockGitInterface.diff.mockRejectedValueOnce(
+        new Error('shallow clone\r\n::error::forged'),
+      );
 
       await run();
 
       expect(mockCore.warning).toHaveBeenCalledWith(
         expect.stringContaining('Could not compare commits'),
+      );
+      expect(mockCore.warning.mock.calls.flat().join('\n')).not.toContain(
+        '::error::forged',
       );
       expect(mockExec.exec).toHaveBeenCalled();
     });

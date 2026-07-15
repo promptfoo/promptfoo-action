@@ -40,6 +40,7 @@ export interface PromptfooConfig {
   scenarios?: unknown;
   nunjucksFilters?: { [key: string]: string };
   extensions?: unknown;
+  commandLineOptions?: { envPath?: unknown; grader?: unknown };
 }
 
 const MAX_DEPENDENCY_PATH_LENGTH = 65536;
@@ -74,7 +75,10 @@ const ASSERT_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/;
 const AUTH_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py)$/;
 const HTTP_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
 const JS_EXTENSION_CASE_INSENSITIVE = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
-const TRANSITIVE_FILE_REFERENCE = /file:(?:\/|\\\/|\\u002f){2}/i;
+const DYNAMIC_PROMPT_EXTENSION =
+  /\.(?:js|cjs|mjs|ts|cts|mts|py|sh|bash|exe|bat|cmd|ps1|rb|pl)$/i;
+const TRANSITIVE_FILE_REFERENCE =
+  /(?:^|[\n\r,:=[\]{}-][ \t]*["']?)file:(?:\/|\\\/|\\u002f){2}/i;
 
 function hasGlobMagic(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
@@ -87,6 +91,15 @@ function hasGlobMagic(value: string): boolean {
     }
   }
   return false;
+}
+
+function hasUnclosedCharacterClass(value: string): boolean {
+  let inCharacterClass = false;
+  for (const character of value) {
+    if (character === '[') inCharacterClass = true;
+    if (character === ']') inCharacterClass = false;
+  }
+  return inCharacterClass;
 }
 
 function hasTransitiveNestedReference(contents: string): boolean {
@@ -116,6 +129,33 @@ function hasTransitiveNestedReference(contents: string): boolean {
     ) {
       return true;
     }
+  }
+  return false;
+}
+
+function hasExternalConfigReference(value: unknown): boolean {
+  const pending: unknown[] = [value];
+  const visited = new WeakSet<object>();
+  let processed = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    processed++;
+    if (typeof current !== 'object' || current === null) continue;
+    if (ArrayBuffer.isView(current)) continue;
+    if (visited.has(current)) return true;
+    visited.add(current);
+    const reference = (current as Record<string, unknown>).$ref;
+    if (typeof reference === 'string' && !reference.startsWith('#')) {
+      return true;
+    }
+    const nestedValues = Object.values(current);
+    if (
+      processed + pending.length + nestedValues.length >
+      MAX_NESTED_CONFIG_VALUES
+    ) {
+      return true;
+    }
+    for (const nestedValue of nestedValues) pending.push(nestedValue);
   }
   return false;
 }
@@ -212,11 +252,36 @@ function readBoundedRegularFile(
     if (
       !currentStat.isFile() ||
       currentStat.dev !== openedStat.dev ||
-      currentStat.ino !== openedStat.ino
+      currentStat.ino !== openedStat.ino ||
+      currentStat.size !== openedStat.size ||
+      currentStat.mtimeMs !== openedStat.mtimeMs ||
+      currentStat.ctimeMs !== openedStat.ctimeMs
     ) {
       return undefined;
     }
     const contents = fs.readFileSync(fileDescriptor, 'utf8');
+    const finalPhysicalPath = resolvePhysicalPath(filePath);
+    if (!allowedRoots.some((root) => isPathInside(root, finalPhysicalPath))) {
+      return undefined;
+    }
+    const finalStat = fs.statSync(finalPhysicalPath);
+    const finalOpenedStat = fs.fstatSync(fileDescriptor);
+    if (
+      !finalStat.isFile() ||
+      !finalOpenedStat.isFile() ||
+      finalStat.dev !== openedStat.dev ||
+      finalStat.ino !== openedStat.ino ||
+      finalStat.size !== openedStat.size ||
+      finalStat.mtimeMs !== openedStat.mtimeMs ||
+      finalStat.ctimeMs !== openedStat.ctimeMs ||
+      finalOpenedStat.dev !== openedStat.dev ||
+      finalOpenedStat.ino !== openedStat.ino ||
+      finalOpenedStat.size !== openedStat.size ||
+      finalOpenedStat.mtimeMs !== openedStat.mtimeMs ||
+      finalOpenedStat.ctimeMs !== openedStat.ctimeMs
+    ) {
+      return undefined;
+    }
     return Buffer.byteLength(contents, 'utf8') > MAX_TRANSITIVE_CONFIG_BYTES
       ? undefined
       : contents;
@@ -268,6 +333,11 @@ export function extractFileDependencies(configPath: string): string[] {
     requiresFullEvaluation = true;
   };
 
+  if (JS_EXTENSION_CASE_INSENSITIVE.test(configPath)) {
+    markUnsafeDependency();
+    return ['./'];
+  }
+
   try {
     const configContent = readBoundedRegularFile(configPath, [
       physicalConfigDir,
@@ -288,6 +358,9 @@ export function extractFileDependencies(configPath: string): string[] {
     if (!config) {
       core.debug('Config file is empty or invalid');
       return [];
+    }
+    if (hasExternalConfigReference(config)) {
+      markUnsafeDependency();
     }
 
     const resolveConfigDependency = (filePath: string): string | undefined => {
@@ -342,6 +415,11 @@ export function extractFileDependencies(configPath: string): string[] {
       const runtimeFilePath = globBacked
         ? filePath.replace(/\\/g, '/')
         : filePath;
+
+      if (globBacked && hasUnclosedCharacterClass(runtimeFilePath)) {
+        markUnsafeDependency();
+        return;
+      }
 
       if (globBacked && hasGlobMagic(runtimeFilePath)) {
         const pathParts =
@@ -455,16 +533,53 @@ export function extractFileDependencies(configPath: string): string[] {
       while (pending.length > 0) {
         const current = pending.pop();
         processed++;
-        if (processed > MAX_NESTED_CONFIG_VALUES) return true;
         if (typeof current === 'string' && current.startsWith('file://')) {
           processFileUrl(current, 'auth');
           continue;
         }
+        if (typeof current === 'string') {
+          for (const prefix of ['python:', 'golang:', 'ruby:']) {
+            if (current.startsWith(prefix)) {
+              processFileUrl(
+                `file://${current.slice(prefix.length)}`,
+                'provider',
+              );
+              return true;
+            }
+          }
+        }
         if (typeof current !== 'object' || current === null) continue;
         if (ArrayBuffer.isView(current)) continue;
+        const providerId = (current as Record<string, unknown>).id;
+        if (typeof providerId === 'string') {
+          if (providerId.startsWith('exec:')) {
+            const executable = providerId.slice('exec:'.length);
+            if (!/\s/.test(executable)) {
+              if (executable.startsWith('file://')) {
+                processFileUrl(executable, 'provider');
+              } else {
+                processFilePath(executable);
+              }
+            }
+            return true;
+          } else if (providerId.startsWith('file://')) {
+            inspectTransitiveReference(providerId);
+            return true;
+          } else if (JS_EXTENSION_CASE_INSENSITIVE.test(providerId)) {
+            processFilePath(providerId);
+            return true;
+          }
+        }
         if (visited.has(current)) return true;
         visited.add(current);
-        pending.push(...Object.values(current));
+        const nestedValues = Object.values(current);
+        if (
+          processed + pending.length + nestedValues.length >
+          MAX_NESTED_CONFIG_VALUES
+        ) {
+          return true;
+        }
+        for (const nestedValue of nestedValues) pending.push(nestedValue);
       }
       return false;
     };
@@ -555,6 +670,7 @@ export function extractFileDependencies(configPath: string): string[] {
         httpConfig.validateStatus.startsWith('file://')
       ) {
         processFileUrl(httpConfig.validateStatus, 'http', false);
+        markUnsafeDependency();
       }
 
       for (const field of [
@@ -566,6 +682,7 @@ export function extractFileDependencies(configPath: string): string[] {
         const reference = httpConfig[field];
         if (typeof reference === 'string' && reference.startsWith('file://')) {
           processFileUrl(reference, 'http', false);
+          markUnsafeDependency();
         }
       }
       const session = httpConfig.session;
@@ -583,6 +700,7 @@ export function extractFileDependencies(configPath: string): string[] {
           'http',
           false,
         );
+        markUnsafeDependency();
       }
 
       const auth = httpConfig.auth;
@@ -600,6 +718,16 @@ export function extractFileDependencies(configPath: string): string[] {
         const authPath = (auth as Record<string, unknown>).path;
         if (typeof authPath === 'string' && authPath.startsWith('file://')) {
           processFileUrl(authPath, 'auth', false);
+          const rawPath = authPath.slice('file://'.length);
+          const selectorIndex = rawPath.lastIndexOf(':');
+          const candidatePath =
+            selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
+          if (
+            AUTH_EXTENSION.test(rawPath) ||
+            AUTH_EXTENSION.test(candidatePath)
+          ) {
+            markUnsafeDependency();
+          }
         } else {
           processRawReference(authPath);
         }
@@ -668,22 +796,17 @@ export function extractFileDependencies(configPath: string): string[] {
       if (providerId.startsWith('file://')) {
         processFileUrl(providerId, 'provider');
         inspectTransitiveReference(providerId);
-        if (
-          TRANSITIVE_CONFIG_EXTENSION.test(providerId.slice('file://'.length))
-        ) {
-          markUnsafeDependency();
-        }
+        markUnsafeDependency();
         return;
       }
       if (providerId.startsWith('exec:')) {
         const executable = providerId.slice('exec:'.length);
         if (executable.startsWith('file://')) {
           processFileUrl(executable, 'provider');
-        } else if (/\s/.test(executable)) {
-          markUnsafeDependency();
-        } else {
+        } else if (!/\s/.test(executable)) {
           processFilePath(executable);
         }
+        markUnsafeDependency();
         return;
       }
       for (const prefix of ['python:', 'golang:', 'ruby:']) {
@@ -692,11 +815,13 @@ export function extractFileDependencies(configPath: string): string[] {
             `file://${providerId.slice(prefix.length)}`,
             'provider',
           );
+          markUnsafeDependency();
           return;
         }
       }
       if (JS_EXTENSION_CASE_INSENSITIVE.test(providerId)) {
         processFilePath(providerId);
+        markUnsafeDependency();
       }
     };
 
@@ -742,6 +867,7 @@ export function extractFileDependencies(configPath: string): string[] {
       const processTransform = (value: unknown): void => {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value, 'auth');
+          markUnsafeDependency();
         }
       };
       if (typeof record.id === 'string') {
@@ -775,6 +901,23 @@ export function extractFileDependencies(configPath: string): string[] {
       for (const provider of providers) processProvider(provider);
     }
 
+    if (config.commandLineOptions) {
+      const envPaths = Array.isArray(config.commandLineOptions.envPath)
+        ? config.commandLineOptions.envPath
+        : [config.commandLineOptions.envPath];
+      for (const envPath of envPaths) {
+        if (envPath === undefined) continue;
+        if (typeof envPath === 'string') {
+          processFilePath(envPath);
+        } else {
+          markUnsafeDependency();
+        }
+      }
+      if ('grader' in config.commandLineOptions) {
+        processProvider(config.commandLineOptions.grader);
+      }
+    }
+
     const processConfigReference = (
       reference: string,
       selector: 'auth' | 'literal' = 'literal',
@@ -792,14 +935,23 @@ export function extractFileDependencies(configPath: string): string[] {
 
     const processPromptReference = (reference: string): void => {
       if (reference.startsWith('exec:')) {
-        const executable = reference.slice('exec:'.length);
-        if (executable.startsWith('file://')) {
-          processFileUrl(executable, 'provider');
-        } else if (/\s/.test(executable)) {
-          markUnsafeDependency();
-        } else {
-          processFilePath(executable);
-        }
+        markUnsafeDependency();
+        return;
+      }
+      const rawPath = reference.startsWith('file://')
+        ? reference.slice('file://'.length)
+        : reference;
+      const selectorIndex = rawPath.lastIndexOf(':');
+      const candidatePath =
+        selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
+      if (
+        DYNAMIC_PROMPT_EXTENSION.test(rawPath) ||
+        DYNAMIC_PROMPT_EXTENSION.test(candidatePath) ||
+        (/[\\/]/.test(rawPath) &&
+          !path.extname(rawPath) &&
+          !path.extname(candidatePath))
+      ) {
+        markUnsafeDependency();
         return;
       }
       inspectTransitiveReference(reference);
@@ -888,6 +1040,9 @@ export function extractFileDependencies(configPath: string): string[] {
       }
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
+          if (/\.ya?ml(?:#[^\r\n]*)?$/i.test(value)) {
+            inspectTransitiveReference(value);
+          }
           processFileUrl(value);
         } else if (
           typeof value === 'object' &&
@@ -899,6 +1054,12 @@ export function extractFileDependencies(configPath: string): string[] {
           if (absolutePath) {
             dependencies.add(absolutePath);
           }
+        } else if (
+          typeof value === 'object' &&
+          value !== null &&
+          extractNestedFileReferences(value)
+        ) {
+          markUnsafeDependency();
         }
       }
     };
@@ -926,6 +1087,16 @@ export function extractFileDependencies(configPath: string): string[] {
         for (const value of values) {
           if (typeof value === 'string' && value.startsWith('file://')) {
             processFileUrl(value, 'assert');
+            const rawPath = value.slice('file://'.length);
+            const selectorIndex = rawPath.indexOf(':');
+            const candidatePath =
+              selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
+            if (
+              ASSERT_EXTENSION.test(rawPath) ||
+              ASSERT_EXTENSION.test(candidatePath)
+            ) {
+              markUnsafeDependency();
+            }
           } else if (
             typeof value === 'object' &&
             value !== null &&
@@ -948,6 +1119,7 @@ export function extractFileDependencies(configPath: string): string[] {
             reference.startsWith('file://')
           ) {
             processFileUrl(reference, 'auth');
+            markUnsafeDependency();
           }
         }
         if ('provider' in assert) processProvider(assert.provider);
@@ -967,6 +1139,7 @@ export function extractFileDependencies(configPath: string): string[] {
         test.assertScoringFunction.startsWith('file://')
       ) {
         processFileUrl(test.assertScoringFunction, 'auth');
+        markUnsafeDependency();
       }
       const options = test.options;
       if (typeof options !== 'object' || options === null) return;
@@ -975,6 +1148,7 @@ export function extractFileDependencies(configPath: string): string[] {
         const reference = optionRecord[field];
         if (typeof reference === 'string' && reference.startsWith('file://')) {
           processFileUrl(reference, 'auth');
+          markUnsafeDependency();
         }
       }
       if (
@@ -998,9 +1172,27 @@ export function extractFileDependencies(configPath: string): string[] {
       extractAssertFiles(config.defaultTest.assert);
       processTestHooks(config.defaultTest);
     }
+    const processTestReference = (reference: string): void => {
+      processConfigReference(reference, 'auth');
+      const rawPath = reference.startsWith('file://')
+        ? reference.slice('file://'.length)
+        : reference;
+      const selectorIndex = rawPath.lastIndexOf(':');
+      const candidatePath =
+        selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
+      if (
+        JS_EXTENSION_CASE_INSENSITIVE.test(rawPath) ||
+        JS_EXTENSION_CASE_INSENSITIVE.test(candidatePath) ||
+        /\.py$/i.test(rawPath) ||
+        /\.py$/i.test(candidatePath)
+      ) {
+        markUnsafeDependency();
+      }
+    };
+
     const processTestInputs = (tests: unknown): void => {
       if (typeof tests === 'string') {
-        processConfigReference(tests, 'auth');
+        processTestReference(tests);
         return;
       }
       if (!Array.isArray(tests)) {
@@ -1009,7 +1201,7 @@ export function extractFileDependencies(configPath: string): string[] {
       }
       for (const test of tests) {
         if (typeof test === 'string') {
-          processConfigReference(test, 'auth');
+          processTestReference(test);
           continue;
         }
         if (typeof test !== 'object' || test === null) {
@@ -1017,7 +1209,7 @@ export function extractFileDependencies(configPath: string): string[] {
           continue;
         }
         if ('path' in test && typeof test.path === 'string') {
-          processConfigReference(test.path, 'auth');
+          processTestReference(test.path);
           if ('config' in test && test.config !== undefined) {
             markUnsafeDependency();
           }
@@ -1058,6 +1250,7 @@ export function extractFileDependencies(configPath: string): string[] {
       for (const filter of Object.values(config.nunjucksFilters)) {
         if (typeof filter === 'string') {
           processFilePath(filter);
+          markUnsafeDependency();
         } else {
           markUnsafeDependency();
         }
@@ -1073,7 +1266,8 @@ export function extractFileDependencies(configPath: string): string[] {
             typeof extension === 'string' &&
             extension.startsWith('file://')
           ) {
-            processFileUrl(extension, 'auth');
+            processFileUrl(extension, 'auth', false);
+            markUnsafeDependency();
           } else {
             markUnsafeDependency();
           }
