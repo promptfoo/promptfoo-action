@@ -1384,6 +1384,35 @@ providers:
     ).toEqual(['*.yaml', 'providers/']);
   });
 
+  it('should preserve sibling dependencies when a provider glob pattern is oversized', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    const oversizedPattern = `providers/${'a'.repeat(65_537)}*.py`;
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://${oversizedPattern}
+  - file://providers/invalid[.py
+  - file://providers/resolved*.py
+  - file://providers/safe.py
+prompts:
+  - file://prompts/safe.txt
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (
+        value.length > 65_536 ||
+        value.includes('invalid[') ||
+        (value.startsWith('/test/repository/') && value.includes('resolved*'))
+      ) {
+        throw new TypeError('invalid glob pattern');
+      }
+      return value.includes('*');
+    });
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['./', 'providers/safe.py', 'prompts/safe.txt']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it('should extract nested file references from a provider YAML file', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('provider.yaml')) {

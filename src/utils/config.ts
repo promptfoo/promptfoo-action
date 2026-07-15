@@ -20,6 +20,7 @@ import { isDirectory } from './fs';
 const MAX_PROVIDER_VALUES = 1_024;
 const MAX_PROVIDER_CONFIGS = 128;
 const MAX_GLOB_MATCHES = 4_096;
+const MAX_GLOB_PATTERN_LENGTH = 64 * 1_024;
 const MAX_BRACE_EXPANSIONS = 1_024;
 const FILE_BEARING_PROVIDER_KEYS = new Set([
   'file',
@@ -237,6 +238,17 @@ function mayRenderFileUrl(value: string): boolean {
   );
 }
 
+function hasGlobMagic(pattern: string): boolean | undefined {
+  if (pattern.length > MAX_GLOB_PATTERN_LENGTH) {
+    return undefined;
+  }
+  try {
+    return glob.hasMagic(pattern, { magicalBraces: true });
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -385,7 +397,15 @@ export function extractFileDependencies(configPath: string): string[] {
         );
         return [];
       }
-      if (glob.hasMagic(filePath, { magicalBraces: true })) {
+      const isFileGlob = hasGlobMagic(filePath);
+      if (isFileGlob === undefined) {
+        dependencies.add(`${dependencyRoot}${path.sep}`);
+        core.warning(
+          'Ignoring an invalid or oversized config dependency glob. Watching the repository workspace conservatively.',
+        );
+        return [];
+      }
+      if (isFileGlob) {
         const expandedPaths = braceExpand(filePath, {
           braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
         });
@@ -411,6 +431,18 @@ export function extractFileDependencies(configPath: string): string[] {
           dependencies.add(`${dependencyRoot}${path.sep}`);
           core.warning(
             'Ignoring unsafe config dependency glob alternative: brace traversal branches must stay within the repository workspace.',
+          );
+          return [];
+        }
+
+        if (
+          safePatterns.some(
+            (safePattern) => hasGlobMagic(safePattern) === undefined,
+          )
+        ) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+          core.warning(
+            'Ignoring an invalid or oversized config dependency glob. Watching the repository workspace conservatively.',
           );
           return [];
         }
@@ -443,10 +475,10 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the absolute, non-glob prefix for watching deletions.
         for (const safePattern of safePatterns) {
-          let basePath = glob.hasMagic(safePattern, { magicalBraces: true })
+          let basePath = hasGlobMagic(safePattern)
             ? safePattern
             : path.dirname(safePattern);
-          while (glob.hasMagic(basePath, { magicalBraces: true })) {
+          while (hasGlobMagic(basePath)) {
             basePath = path.dirname(basePath);
           }
           if (path.relative(cwd, basePath) === '') {
@@ -772,11 +804,13 @@ export function extractFileDependencies(configPath: string): string[] {
         environment,
       );
       const isProviderConfig = /\.(?:ya?ml|json)$/i.test(providerPath);
-      const isProviderGlob = glob.hasMagic(providerPath, {
-        magicalBraces: true,
-      });
+      const isProviderGlob = hasGlobMagic(providerPath);
       if (providerPaths.length === 0) {
-        if (!providerPath || providerPath.includes('\0')) {
+        if (
+          !providerPath ||
+          providerPath.includes('\0') ||
+          isProviderGlob === undefined
+        ) {
           return;
         }
         const isContainedReference = isPathInside(

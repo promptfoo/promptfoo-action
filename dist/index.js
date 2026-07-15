@@ -38075,6 +38075,7 @@ function isDirectory2(filePath) {
 var MAX_PROVIDER_VALUES = 1024;
 var MAX_PROVIDER_CONFIGS = 128;
 var MAX_GLOB_MATCHES = 4096;
+var MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
 var MAX_BRACE_EXPANSIONS = 1024;
 var FILE_BEARING_PROVIDER_KEYS = /* @__PURE__ */ new Set([
   "file",
@@ -38208,6 +38209,16 @@ function mayRenderFileUrl(value) {
   }
   return candidate.includes("file://") && /^\{(?:\{-?|%-?)/.test(candidate) || candidate.includes("{#") && candidate.replace(/\{#[\s\S]*?#\}/g, "").startsWith("file://");
 }
+function hasGlobMagic(pattern) {
+  if (pattern.length > MAX_GLOB_PATTERN_LENGTH) {
+    return void 0;
+  }
+  try {
+    return le(pattern, { magicalBraces: true });
+  } catch {
+    return void 0;
+  }
+}
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path6.dirname(configPath);
@@ -38315,7 +38326,15 @@ function extractFileDependencies(configPath) {
         );
         return [];
       }
-      if (le(filePath, { magicalBraces: true })) {
+      const isFileGlob = hasGlobMagic(filePath);
+      if (isFileGlob === void 0) {
+        dependencies.add(`${dependencyRoot}${path6.sep}`);
+        warning(
+          "Ignoring an invalid or oversized config dependency glob. Watching the repository workspace conservatively."
+        );
+        return [];
+      }
+      if (isFileGlob) {
         const expandedPaths = braceExpand(filePath, {
           braceExpandMax: MAX_BRACE_EXPANSIONS + 1
         });
@@ -38343,6 +38362,15 @@ function extractFileDependencies(configPath) {
           );
           return [];
         }
+        if (safePatterns.some(
+          (safePattern) => hasGlobMagic(safePattern) === void 0
+        )) {
+          dependencies.add(`${dependencyRoot}${path6.sep}`);
+          warning(
+            "Ignoring an invalid or oversized config dependency glob. Watching the repository workspace conservatively."
+          );
+          return [];
+        }
         const matches = Ui(safePatterns, {
           nodir: true,
           braceExpandMax: MAX_BRACE_EXPANSIONS
@@ -38367,8 +38395,8 @@ function extractFileDependencies(configPath) {
           }
         }
         for (const safePattern of safePatterns) {
-          let basePath = le(safePattern, { magicalBraces: true }) ? safePattern : path6.dirname(safePattern);
-          while (le(basePath, { magicalBraces: true })) {
+          let basePath = hasGlobMagic(safePattern) ? safePattern : path6.dirname(safePattern);
+          while (hasGlobMagic(basePath)) {
             basePath = path6.dirname(basePath);
           }
           if (path6.relative(cwd, basePath) === "") {
@@ -38605,11 +38633,9 @@ function extractFileDependencies(configPath) {
         environment
       );
       const isProviderConfig = /\.(?:ya?ml|json)$/i.test(providerPath);
-      const isProviderGlob = le(providerPath, {
-        magicalBraces: true
-      });
+      const isProviderGlob = hasGlobMagic(providerPath);
       if (providerPaths.length === 0) {
-        if (!providerPath || providerPath.includes("\0")) {
+        if (!providerPath || providerPath.includes("\0") || isProviderGlob === void 0) {
           return;
         }
         const isContainedReference = isPathInside(
