@@ -482,6 +482,34 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      'packages/[team]',
+      'packages/{alpha,beta}',
+      'packages/{1..3}',
+      'packages/app*(team)',
+    ])('should treat glob characters in the working directory %s as literal', async (workingDirectory) => {
+      withInputs({
+        prompts: 'prompts/*.txt',
+        'working-directory': workingDirectory,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: `${workingDirectory}/prompts/removed.txt`,
+          status: 'removed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+      );
+    });
+
+    test.each([
       [
         '../../packages/shared/prompts/*.txt',
         'packages/shared/prompts/removed.txt',
@@ -503,6 +531,8 @@ describe('GitHub Action Main', () => {
         'prompts/sub/remaining.txt',
       ],
       ['prompts/**/../*.txt', 'packages/app/removed.txt', 'remaining.txt'],
+      ['prompts/**/./../*.txt', 'packages/app/removed.txt', 'remaining.txt'],
+      ['prompts/**//../*.txt', 'packages/app/removed.txt', 'remaining.txt'],
       [
         'prompts/**/../../**/*.txt',
         'packages/shared/prompts/removed.txt',
@@ -530,6 +560,30 @@ describe('GitHub Action Main', () => {
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', remainingPrompt]),
+      );
+    });
+
+    test.each([
+      'prompts/**/./../*.txt',
+      'prompts/**//../*.txt',
+    ])('should preserve rename-out matching for the redundant-parent glob %s', async (prompts) => {
+      withInputs({ prompts, 'working-directory': 'packages/app' });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'archive/renamed.md',
+          previous_filename: 'packages/app/removed.txt',
+          status: 'renamed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'remaining.txt']),
       );
     });
 
@@ -588,6 +642,24 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
       );
+    });
+
+    test('should compile capped brace patterns once when scanning many removed files', async () => {
+      withInputs({ prompts: 'prompts/{1..1000}/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue(
+        Array.from({ length: 2999 }, (_, index) => ({
+          filename: `docs/removed-${index}.md`,
+          status: 'removed',
+        })),
+      );
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test.each([

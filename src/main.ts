@@ -4,7 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { braceExpand, minimatch } from 'minimatch';
+import { braceExpand, escape as escapeGlob, Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -267,40 +267,40 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    const workingDirectoryPattern = escapeGlob(
+      toRepositoryPath(workingDirectory),
+      { windowsPathsNoEscape: false },
+    ).replace(/[{}]/g, '\\$&');
     let promptGlobMatchingCapped = false;
-    const matchesPromptGlob = (repositoryFile?: string): boolean => {
-      if (!repositoryFile) {
-        return false;
+    let promptGlobMatchers: RegExp[] | undefined;
+    const getPromptGlobMatchers = (): RegExp[] => {
+      if (promptGlobMatchers) {
+        return promptGlobMatchers;
       }
 
-      const absolutePath = path.resolve(workspaceRoot, repositoryFile);
-      const repositoryRelativePath = path.relative(workspaceRoot, absolutePath);
-      if (
-        path.isAbsolute(repositoryRelativePath) ||
-        repositoryRelativePath.split(path.sep)[0] === '..'
-      ) {
-        return false;
-      }
-
-      return promptFilesGlobs.some((pattern) => {
+      const matchers: RegExp[] = [];
+      for (const pattern of promptFilesGlobs) {
         const absolutePattern = path.isAbsolute(pattern)
           ? pattern
-          : `${toRepositoryPath(workingDirectory)}/${pattern}`;
+          : `${workingDirectoryPattern}/${pattern}`;
         const traversalPatterns = braceExpand(absolutePattern, {
           braceExpandMax: MAX_PROMPT_GLOB_VARIANTS + 1,
         });
 
         for (const traversalPattern of traversalPatterns) {
-          if (traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS) {
-            // A conservative match avoids exponential traversal work while
-            // still ensuring a deleted prompt cannot be skipped.
+          if (
+            traversalPatterns.length > MAX_PROMPT_GLOB_VARIANTS ||
+            matchers.length >= MAX_PROMPT_GLOB_VARIANTS
+          ) {
             promptGlobMatchingCapped = true;
-            return true;
+            promptGlobMatchers = [];
+            return promptGlobMatchers;
           }
 
-          const parentTraversal = /\/\*\*((?:\/\.\.)+)(?=\/|$)/.exec(
-            traversalPattern,
-          );
+          const parentTraversal =
+            /\/\*\*(?:\/\.(?=\/)|\/(?=\/))*((?:\/\.\.)+)(?=\/|$)/.exec(
+              traversalPattern,
+            );
           if (parentTraversal) {
             const prefix = traversalPattern.slice(0, parentTraversal.index);
             const suffix = traversalPattern.slice(
@@ -313,7 +313,8 @@ export async function run(): Promise<void> {
               MAX_PROMPT_GLOB_VARIANTS
             ) {
               promptGlobMatchingCapped = true;
-              return true;
+              promptGlobMatchers = [];
+              return promptGlobMatchers;
             }
 
             // globstar may consume no segments before `..`, escaping the
@@ -328,23 +329,43 @@ export async function run(): Promise<void> {
             continue;
           }
 
-          if (
-            minimatch(toRepositoryPath(absolutePath), traversalPattern, {
+          matchers.push(
+            new Minimatch(traversalPattern, {
               nonegate: true,
               nocomment: true,
+              nobrace: true,
               nocase: ['darwin', 'win32'].includes(process.platform),
               nocaseMagicOnly: false,
               optimizationLevel: 2,
               platform: process.platform,
               windowsPathsNoEscape: false,
-            })
-          ) {
-            return true;
-          }
+            }).makeRe() as RegExp,
+          );
         }
+      }
 
+      promptGlobMatchers = matchers;
+      return promptGlobMatchers;
+    };
+    const matchesPromptGlob = (repositoryFile?: string): boolean => {
+      if (!repositoryFile) {
         return false;
-      });
+      }
+
+      const absolutePath = path.resolve(workspaceRoot, repositoryFile);
+      const repositoryRelativePath = path.relative(workspaceRoot, absolutePath);
+      if (
+        path.isAbsolute(repositoryRelativePath) ||
+        repositoryRelativePath.split(path.sep)[0] === '..'
+      ) {
+        return false;
+      }
+
+      const matchers = getPromptGlobMatchers();
+      return (
+        promptGlobMatchingCapped ||
+        matchers.some((matcher) => matcher.test(toRepositoryPath(absolutePath)))
+      );
     };
     const selectChangedFiles = (files: ChangedFile[]): string => {
       const monitoredPromptRemovedOrRenamedOut = files.some(
