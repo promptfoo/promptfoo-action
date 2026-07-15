@@ -300,6 +300,30 @@ describe('GitHub Action Main', () => {
       });
     });
 
+    test.each([
+      '\n',
+      '\r',
+    ])('should reject a matched prompt filename containing a line break', async (lineBreak) => {
+      const forgedAnnotation = 'FORGED_ANNOTATION_CANARY_019F62C3';
+      const unsafePrompt = `prompts/policy${lineBreak}::error::${forgedAnnotation}.txt`;
+      mockOctokit.paginate.mockResolvedValue([{ filename: unsafePrompt }]);
+      mockGlob.sync.mockReturnValue([unsafePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths cannot contain carriage returns or line feeds.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        forgedAnnotation,
+      );
+      expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+        forgedAnnotation,
+      );
+    });
+
     test('should skip evaluation when no relevant files change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'README.md' },
