@@ -38444,11 +38444,21 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
   const isPhysicalDependencyPathInside = (targetPath) => {
     if (!physicalDependencyRoots) {
       physicalDependencyRoots = [];
-      for (const root of /* @__PURE__ */ new Set([dependencyRoot, cwd])) {
+      let physicalConfigDir;
+      let physicalCwd;
+      for (const root of /* @__PURE__ */ new Set([configDir, cwd])) {
         try {
-          physicalDependencyRoots.push(fs6.realpathSync(root));
+          const physicalRoot = fs6.realpathSync(root);
+          physicalDependencyRoots.push(physicalRoot);
+          if (root === configDir) physicalConfigDir = physicalRoot;
+          if (root === cwd) physicalCwd = physicalRoot;
         } catch {
         }
+      }
+      if (isPathInside(cwd, configDir) && (!physicalConfigDir || !physicalCwd || !isPathInside(physicalCwd, physicalConfigDir))) {
+        throw new Error(
+          "Config directory symlinks must stay within the repository workspace"
+        );
       }
     }
     return physicalDependencyRoots.some(
@@ -38456,6 +38466,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     );
   };
   try {
+    if (isPathInside(cwd, configDir)) {
+      isPhysicalDependencyPathInside(configDir);
+    }
     if (/\.(?:[cm]?[jt]s)$/i.test(configPath)) {
       warning(
         "JavaScript/TypeScript config dependencies cannot be extracted statically; watching all repository changes"
@@ -38623,7 +38636,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         redactDisplayPath ? "[redacted]" : displayFileUrl.replace("file://", "")
       );
       const filePath = normalizeConfigFilePath(
-        stripFunctionSuffix ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, "$1") : rawFilePath
+        stripFunctionSuffix ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/, "$1") : rawFilePath
       );
       const globPath = filePath.replace(/\\/g, "/");
       const hasGlobMagic = tryHasGlobMagic(globPath, "config dependency");
@@ -38703,6 +38716,35 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         displayFilePath
       );
       if (!absolutePath) return;
+      let pathExists = true;
+      try {
+        fs6.lstatSync(absolutePath);
+      } catch (error2) {
+        if (error2.code !== "ENOENT") {
+          warning(
+            `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`
+          );
+          return;
+        }
+        pathExists = false;
+      }
+      if (pathExists) {
+        let physicalPath;
+        try {
+          physicalPath = fs6.realpathSync(absolutePath);
+        } catch {
+          warning(
+            `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`
+          );
+          return;
+        }
+        if (!isPhysicalDependencyPathInside(physicalPath)) {
+          warning(
+            `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`
+          );
+          return;
+        }
+      }
       if (isDirectory2(absolutePath) || /[\\/]$/.test(fileUrl)) {
         const directoryPath = /[\\/]$/.test(fileUrl) ? `${absolutePath.replace(/[\\/]+$/, "")}${path6.sep}` : absolutePath;
         dependencies.add(directoryPath);
@@ -38769,7 +38811,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     };
     const visitedStructuredFiles = /* @__PURE__ */ new Set();
     const extractNestedPromptFileUrls = (promptPath, displayPromptPath = promptPath, scanProviderPaths = false, resolveNestedProviderPaths = false, knownHttpProvider = false, initialEnv = templateEnv, failClosedOnRefs = false) => {
-      const rawPath = promptPath.replace(/^file:\/\//, "").replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, "$1");
+      const rawPath = promptPath.replace(/^file:\/\//, "").replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/, "$1");
       const normalizedPath = normalizeConfigFilePath(rawPath).replace(
         /\\/g,
         "/"
@@ -39180,7 +39222,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       for (const value of values) {
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value);
-          if (/\.(?:[cm]?[jt]s|py):[^/\\]+$/i.test(value)) {
+          if (/\.(?:[cm]?[jt]s|py|go|rb):[^/\\]+$/.test(value)) {
             processFileUrl(value, true);
           }
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
@@ -39199,7 +39241,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       for (const assert of asserts) {
         if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
           processFileUrl(assert.value);
-          if (/\.(?:[cm]?[jt]s|py|rb):[^/\\]+$/i.test(assert.value)) {
+          if (/\.(?:[cm]?[jt]s|py|go|rb):[^/\\]+$/.test(assert.value)) {
             processFileUrl(assert.value, true);
           }
         } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
@@ -39751,7 +39793,7 @@ async function run() {
       required: true
     });
     const promptsInput = getInput("prompts", { required: false });
-    const promptFilesGlobs = promptsInput ? promptsInput.split("\n").filter((line) => line.trim()) : [];
+    const promptFilesGlobs = promptsInput ? promptsInput.split(/\r?\n/).filter((line) => line.trim()) : [];
     const configPath = getInput("config", {
       required: true
     });
@@ -39927,9 +39969,7 @@ async function run() {
           return file === trimmed2 ? [file] : [file, trimmed2];
         });
         changedFiles = manualFiles.join("\0");
-        info(
-          `Using manually specified files: ${manualLines.map((file) => file.trim()).join("\n")}`
-        );
+        info(`Using ${manualLines.length} manually specified file(s).`);
       } else {
         validateGitRevision(compareBase);
         try {
@@ -40109,6 +40149,7 @@ async function run() {
         ...selectedPromptFiles
       ]);
     }
+    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
     if (noShare) {
       promptfooArgs.push("--no-share");
     } else {
@@ -40276,7 +40317,7 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(", ");
+      const modifiedFiles = evaluatedPromptFiles.join(", ");
       let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
@@ -40307,9 +40348,9 @@ async function run() {
         ["Success", output.results.stats.successes.toString()],
         ["Failure", output.results.stats.failures.toString()]
       ]);
-      if (promptFiles.length > 0) {
+      if (evaluatedPromptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
-        summary2.addList(promptFiles);
+        summary2.addList(evaluatedPromptFiles);
       }
       if (repeatCheckResult) {
         summary2.addHeading("Repeat Check", 3);
