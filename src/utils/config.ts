@@ -1334,19 +1334,34 @@ export function extractFileDependencies(
           continue;
         }
         const scenarioConfig = scenario as Record<string, unknown>;
+        const scenarioTestsAreArray = Array.isArray(scenarioConfig.tests);
         const scenarioTests = Array.isArray(scenarioConfig.tests)
           ? scenarioConfig.tests
           : [scenarioConfig.tests];
         for (const scenarioTest of scenarioTests) {
           if (typeof scenarioTest === 'string') {
-            processTestFile(scenarioTest);
+            processTestFile(
+              scenarioTest,
+              scenarioTestsAreArray ? undefined : configDir,
+            );
           } else if (
             typeof scenarioTest === 'object' &&
-            scenarioTest !== null &&
-            'path' in scenarioTest &&
-            typeof scenarioTest.path === 'string'
+            scenarioTest !== null
           ) {
-            processTestFile(scenarioTest.path);
+            if (
+              'path' in scenarioTest &&
+              typeof scenarioTest.path === 'string'
+            ) {
+              processTestFile(scenarioTest.path);
+            }
+            const nestedScenarioTest = scenarioTest as PromptfooTestConfig;
+            extractVarFiles(nestedScenarioTest.vars);
+            extractAssertFiles(nestedScenarioTest.assert);
+            extractNestedFileUrls({
+              provider: nestedScenarioTest.provider,
+              assert: nestedScenarioTest.assert,
+              options: nestedScenarioTest.options,
+            });
           }
         }
         extractNestedFileUrls(scenarioConfig.config);

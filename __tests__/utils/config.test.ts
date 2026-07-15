@@ -1012,6 +1012,90 @@ tests:
     ]);
   });
 
+  it('should extract runtime-executed dependencies from inline scenario tests and shared aliases', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests: &shared_tests
+  - provider: file://providers/root.py:call_api
+    options:
+      transform: file://hooks/root-transform.js
+scenarios:
+  - config:
+      - vars:
+          input: scenario
+    tests:
+      - provider: file://providers/scenario.py:call_api
+        assert:
+          - type: python
+            value: file://graders/scenario.py:grade
+        options:
+          transform: file://hooks/scenario-transform.js
+          transformVars: file://hooks/scenario-vars.js
+          rubricPrompt: file://data/scenario-rubric.txt
+  - config:
+      - vars:
+          input: shared
+    tests: *shared_tests
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(
+      expect.arrayContaining([
+        '../config/providers/root.py',
+        '../config/hooks/root-transform.js',
+        '../config/providers/scenario.py',
+        '../config/graders/scenario.py',
+        '../config/hooks/scenario-transform.js',
+        '../config/hooks/scenario-vars.js',
+        '../config/data/scenario-rubric.txt',
+      ]),
+    );
+  });
+
+  it('should preserve scalar and array scenario-test resolution roots', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        const filename = String(filePath);
+        if (filename.endsWith('tests/scalar.yaml')) {
+          return '- vars: fixtures/scalar.yaml\n  provider: file://providers/scalar.py:call_api';
+        }
+        if (filename.endsWith('tests/array.yaml')) {
+          return '- vars: fixtures/array.yaml\n  provider: file://providers/array.py:call_api';
+        }
+        return [
+          'scenarios:',
+          '  - config:',
+          '      - vars:',
+          '          input: scalar',
+          '    tests: file://tests/scalar.yaml',
+          '  - config:',
+          '      - vars:',
+          '          input: array',
+          '    tests:',
+          '      - file://tests/array.yaml',
+        ].join('\n');
+      },
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(
+      expect.arrayContaining([
+        '../config/tests/scalar.yaml',
+        '../config/fixtures/scalar.yaml',
+        '../config/providers/scalar.py',
+        '../config/tests/array.yaml',
+        '../config/tests/fixtures/array.yaml',
+        '../config/tests/providers/array.py',
+      ]),
+    );
+    expect(deps).not.toContain('../config/tests/fixtures/scalar.yaml');
+    expect(deps).not.toContain('../config/tests/providers/scalar.py');
+    expect(deps).not.toContain('../config/fixtures/array.yaml');
+    expect(deps).not.toContain('../config/providers/array.py');
+  });
+
   it('should preserve the generator-config glob directory when its last match is deleted', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
