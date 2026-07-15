@@ -1010,9 +1010,10 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const evaluatedFiles = useConfigPrompts
-        ? 'Prompts evaluated from config'
-        : `Evaluated prompt files: ${evaluatedPromptFiles.join(', ')}`;
+      const evaluatedFiles =
+        evaluatedPromptFiles.length === 0
+          ? 'Prompts evaluated from config'
+          : `Evaluated prompt files: ${evaluatedPromptFiles.join(', ')}`;
       let body = `⚠️ ${evaluatedFiles}
 
 | Success | Failure |

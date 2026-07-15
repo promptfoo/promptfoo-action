@@ -68,6 +68,7 @@ import * as auth from '../src/utils/auth';
 import * as cache from '../src/utils/cache';
 import * as config from '../src/utils/config';
 import * as fsUtils from '../src/utils/fs';
+import { hasBalancedGlobDelimiters } from '../src/utils/glob';
 
 const mockAuth = auth as {
   validatePromptfooApiKey: MockedFunction<typeof auth.validatePromptfooApiKey>;
@@ -2108,6 +2109,22 @@ describe('GitHub Action Main', () => {
       expect(commentBody).not.toContain('prompts/watch.txt');
     });
 
+    test('should report config prompts accurately when no action prompt files match', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      const promptfooArgs = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(promptfooArgs).not.toContain('--prompts');
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body;
+      expect(commentBody).toContain('Prompts evaluated from config');
+      expect(commentBody).not.toContain('Evaluated prompt files:');
+    });
+
     test('should use console guidance in PR comments without a share URL', async () => {
       mockFs.readFileSync.mockReturnValue(
         JSON.stringify({
@@ -2371,6 +2388,8 @@ describe('GitHub Action Main', () => {
         'prompts/\\[literal.txt',
         'prompts/\\(literal.txt',
         'prompts/\\{1..1000000000}.txt',
+        'prompts/[\\]].txt',
+        'prompts/[a\\]b].txt',
       ];
       withInputs({ prompts: patterns.join('\n') });
       mockGlob.sync.mockReturnValue([]);
@@ -2385,6 +2404,16 @@ describe('GitHub Action Main', () => {
         );
       }
       expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should validate many mixed escaped glob delimiters without quadratic scans', () => {
+      if (process.platform === 'win32') return;
+      const repetitions = 10500;
+      const pattern = `${'\\{'.repeat(repetitions)}${'\\('.repeat(repetitions)}${'}'.repeat(repetitions)}${')'.repeat(repetitions)}*`;
+      const started = performance.now();
+
+      expect(hasBalancedGlobDelimiters(pattern)).toBe(true);
+      expect(performance.now() - started).toBeLessThan(500);
     });
 
     test('should reject an in-workspace config symlink that resolves outside the checkout before evaluation', async () => {

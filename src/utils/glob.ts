@@ -46,14 +46,18 @@ export function hasBalancedGlobDelimiters(pattern: string): boolean {
     '(': ')',
     '[': ']',
   };
-  const escapedOpeningClosers: string[] = [];
+  const escapedOpeningClosers: Record<string, number> = {
+    '}': 0,
+    ')': 0,
+    ']': 0,
+  };
   let inCharacterClass = false;
   let escaped = false;
 
   for (const character of pattern) {
     if (escaped) {
       if (character in closers) {
-        escapedOpeningClosers.push(closers[character]);
+        escapedOpeningClosers[closers[character]]++;
       }
       escaped = false;
       continue;
@@ -75,11 +79,8 @@ export function hasBalancedGlobDelimiters(pattern: string): boolean {
     } else if (character === '}' || character === ')' || character === ']') {
       if (expectedClosers[expectedClosers.length - 1] === character) {
         expectedClosers.pop();
-      } else if (escapedOpeningClosers.includes(character)) {
-        escapedOpeningClosers.splice(
-          escapedOpeningClosers.lastIndexOf(character),
-          1,
-        );
+      } else if (escapedOpeningClosers[character] > 0) {
+        escapedOpeningClosers[character]--;
       } else {
         return false;
       }
