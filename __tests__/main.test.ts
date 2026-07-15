@@ -89,6 +89,7 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn(),
     unlinkSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -125,6 +126,7 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
@@ -241,6 +243,9 @@ function setupCommonMocks(): MockOctokit {
     }),
   );
   mockFs.existsSync.mockReturnValue(false);
+  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+    String(filePath),
+  );
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -373,6 +378,56 @@ describe('GitHub Action Main', () => {
         expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
+    });
+
+    test('should preserve prompt-glob spaces while parsing a CRLF-separated prompts input', async () => {
+      withInputs({ prompts: 'prompt one/*.txt\r\nprompt two/*.txt\r\n' });
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        String(pattern).startsWith('prompt one/')
+          ? ['prompt one/first.txt']
+          : ['prompt two/second.txt'],
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenNthCalledWith(1, 'prompt one/*.txt', {
+        cwd: process.cwd(),
+        nodir: true,
+      });
+      expect(mockGlob.sync).toHaveBeenNthCalledWith(2, 'prompt two/*.txt', {
+        cwd: process.cwd(),
+        nodir: true,
+      });
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompt one/first.txt',
+          'prompt two/second.txt',
+        ]),
+      );
+    });
+
+    test('should preserve intentional outer whitespace in the prompts action input', async () => {
+      const prompts = ' prompt one/*.txt ';
+      mockCore.getInput.mockImplementation((name, options) => {
+        const value = name === 'prompts' ? prompts : DEFAULT_INPUTS[name] || '';
+        return options?.trimWhitespace === false ? value : value.trim();
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' prompt one/first.txt ' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === prompts ? [' prompt one/first.txt '] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(prompts, {
+        cwd: process.cwd(),
+        nodir: true,
+      });
+      expect(mockExec.exec).toHaveBeenCalled();
     });
 
     test('should handle whitespace-only prompts input', async () => {
@@ -1028,6 +1083,11 @@ describe('GitHub Action Main', () => {
           'prompts/unchanged.txt',
         ]),
       );
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(commentBody).toContain(
+        'prompts/changed.txt, prompts/unchanged.txt',
+      );
     });
 
     test('should pass all action-input prompts when only the config changes', async () => {
@@ -1045,6 +1105,61 @@ describe('GitHub Action Main', () => {
           'prompts/one.txt',
           'prompts/two.txt',
         ]),
+      );
+    });
+
+    test('should reject lexical and symlinked prompt-glob escapes while preserving safe full-eval prompts', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        '../SENSITIVE-REVIEW-TOKEN/lexical.txt',
+        'prompts/linked.txt',
+        'prompts/safe.txt',
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        String(filePath).endsWith('/prompts/linked.txt')
+          ? '/private/SENSITIVE-REVIEW-TOKEN/linked.txt'
+          : String(filePath),
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/safe.txt']),
+      );
+      expect(args).not.toContain('../SENSITIVE-REVIEW-TOKEN/lexical.txt');
+      expect(args).not.toContain('prompts/linked.txt');
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+    });
+
+    test('should preserve safe full-eval prompts when a sibling realpath lookup fails', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/unreadable.txt',
+        'prompts/safe.txt',
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (String(filePath).endsWith('/prompts/unreadable.txt')) {
+          throw new Error('EACCES: SENSITIVE-REVIEW-TOKEN');
+        }
+        return String(filePath);
+      });
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/safe.txt']),
+      );
+      expect(args).not.toContain('prompts/unreadable.txt');
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
       );
     });
 
@@ -1069,6 +1184,47 @@ describe('GitHub Action Main', () => {
       expect(mockCore.info).not.toHaveBeenCalledWith(
         expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
       );
+    });
+
+    test('should skip an unrelated change when an unchanged prompt filename contains a newline', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/unchanged\n::warning::SENSITIVE-REVIEW-TOKEN.txt',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should list all evaluated action-input prompts in a dependency-triggered workflow summary', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'providers/custom.py' } },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue(['prompts/one.txt', 'prompts/two.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.summary.addHeading).toHaveBeenCalledWith(
+        'Evaluated Files',
+        3,
+      );
+      expect(mockCore.summary.addList).toHaveBeenCalledWith([
+        'prompts/one.txt',
+        'prompts/two.txt',
+      ]);
     });
 
     test('should run when a referenced config dependency is renamed away', async () => {
@@ -1168,6 +1324,34 @@ describe('GitHub Action Main', () => {
       mockConfig.extractFileDependencies.mockReturnValue([
         ' providers/custom-provider.py ',
       ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve intentional outer whitespace in the workflow-files action input', async () => {
+      const workflowFiles = ' providers/custom-provider.py ';
+      mockCore.getInput.mockImplementation((name, options) => {
+        const value =
+          name === 'workflow-files'
+            ? workflowFiles
+            : DEFAULT_INPUTS[name] || '';
+        return options?.trimWhitespace === false ? value : value.trim();
+      });
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([workflowFiles]);
 
       await run();
 

@@ -43,6 +43,16 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function isPathInside(baseDir: string, targetPath: string): boolean {
+  const relativePath = path.relative(baseDir, targetPath);
+  return (
+    relativePath === '' ||
+    (relativePath !== '..' &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath))
+  );
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -191,9 +201,12 @@ export async function run(): Promise<void> {
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
-    const promptsInput = core.getInput('prompts', { required: false });
+    const promptsInput = core.getInput('prompts', {
+      required: false,
+      trimWhitespace: false,
+    });
     const promptFilesGlobs: string[] = promptsInput
-      ? promptsInput.split('\n').filter((line) => line.trim())
+      ? promptsInput.split(/\r?\n/).filter((line) => line.trim())
       : [];
     const configPath: string = core.getInput('config', {
       required: true,
@@ -243,6 +256,7 @@ export async function run(): Promise<void> {
     });
     const workflowFiles: string = core.getInput('workflow-files', {
       required: false,
+      trimWhitespace: false,
     });
     const workflowBase: string = core.getInput('workflow-base', {
       required: false,
@@ -475,6 +489,7 @@ export async function run(): Promise<void> {
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
     const allPromptFiles: string[] = [];
+    let physicalWorkspaceRoot: string | undefined;
     const changedFilesList = changedFiles
       .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
       .filter((file) => file);
@@ -485,8 +500,30 @@ export async function run(): Promise<void> {
         nodir: true,
       });
       const allMatches = matches.filter((file) => {
+        const absoluteFile = path.resolve(workingDirectory, file);
+        if (!isPathInside(workspaceRoot, absoluteFile)) {
+          core.warning(
+            'Ignoring unsafe prompt glob match: path must stay within the repository workspace',
+          );
+          return false;
+        }
+        try {
+          physicalWorkspaceRoot ??= fs.realpathSync(workspaceRoot);
+          const physicalFile = fs.realpathSync(absoluteFile);
+          if (!isPathInside(physicalWorkspaceRoot, physicalFile)) {
+            core.warning(
+              'Ignoring unsafe prompt glob match: resolved path must stay within the repository workspace',
+            );
+            return false;
+          }
+        } catch {
+          core.warning(
+            'Ignoring unreadable prompt glob match: unable to resolve path',
+          );
+          return false;
+        }
         const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          path.relative(workspaceRoot, absoluteFile),
         );
         return repositoryFile !== configRepositoryPath;
       });
@@ -505,12 +542,6 @@ export async function run(): Promise<void> {
         // No changed files info available, include all matches
         promptFiles.push(...allMatches);
       }
-    }
-
-    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
-      throw new Error(
-        'Prompt file paths containing carriage returns or line feeds are not supported',
-      );
     }
 
     const configChanged =
@@ -568,6 +599,9 @@ export async function run(): Promise<void> {
       }
     }
 
+    const evaluationPromptFiles =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+
     if (
       !forceRun &&
       promptFiles.length < 1 &&
@@ -580,6 +614,12 @@ export async function run(): Promise<void> {
       // Only skip if prompts were actually specified
       core.info('No LLM prompt, config files, or dependencies were modified.');
       return;
+    }
+
+    if (evaluationPromptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error(
+        'Prompt file paths containing carriage returns or line feeds are not supported',
+      );
     }
 
     if (forceRun) {
@@ -627,8 +667,6 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    const evaluationPromptFiles =
-      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
     if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         '--prompts',
@@ -863,7 +901,7 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
+      const modifiedFiles = evaluationPromptFiles.join(', ');
       let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
@@ -899,9 +937,9 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (promptFiles.length > 0) {
+      if (evaluationPromptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
-        summary.addList(promptFiles);
+        summary.addList(evaluationPromptFiles);
       }
 
       if (repeatCheckResult) {

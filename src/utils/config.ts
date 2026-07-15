@@ -22,9 +22,77 @@ type PromptEntry =
   | { file?: string; id?: string; raw?: string; [key: string]: unknown };
 type ProviderEntry = string | { id?: string; [key: string]: unknown };
 type TestVars = string | string[] | { [key: string]: unknown };
+type TestAssertion = {
+  type?: string;
+  value?: string | { file?: string };
+  assert?: TestAssertion[];
+};
 
 type LegacyYamlSet = Record<string, unknown>;
 const MAX_BRACE_EXPANSIONS = 1024;
+const MAX_DEPENDENCY_REFERENCE_LENGTH = 65_536;
+const MAX_STRUCTURED_PROMPT_FILE_SIZE = 10 * 1024 * 1024;
+const PROVIDER_SELECTOR_EXTENSIONS = new Set([
+  'cjs',
+  'cts',
+  'js',
+  'mjs',
+  'mts',
+  'py',
+  'ts',
+  'go',
+  'rb',
+]);
+const ASSERTION_SELECTOR_EXTENSIONS = new Set([
+  'cjs',
+  'cts',
+  'js',
+  'mjs',
+  'mts',
+  'py',
+  'ts',
+  'rb',
+]);
+const JAVASCRIPT_SELECTOR_EXTENSIONS = new Set([
+  'cjs',
+  'cts',
+  'js',
+  'mjs',
+  'mts',
+  'ts',
+]);
+const JAVASCRIPT_FILE_REFERENCE_FIELDS = new Set([
+  'validateStatus',
+  'transformRequest',
+  'transformResponse',
+  'responseParser',
+  'sessionParser',
+]);
+const PROMPT_FILE_EXTENSIONS = new Set([
+  'cjs',
+  'csv',
+  'cts',
+  'exe',
+  'js',
+  'json',
+  'jsonl',
+  'j2',
+  'md',
+  'mjs',
+  'mts',
+  'py',
+  'ts',
+  'txt',
+  'yml',
+  'yaml',
+  'sh',
+  'bash',
+  'bat',
+  'cmd',
+  'ps1',
+  'rb',
+  'pl',
+]);
 const GLOB_MAGIC_OPTIONS = {
   magicalBraces: true,
   nonegate: true,
@@ -56,14 +124,12 @@ export interface PromptfooConfig {
   providers?: ProviderEntry | ProviderEntry[];
   targets?: ProviderEntry | ProviderEntry[];
   prompts?: string | PromptEntry[] | Record<string, string>;
-  tests?: Array<{
-    vars?: TestVars;
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
-    [key: string]: unknown;
-  }>;
+  tests?: unknown;
+  scenarios?: unknown;
+  nunjucksFilters?: Record<string, string>;
   defaultTest?: {
     vars?: TestVars;
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
+    assert?: TestAssertion[];
   };
 }
 
@@ -87,6 +153,155 @@ function isTraversableRecord(value: unknown): value is Record<string, unknown> {
     !(value instanceof Map) &&
     !(value instanceof Set)
   );
+}
+
+function compactTemplateWhitespace(value: string): string {
+  let result = '';
+  let cursor = 0;
+  while (cursor < value.length) {
+    const start = value.indexOf('{{', cursor);
+    if (start < 0) {
+      result += value.slice(cursor);
+      break;
+    }
+    const end = value.indexOf('}', start + 2);
+    if (end < 0) {
+      result += value.slice(cursor);
+      break;
+    }
+    if (value.charAt(end + 1) !== '}') {
+      result += value.slice(cursor, end + 1);
+      cursor = end + 1;
+      continue;
+    }
+    result += value.slice(cursor, start);
+    result += value.slice(start, end + 2).replace(/\s+/g, '');
+    cursor = end + 2;
+  }
+  return result;
+}
+
+function stripFunctionSelector(
+  value: string,
+  extensions: Set<string>,
+  caseInsensitive = false,
+): string {
+  if (
+    value.length > MAX_DEPENDENCY_REFERENCE_LENGTH ||
+    value.includes('\0') ||
+    value.includes('\r') ||
+    value.includes('\n')
+  ) {
+    return value;
+  }
+  let extensionIndex = -1;
+  let selectorIndex = -1;
+  for (let index = 0; index < value.length; index++) {
+    const character = value.charAt(index);
+    if (character === '.') {
+      extensionIndex = index;
+      continue;
+    }
+    if (character !== ':' || index === value.length - 1) {
+      continue;
+    }
+    const extensionLength = index - extensionIndex - 1;
+    if (extensionIndex < 0 || extensionLength < 1 || extensionLength > 5) {
+      continue;
+    }
+    const extension = value.slice(extensionIndex + 1, index);
+    const normalizedExtension = caseInsensitive
+      ? extension.toLowerCase()
+      : extension;
+    if (extensions.has(normalizedExtension)) {
+      selectorIndex = index;
+    }
+  }
+  return selectorIndex >= 0 ? value.slice(0, selectorIndex) : value;
+}
+
+function hasPromptFileExtension(value: string): boolean {
+  if (
+    value.length > MAX_DEPENDENCY_REFERENCE_LENGTH ||
+    value.includes('\0') ||
+    value.includes('\r') ||
+    value.includes('\n')
+  ) {
+    return false;
+  }
+  const separatorIndex = Math.max(
+    value.lastIndexOf('/'),
+    value.lastIndexOf('\\'),
+  );
+  const candidate = stripFunctionSelector(value, PROMPT_FILE_EXTENSIONS, true);
+  const extensionIndex = candidate.lastIndexOf('.');
+  return (
+    extensionIndex > separatorIndex &&
+    PROMPT_FILE_EXTENSIONS.has(
+      candidate.slice(extensionIndex + 1).toLowerCase(),
+    )
+  );
+}
+
+function stripSpreadsheetSheetSelector(value: string): string {
+  const sheetIndex = value.indexOf('#');
+  if (sheetIndex < 0) return value;
+  const candidate = value.slice(0, sheetIndex);
+  const extensionIndex = candidate.lastIndexOf('.');
+  if (extensionIndex < 0) return value;
+  const extension = candidate.slice(extensionIndex + 1).toLowerCase();
+  return extension === 'xlsx' || extension === 'xls' ? candidate : value;
+}
+
+function hasBalancedGlobDelimiters(value: string): boolean {
+  const expectedClosers: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const character = value.charAt(index);
+    if (expectedClosers[expectedClosers.length - 1] === ']') {
+      if (character === ']') {
+        expectedClosers.pop();
+      }
+      continue;
+    }
+    if (character === '{') {
+      expectedClosers.push('}');
+      continue;
+    }
+    if (character === '[') {
+      expectedClosers.push(']');
+      continue;
+    }
+    if (
+      character === '(' &&
+      index > 0 &&
+      '*+?@!'.includes(value.charAt(index - 1))
+    ) {
+      expectedClosers.push(')');
+      continue;
+    }
+    if (!'}])'.includes(character) || expectedClosers.length === 0) {
+      continue;
+    }
+    if (expectedClosers[expectedClosers.length - 1] !== character) {
+      return false;
+    }
+    expectedClosers.pop();
+  }
+  return expectedClosers.length === 0;
+}
+
+function isUnsupportedForeignPath(value: string): boolean {
+  const driveLetter = value.charAt(0);
+  const hasDrivePrefix =
+    value.charAt(1) === ':' &&
+    ((driveLetter >= 'A' && driveLetter <= 'Z') ||
+      (driveLetter >= 'a' && driveLetter <= 'z'));
+  const isDriveAbsolute =
+    hasDrivePrefix && (value.charAt(2) === '/' || value.charAt(2) === '\\');
+  const isUncPath =
+    value.startsWith('\\\\') ||
+    (value.startsWith('//') && value.indexOf('/', 2) > 2);
+  return path.sep === '/' && (isDriveAbsolute || isUncPath);
 }
 
 /**
@@ -142,6 +357,12 @@ export function extractFileDependencies(
       filePath: string,
       source: string,
     ): string | undefined => {
+      if (isUnsupportedForeignPath(filePath)) {
+        core.warning(
+          'Ignoring unsafe config dependency: foreign absolute paths are not supported',
+        );
+        return undefined;
+      }
       try {
         if (!filePath) {
           throw new Error(`${source} is empty`);
@@ -179,17 +400,32 @@ export function extractFileDependencies(
         );
         return;
       }
+      if (
+        filePath.length > MAX_DEPENDENCY_REFERENCE_LENGTH ||
+        filePath.includes('\r') ||
+        filePath.includes('\n') ||
+        isUnsupportedForeignPath(filePath)
+      ) {
+        core.warning(
+          'Ignoring invalid config dependency glob; preserving other dependencies',
+        );
+        return;
+      }
 
       try {
         // Check if the path contains glob patterns
         if (glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS)) {
+          if (!hasBalancedGlobDelimiters(filePath)) {
+            core.warning(
+              'Ignoring invalid config dependency glob; preserving other dependencies',
+            );
+            return;
+          }
           const expandedPaths = braceExpand(filePath, {
             braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
           });
           if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-            dependencies.add(
-              `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
-            );
+            dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
             core.warning(
               'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
             );
@@ -301,37 +537,101 @@ export function extractFileDependencies(
 
     // Extract provider and target files
     const stripProviderFunctionSelector = (value: string): string =>
-      value.replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, '$1');
+      stripFunctionSelector(value, PROVIDER_SELECTOR_EXTENSIONS);
+    const stripAssertionFunctionSelector = (value: string): string =>
+      stripFunctionSelector(value, ASSERTION_SELECTOR_EXTENSIONS);
+    const stripJavascriptFunctionSelector = (value: string): string =>
+      stripFunctionSelector(value, JAVASCRIPT_SELECTOR_EXTENSIONS);
+    const processCompatibleFileUrl = (
+      value: string,
+      stripReferenceSelector = stripProviderFunctionSelector,
+    ): string[] | undefined => {
+      const primary = stripReferenceSelector(value);
+      const patterns = processFileUrl(primary);
+      const selectorSuffix = value.slice(primary.length + 1);
+      if (
+        stripReferenceSelector === stripProviderFunctionSelector &&
+        primary !== value &&
+        (/[\\/]/.test(selectorSuffix) ||
+          (primary.endsWith('.rb') && selectorSuffix.includes(':')))
+      ) {
+        processFileUrl(value);
+      }
+      const latestJavascriptPath =
+        primary === value
+          ? stripFunctionSelector(value, JAVASCRIPT_SELECTOR_EXTENSIONS, true)
+          : primary;
+      if (latestJavascriptPath !== value && latestJavascriptPath !== primary) {
+        processFileUrl(latestJavascriptPath);
+      }
+      return patterns;
+    };
+    const processFileBackedProviderReference = (value: string): void => {
+      const prefix = ['python:', 'golang:', 'ruby:', 'exec:'].find(
+        (candidate) => value.startsWith(candidate),
+      );
+      if (prefix) {
+        const providerPath = value.slice(prefix.length);
+        processCompatibleFileUrl(
+          providerPath.startsWith('file://')
+            ? providerPath
+            : `file://${providerPath}`,
+        );
+      }
+    };
+    const watchExternalProviderConfig = (value: string): void => {
+      if (
+        value.length > MAX_DEPENDENCY_REFERENCE_LENGTH ||
+        value.includes('\0') ||
+        value.includes('\r') ||
+        value.includes('\n')
+      ) {
+        return;
+      }
+      if (/[.{,(|](?:ya?ml|jsonl?)(?=$|[},:#?|)])/i.test(value)) {
+        dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
+      }
+    };
     const visitedProviderValues = new WeakSet<object>();
-    const visitProviderReferences = (value: unknown): void => {
+    const visitProviderReferences = (
+      value: unknown,
+      fieldName?: string,
+    ): void => {
       if (typeof value === 'string' && value.startsWith('file://')) {
-        processFileUrl(stripProviderFunctionSelector(value));
+        processCompatibleFileUrl(
+          value,
+          JAVASCRIPT_FILE_REFERENCE_FIELDS.has(fieldName ?? '')
+            ? stripJavascriptFunctionSelector
+            : stripProviderFunctionSelector,
+        );
       } else if (Array.isArray(value)) {
         if (visitedProviderValues.has(value)) {
           return;
         }
         visitedProviderValues.add(value);
         for (const nestedValue of value) {
-          visitProviderReferences(nestedValue);
+          visitProviderReferences(nestedValue, fieldName);
         }
       } else if (isTraversableRecord(value)) {
         if (visitedProviderValues.has(value)) {
           return;
         }
         visitedProviderValues.add(value);
-        for (const nestedValue of Object.values(value)) {
-          visitProviderReferences(nestedValue);
+        for (const [nestedFieldName, nestedValue] of Object.entries(value)) {
+          visitProviderReferences(nestedValue, nestedFieldName);
         }
       }
     };
 
-    const addHttpProviderPath = (value: unknown): void => {
+    const addHttpProviderPath = (
+      value: unknown,
+      stripFunctionSelector = stripProviderFunctionSelector,
+    ): void => {
       if (typeof value !== 'string' || !value) {
         return;
       }
-      const filePath = stripProviderFunctionSelector(
-        value.replace(/^file:\/\//, ''),
-      ).replace(/\\/g, '/');
+      const rawFilePath = value.replace(/^file:\/\//, '').replace(/\\/g, '/');
+      const filePath = stripFunctionSelector(rawFilePath);
       const staticSegments: string[] = [];
       for (const segment of filePath.split('/')) {
         if (/\{[{%#]/.test(segment)) {
@@ -348,7 +648,11 @@ export function extractFileDependencies(
       const absolutePath = path.isAbsolute(staticPath)
         ? path.resolve(staticPath)
         : path.resolve(path.join(configDir, staticPath));
-      if (filePath.includes('\0') || !isInsideDependencyRoots(absolutePath)) {
+      if (
+        filePath.includes('\0') ||
+        isUnsupportedForeignPath(filePath) ||
+        !isInsideDependencyRoots(absolutePath)
+      ) {
         core.warning(
           'Ignoring unsafe HTTP provider file dependency: path must stay within the repository workspace',
         );
@@ -358,7 +662,7 @@ export function extractFileDependencies(
         dependencies.add(`${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`);
         return;
       }
-      processFileUrl(`file://${filePath}`);
+      processCompatibleFileUrl(`file://${rawFilePath}`, stripFunctionSelector);
     };
 
     for (const providers of [config.providers, config.targets]) {
@@ -372,6 +676,10 @@ export function extractFileDependencies(
               : [];
       for (const provider of providerEntries) {
         visitProviderReferences(provider);
+        if (typeof provider === 'string') {
+          processFileBackedProviderReference(provider);
+          watchExternalProviderConfig(provider);
+        }
         if (!isTraversableRecord(provider)) {
           continue;
         }
@@ -381,7 +689,8 @@ export function extractFileDependencies(
           mappedProvider.length === 1 &&
           mappedProvider[0][0].startsWith('file://')
         ) {
-          processFileUrl(stripProviderFunctionSelector(mappedProvider[0][0]));
+          processCompatibleFileUrl(mappedProvider[0][0]);
+          watchExternalProviderConfig(mappedProvider[0][0]);
         }
         const providerId =
           typeof provider.id === 'string'
@@ -396,17 +705,32 @@ export function extractFileDependencies(
                 isTraversableRecord(mappedProvider[0][1])
               ? mappedProvider[0][1]
               : undefined;
+        if (providerId) {
+          processFileBackedProviderReference(providerId);
+          watchExternalProviderConfig(providerId);
+        }
         if (
           !providerId ||
-          !/^https?(?::|$)/.test(providerId) ||
+          (!/^https?(?::|$)/.test(providerId) && !/\{[{%#]/.test(providerId)) ||
           !providerOptions ||
           !isTraversableRecord(providerOptions.config)
         ) {
           continue;
         }
 
-        const { auth, tls, signatureAuth } = providerOptions.config;
-        if (isTraversableRecord(auth) && auth.type === 'file') {
+        const { auth, tls, signatureAuth, validateStatus, multipart } =
+          providerOptions.config;
+        if (
+          typeof validateStatus === 'string' &&
+          validateStatus.startsWith('file://')
+        ) {
+          addHttpProviderPath(validateStatus, stripJavascriptFunctionSelector);
+        }
+        if (
+          isTraversableRecord(auth) &&
+          (auth.type === 'file' ||
+            (typeof auth.type === 'string' && /\{[{%#]/.test(auth.type)))
+        ) {
           addHttpProviderPath(auth.path);
         }
         if (isTraversableRecord(tls)) {
@@ -431,6 +755,20 @@ export function extractFileDependencies(
             addHttpProviderPath(signatureAuth[key]);
           }
         }
+        if (isTraversableRecord(multipart) && Array.isArray(multipart.parts)) {
+          for (const part of multipart.parts) {
+            if (!isTraversableRecord(part)) continue;
+            const isFilePart =
+              part.kind === 'file' ||
+              (typeof part.kind === 'string' && /\{[{%#]/.test(part.kind));
+            if (!isFilePart || !isTraversableRecord(part.source)) continue;
+            const isPathSource =
+              part.source.type === 'path' ||
+              (typeof part.source.type === 'string' &&
+                /\{[{%#]/.test(part.source.type));
+            if (isPathSource) addHttpProviderPath(part.source.path);
+          }
+        }
       }
     }
 
@@ -450,7 +788,11 @@ export function extractFileDependencies(
         filePath: string,
         baseDir = configDir,
       ): string | undefined => {
-        if (!filePath || filePath.includes('\0')) {
+        if (
+          !filePath ||
+          filePath.includes('\0') ||
+          isUnsupportedForeignPath(filePath)
+        ) {
           return undefined;
         }
         const absolutePath = path.isAbsolute(filePath)
@@ -468,6 +810,10 @@ export function extractFileDependencies(
         const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
         const isEnvironmentTemplate =
           /^\s*\{\{-?\s*env(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(reference);
+        if (isTemplated && !isFileUrl && reference.includes('file://')) {
+          dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
+          return;
+        }
         if (
           !declaredFile &&
           !isExecutable &&
@@ -504,9 +850,7 @@ export function extractFileDependencies(
             !isTemplated &&
             glob.hasMagic(reference, GLOB_MAGIC_OPTIONS)) ||
           (/[\\/]/.test(reference) && !/\s/.test(reference)) ||
-          /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
-            reference,
-          );
+          hasPromptFileExtension(reference);
 
         if (!looksLikePath) {
           const candidatePath = resolvePromptProbe(reference);
@@ -537,21 +881,23 @@ export function extractFileDependencies(
 
         const executableParts = isExecutable
           ? (
-              reference
-                .replace(/^exec:/, '')
-                .replace(/\{\{[^}]*\}\}/g, (template) =>
-                  template.replace(/\s+/g, ''),
-                )
-                .match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? []
+              compactTemplateWhitespace(reference.replace(/^exec:/, '')).match(
+                /[^\s"']+|"[^"]*"|'[^']*'/g,
+              ) ?? []
             ).map((part) => part.replace(/^['"]|['"]$/g, ''))
           : [];
-        const promptPath = (
+        const rawPromptPath = (
           isExecutable ? (executableParts[0] ?? '') : reference
         )
           .replace(/^file:\/\//, '')
-          .replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, '$1')
           .replace(/\\/g, '/');
-        const promptPatterns = processFileUrl(`file://${promptPath}`);
+        const promptPath = stripFunctionSelector(
+          rawPromptPath,
+          PROVIDER_SELECTOR_EXTENSIONS,
+        );
+        const promptPatterns = processCompatibleFileUrl(
+          `file://${rawPromptPath}`,
+        );
         if (promptPath.includes('\0')) {
           return;
         }
@@ -681,10 +1027,20 @@ export function extractFileDependencies(
           }
 
           try {
-            const physicalPromptFile =
-              isPromptGlob || fs.existsSync(absolutePromptFile)
-                ? fs.realpathSync(absolutePromptFile)
-                : absolutePromptFile;
+            let promptEntryExists =
+              isPromptGlob || fs.existsSync(absolutePromptFile);
+            if (!promptEntryExists) {
+              try {
+                fs.lstatSync(absolutePromptFile);
+                promptEntryExists = true;
+              } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+                  continue;
+                }
+                throw error;
+              }
+            }
+            const physicalPromptFile = fs.realpathSync(absolutePromptFile);
             if (!isInsidePhysicalDependencyRoots(physicalPromptFile)) {
               core.warning(
                 isPromptGlob
@@ -697,6 +1053,17 @@ export function extractFileDependencies(
               continue;
             }
             visitedPromptFiles.add(physicalPromptFile);
+
+            if (
+              fs.statSync(physicalPromptFile).size >
+              MAX_STRUCTURED_PROMPT_FILE_SIZE
+            ) {
+              dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
+              core.warning(
+                'Skipping oversized structured prompt dependency; nested references will not be inspected',
+              );
+              continue;
+            }
 
             const nestedConfig = loadYaml(
               fs.readFileSync(physicalPromptFile, 'utf8'),
@@ -726,6 +1093,7 @@ export function extractFileDependencies(
             };
             visitNestedReferences(nestedConfig);
           } catch {
+            dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
             core.warning(
               isPromptGlob
                 ? 'Failed to inspect prompt file dependency glob match: unable to read or parse file'
@@ -798,10 +1166,10 @@ export function extractFileDependencies(
     };
 
     // Extract assert files
-    const extractAssertFiles = (
-      asserts?: Array<{ type?: string; value?: unknown }>,
-    ): void => {
-      if (!Array.isArray(asserts)) return;
+    const visitedAssertValues = new WeakSet<object>();
+    const extractAssertFiles = (asserts?: TestAssertion[]): void => {
+      if (!Array.isArray(asserts) || visitedAssertValues.has(asserts)) return;
+      visitedAssertValues.add(asserts);
       for (const assert of asserts) {
         if (
           assert !== null &&
@@ -809,7 +1177,10 @@ export function extractFileDependencies(
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
-          processFileUrl(assert.value);
+          processCompatibleFileUrl(
+            assert.value,
+            stripAssertionFunctionSelector,
+          );
         } else if (
           assert !== null &&
           typeof assert === 'object' &&
@@ -826,6 +1197,7 @@ export function extractFileDependencies(
             dependencies.add(absolutePath);
           }
         }
+        extractAssertFiles(assert.assert);
       }
     };
 
@@ -835,12 +1207,70 @@ export function extractFileDependencies(
       extractAssertFiles(config.defaultTest.assert);
     }
 
-    // Process tests
-    if (Array.isArray(config.tests)) {
-      for (const test of config.tests) {
-        if (test === null || typeof test !== 'object') continue;
-        extractVarFiles(test.vars);
-        extractAssertFiles(test.assert);
+    const visitedTestValues = new WeakSet<object>();
+    const extractTestPath = (testPath: string): void => {
+      if (
+        testPath.length > MAX_DEPENDENCY_REFERENCE_LENGTH ||
+        testPath.includes('\0') ||
+        testPath.includes('\r') ||
+        testPath.includes('\n')
+      ) {
+        core.warning(
+          'Ignoring invalid test file dependency; preserving other dependencies',
+        );
+        return;
+      }
+      const testsPath = stripSpreadsheetSheetSelector(testPath);
+      processCompatibleFileUrl(
+        testsPath.startsWith('file://') ? testsPath : `file://${testsPath}`,
+      );
+
+      // Structured test files can contain their own vars and assertions with
+      // file dependencies. Conservatively watch the workspace for changes.
+      if (/[.{,(|](?:ya?ml|jsonl?|xlsx?|csv)(?=$|[},:#?|)])/i.test(testsPath)) {
+        dependencies.add(`${cwd.replace(/[\\/]+$/, '')}${path.sep}`);
+      }
+    };
+    const extractTestValues = (tests: unknown): void => {
+      if (typeof tests === 'string') {
+        extractTestPath(tests);
+        return;
+      }
+      if (Array.isArray(tests)) {
+        if (visitedTestValues.has(tests)) return;
+        visitedTestValues.add(tests);
+        for (const test of tests) {
+          extractTestValues(test);
+        }
+        return;
+      }
+      if (!isTraversableRecord(tests) || visitedTestValues.has(tests)) return;
+      visitedTestValues.add(tests);
+      if (typeof tests.path === 'string') {
+        extractTestPath(tests.path);
+      }
+      extractVarFiles(tests.vars as TestVars | undefined);
+      extractAssertFiles(tests.assert as TestAssertion[] | undefined);
+      if ('tests' in tests) {
+        extractTestValues(tests.tests);
+      }
+      if ('config' in tests) {
+        extractTestValues(tests.config);
+      }
+    };
+
+    extractTestValues(config.tests);
+    extractTestValues(config.scenarios);
+
+    if (isTraversableRecord(config.nunjucksFilters)) {
+      for (const filterPath of Object.values(config.nunjucksFilters)) {
+        if (typeof filterPath === 'string') {
+          processFileUrl(
+            filterPath.startsWith('file://')
+              ? filterPath
+              : `file://${filterPath}`,
+          );
+        }
       }
     }
 
