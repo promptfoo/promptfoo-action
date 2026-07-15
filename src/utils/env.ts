@@ -315,7 +315,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
 ]);
 
 // Cover AWS endpoint overrides plus Bundler, dotenv preload, Google Cloud SDK,
-// cgo/native loader (including LD_AUDIT), and git/npm controls inherited by children.
+// cgo/native/OpenSSL loader (including LD_AUDIT), and git/npm controls inherited by children.
 const FORBIDDEN_ENV_FILE_PREFIXES = [
   'AWS_ENDPOINT_URL_',
   'BUNDLE_',
