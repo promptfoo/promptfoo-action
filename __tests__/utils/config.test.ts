@@ -10,6 +10,7 @@ vi.mock('fs', async () => {
   return {
     ...realFs,
     readFileSync: vi.fn(),
+    realpathSync: vi.fn(),
     existsSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
@@ -24,6 +25,7 @@ vi.mock('glob');
 describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
+    realpathSync: Mock;
     existsSync: Mock;
     statSync: Mock;
   };
@@ -40,6 +42,9 @@ describe('extractFileDependencies', () => {
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath),
+    );
   });
 
   it('should extract file:// providers', () => {
@@ -253,7 +258,7 @@ tests:
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) =>
         String(filePath).endsWith('cases.yaml')
-          ? '[unterminated'
+          ? '[SYMLINK_SECRET_CANARY_019F62C3'
           : 'tests: file://tests/cases.yaml',
     );
     mockFs.existsSync.mockReturnValue(true);
@@ -263,6 +268,9 @@ tests:
     ).toEqual(['../config/tests/cases.yaml']);
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('Failed to inspect test file dependency'),
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('SYMLINK_SECRET_CANARY_019F62C3'),
     );
   });
 
@@ -309,7 +317,25 @@ tests:
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/tests/cases.yaml']);
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('disk unavailable'),
+      expect.stringContaining('Failed to inspect test file dependency'),
+    );
+  });
+
+  it('should not inspect a file-backed test symlink outside the repository', () => {
+    mockFs.readFileSync.mockReturnValue('tests: file://tests/external.yaml');
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+      String(filePath).endsWith('external.yaml')
+        ? '/private/tmp/outside-secret.yaml'
+        : String(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/external.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('test file dependency must stay within'),
     );
   });
 
@@ -355,6 +381,20 @@ tests:
     ).toContain('../config/');
   });
 
+  it('should preserve an absolute test glob directory when its last match is deleted', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: file:///test/config/cases/*.yaml',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toContain('../config/cases/');
+  });
+
   it('should extract sheet-qualified file-backed tests', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests: file://cases.xlsx#Safety
@@ -363,6 +403,34 @@ tests: file://cases.xlsx#Safety
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/cases.xlsx']);
+  });
+
+  it('should preserve a hash in an Excel test parent directory', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: file://tests#prod/cases.xlsx#Safety',
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests#prod/cases.xlsx']);
+  });
+
+  it('should preserve a hash in a non-Excel test filename', () => {
+    mockFs.readFileSync.mockReturnValue('tests: file://tests/cases#prod.yaml');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases#prod.yaml']);
+  });
+
+  it('should extract an absolute file-backed test path inside the repository', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: file:///test/config/tests/cases.yaml',
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.yaml']);
   });
 
   it('should ignore remote file-backed tests', () => {

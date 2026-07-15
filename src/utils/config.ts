@@ -70,7 +70,7 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.resolve(configDir, filePath);
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -118,16 +118,20 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathParts = filePath.split(/[\\/]/);
-        let basePath = '';
+        const initialGlobRoot = path.isAbsolute(filePath)
+          ? path.parse(absolutePath).root
+          : configDir;
+        const pathParts = path
+          .relative(initialGlobRoot, absolutePath)
+          .split(/[\\/]/);
+        let globRoot = initialGlobRoot;
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
             break;
           }
-          basePath = basePath ? path.join(basePath, part) : part;
+          globRoot = path.join(globRoot, part);
         }
-        if (basePath || preserveGlobRoot) {
-          const globRoot = path.resolve(configDir, basePath || '.');
+        if (globRoot !== initialGlobRoot || preserveGlobRoot) {
           dependencies.add(
             preserveGlobRoot
               ? `${globRoot.replace(/[\\/]+$/, '')}${path.sep}`
@@ -290,7 +294,16 @@ export function extractFileDependencies(configPath: string): string[] {
       inspectedTestFiles.add(testFile);
 
       try {
-        const testContent = fs.readFileSync(testFile, 'utf8');
+        const realDependencyRoot = fs.realpathSync(dependencyRoot);
+        const realTestFile = fs.realpathSync(testFile);
+        if (!isPathInside(realDependencyRoot, realTestFile)) {
+          core.warning(
+            `Ignoring unsafe config dependency "${testFile}": test file dependency must stay within the repository workspace`,
+          );
+          return;
+        }
+
+        const testContent = fs.readFileSync(realTestFile, 'utf8');
         const parsedTests = loadYaml(testContent, {
           schema: CORE_SCHEMA.withTags(mergeTag),
         }) as PromptfooTestConfig | PromptfooTestConfig[] | null;
@@ -307,10 +320,8 @@ export function extractFileDependencies(configPath: string): string[] {
           extractVarFiles(nestedTest.vars, path.dirname(testFile));
           extractAssertFiles(nestedTest.assert);
         }
-      } catch (error) {
-        core.warning(
-          `Failed to inspect test file dependency "${testFile}": ${error instanceof Error ? error.message : String(error)}`,
-        );
+      } catch {
+        core.warning(`Failed to inspect test file dependency "${testFile}"`);
       }
     };
 
@@ -323,10 +334,17 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
-      // Drop a spreadsheet sheet reference, e.g. `tests.csv#Sheet1`.
-      const sheetIndex = filePath.indexOf('#');
-      if (sheetIndex !== -1) {
-        filePath = filePath.slice(0, sheetIndex);
+      // Drop an Excel sheet reference while preserving `#` in other filenames.
+      const fileName = path.basename(filePath);
+      const sheetIndex = fileName.indexOf('#');
+      if (
+        sheetIndex !== -1 &&
+        /\.xlsx?$/i.test(fileName.slice(0, sheetIndex))
+      ) {
+        filePath = path.join(
+          path.dirname(filePath),
+          fileName.slice(0, sheetIndex),
+        );
       }
 
       // Drop a function qualifier, e.g. `tests.py:generate_tests`. Require the

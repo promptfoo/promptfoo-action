@@ -19528,7 +19528,7 @@ var require_dist = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.format = format;
-    exports2.parse = parse3;
+    exports2.parse = parse4;
     var TEXT_REGEXP = /^[\u0009\u0020-\u007e\u0080-\u00ff]*$/;
     var TOKEN_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
     var QUOTE_REGEXP = /[\\"]/g;
@@ -19555,7 +19555,7 @@ var require_dist = __commonJS({
       }
       return result;
     }
-    function parse3(header, options) {
+    function parse4(header, options) {
       const len = header.length;
       let index = skipOWS(header, 0, len);
       const valueStart = index;
@@ -19686,7 +19686,7 @@ var require_main = __commonJS({
       return supportsAnsi() ? `\x1B[2m${text}\x1B[0m` : text;
     }
     var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
-    function parse3(src) {
+    function parse4(src) {
       const obj = {};
       let lines = src.toString();
       lines = lines.replace(/\r\n?/mg, "\n");
@@ -19958,7 +19958,7 @@ var require_main = __commonJS({
       _parseVault,
       config: config2,
       decrypt,
-      parse: parse3,
+      parse: parse4,
       populate
     };
     module2.exports.configDotenv = DotenvModule.configDotenv;
@@ -19985,7 +19985,7 @@ var require_ms = __commonJS({
       options = options || {};
       var type = typeof val;
       if (type === "string" && val.length > 0) {
-        return parse3(val);
+        return parse4(val);
       } else if (type === "number" && isFinite(val)) {
         return options.long ? fmtLong(val) : fmtShort(val);
       }
@@ -19993,7 +19993,7 @@ var require_ms = __commonJS({
         "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
       );
     };
-    function parse3(str) {
+    function parse4(str) {
       str = String(str);
       if (str.length > 100) {
         return;
@@ -29699,7 +29699,7 @@ function parseStringResponse(result, parsers12, texts, trim = true) {
         }
         return lines[i2 + offset];
       };
-      parsers12.some(({ parse: parse3 }) => parse3(line, result));
+      parsers12.some(({ parse: parse4 }) => parse4(line, result));
     }
   });
   return result;
@@ -36310,7 +36310,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = path5.resolve(configDir, filePath);
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36345,16 +36345,16 @@ function extractFileDependencies(configPath) {
             );
           }
         }
-        const pathParts = filePath.split(/[\\/]/);
-        let basePath = "";
+        const initialGlobRoot = path5.isAbsolute(filePath) ? path5.parse(absolutePath).root : configDir;
+        const pathParts = path5.relative(initialGlobRoot, absolutePath).split(/[\\/]/);
+        let globRoot = initialGlobRoot;
         for (const part of pathParts) {
           if (le(part)) {
             break;
           }
-          basePath = basePath ? path5.join(basePath, part) : part;
+          globRoot = path5.join(globRoot, part);
         }
-        if (basePath || preserveGlobRoot) {
-          const globRoot = path5.resolve(configDir, basePath || ".");
+        if (globRoot !== initialGlobRoot || preserveGlobRoot) {
           dependencies.add(
             preserveGlobRoot ? `${globRoot.replace(/[\\/]+$/, "")}${path5.sep}` : globRoot
           );
@@ -36473,7 +36473,15 @@ function extractFileDependencies(configPath) {
       }
       inspectedTestFiles.add(testFile);
       try {
-        const testContent = fs6.readFileSync(testFile, "utf8");
+        const realDependencyRoot = fs6.realpathSync(dependencyRoot);
+        const realTestFile = fs6.realpathSync(testFile);
+        if (!isPathInside(realDependencyRoot, realTestFile)) {
+          warning(
+            `Ignoring unsafe config dependency "${testFile}": test file dependency must stay within the repository workspace`
+          );
+          return;
+        }
+        const testContent = fs6.readFileSync(realTestFile, "utf8");
         const parsedTests = load(testContent, {
           schema: CORE_SCHEMA.withTags(mergeTag)
         });
@@ -36485,10 +36493,8 @@ function extractFileDependencies(configPath) {
           extractVarFiles(nestedTest.vars, path5.dirname(testFile));
           extractAssertFiles(nestedTest.assert);
         }
-      } catch (error2) {
-        warning(
-          `Failed to inspect test file dependency "${testFile}": ${error2 instanceof Error ? error2.message : String(error2)}`
-        );
+      } catch {
+        warning(`Failed to inspect test file dependency "${testFile}"`);
       }
     };
     const processTestFile = (testSource) => {
@@ -36498,9 +36504,13 @@ function extractFileDependencies(configPath) {
       } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
         return;
       }
-      const sheetIndex = filePath.indexOf("#");
-      if (sheetIndex !== -1) {
-        filePath = filePath.slice(0, sheetIndex);
+      const fileName = path5.basename(filePath);
+      const sheetIndex = fileName.indexOf("#");
+      if (sheetIndex !== -1 && /\.xlsx?$/i.test(fileName.slice(0, sheetIndex))) {
+        filePath = path5.join(
+          path5.dirname(filePath),
+          fileName.slice(0, sheetIndex)
+        );
       }
       const functionIndex = filePath.lastIndexOf(":");
       if (functionIndex > 1) {
