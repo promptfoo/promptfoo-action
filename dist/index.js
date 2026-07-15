@@ -40747,12 +40747,26 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           continue;
         }
         const scenarioConfig = scenario;
+        const scenarioTestsAreArray = Array.isArray(scenarioConfig.tests);
         const scenarioTests = Array.isArray(scenarioConfig.tests) ? scenarioConfig.tests : [scenarioConfig.tests];
         for (const scenarioTest of scenarioTests) {
           if (typeof scenarioTest === "string") {
-            processTestFile(scenarioTest);
-          } else if (typeof scenarioTest === "object" && scenarioTest !== null && "path" in scenarioTest && typeof scenarioTest.path === "string") {
-            processTestFile(scenarioTest.path);
+            processTestFile(
+              scenarioTest,
+              scenarioTestsAreArray ? void 0 : configDir
+            );
+          } else if (typeof scenarioTest === "object" && scenarioTest !== null) {
+            if ("path" in scenarioTest && typeof scenarioTest.path === "string") {
+              processTestFile(scenarioTest.path);
+            }
+            const nestedScenarioTest = scenarioTest;
+            extractVarFiles(nestedScenarioTest.vars);
+            extractAssertFiles(nestedScenarioTest.assert);
+            extractNestedFileUrls({
+              provider: nestedScenarioTest.provider,
+              assert: nestedScenarioTest.assert,
+              options: nestedScenarioTest.options
+            });
           }
         }
         extractNestedFileUrls(scenarioConfig.config);
