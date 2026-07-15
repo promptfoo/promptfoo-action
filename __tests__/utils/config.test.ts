@@ -47,7 +47,11 @@ describe('extractFileDependencies', () => {
       throw Object.assign(new Error('not found'), { code: 'ENOENT' });
     });
     mockFs.existsSync.mockReturnValue(false);
-    mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      size: 128,
+    } as fs.Stats);
   });
 
   it('should extract file:// providers', () => {
@@ -70,7 +74,11 @@ providers:
 
   it('should preserve a repository-root directory dependency without a trailing slash', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
-    mockFs.statSync.mockReturnValue({ isDirectory: () => true } as fs.Stats);
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => true,
+      isFile: () => true,
+      size: 128,
+    } as fs.Stats);
     mockFs.readFileSync.mockReturnValue(`
 prompts:
   - file://.
@@ -2613,6 +2621,7 @@ providers:
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.statSync.mockImplementation((filePath: unknown) => ({
       isDirectory: () => false,
+      isFile: () => true,
       size: String(filePath).endsWith('/providers/huge.yaml')
         ? 3 * 1024 * 1024 * 1024
         : 128,
@@ -3690,6 +3699,7 @@ scenarios:
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.statSync.mockImplementation((filePath: unknown) => ({
       isDirectory: () => false,
+      isFile: () => true,
       size: String(filePath).endsWith('/prompts/huge.yaml')
         ? 3 * 1024 * 1024 * 1024
         : 128,
@@ -3801,6 +3811,7 @@ recursive: &recursive
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.statSync.mockReturnValue({
       isDirectory: () => false,
+      isFile: () => true,
       size: 3 * 1024 * 1024 * 1024,
     } as fs.Stats);
     mockFs.readFileSync.mockImplementation(() => {
@@ -3816,10 +3827,63 @@ recursive: &recursive
     );
   });
 
+  it.each([
+    [
+      'root config',
+      '/test/repository/promptfooconfig.yaml',
+      'providers: []\n',
+      ['./'],
+      0,
+    ],
+    [
+      'provider config',
+      '/test/repository/providers/fifo.yaml',
+      'providers:\n  - file://providers/fifo.yaml\n',
+      ['providers/fifo.yaml', './'],
+      1,
+    ],
+    [
+      'structured prompt',
+      '/test/repository/prompts/fifo.yaml',
+      'prompts:\n  - file: prompts/fifo.yaml\n',
+      ['prompts/fifo.yaml', './'],
+      1,
+    ],
+    [
+      'external test',
+      '/test/repository/tests/fifo.yaml',
+      'tests: tests/fifo.yaml\n',
+      ['tests/fifo.yaml', './'],
+      1,
+    ],
+  ] as const)('should not read a non-regular %s dependency', (_kind, fifoPath, configContent, expected, readCount) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.statSync.mockImplementation((filePath: unknown) => ({
+      isDirectory: () => false,
+      isFile: () => String(filePath) !== fifoPath,
+      size: 128,
+    }));
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath) === fifoPath) {
+        throw new Error('FIFO_READ_SECRET_CANARY_019F62C3');
+      }
+      return configContent;
+    });
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(expected);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(readCount);
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('not a regular file or is too large');
+    expect(warnings).not.toContain('FIFO_READ_SECRET_CANARY_019F62C3');
+  });
+
   it('should preserve the external config root when an oversized config is outside the checkout', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.statSync.mockReturnValue({
       isDirectory: () => false,
+      isFile: () => true,
       size: 3 * 1024 * 1024 * 1024,
     } as fs.Stats);
 
@@ -4035,6 +4099,7 @@ scenarios:
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.statSync.mockImplementation((filePath: unknown) => ({
       isDirectory: () => false,
+      isFile: () => true,
       size: String(filePath).endsWith('/tests/huge.yaml')
         ? 3 * 1024 * 1024 * 1024
         : 128,
@@ -4781,6 +4846,8 @@ providers:
       () =>
         ({
           isDirectory: () => true,
+          isFile: () => true,
+          size: 128,
         }) as fs.Stats,
     );
 

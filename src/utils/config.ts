@@ -394,6 +394,11 @@ function hasGlobMagic(pattern: string): boolean | undefined {
   }
 }
 
+function canReadStructuredFile(filePath: string): boolean {
+  const stats = fs.statSync(filePath);
+  return stats.isFile() && stats.size <= MAX_STRUCTURED_FILE_BYTES;
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -424,9 +429,9 @@ export function extractFileDependencies(configPath: string): string[] {
   let configParsed = false;
 
   try {
-    if (fs.statSync(configPath).size > MAX_STRUCTURED_FILE_BYTES) {
+    if (!canReadStructuredFile(configPath)) {
       core.warning(
-        'Config dependency file is too large to inspect safely. Watching the repository workspace conservatively.',
+        'Config dependency file is not a regular file or is too large to inspect safely. Watching the repository workspace conservatively.',
       );
       watchDependencyRoots();
       return Array.from(dependencies).map(toRepositoryPath);
@@ -1160,10 +1165,10 @@ export function extractFileDependencies(configPath: string): string[] {
 
         inspectedProviderFiles.add(inspectionKey);
         try {
-          if (fs.statSync(absolutePath).size > MAX_STRUCTURED_FILE_BYTES) {
+          if (!canReadStructuredFile(absolutePath)) {
             watchDependencyRoots();
             core.warning(
-              'Provider config dependency is too large to inspect safely. Watching the repository workspace conservatively.',
+              'Provider config dependency is not a regular file or is too large to inspect safely. Watching the repository workspace conservatively.',
             );
             continue;
           }
@@ -1258,10 +1263,10 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         inspectedStructuredPrompts.add(promptPath);
         try {
-          if (fs.statSync(promptPath).size > MAX_STRUCTURED_FILE_BYTES) {
+          if (!canReadStructuredFile(promptPath)) {
             watchDependencyRoots();
             core.warning(
-              'Structured prompt dependency is too large to inspect safely. Watching the repository workspace conservatively.',
+              'Structured prompt dependency is not a regular file or is too large to inspect safely. Watching the repository workspace conservatively.',
             );
             continue;
           }
@@ -1544,10 +1549,10 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         inspectedExternalTestFiles.add(inspectionKey);
         try {
-          if (fs.statSync(externalTestPath).size > MAX_STRUCTURED_FILE_BYTES) {
+          if (!canReadStructuredFile(externalTestPath)) {
             watchDependencyRoots();
             core.warning(
-              'External test dependency is too large to inspect safely. Watching the repository workspace conservatively.',
+              'External test dependency is not a regular file or is too large to inspect safely. Watching the repository workspace conservatively.',
             );
             continue;
           }
