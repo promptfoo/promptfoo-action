@@ -423,6 +423,49 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should accurately describe a PR full scan after a monitored prompt is removed', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/remaining.txt',
+        'prompts/unchanged.txt',
+      ]);
+
+      await run();
+
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluated prompt files: prompts/remaining.txt, prompts/unchanged.txt',
+          ),
+        }),
+      );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.not.stringContaining('LLM prompt was modified'),
+        }),
+      );
+    });
+
+    test('should accurately describe a PR full scan that falls back to config prompts', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain('--prompts');
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Evaluation used prompts defined in the Promptfoo config.',
+          ),
+        }),
+      );
+    });
+
     test('should reject a CRLF rename-out when prompt-glob matching is capped', async () => {
       withInputs({ prompts: `prompts/${'a'.repeat(65536)}\nprompts/*.txt` });
       mockOctokit.paginate.mockResolvedValue([

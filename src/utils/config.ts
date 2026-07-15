@@ -16,7 +16,9 @@ const HTTP_FILE_CONFIG_KEYS = [
   'sessionParser',
 ] as const;
 const HTTP_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts)$/;
-const SCRIPT_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py|go|rb)$/;
+const PROVIDER_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py|go|rb)$/;
+const ASSERT_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py|rb)$/;
+const CASE_INSENSITIVE_JS_SELECTOR = /\.(?:[cm]?js|[cm]?ts)$/i;
 
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
@@ -340,16 +342,32 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
-    const stripFileSelector = (fileUrl: string, extension: RegExp): string => {
+    const processFileSelector = (
+      fileUrl: string,
+      extension: RegExp,
+      options: { firstColon?: boolean; requireExport?: boolean } = {},
+    ): void => {
       const rawFilename = fileUrl.slice('file://'.length);
-      const lastColon = rawFilename.lastIndexOf(':');
-      const candidateFilename = rawFilename.slice(0, lastColon);
-      const candidateExport = rawFilename.slice(lastColon + 1);
-      return lastColon !== -1 &&
-        candidateExport &&
-        extension.test(candidateFilename)
-        ? `file://${candidateFilename}`
-        : fileUrl;
+      const colon = options.firstColon
+        ? rawFilename.indexOf(':')
+        : rawFilename.lastIndexOf(':');
+      const candidateFilename = rawFilename.slice(0, colon);
+      const candidateExport = rawFilename.slice(colon + 1);
+      if (colon === -1 || (options.requireExport && !candidateExport)) {
+        processFileUrl(fileUrl);
+        return;
+      }
+      const normalized = `file://${candidateFilename}`;
+      if (extension.test(candidateFilename)) {
+        processFileUrl(normalized);
+        return;
+      }
+      if (CASE_INSENSITIVE_JS_SELECTOR.test(candidateFilename)) {
+        processFileUrl(fileUrl);
+        processFileUrl(normalized);
+        return;
+      }
+      processFileUrl(fileUrl);
     };
 
     // Extract provider files
@@ -357,12 +375,12 @@ export function extractFileDependencies(configPath: string): string[] {
     if (providers.length > 0) {
       for (const provider of providers) {
         if (typeof provider === 'string' && provider.startsWith('file://')) {
-          processFileUrl(provider);
+          processFileSelector(provider, PROVIDER_FILE_SELECTOR);
         } else if (
           typeof provider === 'object' &&
           provider.id?.startsWith('file://')
         ) {
-          processFileUrl(provider.id);
+          processFileSelector(provider.id, PROVIDER_FILE_SELECTOR);
         } else if (typeof provider === 'object' && provider !== null) {
           const httpProviders: Array<[string, unknown]> =
             typeof provider.id === 'string'
@@ -383,7 +401,9 @@ export function extractFileDependencies(configPath: string): string[] {
             for (const key of HTTP_FILE_CONFIG_KEYS) {
               const value = providerConfig[key];
               if (typeof value === 'string' && value.startsWith('file://')) {
-                processFileUrl(stripFileSelector(value, HTTP_FILE_SELECTOR));
+                processFileSelector(value, HTTP_FILE_SELECTOR, {
+                  requireExport: true,
+                });
               }
             }
           }
@@ -413,7 +433,7 @@ export function extractFileDependencies(configPath: string): string[] {
       if (!vars) return;
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(stripFileSelector(value, SCRIPT_FILE_SELECTOR));
+          processFileUrl(value);
         } else if (
           typeof value === 'object' &&
           value !== null &&
@@ -441,7 +461,9 @@ export function extractFileDependencies(configPath: string): string[] {
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
-          processFileUrl(stripFileSelector(assert.value, SCRIPT_FILE_SELECTOR));
+          processFileSelector(assert.value, ASSERT_FILE_SELECTOR, {
+            firstColon: true,
+          });
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&

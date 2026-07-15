@@ -1138,11 +1138,11 @@ export async function run(): Promise<void> {
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const modifiedFiles = formatFileListForDisplay(evaluatedPromptFiles);
       const description =
-        configChanged || dependencyChanged
-          ? useConfigPrompts
-            ? '⚠️ Evaluation used prompts defined in the Promptfoo config.'
-            : `⚠️ Evaluated prompt files: ${modifiedFiles}`
-          : `⚠️ LLM prompt was modified in these files: ${modifiedFiles}`;
+        useConfigPrompts || evaluatedPromptFiles.length === 0
+          ? '⚠️ Evaluation used prompts defined in the Promptfoo config.'
+          : configChanged || dependencyChanged || changedFilesList.length === 0
+            ? `⚠️ Evaluated prompt files: ${modifiedFiles}`
+            : `⚠️ LLM prompt was modified in these files: ${modifiedFiles}`;
       let body = `${description}
 
 | Success | Failure |

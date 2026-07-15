@@ -102,10 +102,34 @@ targets:
       '../config/transforms/response.cjs',
       '../config/validators/named.ts',
       '../config/validators/literal.JS:acceptStatus',
+      '../config/validators/literal.JS',
       '../config/transforms/empty.js:',
       '../config/validators/target.mjs',
       '../config/transforms/parser.mts',
       '../config/transforms/session.cts',
+    ]);
+  });
+
+  it('should track provider script selectors and both uppercase JavaScript interpretations', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/python.py:call_api
+  - id: file://providers/golang.go:CallApi
+  - file://providers/ruby.rb:Namespace::call_api
+  - file://providers/upper.JS:callApi
+targets:
+  - id: file://providers/target.mts:callApi
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/providers/python.py',
+      '../config/providers/golang.go',
+      '../config/providers/ruby.rb:Namespace::call_api',
+      '../config/providers/upper.JS:callApi',
+      '../config/providers/upper.JS',
+      '../config/providers/target.mts',
     ]);
   });
 
@@ -186,7 +210,7 @@ tests:
     expect(deps).toContain('../config/validators/custom.js');
   });
 
-  it('should strip supported lowercase script selectors from vars and assertions', () => {
+  it('should preserve literal var globs and normalize only supported assertion selectors', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
   - vars:
@@ -196,6 +220,10 @@ tests:
     assert:
       - type: javascript
         value: file://validators/check.go:Check
+      - type: ruby
+        value: file://validators/check.rb:Namespace::Check
+      - type: javascript
+        value: file://validators/upper.JS:Check
       - type: javascript
         value: 'file://validators/empty.py:'
 defaultTest:
@@ -209,13 +237,16 @@ defaultTest:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual([
-      '../config/vars/default.mts',
+      '../config/vars/default.mts:build',
       '../config/validators/default.cts',
-      '../config/vars/build.rb',
-      '../config/vars/build.go',
+      '../config/vars/build.rb:func',
+      '../config/vars/build.go:Func',
       '../config/vars/literal.RB:Build',
-      '../config/validators/check.go',
-      '../config/validators/empty.py:',
+      '../config/validators/check.go:Check',
+      '../config/validators/check.rb',
+      '../config/validators/upper.JS:Check',
+      '../config/validators/upper.JS',
+      '../config/validators/empty.py',
     ]);
   });
 
