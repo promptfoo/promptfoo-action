@@ -20,18 +20,24 @@ const PROVIDER_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py|go|rb)$/;
 const ASSERT_FILE_SELECTOR = /\.(?:[cm]?js|[cm]?ts|py|rb)$/;
 const CASE_INSENSITIVE_JS_SELECTOR = /\.(?:[cm]?js|[cm]?ts)$/i;
 
+interface ConfigAssertion {
+  type?: string;
+  value?: string | { file?: string };
+  assert?: ConfigAssertion[];
+}
+
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   targets?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
+    assert?: ConfigAssertion[];
     [key: string]: unknown;
   }>;
   defaultTest?: {
     vars?: { [key: string]: string | { file?: string } };
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
+    assert?: ConfigAssertion[];
   };
 }
 
@@ -452,10 +458,10 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Extract assert files
-    const extractAssertFiles = (
-      asserts?: Array<{ type?: string; value?: unknown }>,
-    ): void => {
-      if (!asserts) return;
+    const visitedAssertSets = new WeakSet<object>();
+    const extractAssertFiles = (asserts?: ConfigAssertion[]): void => {
+      if (!Array.isArray(asserts) || visitedAssertSets.has(asserts)) return;
+      visitedAssertSets.add(asserts);
       for (const assert of asserts) {
         if (
           typeof assert.value === 'string' &&
@@ -477,6 +483,9 @@ export function extractFileDependencies(configPath: string): string[] {
           if (absolutePath) {
             dependencies.add(absolutePath);
           }
+        }
+        if (assert.type === 'assert-set' && Array.isArray(assert.assert)) {
+          extractAssertFiles(assert.assert);
         }
       }
     };

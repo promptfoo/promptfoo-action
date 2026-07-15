@@ -250,6 +250,48 @@ defaultTest:
     ]);
   });
 
+  it('should extract nested assert-set validators and stop on cyclic YAML aliases', () => {
+    mockFs.readFileSync.mockReturnValue(`
+shared: &cycle
+  type: assert-set
+  assert:
+    - *cycle
+defaultTest:
+  assert:
+    - type: assert-set
+      assert:
+        - type: ruby
+          value: file://validators/default.rb:Namespace::check
+tests:
+  - assert:
+      - *cycle
+      - type: assert-set
+        assert:
+          - type: javascript
+            value: file://validators/nested.js:check
+          - type: python
+            value: file://validators/nested.py:check
+          - type: ruby
+            value: file://validators/nested.rb:Namespace::check
+          - type: assert-set
+            assert:
+              - type: javascript
+                value:
+                  file: validators/deeper.ts
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/validators/default.rb',
+      '../config/validators/nested.js',
+      '../config/validators/nested.py',
+      '../config/validators/nested.rb',
+      '../config/validators/deeper.ts',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should extract defaultTest files', () => {
     const configContent = `
 defaultTest:
