@@ -1754,6 +1754,28 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should run for a repository change watched by an external config fallback', async () => {
+      withInputs({ config: '/private/configs/promptfooconfig.yaml' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/current.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        '../../private/configs/',
+        './',
+      ]);
+
+      await run();
+
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        '/private/configs/promptfooconfig.yaml',
+      );
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should skip a README-only change for a root-level dependency glob', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);

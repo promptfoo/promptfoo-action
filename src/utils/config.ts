@@ -403,6 +403,22 @@ export function extractFileDependencies(configPath: string): string[] {
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const dependencyRoots =
     dependencyRoot === cwd ? [cwd] : [dependencyRoot, cwd];
+  const watchDependencyRoots = (): void => {
+    for (const root of dependencyRoots) {
+      dependencies.add(`${root}${path.sep}`);
+    }
+  };
+  const toRepositoryPath = (dep: string): string => {
+    const relativePath = path.relative(cwd, dep);
+    const repositoryPath = relativePath.split(path.sep).join('/');
+    if (!repositoryPath) {
+      return './';
+    }
+    if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
+      return `${repositoryPath}/`;
+    }
+    return repositoryPath;
+  };
   let configParsed = false;
 
   try {
@@ -410,10 +426,8 @@ export function extractFileDependencies(configPath: string): string[] {
       core.warning(
         'Config dependency file is too large to inspect safely. Watching the repository workspace conservatively.',
       );
-      const relativeRoot = path.relative(cwd, dependencyRoot);
-      return [
-        relativeRoot ? `${relativeRoot.split(path.sep).join('/')}/` : './',
-      ];
+      watchDependencyRoots();
+      return Array.from(dependencies).map(toRepositoryPath);
     }
     const configContent = fs.readFileSync(configPath, 'utf8');
     if (!configContent.trim()) {
@@ -563,7 +577,7 @@ export function extractFileDependencies(configPath: string): string[] {
     ): string[] => {
       const renderedFileUrl = renderEnvTemplate(fileUrl, environment);
       if (/\{\{|\{%|\{#/.test(renderedFileUrl)) {
-        dependencies.add(`${dependencyRoot}${path.sep}`);
+        watchDependencyRoots();
         return [];
       }
 
@@ -601,7 +615,7 @@ export function extractFileDependencies(configPath: string): string[] {
       }
       const isFileGlob = hasGlobMagic(filePath);
       if (isFileGlob === undefined) {
-        dependencies.add(`${dependencyRoot}${path.sep}`);
+        watchDependencyRoots();
         core.warning(
           'Ignoring an invalid or oversized config dependency glob. Watching the repository workspace conservatively.',
         );
@@ -610,7 +624,7 @@ export function extractFileDependencies(configPath: string): string[] {
       if (isFileGlob) {
         const expandedPaths = safelyExpandGlob(filePath);
         if (!expandedPaths) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           core.warning(
             'Config dependency glob has too many brace alternatives. Watching the repository workspace conservatively.',
           );
@@ -632,7 +646,7 @@ export function extractFileDependencies(configPath: string): string[] {
           }
         }
         if (unsafePattern) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           core.warning(
             'Ignoring unsafe config dependency glob alternative: brace traversal branches must stay within the repository workspace.',
           );
@@ -644,7 +658,7 @@ export function extractFileDependencies(configPath: string): string[] {
             (safePattern) => hasGlobMagic(safePattern) === undefined,
           )
         ) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           core.warning(
             'Ignoring an invalid or oversized config dependency glob. Watching the repository workspace conservatively.',
           );
@@ -656,7 +670,7 @@ export function extractFileDependencies(configPath: string): string[] {
           braceExpandMax: MAX_BRACE_EXPANSIONS,
         });
         if (matches.length > MAX_GLOB_MATCHES) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           core.warning(
             'Config dependency glob produced too many matches. Watching the repository workspace conservatively.',
           );
@@ -703,7 +717,7 @@ export function extractFileDependencies(configPath: string): string[] {
       );
       if (!absolutePath) {
         if (renderedFileUrl !== fileUrl) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
         }
         return [];
       }
@@ -747,7 +761,7 @@ export function extractFileDependencies(configPath: string): string[] {
       providerValuesVisited += 1;
       if (providerValuesVisited > MAX_PROVIDER_VALUES) {
         providerValueLimitReached = true;
-        dependencies.add(`${dependencyRoot}${path.sep}`);
+        watchDependencyRoots();
         core.warning(
           'Provider dependency graph is too large to inspect safely. Watching the repository workspace conservatively.',
         );
@@ -778,7 +792,7 @@ export function extractFileDependencies(configPath: string): string[] {
           return;
         }
         if (isProviderReference && renderedValue.startsWith('exec:')) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           return;
         }
         if (
@@ -794,7 +808,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         if (!renderedValue.startsWith('file://')) {
           if (/\{\{|\{%|\{#/.test(renderedValue)) {
-            dependencies.add(`${dependencyRoot}${path.sep}`);
+            watchDependencyRoots();
           }
           return;
         }
@@ -810,7 +824,7 @@ export function extractFileDependencies(configPath: string): string[] {
             if (renderedValue === value) {
               processFileUrl(`file://${latestPath}`);
             } else {
-              dependencies.add(`${dependencyRoot}${path.sep}`);
+              watchDependencyRoots();
             }
           }
           return;
@@ -911,7 +925,7 @@ export function extractFileDependencies(configPath: string): string[] {
           renderedAuthType !== undefined &&
           /\{\{|\{%|\{#/.test(renderedAuthType)
         ) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
         }
         const fileAuthPath =
           isHttpAuthContext &&
@@ -929,7 +943,7 @@ export function extractFileDependencies(configPath: string): string[] {
             authEnvironment,
           );
           if (/\{\{|\{%|\{#/.test(renderedAuthPath)) {
-            dependencies.add(`${dependencyRoot}${path.sep}`);
+            watchDependencyRoots();
           } else {
             const authPath = renderedAuthPath.startsWith('file://')
               ? providerFilePath(renderedAuthPath, true)
@@ -944,7 +958,7 @@ export function extractFileDependencies(configPath: string): string[] {
             if (absoluteAuthPath) {
               dependencies.add(absoluteAuthPath);
             } else if (renderedAuthPath !== fileAuthPath) {
-              dependencies.add(`${dependencyRoot}${path.sep}`);
+              watchDependencyRoots();
             }
           }
         }
@@ -975,7 +989,7 @@ export function extractFileDependencies(configPath: string): string[] {
               credentialEnvironment,
             );
             if (/\{\{|\{%|\{#/.test(renderedCredentialPath)) {
-              dependencies.add(`${dependencyRoot}${path.sep}`);
+              watchDependencyRoots();
               continue;
             }
             const credentialPath = renderedCredentialPath.startsWith('file://')
@@ -991,7 +1005,7 @@ export function extractFileDependencies(configPath: string): string[] {
             if (absoluteCredentialPath) {
               dependencies.add(absoluteCredentialPath);
             } else if (renderedCredentialPath !== nestedValue) {
-              dependencies.add(`${dependencyRoot}${path.sep}`);
+              watchDependencyRoots();
             }
             continue;
           }
@@ -1037,7 +1051,7 @@ export function extractFileDependencies(configPath: string): string[] {
             isProviderReference &&
             renderedProviderKey.startsWith('exec:')
           ) {
-            dependencies.add(`${dependencyRoot}${path.sep}`);
+            watchDependencyRoots();
           } else if (
             inspectProviderKey &&
             renderedProviderKey.startsWith('file://')
@@ -1047,7 +1061,7 @@ export function extractFileDependencies(configPath: string): string[] {
             inspectProviderKey &&
             /\{\{|\{%|\{#/.test(renderedProviderKey)
           ) {
-            dependencies.add(`${dependencyRoot}${path.sep}`);
+            watchDependencyRoots();
           }
           processProviderValue(
             nestedValue,
@@ -1127,7 +1141,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }
 
         if (inspectedProviderFiles.size >= MAX_PROVIDER_CONFIGS) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           if (!providerConfigLimitReached) {
             providerConfigLimitReached = true;
             core.warning(
@@ -1140,7 +1154,7 @@ export function extractFileDependencies(configPath: string): string[] {
         inspectedProviderFiles.add(inspectionKey);
         try {
           if (fs.statSync(absolutePath).size > MAX_STRUCTURED_FILE_BYTES) {
-            dependencies.add(`${dependencyRoot}${path.sep}`);
+            watchDependencyRoots();
             core.warning(
               'Provider config dependency is too large to inspect safely. Watching the repository workspace conservatively.',
             );
@@ -1163,7 +1177,7 @@ export function extractFileDependencies(configPath: string): string[] {
           core.warning(
             `Failed to inspect provider config dependency "${JSON.stringify(displayProviderPath).slice(1, -1)}". Watching the repository workspace conservatively.`,
           );
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
         }
       }
     };
@@ -1185,7 +1199,7 @@ export function extractFileDependencies(configPath: string): string[] {
         mayRenderFileUrl(value) &&
         /\{\{|\{%|\{#/.test(renderedValue)
       ) {
-        dependencies.add(`${dependencyRoot}${path.sep}`);
+        watchDependencyRoots();
       }
     };
 
@@ -1195,7 +1209,7 @@ export function extractFileDependencies(configPath: string): string[] {
     ): void => {
       const renderedPath = renderEnvTemplate(filePath, configEnvironment);
       if (/\{\{|\{%|\{#/.test(renderedPath)) {
-        dependencies.add(`${dependencyRoot}${path.sep}`);
+        watchDependencyRoots();
         return;
       }
 
@@ -1214,7 +1228,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const inspectStructuredPrompt = (value: string): void => {
       const renderedValue = renderEnvTemplate(value, configEnvironment);
       if (/\{\{|\{%|\{#/.test(renderedValue)) {
-        dependencies.add(`${dependencyRoot}${path.sep}`);
+        watchDependencyRoots();
         return;
       }
       const fileUrl = renderedValue.startsWith('file://')
@@ -1229,7 +1243,7 @@ export function extractFileDependencies(configPath: string): string[] {
           continue;
         }
         if (inspectedStructuredPrompts.size >= MAX_PROVIDER_CONFIGS) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           core.warning(
             'Too many structured prompt dependencies to inspect safely. Watching the repository workspace conservatively.',
           );
@@ -1238,7 +1252,7 @@ export function extractFileDependencies(configPath: string): string[] {
         inspectedStructuredPrompts.add(promptPath);
         try {
           if (fs.statSync(promptPath).size > MAX_STRUCTURED_FILE_BYTES) {
-            dependencies.add(`${dependencyRoot}${path.sep}`);
+            watchDependencyRoots();
             core.warning(
               'Structured prompt dependency is too large to inspect safely. Watching the repository workspace conservatively.',
             );
@@ -1256,7 +1270,7 @@ export function extractFileDependencies(configPath: string): string[] {
             const current = pending.pop();
             structuredPromptValuesVisited += 1;
             if (structuredPromptValuesVisited > MAX_PROVIDER_VALUES) {
-              dependencies.add(`${dependencyRoot}${path.sep}`);
+              watchDependencyRoots();
               core.warning(
                 'Structured prompt dependency graph is too large to inspect safely. Watching the repository workspace conservatively.',
               );
@@ -1273,7 +1287,7 @@ export function extractFileDependencies(configPath: string): string[] {
                 mayRenderFileUrl(current) &&
                 /\{\{|\{%|\{#/.test(renderedCurrent)
               ) {
-                dependencies.add(`${dependencyRoot}${path.sep}`);
+                watchDependencyRoots();
               }
             } else if (
               current &&
@@ -1285,7 +1299,7 @@ export function extractFileDependencies(configPath: string): string[] {
             }
           }
         } catch {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           core.warning(
             'Failed to inspect a structured prompt dependency. Watching the repository workspace conservatively.',
           );
@@ -1410,7 +1424,7 @@ export function extractFileDependencies(configPath: string): string[] {
           mayRenderFileUrl(fileValue) &&
           /\{\{|\{%|\{#/.test(renderedValue)
         ) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
         }
       }
     };
@@ -1515,7 +1529,7 @@ export function extractFileDependencies(configPath: string): string[] {
           continue;
         }
         if (inspectedExternalTestFiles.size >= MAX_PROVIDER_CONFIGS) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           core.warning(
             'Too many external test dependencies to inspect safely. Watching the repository workspace conservatively.',
           );
@@ -1524,7 +1538,7 @@ export function extractFileDependencies(configPath: string): string[] {
         inspectedExternalTestFiles.add(inspectionKey);
         try {
           if (fs.statSync(externalTestPath).size > MAX_STRUCTURED_FILE_BYTES) {
-            dependencies.add(`${dependencyRoot}${path.sep}`);
+            watchDependencyRoots();
             core.warning(
               'External test dependency is too large to inspect safely. Watching the repository workspace conservatively.',
             );
@@ -1545,7 +1559,7 @@ export function extractFileDependencies(configPath: string): string[] {
             const current = pending.pop();
             externalTestValuesVisited += 1;
             if (externalTestValuesVisited > MAX_PROVIDER_VALUES) {
-              dependencies.add(`${dependencyRoot}${path.sep}`);
+              watchDependencyRoots();
               core.warning(
                 'External test dependency graph is too large to inspect safely. Watching the repository workspace conservatively.',
               );
@@ -1562,7 +1576,7 @@ export function extractFileDependencies(configPath: string): string[] {
                 mayRenderFileUrl(current) &&
                 /\{\{|\{%|\{#/.test(renderedCurrent)
               ) {
-                dependencies.add(`${dependencyRoot}${path.sep}`);
+                watchDependencyRoots();
               }
               continue;
             }
@@ -1663,7 +1677,7 @@ export function extractFileDependencies(configPath: string): string[] {
             }
           }
         } catch {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+          watchDependencyRoots();
           core.warning(
             'Failed to inspect an external test dependency. Watching the repository workspace conservatively.',
           );
@@ -1750,27 +1764,15 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Convert absolute paths back to relative paths from working directory
-    return Array.from(dependencies).map((dep) => {
-      const relativePath = path.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path.sep).join('/');
-      if (!repositoryPath) {
-        return './';
-      }
-      // Preserve trailing slash for directories
-      if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
-        return `${repositoryPath}/`;
-      }
-      return repositoryPath;
-    });
+    return Array.from(dependencies).map(toRepositoryPath);
   } catch (error) {
     if (configParsed) {
       core.warning(
         'Failed to extract config dependencies. Watching the repository workspace conservatively.',
       );
-      const relativeRoot = path.relative(cwd, dependencyRoot);
-      return [
-        relativeRoot ? `${relativeRoot.split(path.sep).join('/')}/` : './',
-      ];
+      dependencies.clear();
+      watchDependencyRoots();
+      return Array.from(dependencies).map(toRepositoryPath);
     }
 
     core.warning(

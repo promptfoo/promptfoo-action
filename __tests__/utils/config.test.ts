@@ -229,6 +229,18 @@ providers:
     vi.unstubAllEnvs();
   });
 
+  it('should watch the external config and repository roots for an unresolved provider template', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/{{ env.MISSING_PROVIDER }}.py
+`);
+
+    expect(
+      extractFileDependencies('/private/configs/promptfooconfig.yaml'),
+    ).toEqual(['../../private/configs/', './']);
+  });
+
   it('should extract environment templates that render to complete provider and tool file URLs', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     vi.stubEnv('PROMPTFOO_PROVIDER_REF', 'file://providers/provider.py:café');
@@ -2735,7 +2747,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/']);
+    expect(deps).toEqual(['../config/', './']);
   });
 
   it('should conservatively watch the workspace for an unreadable provider YAML file', () => {
@@ -3733,7 +3745,7 @@ recursive: &recursive
 
     expect(
       extractFileDependencies('/private/configs/promptfooconfig.yaml'),
-    ).toEqual(['../../private/configs/']);
+    ).toEqual(['../../private/configs/', './']);
     expect(mockFs.readFileSync).not.toHaveBeenCalled();
   });
 
@@ -4418,7 +4430,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/']);
+    expect(deps).toEqual(['../config/', './']);
     expect(mockGlob.sync).not.toHaveBeenCalled();
   });
 
