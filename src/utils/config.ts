@@ -1069,6 +1069,7 @@ export function extractFileDependencies(
           );
           continue;
         }
+        let promptContent: string | undefined;
         try {
           if (visitedStructuredFiles.has(physicalPromptFile)) continue;
           visitedStructuredFiles.add(physicalPromptFile);
@@ -1089,7 +1090,7 @@ export function extractFileDependencies(
             );
             continue;
           }
-          const promptContent = fs.readFileSync(physicalPromptFile, 'utf8');
+          promptContent = fs.readFileSync(physicalPromptFile, 'utf8');
           const parsed = absolutePromptFile.endsWith('.jsonl')
             ? promptContent
                 .split(/\r?\n/)
@@ -1102,7 +1103,15 @@ export function extractFileDependencies(
                 });
           walk(parsed, physicalPromptFile);
         } catch {
-          // Promptfoo falls back to raw prompt content when structured parsing fails.
+          if (
+            promptContent !== undefined &&
+            absolutePromptFile.endsWith('.jsonl')
+          ) {
+            hasDynamicPromptDependencies = true;
+            core.warning(
+              'Structured dependency file could not be parsed safely; watching all repository changes',
+            );
+          }
         }
       }
     };

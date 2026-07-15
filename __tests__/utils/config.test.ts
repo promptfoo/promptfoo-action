@@ -252,6 +252,28 @@ prompts:
     );
   });
 
+  it.each([
+    [
+      'prompt',
+      'prompts:\n  - file: prompts/broken.jsonl\n',
+      '/prompts/broken.jsonl',
+    ],
+    ['test', 'tests:\n  - file://tests/broken.jsonl\n', '/tests/broken.jsonl'],
+  ])('should fail closed when a structured %s JSONL file cannot be parsed', (_kind, configContent, suffix) => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) return configContent;
+      if (candidate.endsWith(suffix)) {
+        return '{"content":"file://partials/system.txt"}\nnot-json\n';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
   it('should not read an escaping object-form structured prompt symlink', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('promptfooconfig.yaml')) {
