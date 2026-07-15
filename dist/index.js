@@ -40081,12 +40081,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         return [];
       }
       const driveNormalizedPath = filePath.replace(/^\/(?=[a-z]:[\\/])/i, "");
-      const preservePosixGlobEscapes = path6.sep === "/" && /\\[()[\]{}]/.test(driveNormalizedPath);
-      const normalizedPath = windowsPathsNoEscape ? preservePosixGlobEscapes ? driveNormalizedPath.replace(
-        /(\\+)([()[\]{}])|\\+/g,
-        (_match, slashes, escaped) => escaped ? `${slashes}${escaped}` : path6.sep
-      ) : driveNormalizedPath.replace(/\\/g, path6.sep) : driveNormalizedPath;
-      const useWindowsPathsNoEscape = windowsPathsNoEscape && !preservePosixGlobEscapes;
+      const normalizedPath = windowsPathsNoEscape ? driveNormalizedPath.replace(/\\/g, path6.sep) : driveNormalizedPath;
       if (isForeignWindowsPath(normalizedPath)) {
         if (!warnedForeignWindowsPath) {
           warnedForeignWindowsPath = true;
@@ -40100,7 +40095,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         normalizedPath,
         MAX_PROVIDER_REFERENCE_LENGTH,
         MAX_BRACE_EXPANSIONS,
-        useWindowsPathsNoEscape
+        windowsPathsNoEscape
       )) {
         addConservativeWatchRoots();
         warnSafe(
@@ -40111,7 +40106,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       const globOptions = {
         magicalBraces: true,
         braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-        ...useWindowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}
+        ...windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}
       };
       let isGlob;
       let expandedPaths;
@@ -40225,7 +40220,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
             relativePath,
             "config file dependency",
             preserveGlobRoot || hasEnvTemplate,
-            preserveGlobRoot || hasEnvTemplate
+            true
           )
         );
       }
@@ -40423,7 +40418,6 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
               processFilePath(
                 expandAndTrackEnvTemplates(part.source.path),
                 "provider multipart file dependency",
-                true,
                 true
               );
             }
@@ -40451,7 +40445,6 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
                   processFilePath(
                     expandAndTrackEnvTemplates(assetPath),
                     "provider security file dependency",
-                    true,
                     true
                   );
                 }
@@ -41171,7 +41164,8 @@ function formatRepeatCommentMarkdown(summary2) {
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 var MAX_GLOB_PATTERN_LENGTH = 65536;
-var MAX_GLOB_BRACE_EXPANSIONS = 1025;
+var MAX_GLOB_BRACE_EXPANSIONS = 1024;
+var GLOB_BRACE_EXPANSION_SENTINEL = MAX_GLOB_BRACE_EXPANSIONS + 1;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
@@ -41664,10 +41658,10 @@ async function run() {
                 dot: true,
                 windowsPathsNoEscape: true,
                 magicalBraces: true,
-                braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
+                braceExpandMax: GLOB_BRACE_EXPANSION_SENTINEL,
                 platform: "linux"
               });
-              if (matcher.set.length >= MAX_GLOB_BRACE_EXPANSIONS) {
+              if (matcher.set.length > MAX_GLOB_BRACE_EXPANSIONS) {
                 warning(
                   "Skipping config dependency glob matching because the pattern exceeds the maximum expansion size"
                 );
