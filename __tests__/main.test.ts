@@ -308,7 +308,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
     });
 
@@ -340,7 +340,10 @@ describe('GitHub Action Main', () => {
         allPrompts,
       );
       const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
-      expect(comment.body).toContain(allPrompts.join(', '));
+      expect(comment.body).toContain(
+        `Evaluated prompt files: ${allPrompts.join(', ')}`,
+      );
+      expect(comment.body).not.toContain('LLM prompt was modified');
     });
 
     test('should evaluate only the changed prompt for a prompt-only change', async () => {
@@ -361,6 +364,7 @@ describe('GitHub Action Main', () => {
       const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
       expect(comment.body).toContain('prompts/first.txt');
       expect(comment.body).not.toContain('prompts/second.txt');
+      expect(comment.body).toContain('LLM prompt was modified');
     });
 
     test('should exclude the config file when a prompt glob also matches it', async () => {
@@ -601,6 +605,11 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockExec.exec).toHaveBeenCalled();
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain(
+        'Evaluated prompt files: prompts/first.txt',
+      );
+      expect(comment.body).not.toContain('LLM prompt was modified');
     });
 
     test('should not interpolate a config dependency containing control characters', async () => {
@@ -2610,6 +2619,9 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain('Evaluated config-defined prompts');
+      expect(comment.body).not.toContain('LLM prompt was modified');
     });
 
     test('should run when a file inside a dependency directory changes', async () => {
@@ -2784,7 +2796,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
 
       // Should still fail the action after posting the comment
