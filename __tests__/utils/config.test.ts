@@ -12,6 +12,8 @@ vi.mock('fs', async () => {
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
     statSync: vi.fn(),
+    lstatSync: vi.fn(),
+    realpathSync: vi.fn(),
     promises: {
       access: vi.fn(),
       writeFile: vi.fn(),
@@ -26,6 +28,8 @@ describe('extractFileDependencies', () => {
     readFileSync: Mock;
     existsSync: Mock;
     statSync: Mock;
+    lstatSync: Mock;
+    realpathSync: Mock;
   };
   const mockGlob = glob as unknown as {
     hasMagic: Mock;
@@ -40,6 +44,10 @@ describe('extractFileDependencies', () => {
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
+    mockFs.lstatSync.mockImplementation(() => {
+      throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+    });
+    mockFs.realpathSync.mockImplementation((value: string) => value);
   });
 
   it('should extract file:// providers', () => {
@@ -167,6 +175,11 @@ commandLineOptions:
   it('should preserve sibling dependencies when an extension glob is too long', async () => {
     const realGlob = await vi.importActual<typeof import('glob')>('glob');
     mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+    mockFs.lstatSync.mockImplementation((value: string) => {
+      throw Object.assign(new Error('stat failed'), {
+        code: value.length > 65_536 ? 'ENAMETOOLONG' : 'ENOENT',
+      });
+    });
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file://providers/custom.py
@@ -384,7 +397,37 @@ extensions:
     const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
 
     expect(deps).toContain('hooks/policy.js');
-    expect(deps).toContain('hooks');
+    expect(deps).toContain('hooks/');
+  });
+
+  it('should preserve an extension glob base when the last hook is deleted', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['hooks/']);
+  });
+
+  it('should preserve a filesystem-root glob base as a directory', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies('/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../../']);
   });
 
   it('should conservatively watch the workspace for referenced commandLineOptions', () => {
@@ -493,7 +536,9 @@ extensions:
 
     expect(deps).toEqual([]);
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('must stay within the repository workspace'),
+      expect.stringContaining(
+        'must stay within the checkout or config directory',
+      ),
     );
   });
 
@@ -578,6 +623,28 @@ shared: &shared
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([]);
+  });
+
+  it('should fail closed when dependency extraction throws after parsing a config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/policy.js:beforeAll
+`);
+    mockGlob.hasMagic.mockImplementation(() => {
+      throw new Error('glob failed\n::error::forged-extractor');
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+    expect(
+      (core.warning as unknown as Mock).mock.calls
+        .map((call) => String(call[0]))
+        .join('\n'),
+    ).not.toContain('::error::forged-extractor');
   });
 
   it('should ignore dependencies that escape the config directory', () => {
@@ -693,6 +760,219 @@ providers:
     expect(deps).toEqual(['../config/providers/custom.py']);
   });
 
+  it('should ignore checkout glob symlinks that resolve outside both dependency roots', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/hooks/safe.js',
+      '/test/working/hooks/escaped.js',
+    ]);
+    mockFs.realpathSync.mockImplementation((value: string) =>
+      value.endsWith('/escaped.js') ? '/test/outside/secret.js' : value,
+    );
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toContain('hooks/safe.js');
+    expect(deps).toContain('hooks/');
+    expect(deps).not.toContain('hooks/escaped.js');
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within an allowed dependency root'),
+    );
+  });
+
+  it('should preserve safe glob siblings when realpath is denied', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/hooks/safe.js',
+      '/test/working/hooks/denied.js',
+    ]);
+    mockFs.realpathSync.mockImplementation((value: string) => {
+      if (value.endsWith('/denied.js')) {
+        throw new Error('EACCES: denied\n::error::forged-annotation');
+      }
+      return value;
+    });
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toContain('hooks/safe.js');
+    expect(deps).toContain('hooks/');
+    expect(deps).not.toContain('hooks/denied.js');
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Unable to resolve a config dependency glob match',
+      ),
+    );
+    expect(
+      (core.warning as unknown as Mock).mock.calls
+        .map((call) => String(call[0]))
+        .join('\n'),
+    ).not.toContain('::error::forged-annotation');
+  });
+
+  it('should preserve safe glob matches from a symlinked config root', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/shared-link/hooks/safe.js']);
+    mockFs.realpathSync.mockImplementation((value: string) =>
+      value.startsWith('/test/working/shared-link')
+        ? value.replace('/test/working/shared-link', '/test/shared-real')
+        : value,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/shared-link/promptfooconfig.yaml',
+    );
+
+    expect(deps).toContain('shared-link/hooks/safe.js');
+    expect(deps).toContain('shared-link/hooks/');
+  });
+
+  it('should preserve checkout glob matches when an unused external root is denied', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/*.js
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/hooks/safe.js']);
+    mockFs.realpathSync.mockImplementation((value: string) => {
+      if (value === '/test/shared') {
+        throw new Error('EACCES: denied\n::error::forged-root');
+      }
+      return value;
+    });
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toContain('hooks/safe.js');
+    expect(deps).toContain('hooks/');
+    expect(mockFs.realpathSync).toHaveBeenCalledWith('/test/shared');
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Unable to resolve an allowed dependency root'),
+    );
+    expect(
+      (core.warning as unknown as Mock).mock.calls
+        .map((call) => String(call[0]))
+        .join('\n'),
+    ).not.toContain('::error::forged-root');
+  });
+
+  it('should ignore direct checkout extension symlinks that resolve outside both dependency roots', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/safe.js:beforeAll
+  - file:///test/working/hooks/escaped.js:beforeAll
+`);
+    mockFs.lstatSync.mockReturnValue({} as fs.Stats);
+    mockFs.realpathSync.mockImplementation((value: string) =>
+      value.endsWith('/escaped.js') ? '/test/outside/secret.js' : value,
+    );
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toContain('hooks/safe.js');
+    expect(deps).not.toContain('hooks/escaped.js');
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within an allowed dependency root'),
+    );
+  });
+
+  it('should preserve safe direct extension siblings when realpath is denied', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/safe.js:beforeAll
+  - file:///test/working/hooks/denied.js:beforeAll
+`);
+    mockFs.lstatSync.mockReturnValue({} as fs.Stats);
+    mockFs.realpathSync.mockImplementation((value: string) => {
+      if (value.endsWith('/denied.js')) {
+        throw new Error('EACCES: denied\n::error::forged-direct');
+      }
+      return value;
+    });
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toContain('hooks/safe.js');
+    expect(deps).not.toContain('hooks/denied.js');
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Unable to resolve an existing config dependency',
+      ),
+    );
+    expect(
+      (core.warning as unknown as Mock).mock.calls
+        .map((call) => String(call[0]))
+        .join('\n'),
+    ).not.toContain('::error::forged-direct');
+  });
+
+  it('should not treat an inaccessible direct dependency as nonexistent', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/safe.js:beforeAll
+  - file:///test/working/hooks/denied.js:beforeAll
+`);
+    mockFs.existsSync.mockReturnValue(false);
+    mockFs.lstatSync.mockImplementation((value: string) => {
+      if (value.endsWith('/denied.js')) {
+        throw Object.assign(
+          new Error('EACCES: denied\n::error::forged-lstat'),
+          { code: 'EACCES' },
+        );
+      }
+      return {} as fs.Stats;
+    });
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toContain('hooks/safe.js');
+    expect(deps).not.toContain('hooks/denied.js');
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Unable to resolve an existing config dependency',
+      ),
+    );
+    expect(
+      (core.warning as unknown as Mock).mock.calls
+        .map((call) => String(call[0]))
+        .join('\n'),
+    ).not.toContain('::error::forged-lstat');
+  });
+
+  it('should preserve a direct dependency whose parent is not yet a directory', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file:///test/working/hooks/future.js:beforeAll
+`);
+    mockFs.lstatSync.mockImplementation(() => {
+      throw Object.assign(new Error('not a directory'), { code: 'ENOTDIR' });
+    });
+
+    const deps = extractFileDependencies('/test/shared/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['hooks/future.js']);
+  });
+
   it('should extract all file types from complex config', () => {
     const configContent = `
 providers:
@@ -786,8 +1066,8 @@ providers:
     expect(deps).toContain('../config/custom/lib/helper.js');
     expect(deps).toContain('../config/custom/utils/format.js');
     // Should also include directories for watching
-    expect(deps).toContain('../config/providers');
-    expect(deps).toContain('../config/custom');
+    expect(deps).toContain('../config/providers/');
+    expect(deps).toContain('../config/custom/');
   });
 
   it('should handle a glob without a base directory', () => {
@@ -819,7 +1099,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toContain('../config/providers/python');
+    expect(deps).toContain('../config/providers/python/');
   });
 
   it('should handle directory paths in file:// URLs', () => {
@@ -876,8 +1156,8 @@ tests:
 
     expect(deps).toContain('../config/test-data/data1.json');
     expect(deps).toContain('../config/validators/validator.js');
-    expect(deps).toContain('../config/test-data');
-    expect(deps).toContain('../config/validators');
+    expect(deps).toContain('../config/test-data/');
+    expect(deps).toContain('../config/validators/');
   });
 
   it('should ignore inline assertion values', () => {

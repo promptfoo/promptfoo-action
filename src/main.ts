@@ -471,6 +471,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
+    const allPromptFiles: string[] = [];
     const changedFilesList = changedFiles
       .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
       .filter((file) => file);
@@ -481,31 +482,30 @@ export async function run(): Promise<void> {
         nodir: true,
       });
 
+      const eligibleMatches = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...eligibleMatches);
+
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = eligibleMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
-          return (
-            repositoryFile !== configRepositoryPath &&
-            changedFilesList.includes(repositoryFile)
-          );
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
-        promptFiles.push(...allMatches);
+        promptFiles.push(...eligibleMatches);
       }
     }
 
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error('Prompt file paths must not contain newlines.');
     }
 
@@ -520,7 +520,7 @@ export async function run(): Promise<void> {
         extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(
-          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
+          `Found ${dependencies.length} file dependencies in config: ${JSON.stringify(dependencies)}`,
         );
 
         // Check if any changed file matches the dependencies
@@ -610,13 +610,13 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (
-      !useConfigPrompts &&
-      !configChanged &&
-      !dependencyChanged &&
-      promptFiles.length > 0
-    ) {
-      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
+    const promptFilesToEvaluate =
+      configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (!useConfigPrompts && promptFilesToEvaluate.length > 0) {
+      promptfooArgs = promptfooArgs.concat([
+        '--prompts',
+        ...promptFilesToEvaluate,
+      ]);
     }
     // Check if sharing is enabled and validate authentication upfront
     if (noShare) {
@@ -882,9 +882,9 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (promptFiles.length > 0) {
+      if (promptFilesToEvaluate.length > 0) {
         summary.addHeading('Evaluated Files', 3);
-        summary.addList(promptFiles);
+        summary.addList(promptFilesToEvaluate);
       }
 
       if (repeatCheckResult) {

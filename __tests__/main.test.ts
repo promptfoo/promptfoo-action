@@ -1096,7 +1096,13 @@ describe('GitHub Action Main', () => {
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
       );
-      expect(args).not.toContain('--prompts');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
+      );
     });
 
     test('should not narrow evaluation when a prompt and config change', async () => {
@@ -1113,7 +1119,13 @@ describe('GitHub Action Main', () => {
 
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
-      expect(args).not.toContain('--prompts');
+      expect(args).toEqual(
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/prompt1.txt',
+          'prompts/prompt2.txt',
+        ]),
+      );
     });
 
     test('should run when an extension dependency is renamed in a pull request', async () => {
@@ -1167,6 +1179,22 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should safely log a dependency path containing a workflow command', async () => {
+      const unsafeDependency = 'hooks/policy\n::error::forged-dependency.js';
+      mockOctokit.paginate.mockResolvedValue([{ filename: unsafeDependency }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([unsafeDependency]);
+
+      await run();
+
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        expect.stringContaining(
+          '"hooks/policy\\n::error::forged-dependency.js"',
+        ),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should reject a changed prompt path that could inject a workflow command', async () => {
       const unsafePrompt = 'prompts/policy\n::error::forged-annotation.txt';
       mockOctokit.paginate.mockResolvedValue([{ filename: unsafePrompt }]);
@@ -1186,6 +1214,22 @@ describe('GitHub Action Main', () => {
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data/']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when the last file in an extension glob is deleted', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'hooks/policy.js', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['hooks/']);
+      mockFsUtils.isDirectory.mockReturnValue(false);
 
       await run();
 

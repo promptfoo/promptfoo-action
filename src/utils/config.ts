@@ -44,6 +44,7 @@ export function extractFileDependencies(configPath: string): string[] {
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const isSafeDependency = (targetPath: string): boolean =>
     isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
+  let configParsed = false;
 
   try {
     if (/\.(?:[cm]?js|[cm]?ts)$/i.test(configPath)) {
@@ -67,6 +68,27 @@ export function extractFileDependencies(configPath: string): string[] {
       core.debug('Config file is empty or invalid');
       return [];
     }
+    configParsed = true;
+
+    let resolvedDependencyRoots: string[] | undefined;
+    const getResolvedDependencyRoots = (): string[] => {
+      if (resolvedDependencyRoots) {
+        return resolvedDependencyRoots;
+      }
+      resolvedDependencyRoots = Array.from(new Set([configDir, cwd])).flatMap(
+        (root) => {
+          try {
+            return [fs.realpathSync(root)];
+          } catch {
+            core.warning(
+              'Unable to resolve an allowed dependency root. Ignoring this root.',
+            );
+            return [];
+          }
+        },
+      );
+      return resolvedDependencyRoots;
+    };
 
     const resolveConfigDependency = (
       filePath: string,
@@ -82,21 +104,63 @@ export function extractFileDependencies(configPath: string): string[] {
 
         if (path.win32.isAbsolute(filePath) && !path.isAbsolute(filePath)) {
           throw new Error(
-            `${source} must stay within the repository workspace`,
+            `${source} must stay within the checkout or config directory`,
           );
         }
 
         const absolutePath = path.resolve(configDir, filePath);
         if (!isSafeDependency(absolutePath)) {
           throw new Error(
-            `${source} must stay within the repository workspace`,
+            `${source} must stay within the checkout or config directory`,
           );
+        }
+
+        if (
+          filePath.length > MAX_GLOB_PATTERN_LENGTH ||
+          absolutePath.length > MAX_GLOB_PATTERN_LENGTH
+        ) {
+          return absolutePath;
+        }
+
+        try {
+          fs.lstatSync(absolutePath);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === 'ENOENT' || code === 'ENOTDIR') {
+            return absolutePath;
+          }
+          core.warning(
+            'Unable to resolve an existing config dependency. Ignoring this dependency.',
+          );
+          return undefined;
+        }
+
+        let resolvedPath: string;
+        try {
+          resolvedPath = fs.realpathSync(absolutePath);
+        } catch {
+          core.warning(
+            'Unable to resolve an existing config dependency. Ignoring this dependency.',
+          );
+          return undefined;
+        }
+        if (
+          !getResolvedDependencyRoots().some((root) =>
+            isPathInside(root, resolvedPath),
+          )
+        ) {
+          core.warning(
+            `Ignoring unsafe config dependency ${JSON.stringify(
+              filePath,
+            )}: config dependency must stay within an allowed dependency root`,
+          );
+          return undefined;
         }
 
         return absolutePath;
       } catch (error) {
         core.warning(
-          `Ignoring unsafe config dependency "${filePath}": ${String(
+          `Ignoring unsafe config dependency ${JSON.stringify(filePath)}: ${String(
             error,
           ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
         );
@@ -133,13 +197,28 @@ export function extractFileDependencies(configPath: string): string[] {
       if (glob.hasMagic(filePath)) {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, { nodir: true });
+        const globDependencyRoots = getResolvedDependencyRoots();
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
-          if (isSafeDependency(absoluteMatch)) {
-            dependencies.add(absoluteMatch);
-          } else {
+          try {
+            const resolvedMatch = fs.realpathSync(absoluteMatch);
+            if (
+              isSafeDependency(absoluteMatch) &&
+              globDependencyRoots.some((root) =>
+                isPathInside(root, resolvedMatch),
+              )
+            ) {
+              dependencies.add(absoluteMatch);
+              continue;
+            }
             core.warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+              `Ignoring unsafe config dependency glob match ${JSON.stringify(
+                match,
+              )}: config file dependency glob match must stay within an allowed dependency root`,
+            );
+          } catch {
+            core.warning(
+              'Unable to resolve a config dependency glob match. Ignoring this match.',
             );
           }
         }
@@ -156,7 +235,12 @@ export function extractFileDependencies(configPath: string): string[] {
           basePath = basePath ? path.join(basePath, part) : part;
         }
         if (basePath) {
-          dependencies.add(path.resolve(configDir, basePath));
+          const absoluteBase = path.resolve(configDir, basePath);
+          dependencies.add(
+            absoluteBase.endsWith(path.sep)
+              ? absoluteBase
+              : `${absoluteBase}${path.sep}`,
+          );
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
@@ -346,9 +430,15 @@ export function extractFileDependencies(configPath: string): string[] {
       }
       return repositoryPath;
     });
-  } catch (error) {
+  } catch {
+    if (configParsed) {
+      core.warning(
+        'Failed to extract dependencies from a parsed config. Watching the repository workspace for changes.',
+      );
+      return ['./'];
+    }
     core.warning(
-      `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
+      'Failed to read or parse the config while extracting dependencies.',
     );
     return [];
   }
