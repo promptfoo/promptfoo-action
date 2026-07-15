@@ -357,6 +357,65 @@ tests:
     ).toEqual(['../config/providers/custom.py']);
   });
 
+  it('should extract a bare file-auth path from an inline HTTP provider', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - provider:
+      id: https://example.test/infer
+      config:
+        auth:
+          type: file
+          path: ./auth/get-token.ts
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/auth/get-token.ts']);
+  });
+
+  it('should extract file URLs nested in an inline assertion config', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - assert:
+      - type: contains
+        config:
+          dataset: file://expected/dataset.json
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/expected/dataset.json']);
+  });
+
+  it('should extract a bare file-auth path and assertion config from an external test', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? [
+              '- provider:',
+              '    id: https://example.test/infer',
+              '    config:',
+              '      auth:',
+              '        type: file',
+              '        path: ./auth/get-token.ts',
+              '  assert:',
+              '    - type: contains',
+              '      config:',
+              '        dataset: file://expected/dataset.json',
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      '../config/auth/get-token.ts',
+      '../config/expected/dataset.json',
+    ]);
+  });
+
   it.each([
     'go',
     'rb',

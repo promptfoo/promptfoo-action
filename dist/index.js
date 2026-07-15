@@ -39880,6 +39880,9 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       extractVarFiles(nestedTest.vars, testBaseDir);
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
+        if (key === "auth" && typeof item === "object" && item !== null && "type" in item && item.type === "file" && "path" in item && typeof item.path === "string") {
+          processFileUrl(`file://${item.path}`, true);
+        }
         if (key === "provider" && includeFileUrls) {
           const providerId = typeof item === "string" ? item : typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" ? item.id : void 0;
           const localProvider = providerId?.match(
@@ -40134,12 +40137,15 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         if (typeof test.path === "string") {
           processTestFile(test.path);
           extractNestedFileUrls(test.config);
-          extractNestedFileUrls({ provider: test.provider });
+          extractNestedFileUrls({
+            provider: test.provider,
+            assert: test.assert
+          });
           continue;
         }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
-        extractNestedFileUrls({ provider: test.provider });
+        extractNestedFileUrls({ provider: test.provider, assert: test.assert });
       }
     }
     return Array.from(dependencies).map((dep) => {

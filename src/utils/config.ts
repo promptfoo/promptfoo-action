@@ -462,6 +462,17 @@ export function extractFileDependencies(
       extractVarFiles(nestedTest.vars, testBaseDir);
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
+        if (
+          key === 'auth' &&
+          typeof item === 'object' &&
+          item !== null &&
+          'type' in item &&
+          item.type === 'file' &&
+          'path' in item &&
+          typeof item.path === 'string'
+        ) {
+          processFileUrl(`file://${item.path}`, true);
+        }
         if (key === 'provider' && includeFileUrls) {
           const providerId =
             typeof item === 'string'
@@ -795,12 +806,15 @@ export function extractFileDependencies(
         if (typeof test.path === 'string') {
           processTestFile(test.path);
           extractNestedFileUrls(test.config);
-          extractNestedFileUrls({ provider: test.provider });
+          extractNestedFileUrls({
+            provider: test.provider,
+            assert: test.assert,
+          });
           continue;
         }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
-        extractNestedFileUrls({ provider: test.provider });
+        extractNestedFileUrls({ provider: test.provider, assert: test.assert });
       }
     }
 
