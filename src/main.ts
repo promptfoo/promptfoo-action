@@ -520,6 +520,14 @@ export async function run(): Promise<void> {
         'Could not resolve the repository workspace or working directory safely',
       );
     }
+    if (
+      !isPathInside(workspaceRoot, workingDirectory) ||
+      !isPathInside(physicalWorkspaceRoot, physicalWorkingDirectory)
+    ) {
+      throw new Error(
+        'Working directory must stay within the repository workspace',
+      );
+    }
 
     for (const globPattern of promptFilesGlobs) {
       if (
@@ -570,54 +578,56 @@ export async function run(): Promise<void> {
         nodir: true,
         braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
       });
-      const allMatches = matches
-        .filter((file) => {
-          const absoluteFile = path.resolve(workingDirectory, file);
-          if (
-            !isPathInside(workspaceRoot, absoluteFile) ||
-            !isPathInside(workingDirectory, absoluteFile)
-          ) {
-            core.warning(
-              'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
-            );
-            return false;
-          }
-          let physicalFile: string;
-          try {
-            physicalFile = fs.realpathSync(absoluteFile);
-          } catch {
-            core.warning(
-              'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
-            );
-            return false;
-          }
-          if (
-            !isPathInside(physicalWorkspaceRoot, physicalFile) ||
-            !isPathInside(physicalWorkingDirectory, physicalFile)
-          ) {
-            core.warning(
-              'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
-            );
-            return false;
-          }
-          const repositoryFile = toRepositoryPath(
-            path.relative(workspaceRoot, absoluteFile),
-          );
-          if (repositoryFile === configRepositoryPath) return false;
+      const allMatches = useConfigPrompts
+        ? matches
+        : matches
+            .filter((file) => {
+              const absoluteFile = path.resolve(workingDirectory, file);
+              if (
+                !isPathInside(workspaceRoot, absoluteFile) ||
+                !isPathInside(workingDirectory, absoluteFile)
+              ) {
+                core.warning(
+                  'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+                );
+                return false;
+              }
+              let physicalFile: string;
+              try {
+                physicalFile = fs.realpathSync(absoluteFile);
+              } catch {
+                core.warning(
+                  'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+                );
+                return false;
+              }
+              if (
+                !isPathInside(physicalWorkspaceRoot, physicalFile) ||
+                !isPathInside(physicalWorkingDirectory, physicalFile)
+              ) {
+                core.warning(
+                  'Ignoring unsafe prompt file match: resolved path must stay within the working directory and repository workspace',
+                );
+                return false;
+              }
+              const repositoryFile = toRepositoryPath(
+                path.relative(workspaceRoot, absoluteFile),
+              );
+              if (repositoryFile === configRepositoryPath) return false;
 
-          const promptPathKey = path.normalize(absoluteFile);
-          if (seenPromptPaths.has(promptPathKey)) return false;
-          seenPromptPaths.add(promptPathKey);
-          return true;
-        })
-        .map((file) =>
-          toRepositoryPath(
-            path.relative(
-              workingDirectory,
-              path.resolve(workingDirectory, file),
-            ),
-          ),
-        );
+              const promptPathKey = path.normalize(absoluteFile);
+              if (seenPromptPaths.has(promptPathKey)) return false;
+              seenPromptPaths.add(promptPathKey);
+              return true;
+            })
+            .map((file) =>
+              toRepositoryPath(
+                path.relative(
+                  workingDirectory,
+                  path.resolve(workingDirectory, file),
+                ),
+              ),
+            );
       allPromptFiles.push(...allMatches);
 
       if (changedFilesList.length > 0) {
@@ -741,12 +751,12 @@ export async function run(): Promise<void> {
 
     const selectedPromptFiles =
       configChanged || dependencyChanged ? allPromptFiles : promptFiles;
-    if (selectedPromptFiles.some((file) => /[\r\n]/.test(file))) {
+    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
+    if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error(
         'Prompt file paths containing CR or LF characters are not supported.',
       );
     }
-    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
 
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');

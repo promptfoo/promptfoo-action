@@ -1245,6 +1245,60 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should ignore an unused newline-containing glob match when prompts come from config', async () => {
+      const hostilePrompt =
+        'prompts/unchanged.txt\r\n::error::forged-config-annotation';
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt', hostilePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockExec.exec.mock.calls[0][1]).not.toContain(hostilePrompt);
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(body).toContain(
+        'Evaluation used prompts defined in the Promptfoo config.',
+      );
+      expect(body).not.toContain('forged-config-annotation');
+      expect(mockCore.info.mock.calls.join('\n')).not.toContain(
+        'forged-config-annotation',
+      );
+    });
+
+    test('should not inspect an unused inaccessible glob match when prompts come from config', async () => {
+      const unusedPrompt = 'prompts/inaccessible.txt';
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([unusedPrompt]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().endsWith(`/${unusedPrompt}`)) {
+          throw new Error('EACCES: SENSITIVE-UNUSED-PROMPT');
+        }
+        return filePath.toString();
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockFs.realpathSync).not.toHaveBeenCalledWith(
+        expect.stringContaining(unusedPrompt),
+      );
+      expect(mockCore.warning.mock.calls.join('\n')).not.toContain(
+        'SENSITIVE-UNUSED-PROMPT',
+      );
+    });
+
     test('should skip an unchanged newline-containing prompt for an unrelated change', async () => {
       const hostilePrompt = 'prompts/unchanged.txt\n::error::forged-annotation';
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
@@ -1646,8 +1700,39 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      ['lexical escape', '../outside-evals'],
+      ['symlink escape', 'linked-evals'],
+    ])('should reject a %s working directory before evaluation', async (_label, workingDirectory) => {
+      withInputs({
+        'working-directory': workingDirectory,
+        prompts: 'prompts/*.txt',
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const candidate = filePath.toString();
+        return candidate === path.join(process.cwd(), 'linked-evals')
+          ? '/tmp/outside/SENSITIVE-EVALS'
+          : candidate;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Working directory must stay within the repository workspace',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed.mock.calls.join('\n')).not.toContain(
+        'SENSITIVE-',
+      );
+    });
+
+    test.each([
       'prompts/{1..100000..1000}.txt',
       'prompts/[{}]*.txt',
+      'prompts/[{].txt',
       String.raw`prompts/\{1..1000000000\}.txt`,
     ])('should accept a bounded prompt glob before enumeration', async (prompts) => {
       withInputs({ prompts });
@@ -1874,6 +1959,37 @@ describe('GitHub Action Main', () => {
       expect(args.filter((arg) => arg.endsWith('manual-prompt.txt'))).toEqual([
         'prompts/manual-prompt.txt',
       ]);
+    });
+
+    test('should omit unused CRLF glob matches from manual config-prompt logs', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGlob.sync.mockReturnValue([
+        'prompts/unchanged.txt\r\n::error::FORGED-MANUAL-ANNOTATION',
+      ]);
+      mockGitInterface.diff.mockResolvedValue('');
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: []',
+      );
+      expect(mockCore.info.mock.calls.join('\n')).not.toContain(
+        'FORGED-MANUAL-ANNOTATION',
+      );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.join('\n')).not.toContain('FORGED-MANUAL-ANNOTATION');
     });
 
     test('should exclude the config file before recording prompt-glob matches', async () => {
