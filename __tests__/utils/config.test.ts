@@ -169,6 +169,16 @@ prompts:
     expect(deps).toEqual(['./']);
   });
 
+  it('should retain a scalar directory prompt after its last file is deleted', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: file://prompts\n');
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/prompts']);
+  });
+
   it.each([
     {
       prompt: 'file://prompts\\*.txt',

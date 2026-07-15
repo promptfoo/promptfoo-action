@@ -20,7 +20,6 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
-import { isDirectory } from './utils/fs';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -507,15 +506,11 @@ export async function run(): Promise<void> {
             return true;
           }
 
-          // Check if the dependency is a directory and any changed file is within it
-          if (dep.endsWith('/') || isDirectory(dep)) {
-            const depDir = dep.endsWith('/') ? dep : `${dep}/`;
-            return changedFilesList.some((changedFile) =>
-              changedFile.startsWith(depDir),
-            );
-          }
-
-          return false;
+          // A dependency directory can disappear when its last tracked file is deleted.
+          const depDir = dep.endsWith('/') ? dep : `${dep}/`;
+          return changedFilesList.some((changedFile) =>
+            changedFile.startsWith(depDir),
+          );
         });
 
         if (dependencyChanged) {

@@ -60,13 +60,11 @@ vi.mock('simple-git', () => ({
 vi.mock('../src/utils/auth');
 vi.mock('../src/utils/cache');
 vi.mock('../src/utils/config');
-vi.mock('../src/utils/fs');
 
 import { handleError, run } from '../src/main';
 import * as auth from '../src/utils/auth';
 import * as cache from '../src/utils/cache';
 import * as config from '../src/utils/config';
-import * as fsUtils from '../src/utils/fs';
 
 const mockAuth = auth as {
   validatePromptfooApiKey: MockedFunction<typeof auth.validatePromptfooApiKey>;
@@ -82,9 +80,6 @@ const mockConfig = config as {
   extractFileDependencies: MockedFunction<
     typeof config.extractFileDependencies
   >;
-};
-const mockFsUtils = fsUtils as {
-  isDirectory: MockedFunction<typeof fsUtils.isDirectory>;
 };
 
 // Note: @actions/core, @actions/github, and @actions/exec are already mocked via vitest.config.ts aliases
@@ -169,7 +164,6 @@ function setupCommonMocks(): MockOctokit {
   mockCache.createCacheManifest.mockResolvedValue();
   mockCache.logCacheMetrics.mockResolvedValue();
   mockConfig.extractFileDependencies.mockReturnValue([]);
-  mockFsUtils.isDirectory.mockReturnValue(false);
 
   // Setup octokit mock
   const mockOctokit: MockOctokit = {
@@ -941,11 +935,24 @@ describe('GitHub Action Main', () => {
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data']);
-      mockFsUtils.isDirectory.mockReturnValue(true);
 
       await run();
 
-      expect(mockFsUtils.isDirectory).toHaveBeenCalledWith('data');
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should run when the last file in a scalar directory prompt is deleted', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/prompts/last.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['evals/prompts']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
