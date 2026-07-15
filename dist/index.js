@@ -39426,7 +39426,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd(), globT
         const isExecutable = reference.startsWith("exec:");
         const isFileUrl = reference.startsWith("file://");
         const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
-        const isEnvironmentTemplate = /^\s*\{\{-?\s*env(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(reference);
+        const isEnvironmentTemplate = /^\s*\{\{-?\s*(?:\(\s*env\s*\)|env)(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(
+          reference
+        );
         if (!declaredFile && !isExecutable && !isFileUrl && !isTemplated && /\s/.test(reference) && reference.includes("file://")) {
           return;
         }
@@ -39746,6 +39748,17 @@ function extractFileDependencies(configPath, executionCwd = process.cwd(), globT
         }
       }
     };
+    const containsNunjucksDirective = (value, visited = /* @__PURE__ */ new WeakSet()) => {
+      if (typeof value === "string") {
+        return /\{%-?\s*(?:include|extends|import|from)\b/.test(value);
+      }
+      if (!Array.isArray(value) && !isTraversableRecord(value)) return false;
+      if (visited.has(value)) return false;
+      visited.add(value);
+      return (Array.isArray(value) ? value : Object.values(value)).some(
+        (nestedValue) => containsNunjucksDirective(nestedValue, visited)
+      );
+    };
     const extractGradingProvider = (provider) => {
       if (typeof provider === "string") {
         if (provider.startsWith("file://")) {
@@ -39770,12 +39783,13 @@ function extractFileDependencies(configPath, executionCwd = process.cwd(), globT
       processFileBackedProviderReference(providerId);
       watchExternalProviderConfig(providerId);
       watchDynamicProviderSideInputs(providerId);
-      if (/^(?:https?|exec)(?::|$)/.test(providerId) || /\{[{%#]/.test(providerId)) {
-        if (/^exec:\s*\S/.test(providerId)) {
-          watchDynamicSideInputs = true;
-        } else {
-          dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
-        }
+      const hasOnlyInlineHttpConfig = /^https?(?::|$)/.test(providerId) && isTraversableRecord(providerOptions) && isTraversableRecord(providerOptions.config) && Object.keys(providerOptions.config).every(
+        (field) => ["url", "method", "headers", "body"].includes(field)
+      ) && !containsNunjucksDirective(providerOptions.config);
+      if (/^exec:\s*\S/.test(providerId)) {
+        watchDynamicSideInputs = true;
+      } else if (/\{[{%#]/.test(providerId) || /^https?(?::|$)/.test(providerId) && !hasOnlyInlineHttpConfig) {
+        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
       }
     };
     const extractRuntimeFileReferences = (value, stripReferenceSelector = stripTransformFunctionSelector, visitedRuntimeValues = /* @__PURE__ */ new WeakSet()) => {
@@ -40846,6 +40860,42 @@ async function run() {
         });
         if (globTraversal.exhausted) {
           throw new Error("Prompt glob traversal budget was exceeded");
+        }
+        if (changedFilesList.length > 0) {
+          const promptPrefixes = expandedPromptPatterns.map((pattern) => {
+            const magicIndex = pattern.search(/[*?[\]{}()!+@]/);
+            const prefixEnd = magicIndex < 0 ? pattern.length : pattern.lastIndexOf("/", magicIndex) + 1;
+            return pattern.slice(0, prefixEnd);
+          });
+          const promptMatcher = new Minimatch(globPattern, {
+            ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+            platform: "linux",
+            windowsPathsNoEscape
+          });
+          const matchedRepositoryPaths = new Set(
+            matches.map(
+              (file) => toRepositoryPath(
+                path8.relative(
+                  workspaceRoot,
+                  path8.resolve(workingDirectory, file)
+                )
+              )
+            )
+          );
+          if (changedFilesList.some((changedFile) => {
+            const absoluteFile = path8.resolve(workspaceRoot, changedFile);
+            const promptCandidate = path8.isAbsolute(globPattern) ? absoluteFile : toRepositoryPath(
+              path8.relative(workingDirectory, absoluteFile)
+            );
+            if (!promptPrefixes.some(
+              (prefix) => promptCandidate.startsWith(prefix)
+            )) {
+              return false;
+            }
+            return promptMatcher.match(promptCandidate) && !matchedRepositoryPaths.has(changedFile);
+          })) {
+            promptGlobFailed = true;
+          }
         }
       } catch {
         promptGlobFailed = true;
