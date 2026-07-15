@@ -361,6 +361,12 @@ export function extractFileDependencies(
   const dependencies = new Set<string>();
   let hasDynamicPromptDependencies = false;
   let hasUnboundedGlobDependencies = false;
+  const warnedUnsafeDependencyKinds = new Set<string>();
+  const warnUnsafeDependency = (kind: string, message: string): void => {
+    if (warnedUnsafeDependencyKinds.has(kind)) return;
+    warnedUnsafeDependencyKinds.add(kind);
+    core.warning(message);
+  };
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
@@ -526,7 +532,8 @@ export function extractFileDependencies(
           : message.includes('contains an invalid null byte')
             ? `${source} contains an invalid null byte`
             : `${source} is empty or invalid`;
-        core.warning(
+        warnUnsafeDependency(
+          'config dependency',
           `Ignoring unsafe config dependency "${sanitizeDependencyDisplayPath(displayPath)}": ${reason}`,
         );
         return undefined;
@@ -666,7 +673,8 @@ export function extractFileDependencies(
         }
         for (const match of matches) {
           if (isForeignWindowsAbsolutePath(match)) {
-            core.warning(
+            warnUnsafeDependency(
+              'config dependency glob match',
               `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`,
             );
             continue;
@@ -676,7 +684,8 @@ export function extractFileDependencies(
           try {
             physicalMatch = fs.realpathSync(absoluteMatch);
           } catch {
-            core.warning(
+            warnUnsafeDependency(
+              'config dependency glob match',
               `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`,
             );
             continue;
@@ -687,7 +696,8 @@ export function extractFileDependencies(
           ) {
             dependencies.add(absoluteMatch);
           } else {
-            core.warning(
+            warnUnsafeDependency(
+              'config dependency glob match',
               `Ignoring unsafe config dependency glob match "${displayFilePath}": resolved path must stay within an allowed dependency root`,
             );
           }
@@ -746,7 +756,8 @@ export function extractFileDependencies(
         fs.lstatSync(absolutePath);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          core.warning(
+          warnUnsafeDependency(
+            'config dependency',
             `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`,
           );
           return;
@@ -758,13 +769,15 @@ export function extractFileDependencies(
         try {
           physicalPath = fs.realpathSync(absolutePath);
         } catch {
-          core.warning(
+          warnUnsafeDependency(
+            'config dependency',
             `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`,
           );
           return;
         }
         if (!isPhysicalDependencyPathInside(physicalPath)) {
-          core.warning(
+          warnUnsafeDependency(
+            'config dependency',
             `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`,
           );
           return;
@@ -1067,7 +1080,8 @@ export function extractFileDependencies(
 
       for (const promptFile of promptFiles) {
         if (isForeignWindowsAbsolutePath(promptFile)) {
-          core.warning(
+          warnUnsafeDependency(
+            'prompt file dependency',
             `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`,
           );
           continue;
@@ -1083,13 +1097,15 @@ export function extractFileDependencies(
         try {
           physicalPromptFile = fs.realpathSync(absolutePromptFile);
         } catch {
-          core.warning(
+          warnUnsafeDependency(
+            'prompt file dependency',
             `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`,
           );
           continue;
         }
         if (!isPhysicalDependencyPathInside(physicalPromptFile)) {
-          core.warning(
+          warnUnsafeDependency(
+            'prompt file dependency',
             `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`,
           );
           continue;
@@ -1418,7 +1434,11 @@ export function extractFileDependencies(
 
     const extractPromptFile = (prompt: PromptEntry): void => {
       const processPromptReference = (reference: string): void => {
-        if (/[\0\r\n]/.test(reference) || reference.length > 65_536) return;
+        if (
+          /[\0\r\n]/.test(reference) ||
+          reference.length > MAX_GLOB_PATTERN_LENGTH
+        )
+          return;
         const isExecutable = reference.startsWith('exec:');
         const hasPathPrefix = /^(?:\.{0,2}[\\/]|[A-Za-z]:[\\/])/.test(
           reference,

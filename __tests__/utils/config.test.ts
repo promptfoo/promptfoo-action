@@ -135,6 +135,30 @@ config:
     );
   });
 
+  it('should not emit one warning for every foreign Windows dependency', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'providers:',
+        ...Array.from(
+          { length: 1000 },
+          (_, index) => `  - 'file://C:\\outside\\provider-${index}.py'`,
+        ),
+      ].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.filter(([message]) =>
+          String(message).includes('Ignoring unsafe config dependency'),
+        ),
+    ).toHaveLength(1);
+  });
+
   it('should reject foreign Windows glob matches, structured prompts, and prompt execution roots', () => {
     if (process.platform === 'win32') return;
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
@@ -172,6 +196,31 @@ prompts:
     expect(warnings).toContain('resolved path must stay within');
     expect(warnings).not.toContain('C:');
     expect(warnings).not.toContain('server');
+  });
+
+  it('should not emit one warning for every unsafe dependency glob match', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue('providers: file://providers/*.yaml\n');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(
+      Array.from(
+        { length: 1000 },
+        (_, index) => `C:\\outside\\provider-${index}.yaml`,
+      ),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/']);
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.filter(([message]) =>
+          String(message).includes('Ignoring unsafe config dependency glob'),
+        ),
+    ).toHaveLength(1);
   });
 
   it('should extract prompt files', () => {

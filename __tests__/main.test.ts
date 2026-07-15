@@ -1516,6 +1516,73 @@ describe('GitHub Action Main', () => {
       expect(body).not.toContain('LLM prompt was modified');
     });
 
+    test.each([
+      [
+        'a directly changed prompt',
+        ['prompts/shared.txt'],
+        [],
+        ['prompts/shared.txt'],
+        'LLM prompt was modified in these files',
+      ],
+      [
+        'a config dependency',
+        ['providers/custom.py'],
+        ['providers/custom.py'],
+        [
+          'prompts/shared.txt',
+          'prompts/first.txt',
+          path.join(process.cwd(), 'prompts/second.txt'),
+        ],
+        'Evaluated prompt files',
+      ],
+    ])('should deduplicate overlapping prompt globs for %s', async (_trigger, changedFiles, dependencies, expectedPrompts, description) => {
+      withInputs({
+        prompts: `prompts/*.txt\n${path.join(process.cwd(), 'prompts/shared*.txt')}`,
+      });
+      mockOctokit.paginate.mockResolvedValue(
+        changedFiles.map((filename) => ({ filename })),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue(dependencies);
+      mockGlob.sync.mockImplementation((pattern: string | string[]) =>
+        pattern === 'prompts/*.txt'
+          ? ['prompts/shared.txt', 'prompts/first.txt']
+          : [
+              path.join(process.cwd(), 'prompts/shared.txt'),
+              path.join(process.cwd(), 'prompts/second.txt'),
+            ],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.filter((arg) => arg.endsWith('.txt'))).toEqual(
+        expectedPrompts,
+      );
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(body).toContain(`${description}: ${expectedPrompts.join(', ')}`);
+    });
+
+    test('should exclude the config file before recording prompt-glob matches', async () => {
+      withInputs({ prompts: '**/*' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'promptfooconfig.yaml',
+        'prompts/shared.txt',
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.filter((arg) => arg.endsWith('.txt'))).toEqual([
+        'prompts/shared.txt',
+      ]);
+      expect(args.filter((arg) => arg === 'promptfooconfig.yaml')).toHaveLength(
+        1,
+      );
+    });
+
     test('should describe config-sourced prompts accurately in a PR comment', async () => {
       mockCore.getBooleanInput.mockImplementation(
         (name: string) => name === 'use-config-prompts',

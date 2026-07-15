@@ -486,6 +486,7 @@ export async function run(): Promise<void> {
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
     const allPromptFiles: string[] = [];
+    const seenPromptPaths = new Set<string>();
     const changedFilesList = changedFiles.split('\0').filter((file) => file);
     const physicalWorkspaceRoot = fs.realpathSync(workspaceRoot);
     const physicalWorkingDirectory = fs.realpathSync(workingDirectory);
@@ -527,7 +528,12 @@ export async function run(): Promise<void> {
         const repositoryFile = toRepositoryPath(
           path.relative(workspaceRoot, absoluteFile),
         );
-        return repositoryFile !== configRepositoryPath;
+        if (repositoryFile === configRepositoryPath) return false;
+
+        const promptPathKey = path.normalize(absoluteFile);
+        if (seenPromptPaths.has(promptPathKey)) return false;
+        seenPromptPaths.add(promptPathKey);
+        return true;
       });
       allPromptFiles.push(...allMatches);
 
