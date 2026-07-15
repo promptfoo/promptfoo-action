@@ -314,7 +314,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
     });
 
@@ -334,6 +334,22 @@ describe('GitHub Action Main', () => {
         'npx',
         expect.any(Array),
         expect.any(Object),
+      );
+    });
+
+    test('should describe a directly modified prompt accurately in a PR comment', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+      ]);
+
+      await run();
+
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'LLM prompt was modified in these files: prompts/prompt1.txt',
+          ),
+        }),
       );
     });
 
@@ -1494,7 +1510,24 @@ describe('GitHub Action Main', () => {
       await run();
 
       const body = mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
-      expect(body).toContain('prompts/prompt1.txt, prompts/prompt2.txt');
+      expect(body).toContain(
+        'Evaluated prompt files: prompts/prompt1.txt, prompts/prompt2.txt',
+      );
+      expect(body).not.toContain('LLM prompt was modified');
+    });
+
+    test('should describe config-sourced prompts accurately in a PR comment', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+
+      await run();
+
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(body).toContain(
+        'Evaluation used prompts defined in the Promptfoo config.',
+      );
+      expect(body).not.toContain('LLM prompt was modified');
     });
 
     test('should report all evaluated input prompts in a dependency-triggered workflow summary', async () => {
@@ -1739,7 +1772,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
 
       // Should still fail the action after posting the comment
