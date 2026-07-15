@@ -100,6 +100,51 @@ prompts:
     expect(deps).toContain('../config/prompts');
   });
 
+  it('should watch the config directory for a root-level scalar prompt glob', () => {
+    mockFs.readFileSync.mockReturnValue("prompts: '*.txt'\n");
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/existing.txt']);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toContain('../config/existing.txt');
+    expect(deps).toContain('../config');
+  });
+
+  it('should watch the correct directory for an absolute scalar prompt glob', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: file:///test/working/prompts/*.txt\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/prompts/existing.txt']);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['prompts/existing.txt', 'prompts']);
+  });
+
+  it('should retain a watch sentinel when the last absolute prompt-glob match is deleted', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: file:///test/working/prompts/*.txt\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['prompts/']);
+  });
+
   it('should ignore an inline scalar prompt', () => {
     mockFs.readFileSync.mockReturnValue('prompts: hello world\n');
 
@@ -181,6 +226,91 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual(['../config/prompt scripts/generate.sh']);
+  });
+
+  it('should extract existing file arguments passed to an executable prompt', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: exec:./scripts/generate.sh ./templates/input.txt --tone formal\n',
+    );
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('templates/input.txt'),
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o644,
+    } as fs.Stats);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/scripts/generate.sh',
+      '../config/templates/input.txt',
+    ]);
+  });
+
+  it('should ignore directory arguments passed to an executable prompt', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: exec:./scripts/generate.sh ./templates\n',
+    );
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('/templates'),
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => true,
+      isFile: () => false,
+      mode: 0o755,
+    } as fs.Stats);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/scripts/generate.sh']);
+  });
+
+  it('should extract a bare executable prompt with an uncommon extension', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: generate.zsh\n');
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('generate.zsh'),
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o755,
+    } as fs.Stats);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/generate.zsh']);
+  });
+
+  it('should ignore an uncommon prompt file without executable permissions', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: generate.zsh\n');
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('generate.zsh'),
+    );
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      mode: 0o644,
+    } as fs.Stats);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
+  it('should ignore an unreadable uncommon prompt candidate', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: generate.zsh\n');
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('generate.zsh'),
+    );
+    mockFs.statSync.mockImplementation(() => {
+      throw new Error('permission denied');
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
   });
 
   it('should ignore an empty executable prompt', () => {
@@ -689,7 +819,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py']);
+    expect(deps).toEqual(['../config/providers/custom.py', '../config']);
   });
 
   it('should extract all file types from complex config', () => {
@@ -801,7 +931,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/provider.py']);
+    expect(deps).toEqual(['../config/provider.py', '../config']);
   });
 
   it('should build nested base directories for globs', () => {

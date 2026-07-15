@@ -19528,7 +19528,7 @@ var require_dist = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.format = format;
-    exports2.parse = parse3;
+    exports2.parse = parse4;
     var TEXT_REGEXP = /^[\u0009\u0020-\u007e\u0080-\u00ff]*$/;
     var TOKEN_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
     var QUOTE_REGEXP = /[\\"]/g;
@@ -19555,7 +19555,7 @@ var require_dist = __commonJS({
       }
       return result;
     }
-    function parse3(header, options) {
+    function parse4(header, options) {
       const len = header.length;
       let index = skipOWS(header, 0, len);
       const valueStart = index;
@@ -19686,7 +19686,7 @@ var require_main = __commonJS({
       return supportsAnsi() ? `\x1B[2m${text}\x1B[0m` : text;
     }
     var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
-    function parse3(src) {
+    function parse4(src) {
       const obj = {};
       let lines = src.toString();
       lines = lines.replace(/\r\n?/mg, "\n");
@@ -19958,7 +19958,7 @@ var require_main = __commonJS({
       _parseVault,
       config: config2,
       decrypt,
-      parse: parse3,
+      parse: parse4,
       populate
     };
     module2.exports.configDotenv = DotenvModule.configDotenv;
@@ -19985,7 +19985,7 @@ var require_ms = __commonJS({
       options = options || {};
       var type = typeof val;
       if (type === "string" && val.length > 0) {
-        return parse3(val);
+        return parse4(val);
       } else if (type === "number" && isFinite(val)) {
         return options.long ? fmtLong(val) : fmtShort(val);
       }
@@ -19993,7 +19993,7 @@ var require_ms = __commonJS({
         "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
       );
     };
-    function parse3(str) {
+    function parse4(str) {
       str = String(str);
       if (str.length > 100) {
         return;
@@ -29699,7 +29699,7 @@ function parseStringResponse(result, parsers12, texts, trim = true) {
         }
         return lines[i2 + offset];
       };
-      parsers12.some(({ parse: parse3 }) => parse3(line, result));
+      parsers12.some(({ parse: parse4 }) => parse4(line, result));
     }
   });
   return result;
@@ -36347,17 +36347,18 @@ function extractFileDependencies(configPath) {
             );
           }
         }
-        const pathParts = filePath.split("/");
-        let basePath = "";
+        const absoluteRoot = path5.parse(absolutePath).root;
+        const pathParts = path5.relative(absoluteRoot, absolutePath).split(path5.sep);
+        let basePath = absoluteRoot;
         for (const part of pathParts) {
           if (le(part)) {
             break;
           }
-          basePath = basePath ? path5.join(basePath, part) : part;
+          basePath = path5.join(basePath, part);
         }
-        if (basePath) {
-          dependencies.add(path5.resolve(path5.join(configDir, basePath)));
-        }
+        dependencies.add(
+          matches.length === 0 ? `${basePath.replace(/[\\/]+$/, "")}${path5.sep}` : basePath
+        );
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
         dependencies.add(directoryPath);
@@ -36384,11 +36385,40 @@ function extractFileDependencies(configPath) {
           reference
         );
         if (!looksLikePath) {
-          return;
+          const candidatePath = resolveConfigDependency(
+            reference,
+            "prompt file dependency"
+          );
+          if (!candidatePath || !fs6.existsSync(candidatePath)) {
+            return;
+          }
+          try {
+            const candidateStats = fs6.statSync(candidatePath);
+            if (!candidateStats.isFile() || (candidateStats.mode & 73) === 0) {
+              return;
+            }
+          } catch {
+            return;
+          }
         }
-        const executablePath = reference.replace(/^exec:/, "").match(/^[^\s"']+|"([^"]*)"|'([^']*)'/)?.[0]?.replace(/^['"]|['"]$/g, "");
-        const promptPath = (isExecutable ? executablePath ?? "" : reference).replace(/^file:\/\//, "").replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, "$1");
+        const executableParts = isExecutable ? (reference.replace(/^exec:/, "").match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? []).map((part) => part.replace(/^['"]|['"]$/g, "")) : [];
+        const promptPath = (isExecutable ? executableParts[0] ?? "" : reference).replace(/^file:\/\//, "").replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, "$1");
         processFileUrl(`file://${promptPath}`);
+        for (const executableArgument of executableParts.slice(1)) {
+          const argumentPath = resolveConfigDependency(
+            executableArgument,
+            "executable prompt file argument"
+          );
+          if (!argumentPath || !fs6.existsSync(argumentPath)) {
+            continue;
+          }
+          try {
+            if (fs6.statSync(argumentPath).isFile()) {
+              dependencies.add(argumentPath);
+            }
+          } catch {
+          }
+        }
         if (/\{[{%]/.test(promptPath)) {
           const staticSegments = [];
           for (const segment of promptPath.split(/[\\/]/)) {

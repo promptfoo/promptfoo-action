@@ -119,17 +119,22 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathParts = filePath.split('/');
-        let basePath = '';
+        const absoluteRoot = path.parse(absolutePath).root;
+        const pathParts = path
+          .relative(absoluteRoot, absolutePath)
+          .split(path.sep);
+        let basePath = absoluteRoot;
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
             break;
           }
-          basePath = basePath ? path.join(basePath, part) : part;
+          basePath = path.join(basePath, part);
         }
-        if (basePath) {
-          dependencies.add(path.resolve(path.join(configDir, basePath)));
-        }
+        dependencies.add(
+          matches.length === 0
+            ? `${basePath.replace(/[\\/]+$/, '')}${path.sep}`
+            : basePath,
+        );
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
         const directoryPath = fileUrl.endsWith('/')
@@ -183,17 +188,56 @@ export function extractFileDependencies(configPath: string): string[] {
           );
 
         if (!looksLikePath) {
-          return;
+          const candidatePath = resolveConfigDependency(
+            reference,
+            'prompt file dependency',
+          );
+          if (!candidatePath || !fs.existsSync(candidatePath)) {
+            return;
+          }
+          try {
+            const candidateStats = fs.statSync(candidatePath);
+            if (
+              !candidateStats.isFile() ||
+              (candidateStats.mode & 0o111) === 0
+            ) {
+              return;
+            }
+          } catch {
+            return;
+          }
         }
 
-        const executablePath = reference
-          .replace(/^exec:/, '')
-          .match(/^[^\s"']+|"([^"]*)"|'([^']*)'/)?.[0]
-          ?.replace(/^['"]|['"]$/g, '');
-        const promptPath = (isExecutable ? (executablePath ?? '') : reference)
+        const executableParts = isExecutable
+          ? (
+              reference
+                .replace(/^exec:/, '')
+                .match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? []
+            ).map((part) => part.replace(/^['"]|['"]$/g, ''))
+          : [];
+        const promptPath = (
+          isExecutable ? (executableParts[0] ?? '') : reference
+        )
           .replace(/^file:\/\//, '')
           .replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, '$1');
         processFileUrl(`file://${promptPath}`);
+
+        for (const executableArgument of executableParts.slice(1)) {
+          const argumentPath = resolveConfigDependency(
+            executableArgument,
+            'executable prompt file argument',
+          );
+          if (!argumentPath || !fs.existsSync(argumentPath)) {
+            continue;
+          }
+          try {
+            if (fs.statSync(argumentPath).isFile()) {
+              dependencies.add(argumentPath);
+            }
+          } catch {
+            // Ignore unreadable arguments while preserving other dependencies.
+          }
+        }
 
         if (/\{[{%]/.test(promptPath)) {
           const staticSegments: string[] = [];
