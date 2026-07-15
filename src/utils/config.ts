@@ -7,11 +7,25 @@ import * as path from 'path';
 import { isDirectory } from './fs';
 
 type ProviderEntry = string | { id?: string; [key: string]: unknown };
+type ProviderEnv = Record<string, string | number | boolean | undefined>;
 const MAX_BRACE_EXPANSIONS = 1024;
 const GLOB_MAGIC_OPTIONS = {
   magicalBraces: true,
   braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
 };
+const FILE_BEARING_PROVIDER_KEYS = new Set([
+  'file',
+  'functions',
+  'path',
+  'request',
+  'response_format',
+  'responseFormat',
+  'responseParser',
+  'sessionParser',
+  'tools',
+  'transformRequest',
+  'transformResponse',
+]);
 
 export interface PromptfooConfig {
   env?: Record<string, unknown>;
@@ -262,11 +276,44 @@ export function extractFileDependencies(configPath: string): string[] {
         );
       }
     };
-    const envTemplatePattern = /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
+    const envTemplatePattern =
+      /\{\{\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*\}\}/g;
+    const envDefaultTemplatePattern =
+      /\{\{\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*\|\s*default\(\s*(['"])([^'"]*)\3(?:\s*,\s*(true|false))?\s*\)\s*\}\}/g;
+    const renderEnvTemplates = (
+      value: string,
+      activeEnv: ProviderEnv,
+    ): string =>
+      value
+        .replace(
+          envDefaultTemplatePattern,
+          (
+            _template: string,
+            dotKey: string,
+            bracketKey: string,
+            _quote: string,
+            fallback: string,
+            useFalsyDefault: string,
+          ) => {
+            const envValue = activeEnv[dotKey || bracketKey];
+            if (
+              envValue === undefined ||
+              (useFalsyDefault === 'true' && !envValue)
+            ) {
+              return fallback;
+            }
+            return String(envValue);
+          },
+        )
+        .replace(
+          envTemplatePattern,
+          (template: string, dotKey: string, bracketKey: string) =>
+            String(activeEnv[dotKey || bracketKey] ?? template),
+        );
     const withEnvOverrides = (
-      baseEnv: NodeJS.ProcessEnv,
+      baseEnv: ProviderEnv,
       overrides: unknown,
-    ): NodeJS.ProcessEnv => {
+    ): ProviderEnv => {
       if (
         typeof overrides !== 'object' ||
         overrides === null ||
@@ -283,15 +330,15 @@ export function extractFileDependencies(configPath: string): string[] {
           typeof value === 'number' ||
           typeof value === 'boolean'
         ) {
-          mergedEnv[key] = String(value).replace(
-            envTemplatePattern,
-            (template: string, envKey: string) => renderEnv[envKey] ?? template,
-          );
+          mergedEnv[key] =
+            typeof value === 'string'
+              ? renderEnvTemplates(value, renderEnv)
+              : value;
         }
       }
       return mergedEnv;
     };
-    const getEnvContextKey = (activeEnv: NodeJS.ProcessEnv): string =>
+    const getEnvContextKey = (activeEnv: ProviderEnv): string =>
       JSON.stringify(
         Object.keys(activeEnv)
           .sort()
@@ -301,10 +348,13 @@ export function extractFileDependencies(configPath: string): string[] {
     const processProviderValue = (
       value: unknown,
       nestedReference: boolean = false,
-      activeEnv: NodeJS.ProcessEnv = configEnv,
+      activeEnv: ProviderEnv = configEnv,
       externalProviderConfig: boolean = false,
       referencedFromProviderObject: boolean = false,
       isProviderReference: boolean = false,
+      isFileBearingConfigValue: boolean = false,
+      parentKey?: string,
+      grandparentKey?: string,
     ): void => {
       if (providerTraversalCount >= 1024) {
         stopProviderTraversal();
@@ -313,20 +363,18 @@ export function extractFileDependencies(configPath: string): string[] {
       providerTraversalCount += 1;
 
       if (typeof value === 'string') {
-        let unresolvedTemplate = false;
-        const renderedProvider = value.replace(
-          envTemplatePattern,
-          (template: string, key: string) => {
-            const envValue = activeEnv[key] ?? process.env[key];
-            if (envValue === undefined) {
-              unresolvedTemplate = true;
-              return template;
-            }
-            return envValue;
-          },
+        const renderedProvider = renderEnvTemplates(value, {
+          ...process.env,
+          ...activeEnv,
+        });
+        const unresolvedLeadingEnvTemplate = /^\s*\{\{\s*env(?:\.|\[)/.test(
+          renderedProvider,
         );
         if (!renderedProvider.startsWith('file://')) {
-          if (isProviderReference && /\{\{|\{%|\{#/.test(renderedProvider)) {
+          if (
+            (isProviderReference && /\{\{|\{%|\{#/.test(renderedProvider)) ||
+            (isFileBearingConfigValue && unresolvedLeadingEnvTemplate)
+          ) {
             dependencies.add(
               `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
             );
@@ -340,7 +388,7 @@ export function extractFileDependencies(configPath: string): string[] {
           /^\/[A-Za-z]:[\\/]/.test(encodedProviderPath)
             ? encodedProviderPath.slice(1)
             : encodedProviderPath;
-        if (unresolvedTemplate || /\{\{|\}\}|\{%|\{#/.test(providerPath)) {
+        if (/\{\{|\}\}|\{%|\{#/.test(providerPath)) {
           dependencies.add(
             `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
           );
@@ -466,6 +514,9 @@ export function extractFileDependencies(configPath: string): string[] {
               externalProviderConfig,
               referencedFromProviderObject,
               isProviderReference,
+              isFileBearingConfigValue,
+              parentKey,
+              grandparentKey,
             );
           }
           return;
@@ -476,8 +527,31 @@ export function extractFileDependencies(configPath: string): string[] {
           externalProviderConfig && referencedFromProviderObject
             ? { ...withEnvOverrides({}, valueEnv), ...activeEnv }
             : withEnvOverrides(activeEnv, valueEnv);
+        const fileAuthPath =
+          parentKey === 'auth' &&
+          grandparentKey === 'config' &&
+          'type' in value &&
+          value.type === 'file' &&
+          'path' in value &&
+          typeof value.path === 'string'
+            ? renderEnvTemplates(value.path, {
+                ...process.env,
+                ...providerEnv,
+              })
+            : undefined;
+        if (fileAuthPath !== undefined) {
+          processProviderValue(
+            fileAuthPath.startsWith('file://')
+              ? fileAuthPath
+              : `file://${fileAuthPath}`,
+            true,
+            providerEnv,
+            false,
+            true,
+          );
+        }
         for (const [key, nestedValue] of Object.entries(value)) {
-          if (key === 'env') {
+          if (key === 'env' || (key === 'path' && fileAuthPath !== undefined)) {
             continue;
           }
           if (
@@ -507,6 +581,9 @@ export function extractFileDependencies(configPath: string): string[] {
             false,
             true,
             key === 'id',
+            FILE_BEARING_PROVIDER_KEYS.has(key),
+            key,
+            parentKey,
           );
         }
       } finally {

@@ -283,7 +283,7 @@ providers:
     ]);
   });
 
-  it('should conservatively watch unsupported whole-value provider templates', () => {
+  it('should resolve bracket and default-filter whole-value provider templates', () => {
     process.env.PROVIDER_PATH = 'file://providers/hidden.py:call_api';
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -295,7 +295,7 @@ providers:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['./']);
+    expect(deps).toEqual(['evals/providers/hidden.py']);
   });
 
   it('should conservatively watch provider paths and map keys with control tags', () => {
@@ -338,11 +338,15 @@ providers:
   - id: openai:gpt-4
     label: "build {{ vars.NAME }}"
     config:
-      body: "hello {{ prompt }}"
       header: "{% if vars.FLAG %}enabled{% endif %}"
       headers:
         "{{ env.API_KEY }}": literal
         Authorization: "Bearer {{ env.API_KEY }}"
+      body:
+        prompt: "hello {{ prompt }} {{ env.API_KEY | upper }}"
+        metadata:
+          type: file
+          path: ./payload-not-executed.txt
 `);
 
     const deps = extractFileDependencies(
@@ -351,6 +355,86 @@ providers:
 
     expect(deps).toEqual([]);
     expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should extract HTTP file-auth dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test/typescript
+    config:
+      method: GET
+      auth:
+        type: file
+        path: ./auth/get-token.ts
+  - id: https://example.test/python
+    config:
+      method: GET
+      auth:
+        type: file
+        path: ./auth/get-token.py
+  - id: https://example.test/named
+    config:
+      method: GET
+      auth:
+        type: file
+        path: file://auth/named-token.ts:getToken
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/auth/get-token.ts',
+      'evals/auth/get-token.py',
+      'evals/auth/named-token.ts',
+    ]);
+  });
+
+  it('should honor provider env for an HTTP file-auth path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    env:
+      AUTH_PATH: ./auth/current-token.ts
+    config:
+      method: GET
+      auth:
+        type: file
+        path: "{{ env.AUTH_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/auth/current-token.ts']);
+  });
+
+  it('should reject an HTTP file-auth path outside the workspace without leaking it', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      method: GET
+      auth:
+        type: file
+        path: ../../outside/secret-token.ts
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Skipping unsafe config dependency content; its path may still be tracked for change detection',
+      ),
+    );
+    expect(core.warning).not.toHaveBeenCalledWith(
+      expect.stringContaining('secret-token'),
+    );
   });
 
   it('should normalize a Windows drive after provider-path templating', () => {
@@ -454,6 +538,88 @@ providers:
     );
 
     expect(deps).toEqual(['tools/current.ts']);
+  });
+
+  it('should resolve bracket and default-filter env templates in nested provider dependencies', () => {
+    process.env.PROVIDER_TOOLS_PATH = 'file://tools/current.ts:getTools';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    config:
+      tools: "{{ env['PROVIDER_TOOLS_PATH'] }}"
+  - id: openai:gpt-4
+    config:
+      tools: "{{ env.MISSING_PROVIDER | default('file://tools/default.ts:getTools') }}"
+  - id: openai:gpt-4
+    config:
+      tools: "{{ env['MISSING_PROVIDER'] | default('file://tools/bracket-default.ts:getTools') }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/tools/current.ts',
+      'evals/tools/default.ts',
+      'evals/tools/bracket-default.ts',
+    ]);
+  });
+
+  it('should honor a falsy default-filter env template in nested provider dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    env:
+      PROVIDER_TOOLS_PATH: ''
+    config:
+      tools: "{{ env.PROVIDER_TOOLS_PATH | default('file://tools/default.ts:getTools', true) }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/tools/default.ts']);
+  });
+
+  it('should honor boolean and numeric falsy config env values in default-filter provider dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+env:
+  BOOLEAN_TOOLS_PATH: false
+  NUMERIC_TOOLS_PATH: 0
+providers:
+  - id: openai:gpt-4
+    config:
+      tools: "{{ env.BOOLEAN_TOOLS_PATH | default('file://tools/boolean-default.ts:getTools', true) }}"
+  - id: openai:gpt-4
+    config:
+      tools: "{{ env.NUMERIC_TOOLS_PATH | default('file://tools/numeric-default.ts:getTools', true) }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/tools/boolean-default.ts',
+      'evals/tools/numeric-default.ts',
+    ]);
+  });
+
+  it('should conservatively watch unsupported leading env templates in file-bearing provider fields', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    config:
+      tools: "{{ env.PROVIDER_TOOLS_PATH | custom_filter }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
   });
 
   it('should prefer caller env over external provider-file defaults', () => {

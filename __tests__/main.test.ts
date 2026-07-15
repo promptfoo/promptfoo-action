@@ -1009,6 +1009,27 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should match repository-style dependency globs with POSIX semantics', async () => {
+      const posixMatchesGlob = vi.spyOn(path.posix, 'matchesGlob');
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/providers/deleted.py' },
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/providers/*.py',
+      ]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('*'),
+      );
+
+      await run();
+
+      expect(posixMatchesGlob).toHaveBeenCalledWith(
+        'evals/providers/deleted.py',
+        'evals/providers/*.py',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should skip an unrelated change for a workspace-root dependency glob', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'docs/readme.md' }]);
       mockGlob.sync.mockReturnValue([]);
