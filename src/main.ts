@@ -33,111 +33,113 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
-const MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
 const PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
+const MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
+
+function invalidPromptGlobError(): PromptfooActionError {
+  return new PromptfooActionError(
+    'Invalid prompt glob: the pattern could not be expanded safely.',
+    ErrorCodes.INVALID_CONFIGURATION,
+    'Use valid prompt glob patterns with bounded brace expansion.',
+  );
+}
 
 function validatePromptGlob(pattern: string): void {
-  const invalidGlob = (): never => {
-    throw new PromptfooActionError(
-      'Invalid prompt glob: the pattern could not be expanded safely.',
-      ErrorCodes.INVALID_CONFIGURATION,
-      'Use valid prompt glob patterns with bounded brace expansion.',
-    );
-  };
-
   const hasControlCharacter = [...pattern].some((character) => {
     const code = character.charCodeAt(0);
     return code < 32 || code === 127;
   });
   if (pattern.length > MAX_PROMPT_GLOB_LENGTH || hasControlCharacter) {
-    invalidGlob();
+    throw invalidPromptGlobError();
   }
 
-  let braceStart = -1;
+  const braces: Array<{ start: number; nested: boolean }> = [];
   let escapedBraceClosers = 0;
+  let numericBraceExpansions = BigInt(1);
+  let commaBraceExpansions = BigInt(1);
+  let escaped = false;
   let inCharacterClass = false;
-  let braceExpansions = 1;
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
-    if (path.sep === '/' && character === '\\') {
-      if (index + 1 >= pattern.length) {
-        invalidGlob();
-      }
-      if (pattern[index + 1] === '{') {
-        escapedBraceClosers++;
-      }
-      index++;
+    if (escaped) {
+      if (character === '{') escapedBraceClosers++;
+      if (character === '}' && escapedBraceClosers > 0) escapedBraceClosers--;
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
       continue;
     }
     if (character === '[') {
       inCharacterClass = true;
       continue;
     }
-    if (inCharacterClass && character === ']') {
+    if (character === ']') {
       inCharacterClass = false;
       continue;
     }
     if (character === '{') {
-      if (braceStart !== -1) {
-        invalidGlob();
-      }
-      braceStart = index;
+      if (braces.length > 0) braces[braces.length - 1].nested = true;
+      braces.push({ start: index + 1, nested: false });
       continue;
     }
-    if (character !== '}') {
-      continue;
-    }
-    if (braceStart === -1) {
+    if (character !== '}') continue;
+    const brace = braces.pop();
+    if (!brace) {
       if (escapedBraceClosers > 0) {
         escapedBraceClosers--;
         continue;
       }
-      invalidGlob();
+      throw invalidPromptGlobError();
     }
+    if (brace.nested) continue;
 
-    const group = pattern.slice(braceStart + 1, index);
-    const range = group.split('..');
-    let expansionCount = group.split(',').length;
-    const hasNumericRange =
-      range.length > 1 && range.some((entry) => /^-?\d/.test(entry));
-    if (
-      hasNumericRange &&
-      !(
-        (range.length === 2 || range.length === 3) &&
-        range.every((entry) => /^-?\d+$/.test(entry))
-      )
-    ) {
-      invalidGlob();
-    }
-    if (
-      (range.length === 2 || range.length === 3) &&
-      range.every((entry) => /^-?\d+$/.test(entry))
-    ) {
-      const values = range.map(Number);
-      const [start, end, rawStep = 1] = values;
-      if (
-        values.some((value) => !Number.isSafeInteger(value)) ||
-        rawStep === 0 ||
-        !Number.isSafeInteger(end - start)
-      ) {
-        invalidGlob();
+    const body = pattern.slice(brace.start, index);
+    if (!body.includes('..')) {
+      commaBraceExpansions *= BigInt(body.split(',').length);
+      if (commaBraceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
+        throw invalidPromptGlobError();
       }
-      expansionCount =
-        Math.floor(Math.abs(end - start) / Math.abs(rawStep)) + 1;
-      const endpointWidth = Math.max(range[0].length, range[1].length);
-      if (expansionCount * endpointWidth > MAX_PROMPT_GLOB_LENGTH) {
-        invalidGlob();
-      }
+      continue;
     }
-    braceExpansions *= expansionCount;
-    if (braceExpansions > PROMPT_GLOB_BRACE_EXPANSION_LIMIT) {
-      invalidGlob();
+    const parts = body.split('..');
+    const numeric = parts.every((part) => /^-?\d+$/.test(part));
+    const numericLike = parts.some((part) => /^-?\d/.test(part));
+    if (!numeric) {
+      if (numericLike) throw invalidPromptGlobError();
+      continue;
     }
-    braceStart = -1;
+    if (parts.length !== 2 && parts.length !== 3) {
+      throw invalidPromptGlobError();
+    }
+    const values = parts.map((part) => Number(part));
+    if (values.some((value) => !Number.isSafeInteger(value))) {
+      throw invalidPromptGlobError();
+    }
+    const start = BigInt(parts[0]);
+    const end = BigInt(parts[1]);
+    const step = parts.length === 3 ? BigInt(parts[2]) : BigInt(1);
+    if (step === BigInt(0)) throw invalidPromptGlobError();
+    const distance = end >= start ? end - start : start - end;
+    const increment = step > BigInt(0) ? step : -step;
+    const count = distance / increment + BigInt(1);
+    numericBraceExpansions *= count;
+    const paddedWidth = Math.max(parts[0].length, parts[1].length);
+    if (
+      numericBraceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) ||
+      count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)
+    ) {
+      throw invalidPromptGlobError();
+    }
   }
-
-  if (braceStart !== -1 || escapedBraceClosers > 0 || inCharacterClass) {
-    invalidGlob();
+  if (
+    escaped ||
+    escapedBraceClosers > 0 ||
+    inCharacterClass ||
+    braces.length > 0
+  ) {
+    throw invalidPromptGlobError();
   }
 }
 
@@ -764,11 +766,16 @@ export async function run(): Promise<void> {
 
     for (const globPattern of promptFilesGlobs) {
       validatePromptGlob(globPattern);
-      const matches = glob.sync(globPattern, {
-        cwd: workingDirectory,
-        nodir: true,
-        braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT,
-      });
+      let matches: string[];
+      try {
+        matches = glob.sync(globPattern, {
+          cwd: workingDirectory,
+          nodir: true,
+          braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT,
+        });
+      } catch {
+        throw invalidPromptGlobError();
+      }
       for (const file of matches) {
         const repositoryFile = toRepositoryPath(
           path.relative(workspaceRoot, path.resolve(workingDirectory, file)),

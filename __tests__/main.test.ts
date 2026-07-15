@@ -411,6 +411,152 @@ describe('GitHub Action Main', () => {
       expect(comment.body.match(/prompts\/first\.txt/g) || []).toHaveLength(1);
     });
 
+    test('should bound action prompt-glob brace expansion before evaluation', async () => {
+      const globPattern = 'prompts/{1..1024}.txt';
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation(
+        (_pattern: string, options?: { braceExpandMax?: number }) => {
+          if (!options?.braceExpandMax || options.braceExpandMax > 1024) {
+            throw new Error('unbounded brace expansion');
+          }
+          return ['prompts/1.txt'];
+        },
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/{1..1025}.txt',
+      'prompts/{1..1000000000}.txt',
+      'prompts/[{1..1000000000}].txt',
+      'prompts/\\\\{1..1000000000}.txt',
+      `prompts/{${'0'.repeat(8192)}1..1024}.txt`,
+      'prompts/{1..10..0}.txt',
+      'prompts/{1..2..3..4}.txt',
+      'prompts/{1..bad}.txt',
+      'prompts/{9007199254740992..9007199254740993}.txt',
+      'prompts/{unbalanced.txt',
+      'prompts/unbalanced}.txt',
+      'prompts/[unbalanced.txt',
+      'prompts/bad\0::error::forged.txt',
+      'prompts/bad\r::error::forged.txt',
+      `prompts/${'a'.repeat(65537)}.txt`,
+    ])('should reject an unsafe prompt glob before expansion', async (globPattern) => {
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+        '::error::forged',
+      );
+    });
+
+    test('should permit escaped braces and braces inside a character class', async () => {
+      const globPattern = 'prompts/\\{literal\\}-[{}]-{1..3}.txt';
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/{literal}-{-1.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/[[:alpha:]]*.txt',
+      'prompts/[[:digit:]]*.txt',
+      'prompts/[]]*.txt',
+    ])('should permit valid prompt-glob character class %s', async (globPattern) => {
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/{foo,{bar,baz}}.txt',
+      'prompts/{foo..bar}.txt',
+      'prompts/{3..1..-1}.txt',
+      'prompts/{0001..0010}.txt',
+      'prompts/\\{1..1000000000\\}.txt',
+    ])('should permit valid prompt-glob brace syntax %s', async (globPattern) => {
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject a malformed prompt glob with a constant sanitized error', async () => {
+      withInputs({ prompts: 'prompts/{bad,pattern}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation(() => {
+        throw new Error('invalid glob\n::error::forged');
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      const output = [
+        ...mockCore.info.mock.calls,
+        ...mockCore.warning.mock.calls,
+        ...mockCore.setFailed.mock.calls,
+      ]
+        .flat()
+        .join('\n');
+      expect(output).not.toContain('::error::forged');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should deduplicate relative and absolute matches for the same prompt', async () => {
       const absolutePrompt = path.resolve(__dirname, '..', 'prompts/first.txt');
       withInputs({ prompts: 'prompts/*.txt\nprompts/first*.txt' });
@@ -447,7 +593,6 @@ describe('GitHub Action Main', () => {
       ['malformed numeric range', 'prompts/{1..many}.txt'],
       ['oversized brace product', `prompts/${'{a,b}'.repeat(11)}.txt`],
       ['unbalanced brace', 'prompts/{first,second.txt'],
-      ['nested brace', 'prompts/{{first,second},third}.txt'],
       ['unexpected closing brace', 'prompts/first}.txt'],
       ['unclosed character class', 'prompts/[first.txt'],
       ['null byte', 'prompts/first\0.txt'],
