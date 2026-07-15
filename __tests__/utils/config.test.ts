@@ -1601,13 +1601,34 @@ tests:
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/cases', '../config/data/context.txt']);
     expect(mockGlob.sync).toHaveBeenCalledWith(
-      '**/*.{yaml,yml,json,jsonl,csv,xls,xlsx}',
+      '**/*.{yaml,yml,json,jsonl,csv,xls,xlsx,py,js,cjs,mjs,ts,cts,mts}',
       expect.objectContaining({
         cwd: '/test/config/cases',
         absolute: true,
         nodir: true,
       }),
     );
+  });
+
+  it('should conservatively inspect a generator inside a file-backed test directory', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockReturnValue('tests: file://cases');
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.statSync.mockImplementation(
+      (filePath: fs.PathLike) =>
+        ({
+          isDirectory: () => String(filePath).endsWith('/cases'),
+        }) as fs.Stats,
+    );
+    mockGlob.sync.mockImplementation((pattern: string) =>
+      /(?:^|[,{}])js(?=[,}])/.test(pattern)
+        ? ['/test/config/cases/generate_cases.js']
+        : [],
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['cases', '/']);
   });
 
   it('should expand Windows-style direct and nested-vars test globs', () => {

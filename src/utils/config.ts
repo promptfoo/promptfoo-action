@@ -861,7 +861,7 @@ export function extractFileDependencies(
       )) {
         if (isDirectory(testFile)) {
           const nestedTestFiles = glob.sync(
-            '**/*.{yaml,yml,json,jsonl,csv,xls,xlsx}',
+            '**/*.{yaml,yml,json,jsonl,csv,xls,xlsx,py,js,cjs,mjs,ts,cts,mts}',
             {
               cwd: testFile,
               absolute: true,
