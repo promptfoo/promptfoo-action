@@ -1,8 +1,12 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { sync } from 'glob';
 import { describe, expect, it } from 'vitest';
 import {
   getGlobRangeError,
   hasBalancedGlobDelimiters,
+  isForeignWindowsAbsoluteGlob,
   normalizeGlobPattern,
 } from '../../src/utils/glob';
 
@@ -19,18 +23,57 @@ describe('glob safety helpers', () => {
     );
   });
 
-  it('should enumerate a backslash-separated POSIX glob after normalization', () => {
+  it('should distinguish POSIX wildcard escapes from Windows-style separators', () => {
     if (process.platform === 'win32') {
       return;
     }
 
-    expect(
-      sync(normalizeGlobPattern(String.raw`__tests__\*.test.ts`, 'linux'), {
-        cwd: process.cwd(),
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'promptfoo-glob-'));
+    const prompts = path.join(fixture, 'prompts');
+    fs.mkdirSync(prompts);
+    fs.writeFileSync(path.join(prompts, '*.txt'), 'literal star');
+    fs.writeFileSync(path.join(prompts, '?.txt'), 'literal question');
+    fs.writeFileSync(path.join(prompts, 'ordinary.txt'), 'ordinary');
+
+    const match = (pattern: string) =>
+      sync(normalizeGlobPattern(pattern, 'linux'), {
+        cwd: fixture,
         nodir: true,
         braceExpandMax: 1024,
-      }),
-    ).toContain('__tests__/main.test.ts');
+      }).sort();
+
+    try {
+      expect(match(String.raw`prompts/\*.txt`)).toEqual(['prompts/*.txt']);
+      expect(match(String.raw`prompts/\?.txt`)).toEqual(['prompts/?.txt']);
+      expect(normalizeGlobPattern(String.raw`prompts/\\*.txt`, 'linux')).toBe(
+        String.raw`prompts/\\*.txt`,
+      );
+      expect(match(String.raw`prompts\*.txt`)).toEqual([
+        'prompts/*.txt',
+        'prompts/?.txt',
+        'prompts/ordinary.txt',
+      ]);
+      expect(normalizeGlobPattern(String.raw`prompts\*.txt`, 'win32')).toBe(
+        'prompts/*.txt',
+      );
+    } finally {
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('should identify foreign Windows absolute glob patterns', () => {
+    expect(isForeignWindowsAbsoluteGlob('C:/repo/prompts/*.txt', 'linux')).toBe(
+      true,
+    );
+    expect(
+      isForeignWindowsAbsoluteGlob(String.raw`\\server\repo\*.txt`, 'linux'),
+    ).toBe(true);
+    expect(isForeignWindowsAbsoluteGlob('C:/repo/prompts/*.txt', 'win32')).toBe(
+      false,
+    );
+    expect(isForeignWindowsAbsoluteGlob('/repo/prompts/*.txt', 'linux')).toBe(
+      false,
+    );
   });
 
   it.each([

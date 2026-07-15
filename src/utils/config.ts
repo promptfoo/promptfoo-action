@@ -564,7 +564,10 @@ export function extractFileDependencies(
       source: string,
     ): boolean | undefined => {
       if (globPath.length > MAX_GLOB_PATTERN_LENGTH) {
-        core.warning(`Ignoring ${source}: pattern is too long`);
+        warnUnsafeDependency(
+          'config dependency glob length',
+          `Ignoring ${source}: pattern is too long`,
+        );
         return undefined;
       }
       const rangeError = getGlobRangeError(globPath, MAX_BRACE_EXPANSIONS);
@@ -613,7 +616,10 @@ export function extractFileDependencies(
         }
         const absolutePattern = path.resolve(configDir, expandedPath);
         if (absolutePattern.length > MAX_GLOB_PATTERN_LENGTH) {
-          core.warning(`Ignoring ${source}: pattern is too long`);
+          warnUnsafeDependency(
+            'config dependency glob length',
+            `Ignoring ${source}: pattern is too long`,
+          );
           continue;
         }
         if (isDependencyPathInside(absolutePattern)) {
@@ -658,7 +664,7 @@ export function extractFileDependencies(
       const filePath = normalizeConfigFilePath(
         selector?.pathWithoutSelector ?? rawFilePath,
       );
-      const globPath = normalizeGlobPattern(filePath);
+      const globPath = normalizeGlobPattern(filePath, 'win32');
       const hasGlobMagic = tryHasGlobMagic(globPath, 'config dependency');
       if (hasGlobMagic === undefined) return;
 
@@ -927,6 +933,7 @@ export function extractFileDependencies(
         pathWithoutPrefix;
       const normalizedPath = normalizeGlobPattern(
         normalizeConfigFilePath(rawPath),
+        'win32',
       );
       const isPromptGlob = tryHasGlobMagic(
         normalizedPath,
@@ -1132,33 +1139,40 @@ export function extractFileDependencies(
             promptSize = fs.statSync(physicalPromptFile).size;
           } catch {
             hasDynamicPromptDependencies = true;
-            core.warning(
+            warnUnsafeDependency(
+              'structured prompt dependency inspection',
               'Structured prompt file could not be inspected safely; watching all repository changes',
             );
             continue;
           }
           if (promptSize > MAX_STRUCTURED_PROMPT_BYTES) {
             hasDynamicPromptDependencies = true;
-            core.warning(
+            warnUnsafeDependency(
+              'structured prompt dependency size',
               'Structured prompt file is too large to scan safely; watching all repository changes',
             );
             continue;
           }
           const promptContent = fs.readFileSync(physicalPromptFile, 'utf8');
-          const parsed = absolutePromptFile.endsWith('.jsonl')
-            ? promptContent
-                .split(/\r?\n/)
-                .filter((line) => line.trim())
-                .map((line) => JSON.parse(line))
-            : absolutePromptFile.endsWith('.json')
-              ? JSON.parse(promptContent)
-              : loadYaml(promptContent, {
-                  schema: YAML_LOAD_SCHEMA,
-                });
+          const structuredExtension = path
+            .extname(absolutePromptFile)
+            .toLowerCase();
+          const parsed =
+            structuredExtension === '.jsonl'
+              ? promptContent
+                  .split(/\r?\n/)
+                  .filter((line) => line.trim())
+                  .map((line) => JSON.parse(line))
+              : structuredExtension === '.json'
+                ? JSON.parse(promptContent)
+                : loadYaml(promptContent, {
+                    schema: YAML_LOAD_SCHEMA,
+                  });
           walk(parsed, physicalPromptFile);
         } catch {
           hasDynamicPromptDependencies = true;
-          core.warning(
+          warnUnsafeDependency(
+            'structured prompt dependency parsing',
             'Structured dependency file could not be parsed safely; watching all repository changes',
           );
         }

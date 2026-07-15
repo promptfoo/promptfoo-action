@@ -278,6 +278,27 @@ prompts:
     ).toEqual([`evals/prompts/chat.${extension}`, 'evals/partials/system.txt']);
   });
 
+  it('should extract dependencies from a multiline uppercase JSONL test file', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return 'tests: file://tests/CASES.JSONL\n';
+      }
+      if (candidate.endsWith('/tests/CASES.JSONL')) {
+        return '{"vars":{"system":"file://partials/system.txt"}}\n{"vars":{"user":"file://partials/user.txt"}}\n';
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/tests/CASES.JSONL',
+      'evals/partials/system.txt',
+      'evals/partials/user.txt',
+    ]);
+  });
+
   it('should tolerate self and shared aliases in object-form structured prompts', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) =>
       String(filePath).endsWith('promptfooconfig.yaml')
@@ -355,6 +376,11 @@ prompts:
       '/prompts/broken.jsonl',
     ],
     ['test', 'tests:\n  - file://tests/broken.jsonl\n', '/tests/broken.jsonl'],
+    [
+      'uppercase test',
+      'tests: file://tests/BROKEN.JSONL\n',
+      '/tests/BROKEN.JSONL',
+    ],
   ])('should fail closed when a structured %s JSONL file cannot be parsed', (_kind, configContent, suffix) => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       const candidate = String(filePath);
@@ -3167,6 +3193,104 @@ providers:
     );
   });
 
+  it.each([
+    [
+      'raw patterns',
+      (index: number) => `file://${index}${'a'.repeat(70_000)}*.yaml`,
+    ],
+    [
+      'resolved patterns',
+      (index: number) => `file://providers/${index}${'a'.repeat(65_500)}*.yaml`,
+    ],
+  ])('should bound warnings for many oversized dependency %s', (_kind, makePattern) => {
+    const longPatterns = Array.from({ length: 40 }, (_, index) =>
+      makePattern(index),
+    );
+    mockFs.readFileSync.mockReturnValue(
+      `providers:\n${longPatterns.map((pattern) => `  - ${pattern}`).join('\n')}\n  - file://providers/safe.py\n`,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.length > 65_536) throw new Error('pattern is too long');
+      return value.includes('*');
+    });
+    mockGlob.sync.mockImplementation((value: string | string[]) => {
+      const patterns = Array.isArray(value) ? value : [value];
+      if (patterns.some((entry) => entry.length > 65_536)) {
+        throw new Error('pattern is too long');
+      }
+      return [];
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/safe.py']);
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.filter(([message]) =>
+          message.includes('pattern is too long'),
+        ),
+    ).toHaveLength(1);
+  });
+
+  it('should fail closed before inspecting a backslash-separated dependency brace range', () => {
+    const dependency = String.raw`file://providers/\{1..1000000000}.py`;
+    mockFs.readFileSync.mockReturnValue(`providers: ${dependency}\n`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should remove an escaping backslash-separated brace alternative before enumeration', () => {
+    const dependency = String.raw`file://providers/\{safe,../../../outside}/*.yaml`;
+    mockFs.readFileSync.mockReturnValue(`providers: ${dependency}\n`);
+    mockGlob.hasMagic.mockImplementation(
+      (filePath: string) => filePath.includes('*') || filePath.includes('{'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    extractFileDependencies('/test/working/evals/promptfooconfig.yaml');
+
+    const enumeratedPatterns = mockGlob.sync.mock.calls
+      .flatMap(([value]) => (Array.isArray(value) ? value : [value]))
+      .join('\n');
+    expect(enumeratedPatterns).toContain('/providers/safe/*.yaml');
+    expect(enumeratedPatterns).not.toContain('../');
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('glob alternative must stay within'),
+    );
+  });
+
+  it('should bound warnings for many malformed structured prompt matches', () => {
+    const promptFiles = Array.from(
+      { length: 40 },
+      (_, index) => `/test/working/evals/prompts/broken-${index}.yaml`,
+    );
+    mockFs.readFileSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('promptfooconfig.yaml')
+        ? 'prompts: file://prompts/*.yaml\n'
+        : 'content: [file://partials/system.txt\n',
+    );
+    mockGlob.hasMagic.mockImplementation((filePath: string) =>
+      filePath.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(promptFiles);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.filter(([message]) =>
+          message.includes('Structured dependency file could not be parsed'),
+        ),
+    ).toHaveLength(1);
+  });
+
   it('should render env-computed HTTP provider and file discriminators before dependency extraction', () => {
     mockFs.readFileSync.mockReturnValue(`
 env:
@@ -4180,28 +4304,6 @@ prompts:
     expect(mockGlob.hasMagic).not.toHaveBeenCalled();
     expect(mockGlob.sync).not.toHaveBeenCalled();
     expect(core.warning).toHaveBeenCalledWith(expect.stringContaining(warning));
-  });
-
-  it('should preserve POSIX escaped brace and delimiter literals in config dependencies', () => {
-    if (process.platform === 'win32') return;
-    mockFs.readFileSync.mockReturnValue(String.raw`
-providers:
-  - 'file://providers/\{1..1000000000\}.py'
-  - 'file://providers/\[literal\].py'
-  - 'file://providers/\(literal\).py'
-`);
-
-    expect(
-      extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toEqual([
-      String.raw`providers/\{1..1000000000\}.py`,
-      String.raw`providers/\[literal\].py`,
-      String.raw`providers/\(literal\).py`,
-    ]);
-    expect(mockGlob.sync).not.toHaveBeenCalled();
-    expect(core.warning).not.toHaveBeenCalledWith(
-      expect.stringContaining('brace range'),
-    );
   });
 
   it('should preserve an explicitly mapped prompt directory after its last file is deleted', () => {

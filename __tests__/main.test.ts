@@ -1356,6 +1356,21 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should fail closed before inspecting a backslash-separated dependency brace range', async () => {
+      const dependency = String.raw`providers/\{1..1000000000}.py`;
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockGlob.hasMagic).not.toHaveBeenCalledWith(
+        dependency,
+        expect.any(Object),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should run when dependency extraction conservatively watches the repository root', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers/dynamic-provider.py' },

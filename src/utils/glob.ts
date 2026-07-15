@@ -5,6 +5,7 @@ export function normalizeGlobPattern(
   platform: NodeJS.Platform = process.platform,
 ): string {
   if (platform === 'win32') return globPattern.replace(/\\/g, '/');
+  const hasPosixSeparator = globPattern.includes('/');
   let normalized = '';
   for (let index = 0; index < globPattern.length; index++) {
     if (globPattern[index] !== '\\') {
@@ -14,12 +15,24 @@ export function normalizeGlobPattern(
     let end = index + 1;
     while (globPattern[end] === '\\') end++;
     const slashCount = end - index;
-    normalized += '{}[]()'.includes(globPattern[end] ?? '\0')
-      ? '\\'.repeat(slashCount)
-      : '/'.repeat(slashCount);
+    const escapedCharacter = globPattern[end] ?? '\0';
+    normalized +=
+      '{}[]()'.includes(escapedCharacter) ||
+      (hasPosixSeparator && '*?'.includes(escapedCharacter))
+        ? '\\'.repeat(slashCount)
+        : '/'.repeat(slashCount);
     index = end - 1;
   }
   return normalized;
+}
+
+export function isForeignWindowsAbsoluteGlob(
+  globPattern: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return (
+    platform !== 'win32' && /^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(globPattern)
+  );
 }
 
 function removePosixEscapes(globPattern: string): string {

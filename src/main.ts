@@ -25,6 +25,7 @@ import { isDirectory } from './utils/fs';
 import {
   getGlobRangeError,
   hasBalancedGlobDelimiters,
+  isForeignWindowsAbsoluteGlob,
   normalizeGlobPattern,
 } from './utils/glob';
 import {
@@ -534,7 +535,7 @@ export async function run(): Promise<void> {
       }
       if (
         expandedPatterns.some((expandedPattern) => {
-          if (/^(?:[A-Za-z]:\/|\/\/)/.test(expandedPattern)) return true;
+          if (isForeignWindowsAbsoluteGlob(expandedPattern)) return true;
           const absolutePattern = path.resolve(
             workingDirectory,
             expandedPattern,
@@ -635,7 +636,8 @@ export async function run(): Promise<void> {
         core.debug(`Found ${dependencies.length} file dependencies in config`);
 
         // Check if any changed file matches the dependencies
-        dependencyChanged = dependencies.some((dep) => {
+        dependencyChanged = dependencies.some((dependency) => {
+          const dep = normalizeGlobPattern(dependency, 'win32');
           if (dep === '.' || dep === './' || dep === '' || dep === '/') {
             return true;
           }
