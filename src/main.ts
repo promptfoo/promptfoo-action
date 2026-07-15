@@ -394,6 +394,15 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
+        if (
+          pullRequestFiles.some(
+            (file) =>
+              file.filename.includes('\0') ||
+              file.previous_filename?.includes('\0'),
+          )
+        ) {
+          throw new Error('Changed file names must not contain null bytes.');
+        }
         changedFiles = pullRequestFiles
           .flatMap((file) =>
             file.previous_filename
@@ -418,7 +427,11 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = String(filesInput)
+        const manualFiles = String(filesInput);
+        if (manualFiles.includes('\0')) {
+          throw new Error('Changed file names must not contain null bytes.');
+        }
+        changedFiles = manualFiles
           .split(/\r?\n/)
           .flatMap((file) => {
             const trimmedFile = file.trim();

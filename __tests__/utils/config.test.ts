@@ -720,7 +720,7 @@ prompts:
     expect(deps).toEqual(['./']);
   });
 
-  it('should preserve escaped literal braces in a POSIX-absolute config dependency path', () => {
+  it('should preserve escaped literal braces in a direct provider dependency path', () => {
     const literal = '\\{left,right\\}'.repeat(16);
     mockFs.readFileSync.mockReturnValue(
       `providers:\n  - 'file:///test/working/providers/${literal}.py'`,
@@ -732,11 +732,231 @@ prompts:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should expand a bounded backslash-separated config numeric range like Promptfoo', async () => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    mockFs.readFileSync.mockReturnValue("tests: 'file://tests/\\{1..2}.yaml'");
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+    mockGlob.sync.mockImplementation((pattern: string) => {
+      if (pattern.endsWith('/1.yaml')) return ['/test/working/tests/1.yaml'];
+      if (pattern.endsWith('/2.yaml')) return ['/test/working/tests/2.yaml'];
+      return [];
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['tests/1.yaml', 'tests/2.yaml', 'tests/']);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/working/tests/1.yaml',
+      expect.objectContaining({
+        braceExpandMax: 1024,
+        windowsPathsNoEscape: true,
+      }),
+    );
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should not enumerate traversal arms in a backslash-separated config glob', async () => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    mockFs.readFileSync.mockReturnValue(
+      "tests: 'file://tests/\\{safe,../../outside}/*.yaml'",
+    );
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+    mockGlob.sync.mockImplementation((pattern: string) => {
+      if (pattern.includes('/outside/')) {
+        throw new Error('unsafe config glob arm was enumerated');
+      }
+      return ['/test/working/tests/safe/case.yaml'];
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['tests/safe/case.yaml', 'tests/safe/']);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+    expect(mockGlob.sync).toHaveBeenCalledWith(
+      '/test/working/tests/safe/*.yaml',
+      expect.objectContaining({
+        braceExpandMax: 1024,
+        windowsPathsNoEscape: true,
+      }),
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Ignoring unsafe config dependency glob pattern'),
+    );
+  });
+
+  it('should track a plain backslash-separated config dependency like Promptfoo', () => {
+    mockFs.readFileSync.mockReturnValue("tests: 'file://tests\\case.yaml'");
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['tests/case.yaml']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should reject an extglob-only backslash traversal before enumeration', async () => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    mockFs.readFileSync.mockReturnValue(
+      "tests: 'file://..\\@(outside-one|outside-two).yaml'",
+    );
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+    mockGlob.sync.mockImplementation(() => {
+      throw new Error('unsafe extglob traversal was enumerated');
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Ignoring unsafe config dependency'),
+    );
+  });
+
+  it('should preserve literal backslashes in direct HTTP file dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https
+    config:
+      tls:
+        caPath: 'certs/literal\\ca.bundle'
+      signatureAuth:
+        privateKeyPath: 'signing/literal\\private.material'
+      multipart:
+        parts:
+          - source:
+              path: 'fixtures/literal\\payload.blob'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'certs/literal\\ca.bundle',
+      'signing/literal\\private.material',
+      'fixtures/literal\\payload.blob',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should not normalize transitive direct HTTP file dependencies a second time', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'providers: file://providers/http.yaml',
+      ],
+      [
+        '/test/working/providers/http.yaml',
+        `- id: https
+  config:
+    auth:
+      type: file
+      path: 'file://auth/literal\\auth.js'
+    tls:
+      caPath: 'file://certs/literal\\ca.bundle'
+    signatureAuth:
+      privateKeyPath: 'file://signing/literal\\private.material'`,
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((value: string) => {
+      const contents = files.get(value);
+      if (contents === undefined) {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      return contents;
+    });
+    mockFs.statSync.mockImplementation(
+      (value: string) =>
+        ({
+          isDirectory: () => false,
+          size: Buffer.byteLength(files.get(value) ?? ''),
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'providers/http.yaml',
+      'auth/literal\\auth.js',
+      'certs/literal\\ca.bundle',
+      'signing/literal\\private.material',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should preserve literal backslashes for direct prompt and assertion files', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - 'file://prompts/literal\\chat.txt'
+tests:
+  - assert:
+      - type: contains
+        value: 'file://expected/literal\\answer.txt'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'prompts/literal\\chat.txt',
+      'expected/literal\\answer.txt',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '\\{left,right\\}',
+    '\\[team\\]',
+    '\\{1..5000000\\}',
+    '\\foo[]]',
+    '\\foo[[]x]',
+    '\\foo@(left|right',
+    '\\foo+(left|right',
+    '\\foo!(left|right',
+    '{left,right}',
+    '{1..2}',
+  ])('should preserve a literal %s in optional-glob prompt and assertion paths', async (literal) => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - 'file://prompts/literal${literal}.txt'
+tests:
+  - assert:
+      - type: contains
+        value: 'file://expected/literal${literal}.txt'
+`);
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      `prompts/literal${literal}.txt`,
+      `expected/literal${literal}.txt`,
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should preserve a literal backslash in a direct defaultTest path', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "defaultTest: 'file://tests/literal\\default.yaml'",
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['tests/literal\\default.yaml', './']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
   it.each([
     ['huge numeric range', 'file://providers/{1..1000000000}/*.py'],
     ['malformed brace', 'file://providers/{safe,../outside/*.py'],
     ['in-class numeric range', 'file://providers/[{1..5000000}].py'],
+    ['backslash-separated numeric range', 'file://providers/\\{1..5000000}.py'],
     ['even-backslash numeric range', 'file://providers/\\\\{1..1000000000}.py'],
+    [
+      'in-class even-backslash numeric range',
+      'file://providers/[\\\\{1..5000000}].py',
+    ],
     ['unsafe numeric bound', `file://providers/{1..${'9'.repeat(200)}}/*.py`],
     ['unsafe integer bound', `file://providers/{1..${'9'.repeat(20)}}/*.py`],
     [
@@ -953,6 +1173,47 @@ tests:
       'assets/chat.txt',
       'assets/deep.txt',
     ]);
+  });
+
+  it('should extract nested dependencies from a string YAML prompt and stop cycles', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'prompts: [file://prompts/chat.yaml]',
+      ],
+      [
+        '/test/working/prompts/chat.yaml',
+        'messages:\n  - content: file://prompts/nested.yaml',
+      ],
+      [
+        '/test/working/prompts/nested.yaml',
+        'messages:\n  - content: file://assets/context.txt\n  - content: file://prompts/chat.yaml',
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((value: string) => {
+      const contents = files.get(value);
+      if (contents === undefined) {
+        throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+      }
+      return contents;
+    });
+    mockFs.statSync.mockImplementation(
+      (value: string) =>
+        ({
+          isDirectory: () => false,
+          size: Buffer.byteLength(files.get(value) ?? ''),
+        }) as fs.Stats,
+    );
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'prompts/chat.yaml',
+      'prompts/nested.yaml',
+      'assets/context.txt',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(3);
+    expect(core.warning).not.toHaveBeenCalled();
   });
 
   it('should not read an oversized structured prompt dependency', () => {

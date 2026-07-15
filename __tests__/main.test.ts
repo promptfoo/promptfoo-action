@@ -510,6 +510,11 @@ describe('GitHub Action Main', () => {
         'expands to more than 1024 alternatives',
       ],
       [
+        'in-class even-backslash numeric range',
+        'prompts/[\\\\{1..5000000}].txt',
+        'expands to more than 1024 alternatives',
+      ],
+      [
         'Windows numeric range',
         'C:\\repo\\{1..1000000000}\\*.txt',
         'expands to more than 1024 alternatives',
@@ -582,6 +587,28 @@ describe('GitHub Action Main', () => {
 
       expect(mockGlob.sync).toHaveBeenCalledWith(
         absoluteGlob,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'relative',
+      'absolute',
+    ])('should preserve an odd-escaped numeric brace in a POSIX-%s prompt glob', async (kind) => {
+      const relativeGlob = 'prompts/[\\{1..5000000}].txt';
+      const promptGlob =
+        kind === 'absolute'
+          ? path.join(process.cwd(), relativeGlob)
+          : relativeGlob;
+      withInputs({ prompts: promptGlob });
+      mockOctokit.paginate.mockResolvedValue([]);
+      mockGlob.sync.mockReturnValue(['prompts/{.txt', 'prompts/1.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        promptGlob,
         expect.objectContaining({ braceExpandMax: 1024 }),
       );
       expect(mockExec.exec).toHaveBeenCalled();
@@ -1093,6 +1120,37 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'action input',
+      'workflow payload',
+    ])('should reject an embedded null byte in a manual changed-file %s', async (source) => {
+      const injected = 'prompts/prompt1.txt\0::error::forged-manual-file';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: source === 'workflow payload' ? { files: injected } : {},
+        },
+        configurable: true,
+      });
+      if (source === 'action input') {
+        withInputs({ 'workflow-files': injected });
+      }
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file names must not contain null bytes.',
+      );
+      expect(
+        mockCore.setFailed.mock.calls.map((call) => String(call[0])).join('\n'),
+      ).not.toContain('::error::forged-manual-file');
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should handle workflow_dispatch with custom base comparison', async () => {
@@ -1651,6 +1709,33 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'filename',
+      'previous_filename',
+    ])('should reject an embedded null byte in a pull request %s', async (field) => {
+      const injected = 'prompts/prompt1.txt\0::error::forged-pr-file';
+      mockOctokit.paginate.mockResolvedValue([
+        field === 'filename'
+          ? { filename: injected }
+          : {
+              filename: 'archived/prompt1.txt',
+              previous_filename: injected,
+              status: 'renamed',
+            },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Changed file names must not contain null bytes.',
+      );
+      expect(
+        mockCore.setFailed.mock.calls.map((call) => String(call[0])).join('\n'),
+      ).not.toContain('::error::forged-pr-file');
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should preserve leading whitespace in a pull request dependency path', async () => {

@@ -69,6 +69,17 @@ export function validateGlobPattern(
   for (const match of globPattern.matchAll(
     /\{(-?\d+)\.\.(-?\d+)(?:\.\.(-?\d+))?\}/g,
   )) {
+    let openingEscapes = 0;
+    for (
+      let index = match.index - 1;
+      index >= 0 && globPattern[index] === '\\';
+      index--
+    ) {
+      openingEscapes++;
+    }
+    if (!usesWindowsSeparators && openingEscapes % 2 === 1) {
+      continue;
+    }
     if (
       Math.max(match[1].length, match[2].length, match[3]?.length ?? 0) >
       MAX_GLOB_NUMERIC_RANGE_WIDTH
