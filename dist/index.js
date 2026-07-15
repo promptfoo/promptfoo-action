@@ -39432,7 +39432,8 @@ async function run() {
       } else {
         changedFiles = pullRequestFiles.flatMap(
           (file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]
-        ).join("\n");
+        ).join("\0");
+        changedFiles = `${changedFiles}\0`;
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
@@ -39447,12 +39448,13 @@ async function run() {
           changedFiles = await gitInterface.diff([
             "--name-only",
             "--no-renames",
+            "-z",
             compareBase,
             "HEAD",
             "--"
           ]);
           info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`
+            `Comparing against ${compareBase}, found changed files: ${JSON.stringify(changedFiles)}`
           );
         } catch (error2) {
           warning(
@@ -39472,12 +39474,13 @@ async function run() {
           changedFiles = await gitInterface.diff([
             "--name-only",
             "--no-renames",
+            "-z",
             beforeSha,
             afterSha,
             "--"
           ]);
           info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${JSON.stringify(changedFiles)}`
           );
         } catch (error2) {
           warning(
@@ -39497,7 +39500,7 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const changedFilesList = changedFiles.split(/\r?\n/).filter((file) => file);
+    const changedFilesList = changedFiles.split(changedFiles.includes("\0") ? "\0" : /\r?\n/).filter((file) => file);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
@@ -39520,6 +39523,11 @@ async function run() {
         });
         promptFiles.push(...allMatches);
       }
+    }
+    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new Error(
+        "Prompt file paths containing carriage returns or line feeds are not supported"
+      );
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
