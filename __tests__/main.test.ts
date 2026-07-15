@@ -995,7 +995,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('monitored prompt was removed or moved'),
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
@@ -1015,7 +1017,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('monitored prompt was removed or moved'),
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
@@ -1032,7 +1036,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('monitored prompt was removed or moved'),
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
@@ -1057,7 +1063,9 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.setFailed).not.toHaveBeenCalled();
       expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('monitored prompt was removed or moved'),
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
@@ -1067,6 +1075,30 @@ describe('GitHub Action Main', () => {
         cwd: process.cwd(),
         nodir: true,
       });
+    });
+
+    test('should explain capped prompt-glob matching when no prompt was removed', async () => {
+      withInputs({
+        prompts: `prompts/${'a'.repeat(65536)}\nprompts/*.txt`,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt', status: 'modified' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/changed.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+      );
     });
 
     test('should fail open when the working-directory prefix exceeds the minimatch pattern limit', async () => {
@@ -1083,7 +1115,9 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.setFailed).not.toHaveBeenCalled();
       expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('monitored prompt was removed or moved'),
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
@@ -1125,7 +1159,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.warning).toHaveBeenCalledWith(
-        expect.stringContaining('monitored prompt was removed or moved'),
+        expect.stringContaining(
+          'Prompt glob matching exceeded its safety limits',
+        ),
       );
       expect(mockExec.exec.mock.calls[0][1]).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),

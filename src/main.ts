@@ -416,7 +416,14 @@ export async function run(): Promise<void> {
             matchesPromptGlob(file.previous_filename) &&
             !matchesPromptGlob(file.filename)),
       );
-      if (promptGlobMatchingCapped || monitoredPromptRemovedOrRenamedOut) {
+      if (promptGlobMatchingCapped) {
+        core.warning(
+          'Prompt glob matching exceeded its safety limits. Processing all remaining matching prompt files.',
+        );
+        return '';
+      }
+
+      if (monitoredPromptRemovedOrRenamedOut) {
         core.warning(
           'A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files.',
         );
