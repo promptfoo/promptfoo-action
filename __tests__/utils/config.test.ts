@@ -2026,6 +2026,16 @@ providers:
     ).toEqual(['evals/providers/actual.yaml', 'evals/parsers/actual.js']);
   });
 
+  it('should retain providers when targets is present but falsy', () => {
+    mockFs.readFileSync.mockReturnValue(
+      ["targets: ''", 'providers: file://providers/actual.py'].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/actual.py']);
+  });
+
   it('should preserve sibling dependencies when provider and test glob patterns are too long', () => {
     const longPattern = `file://${'a'.repeat(70_000)}*.yaml`;
     mockFs.readFileSync.mockReturnValue(

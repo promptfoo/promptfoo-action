@@ -960,7 +960,7 @@ export function extractFileDependencies(
     };
 
     // Promptfoo normalizes the targets alias into providers before evaluation.
-    const configuredProviders = config.targets ?? config.providers;
+    const configuredProviders = config.targets || config.providers;
     if (configuredProviders) {
       const providers =
         typeof configuredProviders === 'string'
