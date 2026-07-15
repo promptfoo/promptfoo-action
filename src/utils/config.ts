@@ -101,6 +101,10 @@ export function extractFileDependencies(
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const dependencyRoots =
+    dependencyRoot === cwd ? [dependencyRoot] : [dependencyRoot, cwd];
+  const isInsideDependencyRoots = (filePath: string): boolean =>
+    dependencyRoots.some((root) => isPathInside(root, filePath));
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -133,7 +137,7 @@ export function extractFileDependencies(
         const absolutePath = path.isAbsolute(filePath)
           ? path.resolve(filePath)
           : path.resolve(path.join(configDir, filePath));
-        if (!isPathInside(dependencyRoot, absolutePath)) {
+        if (!isInsideDependencyRoots(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
           );
@@ -180,7 +184,7 @@ export function extractFileDependencies(
           let unsafeAlternative = false;
           for (const expandedPath of expandedPaths) {
             const absolutePattern = path.resolve(configDir, expandedPath);
-            if (isPathInside(dependencyRoot, absolutePattern)) {
+            if (isInsideDependencyRoots(absolutePattern)) {
               safePatterns.push(absolutePattern);
             } else {
               unsafeAlternative = true;
@@ -204,7 +208,7 @@ export function extractFileDependencies(
           );
           for (const match of matches) {
             const absoluteMatch = path.resolve(match);
-            if (isPathInside(dependencyRoot, absoluteMatch)) {
+            if (isInsideDependencyRoots(absoluteMatch)) {
               dependencies.add(absoluteMatch);
             } else {
               core.warning(
@@ -299,16 +303,30 @@ export function extractFileDependencies(
       const filePath = stripProviderFunctionSelector(
         value.replace(/^file:\/\//, ''),
       ).replace(/\\/g, '/');
-      const absolutePath = path.isAbsolute(filePath)
-        ? path.resolve(filePath)
-        : path.resolve(path.join(configDir, filePath));
-      if (
-        filePath.includes('\0') ||
-        !isPathInside(dependencyRoot, absolutePath)
-      ) {
+      const staticSegments: string[] = [];
+      for (const segment of filePath.split('/')) {
+        if (/\{[{%#]/.test(segment)) {
+          break;
+        }
+        staticSegments.push(segment);
+      }
+      const hasTemplate = staticSegments.length < filePath.split('/').length;
+      const staticPath = hasTemplate
+        ? staticSegments.length > 0
+          ? staticSegments.join('/')
+          : '.'
+        : filePath;
+      const absolutePath = path.isAbsolute(staticPath)
+        ? path.resolve(staticPath)
+        : path.resolve(path.join(configDir, staticPath));
+      if (filePath.includes('\0') || !isInsideDependencyRoots(absolutePath)) {
         core.warning(
           'Ignoring unsafe HTTP provider file dependency: path must stay within the repository workspace',
         );
+        return;
+      }
+      if (hasTemplate) {
+        dependencies.add(`${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`);
         return;
       }
       processFileUrl(`file://${filePath}`);
@@ -320,7 +338,9 @@ export function extractFileDependencies(
           ? [providers]
           : Array.isArray(providers)
             ? providers
-            : [];
+            : isTraversableRecord(providers)
+              ? [providers]
+              : [];
       for (const provider of providerEntries) {
         visitProviderReferences(provider);
         if (!isTraversableRecord(provider)) {
@@ -328,6 +348,12 @@ export function extractFileDependencies(
         }
 
         const mappedProvider = Object.entries(provider);
+        if (
+          mappedProvider.length === 1 &&
+          mappedProvider[0][0].startsWith('file://')
+        ) {
+          processFileUrl(stripProviderFunctionSelector(mappedProvider[0][0]));
+        }
         const providerId =
           typeof provider.id === 'string'
             ? provider.id
@@ -401,9 +427,7 @@ export function extractFileDependencies(
         const absolutePath = path.isAbsolute(filePath)
           ? path.resolve(filePath)
           : path.resolve(path.join(baseDir, filePath));
-        return isPathInside(dependencyRoot, absolutePath)
-          ? absolutePath
-          : undefined;
+        return isInsideDependencyRoots(absolutePath) ? absolutePath : undefined;
       };
       const processPromptReference = (
         reference: string,
@@ -621,7 +645,7 @@ export function extractFileDependencies(
         for (const promptFile of promptFiles) {
           const absolutePromptFile = path.resolve(promptFile);
           if (
-            !isPathInside(dependencyRoot, absolutePromptFile) ||
+            !isInsideDependencyRoots(absolutePromptFile) ||
             !/\.(?:json|ya?ml)$/i.test(absolutePromptFile)
           ) {
             continue;
@@ -631,7 +655,7 @@ export function extractFileDependencies(
             const physicalPromptFile = fs.existsSync(absolutePromptFile)
               ? fs.realpathSync(absolutePromptFile)
               : absolutePromptFile;
-            if (!isPathInside(dependencyRoot, physicalPromptFile)) {
+            if (!isInsideDependencyRoots(physicalPromptFile)) {
               core.warning(
                 `Ignoring unsafe prompt file dependency "${promptPath}": resolved path must stay within the repository workspace`,
               );
@@ -646,14 +670,23 @@ export function extractFileDependencies(
               fs.readFileSync(physicalPromptFile, 'utf8'),
               { schema: CONFIG_YAML_SCHEMA },
             );
+            const visitedNestedValues = new WeakSet<object>();
             const visitNestedReferences = (value: unknown): void => {
               if (typeof value === 'string' && value.startsWith('file://')) {
                 processPromptReference(value);
               } else if (Array.isArray(value)) {
+                if (visitedNestedValues.has(value)) {
+                  return;
+                }
+                visitedNestedValues.add(value);
                 for (const nestedValue of value) {
                   visitNestedReferences(nestedValue);
                 }
               } else if (isTraversableRecord(value)) {
+                if (visitedNestedValues.has(value)) {
+                  return;
+                }
+                visitedNestedValues.add(value);
                 for (const nestedValue of Object.values(value)) {
                   visitNestedReferences(nestedValue);
                 }
@@ -696,6 +729,7 @@ export function extractFileDependencies(
 
     // Extract test variable files
     const extractVarFiles = (vars?: TestVars): void => {
+      const declaredVarPaths = typeof vars === 'string' || Array.isArray(vars);
       const values =
         typeof vars === 'string'
           ? [vars]
@@ -705,8 +739,13 @@ export function extractFileDependencies(
               ? Object.values(vars)
               : [];
       for (const value of values) {
-        if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(value);
+        if (
+          typeof value === 'string' &&
+          (value.startsWith('file://') || declaredVarPaths)
+        ) {
+          processFileUrl(
+            value.startsWith('file://') ? value : `file://${value}`,
+          );
         } else if (
           typeof value === 'object' &&
           value !== null &&

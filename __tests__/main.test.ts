@@ -739,7 +739,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using manually specified files: prompts/file1.txt\\nprompts/file2.txt',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
@@ -922,6 +922,28 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should not narrow the evaluation when a prompt and config dependency both change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+        { filename: 'providers/custom.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/changed.txt',
+        'prompts/unchanged.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
     test('should run when a referenced config dependency is renamed away', async () => {
       mockOctokit.paginate.mockResolvedValue([
         {
@@ -998,6 +1020,61 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.info).toHaveBeenCalledWith(
         'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve intentional surrounding spaces in a manual dependency filename', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: ' providers/custom-provider.py \r\n',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' providers/custom-provider.py ',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should not emit a workflow command from a manual file list', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: 'providers/custom.py\r\n::warning::SENSITIVE-REVIEW-TOKEN',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('\n::warning::SENSITIVE-REVIEW-TOKEN'),
       );
       expect(mockExec.exec).toHaveBeenCalled();
     });

@@ -63,6 +63,45 @@ providers:
     expect(deps).toContain('../config/another_provider.js');
   });
 
+  it('should extract absolute checkout dependencies from an external config', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/prompts/structured.yaml')) {
+        return 'content: file:///test/working/shared/system.txt\n';
+      }
+      return `
+providers:
+  - file:///test/working/providers/custom.py
+prompts:
+  - file:///test/working/prompts/main.txt
+  - file:///test/working/prompts/structured.yaml
+  - file:///test/working/prompts/*.md
+`;
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/prompts/reference.md']);
+    mockFs.existsSync.mockImplementation((filePath: unknown) =>
+      String(filePath).endsWith('/prompts/structured.yaml'),
+    );
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => filePath);
+
+    const deps = extractFileDependencies(
+      '/test/external/promptfooconfig.yaml',
+      '/test/working',
+    );
+
+    expect(deps).toEqual([
+      'providers/custom.py',
+      'prompts/main.txt',
+      'prompts/structured.yaml',
+      'shared/system.txt',
+      'prompts/reference.md',
+      'prompts',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should extract file-backed targets and nested target dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 targets:
@@ -119,6 +158,57 @@ targets:
       'auth/map-token.ts',
       'certs/map-ca.pem',
     ]);
+  });
+
+  it.each([
+    'providers',
+    'targets',
+  ])('should extract nested and HTTP dependencies from a singleton %s object', (field) => {
+    mockFs.readFileSync.mockReturnValue(`
+${field}:
+  id: http
+  config:
+    request: file://fixtures/singleton-request.json
+    auth:
+      type: file
+      path: ./auth/singleton-token.ts
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'fixtures/singleton-request.json',
+      'auth/singleton-token.ts',
+    ]);
+  });
+
+  it('should extract a file-backed target map key', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - file://providers/mapped.py:call_api:
+      label: mapped-provider
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/mapped.py']);
+  });
+
+  it('should conservatively watch static prefixes for templated HTTP target paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+targets:
+  - id: http
+    config:
+      auth:
+        type: file
+        path: certs/{{ env.AUTH_FILE }}
+      tls:
+        certPath: '{{ env.CLIENT_CERT_PATH }}'
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['certs/', './']);
   });
 
   it('should preserve dependencies when a target contains a cyclic YAML alias', () => {
@@ -1811,6 +1901,27 @@ tests:
     ]);
   });
 
+  it('should extract bare scalar and array test-vars paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  vars: data/default-cases.yaml
+tests:
+  - vars: data/scalar-cases.csv
+  - vars:
+      - data/array-cases.yaml
+      - data/extra-cases.json
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      'data/default-cases.yaml',
+      'data/scalar-cases.csv',
+      'data/array-cases.yaml',
+      'data/extra-cases.json',
+    ]);
+  });
+
   it('should extract assert files', () => {
     const configContent = `
 tests:
@@ -1909,6 +2020,34 @@ metadata: !!set {a: not-null}
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('prompts/prompts.yaml')) {
         return `metadata: ${metadata}\ncontent: file://shared/system.txt\n`;
+      }
+      return 'prompts: file://prompts/prompts.yaml\n';
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/prompts.yaml', 'shared/system.txt']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should preserve nested dependencies after a cyclic structured-prompt alias', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('prompts/prompts.yaml')) {
+        return `metadata: &metadata\n  self: *metadata\ncontent: file://shared/system.txt\n`;
+      }
+      return 'prompts: file://prompts/prompts.yaml\n';
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['prompts/prompts.yaml', 'shared/system.txt']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should preserve nested dependencies after a cyclic structured-prompt array alias', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('prompts/prompts.yaml')) {
+        return `metadata: &metadata\n  - *metadata\ncontent: file://shared/system.txt\n`;
       }
       return 'prompts: file://prompts/prompts.yaml\n';
     });
