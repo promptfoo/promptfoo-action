@@ -458,6 +458,72 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
+    test.each([
+      {
+        label: 'changed prompt',
+        changed: ['prompts/prompt1.txt'],
+        dependencies: [],
+        expected: ['prompts/prompt1.txt'],
+        absoluteOverlap: false,
+      },
+      {
+        label: 'shared dependency',
+        changed: ['data/context.json'],
+        dependencies: ['data/context.json'],
+        expected: ['prompts/prompt1.txt', 'prompts/prompt2.txt'],
+        absoluteOverlap: false,
+      },
+      {
+        label: 'changed prompt with an absolute overlap',
+        changed: ['prompts/prompt1.txt'],
+        dependencies: [],
+        expected: ['prompts/prompt1.txt'],
+        absoluteOverlap: true,
+      },
+      {
+        label: 'shared dependency with an absolute overlap',
+        changed: ['data/context.json'],
+        dependencies: ['data/context.json'],
+        expected: ['prompts/prompt1.txt', 'prompts/prompt2.txt'],
+        absoluteOverlap: true,
+      },
+    ])('should deduplicate overlapping prompt globs for a $label', async ({
+      changed,
+      dependencies,
+      expected,
+      absoluteOverlap,
+    }) => {
+      const overlap = absoluteOverlap
+        ? path.join(process.cwd(), 'prompts/prompt1.*')
+        : 'prompts/prompt1.*';
+      withInputs({ prompts: `prompts/*.txt\n${overlap}` });
+      mockOctokit.paginate.mockResolvedValue(
+        changed.map((filename) => ({ filename })),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue(dependencies);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/*.txt'
+          ? ['prompts/prompt1.txt', 'prompts/prompt2.txt']
+          : [
+              absoluteOverlap
+                ? path.join(process.cwd(), 'prompts/prompt1.txt')
+                : 'prompts/prompt1.txt',
+            ],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(args.filter((arg) => arg.includes('prompts/prompt'))).toEqual(
+        expected,
+      );
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0]?.[0]
+        .body as string;
+      expect(body.split('prompts/prompt1.txt')).toHaveLength(2);
+      expect(body).toContain(expected.join(', '));
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should resolve prompt changes relative to working-directory', async () => {
       withInputs({
         'working-directory': 'evals',

@@ -1961,6 +1961,24 @@ defaultTest: file://defaults/default.yaml
     );
   });
 
+  it('should warn only once for many foreign Windows dependency paths', () => {
+    const providers = Array.from(
+      { length: 512 },
+      (_, index) => `'file://C:\\outside\\provider-${index}.py'`,
+    ).join(', ');
+    mockFs.readFileSync.mockReturnValue(`providers: [${providers}]`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
   it('should reject foreign Windows brace arms before glob enumeration while retaining safe arms', () => {
     mockFs.readFileSync.mockReturnValue(
       "providers: ['file://{safe,C:\\outside}/*.py']",

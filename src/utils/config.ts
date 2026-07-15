@@ -350,6 +350,7 @@ export function extractFileDependencies(configPath: string): string[] {
       return true;
     };
 
+    let warnedForeignWindowsPath = false;
     const resolveConfigDependency = (
       filePath: string,
       source: string,
@@ -362,6 +363,8 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
         if (isForeignWindowsPath(filePath)) {
+          if (warnedForeignWindowsPath) return undefined;
+          warnedForeignWindowsPath = true;
           throw new Error(
             `${source} must stay within the repository workspace`,
           );

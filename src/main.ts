@@ -512,6 +512,20 @@ export async function run(): Promise<void> {
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
     const allPromptFiles: string[] = [];
+    const promptFileSet = new Set<string>();
+    const allPromptFileSet = new Set<string>();
+    const appendUniquePromptFiles = (
+      target: string[],
+      seen: Set<string>,
+      files: string[],
+    ): void => {
+      for (const file of files) {
+        const absoluteFile = path.resolve(workingDirectory, file);
+        if (seen.has(absoluteFile)) continue;
+        seen.add(absoluteFile);
+        target.push(file);
+      }
+    };
     const changedFilesList = changedFiles.split('\0').filter((file) => file);
 
     for (const globPattern of promptFilesGlobs) {
@@ -583,7 +597,7 @@ export async function run(): Promise<void> {
         );
         return repositoryFile !== configRepositoryPath;
       });
-      allPromptFiles.push(...allMatches);
+      appendUniquePromptFiles(allPromptFiles, allPromptFileSet, allMatches);
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
@@ -593,10 +607,10 @@ export async function run(): Promise<void> {
           );
           return changedFilesList.includes(repositoryFile);
         });
-        promptFiles.push(...changedMatches);
+        appendUniquePromptFiles(promptFiles, promptFileSet, changedMatches);
       } else {
         // No changed files info available, include all matches
-        promptFiles.push(...allMatches);
+        appendUniquePromptFiles(promptFiles, promptFileSet, allMatches);
       }
     }
 
