@@ -5712,7 +5712,7 @@ var require_client_h1 = __commonJS({
       kResume,
       kHTTPContext
     } = require_symbols();
-    var constants3 = require_constants2();
+    var constants4 = require_constants2();
     var EMPTY_BUF = Buffer.alloc(0);
     var FastBuffer = Buffer[Symbol.species];
     var addListener = util.addListener;
@@ -5787,7 +5787,7 @@ var require_client_h1 = __commonJS({
       constructor(client, socket, { exports: exports3 }) {
         assert(Number.isFinite(client[kMaxHeadersSize]) && client[kMaxHeadersSize] > 0);
         this.llhttp = exports3;
-        this.ptr = this.llhttp.llhttp_alloc(constants3.TYPE.RESPONSE);
+        this.ptr = this.llhttp.llhttp_alloc(constants4.TYPE.RESPONSE);
         this.client = client;
         this.socket = socket;
         this.timeout = null;
@@ -5882,11 +5882,11 @@ var require_client_h1 = __commonJS({
             currentBufferRef = null;
           }
           const offset = llhttp.llhttp_get_error_pos(this.ptr) - currentBufferPtr;
-          if (ret !== constants3.ERROR.OK) {
+          if (ret !== constants4.ERROR.OK) {
             const body = data.subarray(offset);
-            if (ret === constants3.ERROR.PAUSED_UPGRADE) {
+            if (ret === constants4.ERROR.PAUSED_UPGRADE) {
               this.onUpgrade(body);
-            } else if (ret === constants3.ERROR.PAUSED) {
+            } else if (ret === constants4.ERROR.PAUSED) {
               this.paused = true;
               socket.unshift(body);
             } else {
@@ -5909,10 +5909,10 @@ var require_client_h1 = __commonJS({
         } finally {
           currentParser = null;
         }
-        if (ret === constants3.ERROR.OK) {
+        if (ret === constants4.ERROR.OK) {
           return null;
         }
-        if (ret === constants3.ERROR.PAUSED || ret === constants3.ERROR.PAUSED_UPGRADE) {
+        if (ret === constants4.ERROR.PAUSED || ret === constants4.ERROR.PAUSED_UPGRADE) {
           this.paused = true;
           return null;
         }
@@ -5929,7 +5929,7 @@ var require_client_h1 = __commonJS({
           const len = new Uint8Array(llhttp.memory.buffer, ptr).indexOf(0);
           message = "Response does not match the HTTP/1.1 protocol (" + Buffer.from(llhttp.memory.buffer, ptr, len).toString() + ")";
         }
-        return new HTTPParserError(message, constants3.ERROR[ret], data);
+        return new HTTPParserError(message, constants4.ERROR[ret], data);
       }
       destroy() {
         assert(this.ptr != null);
@@ -6108,7 +6108,7 @@ var require_client_h1 = __commonJS({
           socket[kBlocking] = false;
           client[kResume]();
         }
-        return pause ? constants3.ERROR.PAUSED : 0;
+        return pause ? constants4.ERROR.PAUSED : 0;
       }
       onBody(buf) {
         const { client, socket, statusCode, maxResponseSize } = this;
@@ -6130,7 +6130,7 @@ var require_client_h1 = __commonJS({
         }
         this.bytesRead += buf.length;
         if (request2.onData(buf) === false) {
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         }
       }
       onMessageComplete() {
@@ -6166,13 +6166,13 @@ var require_client_h1 = __commonJS({
         if (socket[kWriting]) {
           assert(client[kRunning] === 0);
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (!shouldKeepAlive) {
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (socket[kReset] && client[kRunning] === 0) {
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (client[kPipelining] == null || client[kPipelining] === 1) {
           setImmediate(() => client[kResume]());
         } else {
@@ -38218,6 +38218,37 @@ function isPromptFilePath(prompt) {
     prompt
   ) || prompt.charAt(prompt.length - 3) === "." || prompt.charAt(prompt.length - 4) === "." || prompt.includes("*") || prompt.includes("/") || prompt.includes("\\");
 }
+function readStructuredDependency(filePath) {
+  const descriptor = fs6.openSync(
+    filePath,
+    fs6.constants.O_RDONLY | fs6.constants.O_NONBLOCK | fs6.constants.O_NOFOLLOW
+  );
+  try {
+    const stats = fs6.fstatSync(descriptor);
+    if (!stats.isFile() || stats.size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
+      throw new Error("nested dependency must be a bounded regular file");
+    }
+    const chunks = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_STRUCTURED_DEPENDENCY_BYTES) {
+      const chunk = Buffer.allocUnsafe(
+        Math.min(64 * 1024, MAX_STRUCTURED_DEPENDENCY_BYTES + 1 - totalBytes)
+      );
+      const bytesRead = fs6.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      chunks.push(chunk.subarray(0, bytesRead));
+      totalBytes += bytesRead;
+    }
+    if (totalBytes > MAX_STRUCTURED_DEPENDENCY_BYTES) {
+      throw new Error("nested dependency must be a bounded regular file");
+    }
+    return Buffer.concat(chunks, totalBytes).toString("utf8");
+  } finally {
+    fs6.closeSync(descriptor);
+  }
+}
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path6.dirname(configPath);
@@ -38231,7 +38262,7 @@ function extractFileDependencies(configPath) {
     }
   };
   try {
-    const configContent = fs6.readFileSync(configPath, "utf8");
+    const configContent = readStructuredDependency(configPath);
     if (!configContent.trim()) {
       debug("Config file is empty or invalid");
       return [];
@@ -38675,11 +38706,8 @@ function extractFileDependencies(configPath) {
           visitedProviderConfigs.add(providerConfigKey);
           activeProviderConfigs.add(absolutePath);
           try {
-            if (fs6.statSync(absolutePath).size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
-              throw new Error("nested provider dependency is too large");
-            }
             const providerConfig = load(
-              fs6.readFileSync(absolutePath, "utf8"),
+              readStructuredDependency(absolutePath),
               {
                 schema: CORE_SCHEMA.withTags(mergeTag)
               }
@@ -39015,11 +39043,8 @@ function extractFileDependencies(configPath) {
         continue;
       }
       try {
-        if (fs6.statSync(promptFile).size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
-          throw new Error("nested prompt dependency is too large");
-        }
         extractGeneratorConfigReferences(
-          load(fs6.readFileSync(promptFile, "utf8"), {
+          load(readStructuredDependency(promptFile), {
             schema: CORE_SCHEMA.withTags(mergeTag)
           }),
           true
@@ -39062,10 +39087,7 @@ function extractFileDependencies(configPath) {
           testTraversalCount += 1;
           visitedTestFiles.add(testFileContextKey);
           try {
-            if (fs6.statSync(testFile).size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
-              throw new Error("nested test dependency is too large");
-            }
-            const testContent = fs6.readFileSync(testFile, "utf8");
+            const testContent = readStructuredDependency(testFile);
             if (/\.csv$/i.test(testFile)) {
               for (const match2 of testContent.matchAll(
                 /file:\/\/[^,"'\r\n\]}]+/g
@@ -39217,11 +39239,8 @@ function extractFileDependencies(configPath) {
             scenarioTraversalCount += 1;
             visitedScenarioFiles.add(scenarioFile);
             try {
-              if (fs6.statSync(scenarioFile).size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
-                throw new Error("nested scenario dependency is too large");
-              }
               const loadedScenarios = load(
-                fs6.readFileSync(scenarioFile, "utf8"),
+                readStructuredDependency(scenarioFile),
                 {
                   schema: CORE_SCHEMA.withTags(mergeTag)
                 }

@@ -131,6 +131,39 @@ function isPromptFilePath(prompt: string): boolean {
   );
 }
 
+function readStructuredDependency(filePath: string): string {
+  const descriptor = fs.openSync(
+    filePath,
+    fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const stats = fs.fstatSync(descriptor);
+    if (!stats.isFile() || stats.size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
+      throw new Error('nested dependency must be a bounded regular file');
+    }
+
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (totalBytes <= MAX_STRUCTURED_DEPENDENCY_BYTES) {
+      const chunk = Buffer.allocUnsafe(
+        Math.min(64 * 1024, MAX_STRUCTURED_DEPENDENCY_BYTES + 1 - totalBytes),
+      );
+      const bytesRead = fs.readSync(descriptor, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) {
+        break;
+      }
+      chunks.push(chunk.subarray(0, bytesRead));
+      totalBytes += bytesRead;
+    }
+    if (totalBytes > MAX_STRUCTURED_DEPENDENCY_BYTES) {
+      throw new Error('nested dependency must be a bounded regular file');
+    }
+    return Buffer.concat(chunks, totalBytes).toString('utf8');
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -153,7 +186,7 @@ export function extractFileDependencies(configPath: string): string[] {
   };
 
   try {
-    const configContent = fs.readFileSync(configPath, 'utf8');
+    const configContent = readStructuredDependency(configPath);
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
       return [];
@@ -799,13 +832,8 @@ export function extractFileDependencies(configPath: string): string[] {
           visitedProviderConfigs.add(providerConfigKey);
           activeProviderConfigs.add(absolutePath);
           try {
-            if (
-              fs.statSync(absolutePath).size > MAX_STRUCTURED_DEPENDENCY_BYTES
-            ) {
-              throw new Error('nested provider dependency is too large');
-            }
             const providerConfig = loadYaml(
-              fs.readFileSync(absolutePath, 'utf8'),
+              readStructuredDependency(absolutePath),
               {
                 schema: CORE_SCHEMA.withTags(mergeTag),
               },
@@ -1283,11 +1311,8 @@ export function extractFileDependencies(configPath: string): string[] {
         continue;
       }
       try {
-        if (fs.statSync(promptFile).size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
-          throw new Error('nested prompt dependency is too large');
-        }
         extractGeneratorConfigReferences(
-          loadYaml(fs.readFileSync(promptFile, 'utf8'), {
+          loadYaml(readStructuredDependency(promptFile), {
             schema: CORE_SCHEMA.withTags(mergeTag),
           }),
           true,
@@ -1346,10 +1371,7 @@ export function extractFileDependencies(configPath: string): string[] {
           testTraversalCount += 1;
           visitedTestFiles.add(testFileContextKey);
           try {
-            if (fs.statSync(testFile).size > MAX_STRUCTURED_DEPENDENCY_BYTES) {
-              throw new Error('nested test dependency is too large');
-            }
-            const testContent = fs.readFileSync(testFile, 'utf8');
+            const testContent = readStructuredDependency(testFile);
             if (/\.csv$/i.test(testFile)) {
               for (const match of testContent.matchAll(
                 /file:\/\/[^,"'\r\n\]}]+/g,
@@ -1539,13 +1561,8 @@ export function extractFileDependencies(configPath: string): string[] {
             scenarioTraversalCount += 1;
             visitedScenarioFiles.add(scenarioFile);
             try {
-              if (
-                fs.statSync(scenarioFile).size > MAX_STRUCTURED_DEPENDENCY_BYTES
-              ) {
-                throw new Error('nested scenario dependency is too large');
-              }
               const loadedScenarios = loadYaml(
-                fs.readFileSync(scenarioFile, 'utf8'),
+                readStructuredDependency(scenarioFile),
                 {
                   schema: CORE_SCHEMA.withTags(mergeTag),
                 },

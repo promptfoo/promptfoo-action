@@ -10,6 +10,10 @@ vi.mock('fs', async () => {
   return {
     ...realFs,
     readFileSync: vi.fn(),
+    openSync: vi.fn(),
+    fstatSync: vi.fn(),
+    readSync: vi.fn(),
+    closeSync: vi.fn(),
     existsSync: vi.fn(),
     realpathSync: vi.fn(),
     lstatSync: vi.fn(),
@@ -26,6 +30,10 @@ vi.mock('glob');
 describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
+    openSync: Mock;
+    fstatSync: Mock;
+    readSync: Mock;
+    closeSync: Mock;
     existsSync: Mock;
     realpathSync: Mock;
     lstatSync: Mock;
@@ -47,7 +55,51 @@ describe('extractFileDependencies', () => {
     mockFs.lstatSync.mockImplementation(() => {
       throw Object.assign(new Error('missing'), { code: 'ENOENT' });
     });
-    mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      size: 0,
+    } as fs.Stats);
+    const openPaths = new Map<number, string>();
+    const readBuffers = new Map<number, Buffer>();
+    const readOffsets = new Map<number, number>();
+    let nextDescriptor = 100;
+    mockFs.openSync.mockImplementation((filePath: string) => {
+      const descriptor = nextDescriptor++;
+      openPaths.set(descriptor, filePath);
+      return descriptor;
+    });
+    mockFs.fstatSync.mockImplementation((descriptor: number) =>
+      mockFs.statSync(openPaths.get(descriptor)),
+    );
+    mockFs.readSync.mockImplementation(
+      (
+        descriptor: number,
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number | null,
+      ) => {
+        let source = readBuffers.get(descriptor);
+        if (!source) {
+          source = Buffer.from(
+            mockFs.readFileSync(openPaths.get(descriptor), 'utf8'),
+          );
+          readBuffers.set(descriptor, source);
+        }
+        const start = position ?? readOffsets.get(descriptor) ?? 0;
+        const bytesRead = source.copy(buffer, offset, start, start + length);
+        if (position === null) {
+          readOffsets.set(descriptor, start + bytesRead);
+        }
+        return bytesRead;
+      },
+    );
+    mockFs.closeSync.mockImplementation((descriptor: number) => {
+      openPaths.delete(descriptor);
+      readBuffers.delete(descriptor);
+      readOffsets.delete(descriptor);
+    });
     delete process.env.PROVIDER_PATH;
     delete process.env.PROVIDER_FILE;
     delete process.env.PROVIDER_TOOLS_PATH;
@@ -3358,7 +3410,14 @@ providers:
       filePath.includes('*'),
     );
     mockGlob.sync.mockReturnValue([]);
-    mockFs.statSync.mockImplementation(() => {
+    mockFs.statSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return {
+          isDirectory: () => false,
+          isFile: () => true,
+          size: 0,
+        } as fs.Stats;
+      }
       throw Object.assign(new Error('missing'), { code: 'ENOENT' });
     });
 
@@ -4130,6 +4189,7 @@ tests:
       (filePath: string) =>
         ({
           isDirectory: () => false,
+          isFile: () => true,
           size: /(?:providers|prompt|cases)\.ya?ml$/.test(filePath)
             ? 3 * 1024 * 1024 * 1024
             : 0,
@@ -4171,6 +4231,200 @@ tests: file://tests/cases.yaml
         .mocked(core.warning)
         .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
     ).toBe(false);
+  });
+
+  it('should not read FIFO-like nested provider, prompt, test, or scenario dependencies', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      /(?:prompt|cases|scenario)\.ya?ml$/.test(filePath),
+    );
+    mockFs.statSync.mockImplementation(
+      (filePath: string) =>
+        ({
+          isDirectory: () => false,
+          isFile: () => filePath.endsWith('promptfooconfig.yaml'),
+          isFIFO: () => !filePath.endsWith('promptfooconfig.yaml'),
+          size: 0,
+        }) as fs.Stats,
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return `
+providers: file://providers.yaml
+prompts:
+  - file: prompts/prompt.yaml
+tests: file://tests/cases.yaml
+scenarios: file://scenarios/scenario.yaml
+`;
+      }
+      throw new Error('FIFO_READ_SECRET_MARKER');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/providers.yaml',
+      './',
+      'evals/prompts/prompt.yaml',
+      'evals/tests/cases.yaml',
+      'evals/scenarios/scenario.yaml',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract nested provider dependencies; conservatively watching the dependency root',
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract nested prompt dependencies; conservatively watching the dependency root',
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract nested test dependencies; conservatively watching the dependency root',
+    );
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract nested scenario dependencies; conservatively watching the dependency root',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
+  });
+
+  it('should not read a FIFO-like primary config file', () => {
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => false,
+      isFIFO: () => true,
+      size: 0,
+    } as fs.Stats);
+    mockFs.readFileSync.mockImplementation(() => {
+      throw new Error('PRIMARY_FIFO_READ_SECRET_MARKER');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockFs.readFileSync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract dependencies from config; conservatively watching the dependency root',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
+  });
+
+  it('should not read an oversized primary config file', () => {
+    mockFs.statSync.mockReturnValue({
+      isDirectory: () => false,
+      isFile: () => true,
+      size: 11 * 1024 * 1024,
+    } as fs.Stats);
+    mockFs.readFileSync.mockImplementation(() => {
+      throw new Error('PRIMARY_OVERSIZED_READ_SECRET_MARKER');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockFs.readFileSync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract dependencies from config; conservatively watching the dependency root',
+    );
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
+  });
+
+  it('should read the original descriptor when a nested path is swapped for a FIFO after fstat', () => {
+    const openPaths = new Map<number, string>();
+    const readOffsets = new Map<number, number>();
+    let nextDescriptor = 300;
+    let providerPathIsFifo = false;
+    mockFs.openSync.mockImplementation((filePath: string, flags: number) => {
+      expect(flags & fs.constants.O_NONBLOCK).toBe(fs.constants.O_NONBLOCK);
+      if (fs.constants.O_NOFOLLOW !== undefined) {
+        expect(flags & fs.constants.O_NOFOLLOW).toBe(fs.constants.O_NOFOLLOW);
+      }
+      const descriptor = nextDescriptor++;
+      openPaths.set(descriptor, filePath);
+      return descriptor;
+    });
+    mockFs.fstatSync.mockImplementation((descriptor: number) => {
+      if (openPaths.get(descriptor)?.endsWith('providers.yaml')) {
+        providerPathIsFifo = true;
+      }
+      return {
+        isFile: () => true,
+        size: 64,
+      } as fs.Stats;
+    });
+    mockFs.readSync.mockImplementation(
+      (descriptor: number, buffer: Buffer, offset: number, length: number) => {
+        const filePath = openPaths.get(descriptor) ?? '';
+        const source = Buffer.from(
+          filePath.endsWith('promptfooconfig.yaml')
+            ? 'providers: file://providers.yaml'
+            : 'config:\n  tools: file://tools/helper.js:loadTools',
+        );
+        const start = readOffsets.get(descriptor) ?? 0;
+        const bytesRead = source.copy(buffer, offset, start, start + length);
+        readOffsets.set(descriptor, start + bytesRead);
+        return bytesRead;
+      },
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('providers.yaml') && providerPathIsFifo) {
+        throw new Error('FIFO_SWAP_READ_SECRET_MARKER');
+      }
+      throw new Error('PATH_REOPEN_SECRET_MARKER');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers.yaml', 'evals/tools/helper.js']);
+    expect(providerPathIsFifo).toBe(true);
+    expect(mockFs.readFileSync).not.toHaveBeenCalled();
+    expect(mockFs.closeSync).toHaveBeenCalledTimes(2);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should stop reading a nested file that grows beyond the structured dependency limit after fstat', () => {
+    const openPaths = new Map<number, string>();
+    const readOffsets = new Map<number, number>();
+    let nextDescriptor = 400;
+    mockFs.openSync.mockImplementation((filePath: string) => {
+      const descriptor = nextDescriptor++;
+      openPaths.set(descriptor, filePath);
+      return descriptor;
+    });
+    mockFs.fstatSync.mockReturnValue({
+      isFile: () => true,
+      size: 0,
+    } as fs.Stats);
+    mockFs.readSync.mockImplementation(
+      (descriptor: number, buffer: Buffer, offset: number, length: number) => {
+        const filePath = openPaths.get(descriptor) ?? '';
+        if (filePath.endsWith('promptfooconfig.yaml')) {
+          const source = Buffer.from('providers: file://providers.yaml');
+          const start = readOffsets.get(descriptor) ?? 0;
+          const bytesRead = source.copy(buffer, offset, start, start + length);
+          readOffsets.set(descriptor, start + bytesRead);
+          return bytesRead;
+        }
+        buffer.fill('x', offset, offset + length);
+        return length;
+      },
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers.yaml', './']);
+    expect(mockFs.closeSync).toHaveBeenCalledTimes(2);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Failed to extract nested provider dependencies; conservatively watching the dependency root',
+    );
   });
 
   it('should extract test and assertion transform dependencies', () => {
@@ -4484,6 +4738,7 @@ nunjucksFilters:
       (filePath: string) =>
         ({
           isDirectory: () => false,
+          isFile: () => true,
           size: filePath.endsWith('scenarios/large.yaml')
             ? 11 * 1024 * 1024
             : 0,
@@ -4762,9 +5017,11 @@ providers:
     });
 
     mockFs.statSync.mockImplementation(
-      () =>
+      (filePath: string) =>
         ({
-          isDirectory: () => true,
+          isDirectory: () => !filePath.endsWith('promptfooconfig.yaml'),
+          isFile: () => filePath.endsWith('promptfooconfig.yaml'),
+          size: 0,
         }) as fs.Stats,
     );
 
