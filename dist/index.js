@@ -38809,7 +38809,7 @@ function normalizeWindowsPromptGlob(pattern) {
   const firstForwardSlash = pattern.indexOf("/");
   const nativePrefix = firstForwardSlash === -1 ? pattern : pattern.slice(0, firstForwardSlash);
   const escapedSuffix = firstForwardSlash === -1 ? "" : pattern.slice(firstForwardSlash);
-  return nativePrefix.replace(/\\(\[[^\\]*\\\])(?=\\|$)/g, "/\\$1").replace(/(?<!\/)\\(?![,.\-|^\]})])/g, "/") + escapedSuffix.replace(/\\(?![?*()[\]{}+@!,.\-|^])/g, "/");
+  return nativePrefix.replace(/\\(\[[^\\]*\\\])(?=\\|$)/g, "/\\$1").replace(/(?<!\/)\\(?![,.\-|^\]})])/g, "/") + escapedSuffix.replace(/\\(?![()[\]{}+@!,.\-|^])/g, "/");
 }
 function parseGitDiffFiles(diff) {
   if (diff && !diff.endsWith("\0")) {
