@@ -370,7 +370,7 @@ export async function run(): Promise<void> {
               ? [file.filename, file.previous_filename]
               : [file.filename],
           )
-          .join('\n');
+          .join('\0');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -387,8 +387,12 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
-        core.info(`Using manually specified files: ${changedFiles}`);
+        const manualFiles = filesInput
+          .split(/\r?\n/)
+          .map((file: string) => file.trim())
+          .filter((file: string) => file);
+        changedFiles = manualFiles.join('\0');
+        core.info(`Using manually specified files: ${manualFiles.join('\n')}`);
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
@@ -396,12 +400,15 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found ${
+              changedFiles.split('\0').filter((file) => file).length
+            } changed files`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -429,12 +436,15 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found ${
+              changedFiles.split('\0').filter((file) => file).length
+            } changed files`,
           );
         } catch (error) {
           core.warning(
@@ -457,10 +467,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles
-      .split(/\r?\n/)
-      .map((file) => file.trim())
-      .filter((file) => file);
+    const changedFilesList = changedFiles.split('\0').filter((file) => file);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {

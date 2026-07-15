@@ -46,7 +46,7 @@ const { mockGitInterface } = vi.hoisted(() => ({
     }),
     revparse: vi.fn(() => Promise.resolve('mock-commit-hash\n')),
     diff: vi.fn(() =>
-      Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+      Promise.resolve('prompts/prompt1.txt\0promptfooconfig.yaml\0'),
     ),
   },
 }));
@@ -165,7 +165,7 @@ function setupCommonMocks(): MockOctokit {
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
-    'prompts/prompt1.txt\npromptfooconfig.yaml',
+    'prompts/prompt1.txt\0promptfooconfig.yaml\0',
   );
   mockCache.cleanupOldCache.mockResolvedValue(0);
   mockCache.createCacheManifest.mockResolvedValue();
@@ -628,6 +628,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -700,6 +701,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -914,6 +916,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -961,6 +964,57 @@ describe('GitHub Action Main', () => {
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve significant whitespace in GitHub API filenames', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' data/context.json ' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' data/context.json ',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve newline-containing GitHub API filenames', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'data/line\nbreak.json' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'data/line\nbreak.json',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should match tab and space-containing push filenames from NUL-delimited git output', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValue(
+        'docs/unrelated.md\0data/tab\tcontext.json\0data/ leading.json\0',
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'data/tab\tcontext.json',
+        'data/ leading.json',
+      ]);
 
       await run();
 
@@ -1689,6 +1743,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',
