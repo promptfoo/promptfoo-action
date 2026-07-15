@@ -115,6 +115,11 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
+    const globOptions = {
+      windowsPathsNoEscape: true,
+      magicalBraces: true,
+    };
+
     // Helper function to process file:// paths with glob support
     const processFileUrl = (fileUrl: string): void => {
       const filePath = normalizeConfigFilePath(fileUrl.replace('file://', ''));
@@ -127,10 +132,6 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       // Check if the path contains glob patterns
-      const globOptions = {
-        windowsPathsNoEscape: true,
-        magicalBraces: true,
-      };
       if (glob.hasMagic(filePath, globOptions)) {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, {
@@ -328,7 +329,7 @@ export function extractFileDependencies(configPath: string): string[] {
           if (defaultTestPath) {
             processFileUrl(config.defaultTest);
           }
-          if (defaultTestPath && !glob.hasMagic(defaultTestPath)) {
+          if (defaultTestPath && !glob.hasMagic(defaultTestPath, globOptions)) {
             try {
               const realDependencyRoot = fs.realpathSync(dependencyRoot);
               const realDefaultTestPath = fs.realpathSync(defaultTestPath);

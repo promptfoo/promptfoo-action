@@ -350,6 +350,38 @@ defaultTest: file://defaults/default.yaml
     );
   });
 
+  it('should not inspect a brace or Windows-style file-backed defaultTest glob as a file', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "defaultTest: 'file://defaults\\{one,two}.yaml'",
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (
+        value: string,
+        options?: { magicalBraces?: boolean; windowsPathsNoEscape?: boolean },
+      ) =>
+        value.includes('{') &&
+        options?.magicalBraces === true &&
+        options?.windowsPathsNoEscape === true,
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/evals/defaults/one.yaml',
+      '/test/working/evals/defaults/two.yaml',
+    ]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/one.yaml',
+      'evals/defaults/two.yaml',
+      'evals/defaults',
+    ]);
+    expect(mockFs.realpathSync).not.toHaveBeenCalled();
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should reject nested defaultTest dependencies outside the repository', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('promptfooconfig.yaml')) {
