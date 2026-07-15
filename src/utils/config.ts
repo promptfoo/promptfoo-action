@@ -323,7 +323,6 @@ export function extractFileDependencies(
       filePath: string,
       source = 'config file dependency',
       preserveGlobRoot = false,
-      windowsPathsNoEscape = false,
     ): string[] => {
       if (filePath.includes('\0')) {
         warnSafe(
@@ -332,22 +331,7 @@ export function extractFileDependencies(
         return [];
       }
       const driveNormalizedPath = filePath.replace(/^\/(?=[a-z]:[\\/])/i, '');
-      const preservePosixGlobEscapes =
-        path.sep === '/' && /\\[()[\]{}]/.test(driveNormalizedPath);
-      const normalizedPath = windowsPathsNoEscape
-        ? preservePosixGlobEscapes
-          ? driveNormalizedPath.replace(
-              /(\\+)([()[\]{}])|\\+/g,
-              (
-                _match,
-                slashes: string | undefined,
-                escaped: string | undefined,
-              ) => (escaped ? `${slashes}${escaped}` : path.sep),
-            )
-          : driveNormalizedPath.replace(/\\/g, path.sep)
-        : driveNormalizedPath;
-      const useWindowsPathsNoEscape =
-        windowsPathsNoEscape && !preservePosixGlobEscapes;
+      const normalizedPath = driveNormalizedPath.replace(/\\/g, path.sep);
       if (isForeignWindowsPath(normalizedPath)) {
         if (!warnedForeignWindowsPath) {
           warnedForeignWindowsPath = true;
@@ -362,7 +346,7 @@ export function extractFileDependencies(
           normalizedPath,
           MAX_PROVIDER_REFERENCE_LENGTH,
           MAX_BRACE_EXPANSIONS,
-          useWindowsPathsNoEscape,
+          true,
         )
       ) {
         addConservativeWatchRoots();
@@ -376,7 +360,7 @@ export function extractFileDependencies(
       const globOptions = {
         magicalBraces: true,
         braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-        ...(useWindowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}),
+        windowsPathsNoEscape: true,
       };
       let isGlob: boolean;
       let expandedPaths: string[];
@@ -548,7 +532,6 @@ export function extractFileDependencies(
             relativePath,
             'config file dependency',
             preserveGlobRoot || hasEnvTemplate,
-            preserveGlobRoot || hasEnvTemplate,
           ),
         );
       }
@@ -707,7 +690,6 @@ export function extractFileDependencies(
             expandAndTrackEnvTemplates(relativeVarFile),
             'test variable file dependency',
             true,
-            true,
           )) {
             if (!/\.(?:csv|jsonl)$/i.test(resolvedVarFile)) {
               inspectTestFile(resolvedVarFile, refResolutionRoot, varBaseDir);
@@ -728,7 +710,6 @@ export function extractFileDependencies(
           processFilePath(
             expandAndTrackEnvTemplates(value.file),
             'test variable file dependency',
-            true,
             true,
           );
         }
@@ -758,7 +739,6 @@ export function extractFileDependencies(
           processFilePath(
             expandAndTrackEnvTemplates(assert.value.file),
             'assertion file dependency',
-            true,
             true,
           );
         }
@@ -898,7 +878,6 @@ export function extractFileDependencies(
                 expandAndTrackEnvTemplates(part.source.path),
                 'provider multipart file dependency',
                 true,
-                true,
               );
             }
             const securityGroups: Array<[string, string[]]> = [
@@ -929,7 +908,6 @@ export function extractFileDependencies(
                   processFilePath(
                     expandAndTrackEnvTemplates(assetPath),
                     'provider security file dependency',
-                    true,
                     true,
                   );
                 }
@@ -1020,7 +998,6 @@ export function extractFileDependencies(
             relativeRefPath,
             'test $ref dependency',
             false,
-            true,
           )) {
             inspectTestFile(
               refFile,
@@ -1274,7 +1251,6 @@ export function extractFileDependencies(
         filePath,
         'test file dependency',
         true,
-        true,
       )) {
         if (isDirectory(testFile)) {
           const nestedTestFiles = glob.sync(
@@ -1411,7 +1387,6 @@ export function extractFileDependencies(
           processFilePath(
             expandAndTrackEnvTemplates(filterPath),
             'Nunjucks filter file dependency',
-            true,
             true,
           );
         }

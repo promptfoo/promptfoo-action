@@ -2932,6 +2932,7 @@ tests:
   it.each([
     'file://{../outside,tests}/*.yaml',
     'file://{tests/../../outside,tests}/*.yaml',
+    'file://\\{safe,../../outside}/*.yaml',
   ])('should reject brace-alternative traversal before expanding %s', (testPath) => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
     mockFs.readFileSync.mockReturnValue(`tests: '${testPath}'`);
@@ -3668,6 +3669,18 @@ tests: "file://tests/\\0*.yaml"
       `tests: 'file://tests/${String.fromCharCode(92).repeat(2)}{1..1000000000}.yaml'`,
     ],
     [
+      'an odd-backslash prompt range',
+      `prompts: 'file://prompts/${String.fromCharCode(92)}{1..4096}.txt'`,
+    ],
+    [
+      'an odd-backslash provider range',
+      `providers: 'file://providers/${String.fromCharCode(92)}{1..4096}.py'`,
+    ],
+    [
+      'an odd-backslash test range',
+      `tests: 'file://tests/${String.fromCharCode(92)}{1..4096}.yaml'`,
+    ],
+    [
       'a zero-padded test range',
       `tests: 'file://tests/{${'0'.repeat(32_000)}1..${'0'.repeat(31_997)}1024}.yaml'`,
     ],
@@ -3704,7 +3717,7 @@ tests: "file://tests/\\0*.yaml"
     );
   });
 
-  it('should preserve POSIX-escaped glob literals while normalizing Windows separators', () => {
+  it('should normalize config glob backslashes using Promptfoo no-escape semantics', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/working');
     mockFs.readFileSync.mockReturnValue(
       [
@@ -3721,14 +3734,16 @@ tests: "file://tests/\\0*.yaml"
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([
-      'tests/\\{1..1000000000\\}.yaml',
-      'tests/\\{1..1000000000}.yaml',
-      'tests/\\[literal\\].yaml',
-      'tests/\\(literal\\).yaml',
-      'tests/nested/\\[mixed\\].yaml',
+      'tests/{1..1000000000/}.yaml',
+      '/',
+      'tests/[literal/].yaml',
+      'tests/(literal/).yaml',
+      'tests/nested/[mixed/].yaml',
       'tests/nested/cases.yaml',
     ]);
-    expect(core.warning).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
   });
 
   it('should reject an oversized config dependency before glob parsing', () => {

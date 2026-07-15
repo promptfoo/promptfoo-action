@@ -635,6 +635,23 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
+    test('should preserve an escaped numeric-range action prompt literal on POSIX', async () => {
+      const pattern = `prompts/${String.fromCharCode(92)}{1..1000000000}.txt`;
+      withInputs({ prompts: pattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/{1..1000000000}.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        pattern,
+        expect.objectContaining({ braceExpandMax: 1025 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should handle empty prompts input', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {
