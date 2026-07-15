@@ -808,6 +808,57 @@ vars:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should track a scalar XLSX vars file without its sheet selector or YAML inspection', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return "vars: 'file://data/vars.xlsx#Regression Cases'";
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/vars.xlsx',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should track array-form XLS and XLSX vars files without sheet selectors or YAML inspection', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+vars:
+  - file://data/legacy-vars.xls#2
+  - data/current-vars.xlsx#Sheet1
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/legacy-vars.xls',
+      'evals/data/current-vars.xlsx',
+    ]);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(2);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('should track provider, options, and assertion file fields in a file-backed defaultTest', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {

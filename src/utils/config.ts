@@ -376,10 +376,9 @@ export function extractFileDependencies(configPath: string): string[] {
         rawFileUrl.slice('file://'.length),
       );
       if (watchDynamicFilePath(rawFilePath)) return;
-      const filePath = rawFilePath.replace(
-        /(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i,
-        '$1',
-      );
+      const filePath = rawFilePath
+        .replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, '$1')
+        .replace(/(\.xlsx?)#.*$/i, '$1');
       const fileUrl = `file://${filePath}`;
       const absolutePath = resolveConfigDependency(
         filePath,
@@ -389,7 +388,7 @@ export function extractFileDependencies(configPath: string): string[] {
       if (inspectedVarPaths.has(absolutePath)) return;
       inspectedVarPaths.add(absolutePath);
       const varFiles = processFileUrl(fileUrl, absolutePath);
-      if (/\.(?:[cm]?[jt]s|py)$/i.test(filePath)) return;
+      if (/\.(?:[cm]?[jt]s|py|xlsx?)$/i.test(filePath)) return;
       for (const varFile of varFiles) {
         if (inspectedVarFiles.has(varFile)) continue;
         inspectedVarFiles.add(varFile);
