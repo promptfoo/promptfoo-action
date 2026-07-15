@@ -494,6 +494,34 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
+    test('should accurately log a manual full scan that uses config prompts', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValue('');
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing prompts defined in the Promptfoo config.',
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('Processing all matching prompt files:'),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test.each([
       {
         label: 'changed prompt',

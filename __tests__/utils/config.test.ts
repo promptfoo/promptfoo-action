@@ -5508,7 +5508,7 @@ providers:
     );
   });
 
-  it('should ignore a glob rejected during brace expansion without dropping later dependencies', () => {
+  it('should conservatively watch the dependency root when brace expansion fails', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file://providers/{invalid,safe}*.py
@@ -5525,13 +5525,13 @@ providers:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['evals/providers/sibling.py']);
+    expect(deps).toEqual(['./', 'evals/providers/sibling.py']);
     expect(core.warning).toHaveBeenCalledWith(
-      'Skipping invalid config dependency glob pattern',
+      'Skipping invalid config dependency glob pattern; conservatively watching the dependency root',
     );
   });
 
-  it('should ignore a glob rejected during expansion without dropping later dependencies', () => {
+  it('should conservatively watch the dependency root when glob enumeration fails', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file://providers/invalid*.py
@@ -5548,9 +5548,9 @@ providers:
       '/test/working/evals/promptfooconfig.yaml',
     );
 
-    expect(deps).toEqual(['evals/providers/safe.py']);
+    expect(deps).toEqual(['./', 'evals/providers/safe.py']);
     expect(core.warning).toHaveBeenCalledWith(
-      'Skipping invalid config dependency glob pattern',
+      'Skipping invalid config dependency glob pattern; conservatively watching the dependency root',
     );
   });
 

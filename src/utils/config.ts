@@ -608,7 +608,10 @@ export function extractFileDependencies(configPath: string): string[] {
             braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
           });
         } catch {
-          core.warning('Skipping invalid config dependency glob pattern');
+          addDependencyRootWatchers();
+          core.warning(
+            'Skipping invalid config dependency glob pattern; conservatively watching the dependency root',
+          );
           return [];
         }
         if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
@@ -698,7 +701,10 @@ export function extractFileDependencies(configPath: string): string[] {
             braceExpandMax: MAX_BRACE_EXPANSIONS,
           });
         } catch {
-          core.warning('Skipping invalid config dependency glob pattern');
+          addDependencyRootWatchers();
+          core.warning(
+            'Skipping invalid config dependency glob pattern; conservatively watching the dependency root',
+          );
           return [];
         }
         const safeMatches: string[] = [];

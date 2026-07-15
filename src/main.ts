@@ -738,7 +738,9 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`,
+        useConfigPrompts
+          ? 'Processing prompts defined in the Promptfoo config.'
+          : `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`,
       );
     }
 
