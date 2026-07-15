@@ -3534,6 +3534,36 @@ providers:
     ]);
   });
 
+  it('should preserve literal POSIX backslashes in direct HTTP file paths', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue(String.raw`
+providers:
+  - id: http
+    config:
+      auth:
+        type: file
+        path: './credentials\auth-token.txt'
+      signatureAuth:
+        certPath: './credentials\signature.crt'
+      tls:
+        keyPath: './credentials\client.key'
+      multipart:
+        parts:
+          - source:
+              type: path
+              path: './uploads\document.bin'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      String.raw`evals/credentials\auth-token.txt`,
+      String.raw`evals/credentials\signature.crt`,
+      String.raw`evals/credentials\client.key`,
+      String.raw`evals/uploads\document.bin`,
+    ]);
+  });
+
   it('should conservatively watch computed nested response-schema templates', () => {
     process.env.PROVIDER_FILE = 'current.json';
     mockFs.readFileSync.mockReturnValue(`
