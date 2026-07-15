@@ -145,7 +145,7 @@ prompts:
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
 
-    expect(deps).toEqual([match, './', 'nested/system.txt']);
+    expect(deps).toEqual([match, prompt, 'nested/system.txt']);
     expect(mockGlob.sync).toHaveBeenCalledTimes(2);
   });
 
@@ -203,7 +203,7 @@ prompts:
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['existing.txt', './']);
+    expect(deps).toEqual(['existing.txt', '*.txt']);
   });
 
   it('should retain a repository-root watch sentinel when the last prompt is deleted', () => {
@@ -215,7 +215,7 @@ prompts:
 
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['./']);
+    expect(deps).toEqual(['*.txt']);
   });
 
   it('should retain a scalar directory prompt after its last file is deleted', () => {
@@ -305,6 +305,10 @@ prompts:
     'prompts: "Calculate price * discount_percent."\n',
     'prompts: "Return **bold**."\n',
     'prompts: "Calculate price *. token."\n',
+    'prompts: "Solve 2*2"\n',
+    'prompts: "Solve 2*2."\n',
+    'prompts: "Use *emphasis* sparingly."\n',
+    'prompts: "Use **bold** text, not plain text."\n',
     'prompts: What is the capital of {{country}}?\n',
     'prompts: Return [safe] output for {{user}}.\n',
     'prompts: Which option (A or B)? Explain briefly.\n',
@@ -1077,6 +1081,8 @@ prompts:
   it('should extract test variable files', () => {
     const configContent = `
 tests:
+  - null
+  - invalid-test-entry
   - vars:
       context: file://data/context.txt
       examples:
@@ -1197,6 +1203,106 @@ metadata: !!set {a: not-null}
     const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
 
     expect(deps).toEqual(['prompts/prompts.yaml', 'shared/system.txt']);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should not enumerate binary metadata while inspecting nested prompt YAML', () => {
+    const binaryMetadata = Buffer.alloc(1536 * 1024, 65).toString('base64');
+    const objectValues = vi.spyOn(Object, 'values');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('prompts/prompts.yaml')) {
+        return `metadata: !!binary ${binaryMetadata}\ncreatedAt: 2024-01-02\nmessages:\n  - content: file://shared/system.txt\n`;
+      }
+      return 'prompts: file://prompts/prompts.yaml\n';
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+    const enumeratedBinary = objectValues.mock.calls.some(([value]) =>
+      ArrayBuffer.isView(value),
+    );
+    const enumeratedDate = objectValues.mock.calls.some(
+      ([value]) => value instanceof Date,
+    );
+    objectValues.mockRestore();
+
+    expect(deps).toEqual(['prompts/prompts.yaml', 'shared/system.txt']);
+    expect(enumeratedBinary).toBe(false);
+    expect(enumeratedDate).toBe(false);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should not enumerate a binary prompt map', () => {
+    const binaryMetadata = Buffer.alloc(64 * 1024, 65).toString('base64');
+    const objectKeys = vi.spyOn(Object, 'keys');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.py
+prompts: !!binary ${binaryMetadata}
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+    const enumeratedBinary = objectKeys.mock.calls.some(([value]) =>
+      ArrayBuffer.isView(value),
+    );
+    objectKeys.mockRestore();
+
+    expect(deps).toEqual(['providers/provider.py']);
+    expect(enumeratedBinary).toBe(false);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should not enumerate binary test variables', () => {
+    const binaryMetadata = Buffer.alloc(64 * 1024, 65).toString('base64');
+    const objectValues = vi.spyOn(Object, 'values');
+    mockFs.readFileSync.mockReturnValue(`
+prompts: file://prompts/main.txt
+defaultTest:
+  vars: !!binary ${binaryMetadata}
+  assert:
+    - value: file://expected/default.txt
+tests:
+  - vars: !!binary ${binaryMetadata}
+    assert:
+      - value: file://expected/test.txt
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+    const enumeratedBinary = objectValues.mock.calls.some(([value]) =>
+      ArrayBuffer.isView(value),
+    );
+    objectValues.mockRestore();
+
+    expect(deps).toEqual([
+      'prompts/main.txt',
+      'expected/default.txt',
+      'expected/test.txt',
+    ]);
+    expect(enumeratedBinary).toBe(false);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'providers',
+    'assert',
+    'tests',
+  ])('should not iterate a binary %s collection', (collection) => {
+    const binaryMetadata = Buffer.alloc(64 * 1024, 65).toString('base64');
+    const binaryCollection =
+      collection === 'assert'
+        ? `defaultTest:\n  assert: !!binary ${binaryMetadata}`
+        : `${collection}: !!binary ${binaryMetadata}`;
+    const iterator = vi.spyOn(Uint8Array.prototype, Symbol.iterator);
+    mockFs.readFileSync.mockReturnValue(`
+prompts: file://prompts/main.txt
+${binaryCollection}
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+    const iteratedBinary = iterator.mock.calls.length > 0;
+    iterator.mockRestore();
+
+    expect(deps).toEqual(['prompts/main.txt']);
+    expect(iteratedBinary).toBe(false);
     expect(core.warning).not.toHaveBeenCalled();
   });
 

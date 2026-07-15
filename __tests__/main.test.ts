@@ -98,6 +98,7 @@ vi.mock('fs', async () => {
   };
 });
 vi.mock('glob', () => ({
+  hasMagic: vi.fn(),
   sync: vi.fn(),
 }));
 vi.mock('dotenv');
@@ -131,6 +132,7 @@ const mockFs = fs as unknown as {
 import * as glob from 'glob';
 
 const mockGlob = glob as unknown as {
+  hasMagic: MockedFunction<typeof glob.hasMagic>;
   sync: MockedFunction<typeof glob.sync>;
 };
 
@@ -960,6 +962,38 @@ describe('GitHub Action Main', () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'deleted.txt' }]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should skip an unrelated change for a repository-root prompt glob', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('*'),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue(['*.txt']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should run when a repository-root prompt glob matches a deletion', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'deleted.txt' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) =>
+        value.includes('*'),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue(['*.txt']);
 
       await run();
 

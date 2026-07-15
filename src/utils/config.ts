@@ -67,6 +67,18 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function isTraversableRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    !ArrayBuffer.isView(value) &&
+    !(value instanceof Date) &&
+    !(value instanceof Map) &&
+    !(value instanceof Set)
+  );
+}
+
 /**
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
@@ -171,9 +183,11 @@ export function extractFileDependencies(
           basePath = path.join(basePath, part);
         }
         dependencies.add(
-          matches.length === 0
-            ? `${basePath.replace(/[\\/]+$/, '')}${path.sep}`
-            : basePath,
+          path.relative(cwd, basePath) === ''
+            ? absolutePath
+            : matches.length === 0
+              ? `${basePath.replace(/[\\/]+$/, '')}${path.sep}`
+              : basePath,
         );
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
@@ -188,13 +202,15 @@ export function extractFileDependencies(
     };
 
     // Extract provider files
-    if (config.providers) {
+    if (Array.isArray(config.providers)) {
       for (const provider of config.providers) {
         if (typeof provider === 'string' && provider.startsWith('file://')) {
           processFileUrl(provider);
         } else if (
           typeof provider === 'object' &&
-          provider.id?.startsWith('file://')
+          provider !== null &&
+          typeof provider.id === 'string' &&
+          provider.id.startsWith('file://')
         ) {
           processFileUrl(provider.id);
         }
@@ -208,7 +224,9 @@ export function extractFileDependencies(
           ? [config.prompts]
           : Array.isArray(config.prompts)
             ? config.prompts
-            : Object.keys(config.prompts);
+            : isTraversableRecord(config.prompts)
+              ? Object.keys(config.prompts)
+              : [];
 
       const visitedPromptFiles = new Set<string>();
       const resolvePromptProbe = (
@@ -253,8 +271,7 @@ export function extractFileDependencies(
           isFileUrl ||
           isEnvironmentTemplate ||
           (reference.includes('*') &&
-            (!/(?:\s\*|\*\s)/.test(reference) ||
-              /\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) ||
+            (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) ||
               /^[^*]*\*+$/.test(reference))) ||
           /[\\/]/.test(reference) ||
           /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
@@ -421,7 +438,7 @@ export function extractFileDependencies(
                 for (const nestedValue of value) {
                   visitNestedReferences(nestedValue);
                 }
-              } else if (typeof value === 'object' && value !== null) {
+              } else if (isTraversableRecord(value)) {
                 for (const nestedValue of Object.values(value)) {
                   visitNestedReferences(nestedValue);
                 }
@@ -464,7 +481,7 @@ export function extractFileDependencies(
 
     // Extract test variable files
     const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
-      if (!vars) return;
+      if (!isTraversableRecord(vars)) return;
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
@@ -489,14 +506,18 @@ export function extractFileDependencies(
     const extractAssertFiles = (
       asserts?: Array<{ type?: string; value?: unknown }>,
     ): void => {
-      if (!asserts) return;
+      if (!Array.isArray(asserts)) return;
       for (const assert of asserts) {
         if (
+          assert !== null &&
+          typeof assert === 'object' &&
           typeof assert.value === 'string' &&
           assert.value.startsWith('file://')
         ) {
           processFileUrl(assert.value);
         } else if (
+          assert !== null &&
+          typeof assert === 'object' &&
           typeof assert.value === 'object' &&
           assert.value !== null &&
           'file' in assert.value &&
@@ -514,14 +535,15 @@ export function extractFileDependencies(
     };
 
     // Process defaultTest
-    if (config.defaultTest) {
+    if (isTraversableRecord(config.defaultTest)) {
       extractVarFiles(config.defaultTest.vars);
       extractAssertFiles(config.defaultTest.assert);
     }
 
     // Process tests
-    if (config.tests) {
+    if (Array.isArray(config.tests)) {
       for (const test of config.tests) {
+        if (test === null || typeof test !== 'object') continue;
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
       }
