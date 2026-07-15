@@ -117,6 +117,38 @@ prompts:
     expect(mockGlob.sync).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    'release notes-*.{json,yaml}',
+    'release notes-*.@(json|yaml)',
+    'release notes-*',
+    'release notes *.{json,yaml}',
+    'release notes *.@(json|yaml)',
+    'release notes *',
+    'release notes **.{json,yaml}',
+    'release notes **.@(json|yaml)',
+    'release notes **',
+  ])('should inspect a bare root prompt glob with spaces in its filename', (prompt) => {
+    const match = prompt.startsWith('release notes-')
+      ? 'release notes-v1.yaml'
+      : 'release notes v1.yaml';
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith(match)) {
+        return 'content: file://nested/system.txt\n';
+      }
+      return `prompts: '${prompt}'\n`;
+    });
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) =>
+        value.includes('*') || value.includes('@(') || value.includes('{'),
+    );
+    mockGlob.sync.mockReturnValue([`/test/working/${match}`]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual([match, './', 'nested/system.txt']);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(2);
+  });
+
   it('should watch the config directory for a root-level scalar prompt glob', () => {
     mockFs.readFileSync.mockReturnValue("prompts: '*.txt'\n");
     mockGlob.hasMagic.mockImplementation((value: string) =>
@@ -271,6 +303,8 @@ prompts:
     'prompts: |\n  Calculate price * discount_percent.\n',
     'prompts: "Return **bold** output for the user."\n',
     'prompts: "Calculate price * discount_percent."\n',
+    'prompts: "Return **bold**."\n',
+    'prompts: "Calculate price *. token."\n',
     'prompts: What is the capital of {{country}}?\n',
     'prompts: Return [safe] output for {{user}}.\n',
     'prompts: Which option (A or B)? Explain briefly.\n',
