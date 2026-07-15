@@ -508,6 +508,8 @@ prompts:
     'prompts: "Use **bold** text, not plain text."\n',
     "prompts: 'Answer in {{ env.TONE }} tone'\n",
     'prompts: \'Use {{- env["TONE"] -}} tone for this response\'\n',
+    "prompts: '{{ env.TONE }} tone for {{question}}'\n",
+    'prompts: \'{{- env["TONE"] -}}: {{user}}\'\n',
     'prompts: What is the capital of {{country}}?\n',
     'prompts: Return [safe] output for {{user}}.\n',
     'prompts: Which option (A or B)? Explain briefly.\n',
