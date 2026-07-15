@@ -1101,6 +1101,24 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should reject a matched prompt filename that could forge a workflow command', async () => {
+      const injectedFilename =
+        'prompts/customer\n::error::SENSITIVE-REVIEW-TOKEN.txt';
+      mockOctokit.paginate.mockResolvedValue([{ filename: injectedFilename }]);
+      mockGlob.sync.mockReturnValue([injectedFilename]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Prompt file paths containing carriage returns or line feeds are not supported',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+    });
+
     test('should run when a file inside a dependency directory changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },
