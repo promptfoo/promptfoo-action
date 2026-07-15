@@ -295,13 +295,18 @@ describe('findForbiddenEnvFileKey', () => {
     'DOTENV_KEY',
     'dotenv_config_path',
     'DOTENV_CONFIG_OVERRIDE',
+    '__proto__',
+    'CoNsTrUcToR',
+    'pRoToTyPe',
     'GITHUB_STEP_SUMMARY',
     'GITHUB_OUTPUT',
     'GITHUB_ENV',
     'GITHUB_PATH',
     'GITHUB_STATE',
   ])('flags forbidden key %s and returns the original-case key', (key) => {
-    expect(findForbiddenEnvFileKey({ [key]: 'x' })).toBe(key);
+    const environment: Record<string, string> = Object.create(null);
+    environment[key] = 'x';
+    expect(findForbiddenEnvFileKey(environment)).toBe(key);
   });
 });
 
@@ -330,6 +335,29 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
 
     expect(target.OPENAI_API_KEY).toBe('sk-test');
     expect(target.NODE_ENV).toBe('test');
+  });
+
+  test.each([
+    'constructor',
+    'prototype',
+  ])('rejects reserved object key %s without changing a normal target', (key) => {
+    const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
+    const file = writeEnv('.env', key.concat('=polluted\nSAFE=ok\n'));
+
+    let error: unknown;
+    try {
+      loadEnvironmentFile(file, target);
+    } catch (e) {
+      error = e;
+    }
+
+    expect(error).toBeInstanceOf(PromptfooActionError);
+    expect((error as PromptfooActionError).code).toBe(
+      ErrorCodes.INVALID_CONFIGURATION,
+    );
+    expect((error as PromptfooActionError).message).toContain(key);
+    expect(target).toEqual({ EXISTING: 'keep' });
+    expect(Object.getPrototypeOf(target)).toBe(Object.prototype);
   });
 
   test('rejects a forbidden variable without leaking any value from the file', () => {

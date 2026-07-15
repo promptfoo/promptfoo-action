@@ -6,6 +6,7 @@ import { ErrorCodes, PromptfooActionError } from './errors';
 // behavior. Keep this explicit and grouped so the trust boundary is easy
 // to audit. Legitimate overrides belong in the trusted workflow environment.
 const FORBIDDEN_ENV_FILE_KEYS = new Set([
+  '__PROTO__',
   'ABLIT_API_BASE_URL',
   'AI21_API_BASE_URL',
   'ALL_PROXY',
@@ -85,6 +86,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'CLAWDBOT_GATEWAY_URL',
   'CLOUDFLARE_ACCOUNT_ID',
   'CLOUDFLARE_GATEWAY_ID',
+  'CONSTRUCTOR',
   'COMPILER_PATH',
   'CODEX_HOME',
   'COMSPEC',
@@ -260,6 +262,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PROMPTFOO_SHARING_APP_BASE_URL',
   'PROMPTFOO_STRICT_FILES',
   'PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT',
+  'PROTOTYPE',
   'PUPPETEER_CACHE_DIR',
   'PUPPETEER_CHROME_DOWNLOAD_BASE_URL',
   'PUPPETEER_DOWNLOAD_BASE_URL',
@@ -336,7 +339,7 @@ export function loadEnvironmentFile(
 ): void {
   // Parse into an isolated object so untrusted values cannot affect this action
   // or a child process before they have passed the process-control check.
-  const fileEnvironment: Record<string, string> = {};
+  const fileEnvironment: Record<string, string> = Object.create(null);
   const result = dotenv.config({
     path: envFilePath,
     override: true,
@@ -357,7 +360,7 @@ export function loadEnvironmentFile(
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      'Remove process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead.',
+      'Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead.',
     );
   }
 
