@@ -605,6 +605,51 @@ prompts: ${'A'.repeat(70_000)}
     );
   });
 
+  it('should skip an oversized file glob and preserve sibling dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.py
+  - file://prompts/${'A'.repeat(70_000)}*.txt
+prompts: file://prompts/main.txt
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.length > 65_536) {
+        throw new Error('pattern is too long');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.py', 'prompts/main.txt']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring invalid config dependency glob; preserving other dependencies',
+    );
+  });
+
+  it('should skip an oversized prompt glob and preserve sibling dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.py
+prompts:
+  - file://prompts/main.txt
+  - file://prompts/${'A'.repeat(70_000)}*.txt
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.length > 65_536) {
+        throw new Error('pattern is too long');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['providers/custom.py', 'prompts/main.txt']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring invalid config dependency glob; preserving other dependencies',
+    );
+  });
+
   it('should extract scalar prompt functions without the function suffix', () => {
     mockFs.readFileSync.mockReturnValue(
       'prompts: file://prompts/build.py:create_prompt\n',

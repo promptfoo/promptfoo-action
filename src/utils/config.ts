@@ -158,104 +158,110 @@ export function extractFileDependencies(
         return;
       }
 
-      // Check if the path contains glob patterns
-      if (glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS)) {
-        const expandedPaths = braceExpand(filePath, {
-          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-        });
-        if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
-          dependencies.add(
-            `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
-          );
-          core.warning(
-            'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
-          );
-          return;
-        }
-
-        const safePatterns: string[] = [];
-        let unsafeAlternative = false;
-        for (const expandedPath of expandedPaths) {
-          const absolutePattern = path.resolve(configDir, expandedPath);
-          if (isPathInside(dependencyRoot, absolutePattern)) {
-            safePatterns.push(absolutePattern);
-          } else {
-            unsafeAlternative = true;
-          }
-        }
-        if (unsafeAlternative) {
-          core.warning(
-            'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
-          );
-        }
-        if (safePatterns.length === 0) {
-          return;
-        }
-
-        const matches = glob.sync(
-          safePatterns.length === 1 ? safePatterns[0] : safePatterns,
-          {
-            nodir: true,
-            windowsPathsNoEscape: true,
-          },
-        );
-        for (const match of matches) {
-          const absoluteMatch = path.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
-            dependencies.add(absoluteMatch);
-          } else {
+      try {
+        // Check if the path contains glob patterns
+        if (glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS)) {
+          const expandedPaths = braceExpand(filePath, {
+            braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+          });
+          if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
+            dependencies.add(
+              `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
+            );
             core.warning(
-              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+              'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+            );
+            return;
+          }
+
+          const safePatterns: string[] = [];
+          let unsafeAlternative = false;
+          for (const expandedPath of expandedPaths) {
+            const absolutePattern = path.resolve(configDir, expandedPath);
+            if (isPathInside(dependencyRoot, absolutePattern)) {
+              safePatterns.push(absolutePattern);
+            } else {
+              unsafeAlternative = true;
+            }
+          }
+          if (unsafeAlternative) {
+            core.warning(
+              'Ignoring unsafe config dependency glob alternative: config file dependency glob alternative must stay within the repository workspace',
             );
           }
-        }
+          if (safePatterns.length === 0) {
+            return;
+          }
 
-        for (const absolutePattern of safePatterns) {
-          if (!glob.hasMagic(absolutePattern, GLOB_MAGIC_OPTIONS)) {
-            dependencies.add(absolutePattern);
-            continue;
-          }
-          const absoluteRoot = path.parse(absolutePattern).root;
-          const pathParts = path
-            .relative(absoluteRoot, absolutePattern)
-            .split(path.sep);
-          let basePath = absoluteRoot;
-          for (const part of pathParts) {
-            if (glob.hasMagic(part, GLOB_MAGIC_OPTIONS)) {
-              break;
-            }
-            basePath = path.join(basePath, part);
-          }
-          dependencies.add(
-            path.relative(cwd, basePath) === ''
-              ? absolutePattern
-              : matches.length === 0
-                ? `${basePath.replace(/[\\/]+$/, '')}${path.sep}`
-                : basePath,
+          const matches = glob.sync(
+            safePatterns.length === 1 ? safePatterns[0] : safePatterns,
+            {
+              nodir: true,
+              windowsPathsNoEscape: true,
+            },
           );
+          for (const match of matches) {
+            const absoluteMatch = path.resolve(match);
+            if (isPathInside(dependencyRoot, absoluteMatch)) {
+              dependencies.add(absoluteMatch);
+            } else {
+              core.warning(
+                `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+              );
+            }
+          }
+
+          for (const absolutePattern of safePatterns) {
+            if (!glob.hasMagic(absolutePattern, GLOB_MAGIC_OPTIONS)) {
+              dependencies.add(absolutePattern);
+              continue;
+            }
+            const absoluteRoot = path.parse(absolutePattern).root;
+            const pathParts = path
+              .relative(absoluteRoot, absolutePattern)
+              .split(path.sep);
+            let basePath = absoluteRoot;
+            for (const part of pathParts) {
+              if (glob.hasMagic(part, GLOB_MAGIC_OPTIONS)) {
+                break;
+              }
+              basePath = path.join(basePath, part);
+            }
+            dependencies.add(
+              path.relative(cwd, basePath) === ''
+                ? absolutePattern
+                : matches.length === 0
+                  ? `${basePath.replace(/[\\/]+$/, '')}${path.sep}`
+                  : basePath,
+            );
+          }
+          return safePatterns;
         }
-        return safePatterns;
-      }
 
-      const absolutePath = resolveConfigDependency(
-        filePath,
-        'config file dependency',
-      );
-      if (!absolutePath) {
-        return;
-      }
+        const absolutePath = resolveConfigDependency(
+          filePath,
+          'config file dependency',
+        );
+        if (!absolutePath) {
+          return;
+        }
 
-      if (isDirectory(absolutePath)) {
-        // It's a directory, preserve trailing slash if it was there
-        const directoryPath = fileUrl.endsWith('/')
-          ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
-          : absolutePath;
-        dependencies.add(directoryPath);
-      } else {
-        // It's a regular file path
-        dependencies.add(absolutePath);
+        if (isDirectory(absolutePath)) {
+          // It's a directory, preserve trailing slash if it was there
+          const directoryPath = fileUrl.endsWith('/')
+            ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
+            : absolutePath;
+          dependencies.add(directoryPath);
+        } else {
+          // It's a regular file path
+          dependencies.add(absolutePath);
+        }
+        return [absolutePath];
+      } catch {
+        core.warning(
+          'Ignoring invalid config dependency glob; preserving other dependencies',
+        );
       }
-      return [absolutePath];
     };
 
     // Extract provider files
@@ -479,7 +485,12 @@ export function extractFileDependencies(
           return;
         }
 
-        const isPromptGlob = glob.hasMagic(promptPath, GLOB_MAGIC_OPTIONS);
+        let isPromptGlob: boolean;
+        try {
+          isPromptGlob = glob.hasMagic(promptPath, GLOB_MAGIC_OPTIONS);
+        } catch {
+          return;
+        }
         const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(promptPath);
         const hasFixedExtension = /\.[A-Za-z0-9_-]+$/.test(promptPath);
         if (!isStructuredPrompt && (!isPromptGlob || hasFixedExtension)) {
