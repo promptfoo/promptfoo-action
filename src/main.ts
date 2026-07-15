@@ -548,6 +548,8 @@ export async function run(): Promise<void> {
               minimatch(changedFile, dep, {
                 dot: true,
                 windowsPathsNoEscape: true,
+                magicalBraces: true,
+                braceExpandMax: 1025,
               }),
             )
           ) {

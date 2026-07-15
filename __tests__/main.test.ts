@@ -1105,6 +1105,35 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should run when a brace-only dependency glob matches a deleted file', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/case-one.yaml', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/case-{one,two}.yaml',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should skip a README-only change for a brace-only dependency glob', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'evals/case-{one,two}.yaml',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test('should detect dependency directories without a trailing slash', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },

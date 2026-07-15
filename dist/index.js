@@ -39568,6 +39568,7 @@ function isDirectory2(filePath) {
 }
 
 // src/utils/config.ts
+var MAX_BRACE_EXPANSIONS = 1024;
 function isPathInside(baseDir, targetPath) {
   const relativePath = path6.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
@@ -39680,9 +39681,32 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
     };
     const processFilePath = (filePath, source = "config file dependency", preserveGlobRoot = false, windowsPathsNoEscape = false) => {
       const normalizedPath = windowsPathsNoEscape ? filePath.replace(/\\/g, path6.sep) : filePath;
-      const traversalPath = normalizedPath.replace(/\[\.\]/g, ".");
-      const hasTraversalAlternative = (/[{}]/.test(normalizedPath) || traversalPath !== normalizedPath) && /(?:^|[/{,])\.\.(?:[/},]|$)/.test(traversalPath);
-      if (windowsPathsNoEscape && hasTraversalAlternative) {
+      const globOptions = {
+        magicalBraces: true,
+        braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+        ...windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}
+      };
+      const isGlob = le(normalizedPath, globOptions);
+      const expandedPaths = isGlob ? braceExpand(normalizedPath, {
+        braceExpandMax: MAX_BRACE_EXPANSIONS + 1
+      }) : [normalizedPath];
+      if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
+        warning(
+          "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
+        );
+        return [];
+      }
+      const hasParentAlternative = expandedPaths.some(
+        (expandedPath) => /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(expandedPath)
+      );
+      if (expandedPaths.some((expandedPath) => {
+        const traversalPath = expandedPath.replace(/\[\.\]/g, ".");
+        return !isPathInside(
+          dependencyRoot,
+          path6.resolve(configDir, traversalPath)
+        );
+      })) {
         warning(
           `Ignoring unsafe config dependency "${normalizedPath}": ${source} must stay within the repository workspace`
         );
@@ -39692,11 +39716,11 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       if (!absolutePath) {
         return [];
       }
-      const globOptions = windowsPathsNoEscape ? { windowsPathsNoEscape: true } : void 0;
-      if (le(filePath, globOptions)) {
+      if (isGlob) {
         const matches = Ui(absolutePath, {
           nodir: true,
-          ...globOptions
+          ...globOptions,
+          braceExpandMax: MAX_BRACE_EXPANSIONS
         });
         const safeMatches = [];
         for (const match2 of matches) {
@@ -39710,7 +39734,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
             );
           }
         }
-        const initialGlobRoot = path6.isAbsolute(filePath) ? path6.parse(absolutePath).root : configDir;
+        const initialGlobRoot = path6.isAbsolute(normalizedPath) ? path6.parse(absolutePath).root : configDir;
         const pathParts = path6.relative(initialGlobRoot, absolutePath).split(/[\\/]/);
         let globRoot = initialGlobRoot;
         for (const part of pathParts) {
@@ -39719,7 +39743,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           }
           globRoot = path6.join(globRoot, part);
         }
-        if (globRoot === dependencyRoot && !hasTraversalAlternative && !dependencies.has(
+        if ((globRoot === dependencyRoot || hasParentAlternative) && !dependencies.has(
           `${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`
         )) {
           dependencies.add(absolutePath);
@@ -39743,7 +39767,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       const hasEnvTemplate = expandedPath !== filePath;
       filePath = expandedPath;
       const functionIndex = filePath.lastIndexOf(":");
-      if (functionIndex > 1 && (/\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex)) || isProvider && /\.(?:go|rb)$/i.test(filePath.slice(0, functionIndex)))) {
+      if (functionIndex > 1 && (/\.(?:py|rb|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex)) || isProvider && /\.(?:go|rb)$/i.test(filePath.slice(0, functionIndex)))) {
         filePath = filePath.slice(0, functionIndex);
       }
       if (baseDir !== configDir) {
@@ -39803,7 +39827,9 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
             true,
             true
           )) {
-            inspectTestFile(resolvedVarFile, refResolutionRoot, baseDir);
+            if (!/\.(?:csv|jsonl)$/i.test(resolvedVarFile)) {
+              inspectTestFile(resolvedVarFile, refResolutionRoot, baseDir);
+            }
           }
         }
         return;
@@ -39812,13 +39838,12 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value, true);
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
-          const absolutePath = resolveConfigDependency(
-            value.file,
-            "test variable file dependency"
+          processFilePath(
+            expandAndTrackEnvTemplates(value.file),
+            "test variable file dependency",
+            true,
+            true
           );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
         }
       }
     };
@@ -39831,13 +39856,12 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
           processFileUrl(assert.value);
         } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
-          const absolutePath = resolveConfigDependency(
-            assert.value.file,
-            "assertion file dependency"
+          processFilePath(
+            expandAndTrackEnvTemplates(assert.value.file),
+            "assertion file dependency",
+            true,
+            true
           );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
         }
       }
     };
@@ -39877,13 +39901,15 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       if (typeof nestedTest.$id === "string") {
         dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
       }
-      extractVarFiles(nestedTest.vars, testBaseDir);
+      extractVarFiles(nestedTest.vars);
       extractAssertFiles(nestedTest.assert);
       for (const [key, item] of Object.entries(value)) {
-        if (key === "auth" && typeof item === "object" && item !== null && "type" in item && item.type === "file" && "path" in item && typeof item.path === "string") {
-          processFileUrl(`file://${item.path}`, true);
-        }
         if (key === "provider" && includeFileUrls) {
+          const providerConfig = typeof item === "object" && item !== null && "config" in item && typeof item.config === "object" && item.config !== null ? item.config : void 0;
+          const fileAuth = providerConfig && "auth" in providerConfig && typeof providerConfig.auth === "object" && providerConfig.auth !== null ? providerConfig.auth : void 0;
+          if (fileAuth && "type" in fileAuth && fileAuth.type === "file" && "path" in fileAuth && typeof fileAuth.path === "string") {
+            processFileUrl(`file://${fileAuth.path}`, true);
+          }
           const providerId = typeof item === "string" ? item : typeof item === "object" && item !== null && "id" in item && typeof item.id === "string" ? item.id : void 0;
           const localProvider = providerId?.match(
             /^(?:file:\/\/|python:(?=[\s\S]+\.py(?::[^/\\]+)?$)|golang:(?=[\s\S]+\.go(?::[^/\\]+)?$)|ruby:(?=[\s\S]+\.rb(?::[^/\\]+)?$))([\s\S]+)$/i
@@ -40061,7 +40087,10 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           if (typeof nestedTest !== "object" || nestedTest === null) {
             continue;
           }
-          extractVarFiles(nestedTest.vars, testBaseDir);
+          if (typeof nestedTest.path === "string") {
+            processTestFile(nestedTest.path);
+          }
+          extractVarFiles(nestedTest.vars);
           extractAssertFiles(nestedTest.assert);
           extractNestedFileUrls(
             nestedTest,
@@ -40124,7 +40153,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       extractAssertFiles(config2.defaultTest.assert);
     }
     if (config2.tests) {
-      extractNestedFileUrls(config2.tests, refResolutionRoot, false);
+      extractNestedFileUrls(config2.tests, configDir, false);
       const tests = Array.isArray(config2.tests) ? config2.tests : [config2.tests];
       for (const test of tests) {
         if (typeof test === "string") {
@@ -40881,7 +40910,9 @@ async function run() {
           if (changedFilesList.some(
             (changedFile) => minimatch(changedFile, dep, {
               dot: true,
-              windowsPathsNoEscape: true
+              windowsPathsNoEscape: true,
+              magicalBraces: true,
+              braceExpandMax: 1025
             })
           )) {
             return true;
