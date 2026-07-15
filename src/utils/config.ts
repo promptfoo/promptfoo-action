@@ -1,9 +1,46 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
+import {
+  binaryTag,
+  CORE_SCHEMA,
+  defineMappingTag,
+  legacyMapTag,
+  load as loadYaml,
+  mergeTag,
+  omapTag,
+  pairsTag,
+  setTag,
+  timestampTag,
+} from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
+
+const MAX_PROVIDER_VALUES = 1_024;
+const MAX_PROVIDER_CONFIGS = 128;
+const MAX_GLOB_MATCHES = 4_096;
+
+const legacySetTag = defineMappingTag<Record<string, unknown>>(
+  'tag:yaml.org,2002:set',
+  {
+    ...legacyMapTag,
+    identify: setTag.identify,
+    represent: setTag.represent,
+    addPair: (container, key, value) => {
+      if (value !== null) return 'cannot resolve a set item';
+      return legacyMapTag.addPair(container, key, null);
+    },
+  },
+);
+
+const YAML_LOAD_SCHEMA = CORE_SCHEMA.withTags(
+  mergeTag,
+  binaryTag,
+  timestampTag,
+  omapTag,
+  pairsTag,
+  legacySetTag,
+);
 
 export interface PromptfooConfig {
   env?: { [key: string]: unknown };
@@ -68,6 +105,14 @@ function renderEnvTemplate(
   value: string,
   environment: Record<string, string | undefined>,
 ): string {
+  if (
+    /^(?:1|true|yes|yup|yeppers)$/i.test(
+      environment.PROMPTFOO_DISABLE_TEMPLATING ?? '',
+    )
+  ) {
+    return value;
+  }
+
   return value.replace(
     /\{\{\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*\}\}/g,
     (template, dotName: string | undefined, bracketName: string | undefined) =>
@@ -105,6 +150,7 @@ export function extractFileDependencies(configPath: string): string[] {
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  let configParsed = false;
 
   try {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -114,17 +160,30 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     const config = loadYaml(configContent, {
-      schema: CORE_SCHEMA.withTags(mergeTag),
+      schema: YAML_LOAD_SCHEMA,
     }) as PromptfooConfig;
 
     if (!config) {
       core.debug('Config file is empty or invalid');
       return [];
     }
+    configParsed = true;
 
+    const rootEnvironment = environmentValues(config.env, process.env);
+    const disableTemplateEnvVars =
+      rootEnvironment.PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS ??
+      process.env.PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS;
+    const selfHosted =
+      rootEnvironment.PROMPTFOO_SELF_HOSTED ??
+      process.env.PROMPTFOO_SELF_HOSTED;
+    const hidesProcessEnvironment = /^(?:1|true|yes|yup|yeppers)$/i.test(
+      disableTemplateEnvVars ?? selfHosted ?? '',
+    );
+    const baseEnvironment = hidesProcessEnvironment ? {} : process.env;
+    const configOverrides = environmentValues(config.env, baseEnvironment);
     const configEnvironment = {
-      ...process.env,
-      ...environmentValues(config.env, process.env),
+      ...baseEnvironment,
+      ...configOverrides,
     };
 
     let realDependencyRoot: string | undefined;
@@ -204,7 +263,7 @@ export function extractFileDependencies(configPath: string): string[] {
       environment: Record<string, string | undefined> = configEnvironment,
     ): string[] => {
       const renderedFileUrl = renderEnvTemplate(fileUrl, environment);
-      if (/\{\{|\{%/.test(renderedFileUrl)) {
+      if (/\{\{|\{%|\{#/.test(renderedFileUrl)) {
         dependencies.add(`${dependencyRoot}${path.sep}`);
         return [];
       }
@@ -213,7 +272,9 @@ export function extractFileDependencies(configPath: string): string[] {
         ? providerFilePath(renderedFileUrl, allowJavascript)
         : renderedFileUrl.slice('file://'.length);
       const displayPath = isProvider
-        ? providerFilePath(fileUrl, allowJavascript)
+        ? fileUrl.startsWith('file://')
+          ? providerFilePath(fileUrl, allowJavascript)
+          : fileUrl
         : fileUrl.slice('file://'.length);
       const absolutePath = resolveConfigDependency(
         filePath,
@@ -231,6 +292,13 @@ export function extractFileDependencies(configPath: string): string[] {
       if (glob.hasMagic(filePath)) {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, { nodir: true });
+        if (matches.length > MAX_GLOB_MATCHES) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+          core.warning(
+            'Config dependency glob produced too many matches. Watching the repository workspace conservatively.',
+          );
+          return [];
+        }
         const safeMatches: string[] = [];
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
@@ -270,17 +338,47 @@ export function extractFileDependencies(configPath: string): string[] {
     // Extract provider files
     const inspectedProviderFiles = new Set<string>();
     const activeProviderObjects = new WeakSet<object>();
+    let providerValuesVisited = 0;
+    let providerValueLimitReached = false;
+    let providerConfigLimitReached = false;
 
     const processProviderValue = (
       value: unknown,
       isProviderReference = false,
-      environment: Record<string, string | undefined> = configEnvironment,
+      providerOverrides: Record<string, string | undefined> = {},
+      externalProviderConfig = false,
+      callerProviderContext = false,
     ): void => {
+      if (providerValueLimitReached) {
+        return;
+      }
+      providerValuesVisited += 1;
+      if (providerValuesVisited > MAX_PROVIDER_VALUES) {
+        providerValueLimitReached = true;
+        dependencies.add(`${dependencyRoot}${path.sep}`);
+        core.warning(
+          'Provider dependency graph is too large to inspect safely. Watching the repository workspace conservatively.',
+        );
+        return;
+      }
+
       if (typeof value === 'string') {
-        if (!value.startsWith('file://')) {
+        const environment = {
+          ...configEnvironment,
+          ...providerOverrides,
+        };
+        if (!renderEnvTemplate(value, environment).startsWith('file://')) {
+          if (/\{\{|\{%|\{#/.test(value)) {
+            dependencies.add(`${dependencyRoot}${path.sep}`);
+          }
           return;
         }
-        processProviderReference(value, isProviderReference, environment);
+        processProviderReference(
+          value,
+          isProviderReference,
+          providerOverrides,
+          callerProviderContext,
+        );
         return;
       }
 
@@ -296,21 +394,70 @@ export function extractFileDependencies(configPath: string): string[] {
       try {
         if (Array.isArray(value)) {
           for (const item of value) {
-            processProviderValue(item, isProviderReference, environment);
+            processProviderValue(
+              item,
+              isProviderReference,
+              providerOverrides,
+              externalProviderConfig,
+              callerProviderContext,
+            );
+            if (providerValueLimitReached) {
+              break;
+            }
           }
           return;
         }
 
         const providerEnvironment = {
-          ...environmentValues((value as { env?: unknown }).env, environment),
-          ...environment,
+          ...configEnvironment,
+          ...providerOverrides,
+        };
+        const nestedProviderOverrides = {
+          ...environmentValues(
+            (value as { env?: unknown }).env,
+            providerEnvironment,
+          ),
+          ...(externalProviderConfig && callerProviderContext
+            ? configOverrides
+            : {}),
+          ...providerOverrides,
         };
 
         for (const [key, nestedValue] of Object.entries(value)) {
-          if (key.startsWith('file://')) {
-            processProviderReference(key, true, providerEnvironment);
+          if (key === 'env') {
+            continue;
           }
-          processProviderValue(nestedValue, key === 'id', providerEnvironment);
+          const mappedProviderOverrides = {
+            ...environmentValues(
+              nestedValue && typeof nestedValue === 'object'
+                ? (nestedValue as { env?: unknown }).env
+                : undefined,
+              {
+                ...configEnvironment,
+                ...nestedProviderOverrides,
+              },
+            ),
+            ...nestedProviderOverrides,
+          };
+          const environment = {
+            ...configEnvironment,
+            ...mappedProviderOverrides,
+          };
+          if (renderEnvTemplate(key, environment).startsWith('file://')) {
+            processProviderReference(key, true, mappedProviderOverrides, true);
+          } else if (/\{\{|\{%|\{#/.test(key)) {
+            dependencies.add(`${dependencyRoot}${path.sep}`);
+          }
+          processProviderValue(
+            nestedValue,
+            key === 'id',
+            nestedProviderOverrides,
+            false,
+            key === 'id',
+          );
+          if (providerValueLimitReached) {
+            break;
+          }
         }
       } finally {
         activeProviderObjects.delete(value);
@@ -320,12 +467,19 @@ export function extractFileDependencies(configPath: string): string[] {
     const processProviderReference = (
       provider: string,
       isProviderReference = true,
-      environment: Record<string, string | undefined> = configEnvironment,
+      providerOverrides: Record<string, string | undefined> = {},
+      callerProviderContext = false,
     ): void => {
+      const environment = {
+        ...configEnvironment,
+        ...providerOverrides,
+      };
       const allowJavascript = !isProviderReference;
       const renderedProvider = renderEnvTemplate(provider, environment);
       const providerPath = providerFilePath(renderedProvider, allowJavascript);
-      const displayProviderPath = providerFilePath(provider, allowJavascript);
+      const displayProviderPath = provider.startsWith('file://')
+        ? providerFilePath(provider, allowJavascript)
+        : provider;
       const providerPaths = processFileUrl(
         provider,
         true,
@@ -362,15 +516,32 @@ export function extractFileDependencies(configPath: string): string[] {
           continue;
         }
 
+        if (inspectedProviderFiles.size >= MAX_PROVIDER_CONFIGS) {
+          dependencies.add(`${dependencyRoot}${path.sep}`);
+          if (!providerConfigLimitReached) {
+            providerConfigLimitReached = true;
+            core.warning(
+              'Too many provider config dependencies to inspect safely. Watching the repository workspace conservatively.',
+            );
+          }
+          continue;
+        }
+
         inspectedProviderFiles.add(inspectionKey);
         try {
           const providerConfig = loadYaml(
             fs.readFileSync(absolutePath, 'utf8'),
             {
-              schema: CORE_SCHEMA.withTags(mergeTag),
+              schema: YAML_LOAD_SCHEMA,
             },
           );
-          processProviderValue(providerConfig, false, environment);
+          processProviderValue(
+            providerConfig,
+            false,
+            providerOverrides,
+            true,
+            callerProviderContext,
+          );
         } catch {
           core.warning(
             `Failed to inspect provider config dependency "${displayProviderPath}". Watching the repository workspace conservatively.`,
@@ -386,19 +557,46 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     }
 
+    const processPotentialFileUrl = (value: string): void => {
+      const renderedValue = renderEnvTemplate(value, configEnvironment);
+      if (renderedValue.startsWith('file://')) {
+        processFileUrl(value);
+      } else if (/\{#|\{\{\s*env(?:\.|\[)|\{%[^%]*\benv(?:\.|\[)/.test(value)) {
+        dependencies.add(`${dependencyRoot}${path.sep}`);
+      }
+    };
+
+    const processTemplatedDependency = (
+      filePath: string,
+      source: string,
+    ): void => {
+      const renderedPath = renderEnvTemplate(filePath, configEnvironment);
+      if (/\{\{|\{%|\{#/.test(renderedPath)) {
+        dependencies.add(`${dependencyRoot}${path.sep}`);
+        return;
+      }
+
+      const absolutePath = resolveConfigDependency(
+        renderedPath,
+        source,
+        filePath,
+      );
+      if (absolutePath) {
+        dependencies.add(absolutePath);
+      }
+    };
+
     // Extract prompt files
     if (config.prompts) {
       for (const prompt of config.prompts) {
-        if (typeof prompt === 'string' && prompt.startsWith('file://')) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === 'object' && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            'prompt file dependency',
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
+        if (typeof prompt === 'string') {
+          processPotentialFileUrl(prompt);
+        } else if (
+          typeof prompt === 'object' &&
+          prompt !== null &&
+          typeof prompt.file === 'string'
+        ) {
+          processTemplatedDependency(prompt.file, 'prompt file dependency');
         }
       }
     }
@@ -407,21 +605,18 @@ export function extractFileDependencies(configPath: string): string[] {
     const extractVarFiles = (vars?: { [key: string]: unknown }): void => {
       if (!vars) return;
       for (const value of Object.values(vars)) {
-        if (typeof value === 'string' && value.startsWith('file://')) {
-          processFileUrl(value);
+        if (typeof value === 'string') {
+          processPotentialFileUrl(value);
         } else if (
           typeof value === 'object' &&
           value !== null &&
           'file' in value &&
           typeof value.file === 'string'
         ) {
-          const absolutePath = resolveConfigDependency(
+          processTemplatedDependency(
             value.file,
             'test variable file dependency',
           );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
         }
       }
     };
@@ -432,24 +627,18 @@ export function extractFileDependencies(configPath: string): string[] {
     ): void => {
       if (!asserts) return;
       for (const assert of asserts) {
-        if (
-          typeof assert.value === 'string' &&
-          assert.value.startsWith('file://')
-        ) {
-          processFileUrl(assert.value);
+        if (typeof assert.value === 'string') {
+          processPotentialFileUrl(assert.value);
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&
           'file' in assert.value &&
           typeof assert.value.file === 'string'
         ) {
-          const absolutePath = resolveConfigDependency(
+          processTemplatedDependency(
             assert.value.file,
             'assertion file dependency',
           );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
         }
       }
     };
@@ -479,6 +668,16 @@ export function extractFileDependencies(configPath: string): string[] {
       return repositoryPath;
     });
   } catch (error) {
+    if (configParsed) {
+      core.warning(
+        'Failed to extract config dependencies. Watching the repository workspace conservatively.',
+      );
+      const relativeRoot = path.relative(cwd, dependencyRoot);
+      return [
+        relativeRoot ? `${relativeRoot.split(path.sep).join('/')}/` : './',
+      ];
+    }
+
     core.warning(
       `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
     );

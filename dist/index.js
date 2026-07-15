@@ -34513,37 +34513,17 @@ var seqTag = defineSequenceTag("tag:yaml.org,2002:seq", {
   },
   identify: Array.isArray
 });
-function isPlainObject3(data) {
-  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
-  const prototype = Object.getPrototypeOf(data);
-  return prototype === null || prototype === Object.prototype;
-}
-function pick2(object, keys) {
-  const result = {};
-  for (const key of keys) if (object[key] !== void 0) result[key] = object[key];
-  return result;
-}
 var omapTag = defineSequenceTag("tag:yaml.org,2002:omap", {
-  create: () => ({
-    list: [],
-    seen: /* @__PURE__ */ new Set()
-  }),
-  addItem: (carrier, item) => {
-    let key;
-    if (item instanceof Map) {
-      if (item.size !== 1) return "cannot resolve an ordered map item";
-      key = item.keys().next().value;
-    } else if (isPlainObject3(item)) {
-      const itemKeys = Object.keys(item);
-      if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
-      key = itemKeys[0];
-    } else return "cannot resolve an ordered map item";
-    if (carrier.seen.has(key)) return "duplicate key in ordered map";
-    carrier.seen.add(key);
-    carrier.list.push(item);
+  create: () => [],
+  addItem: (container, item) => {
+    if (Object.prototype.toString.call(item) !== "[object Object]") return "cannot resolve an ordered map item";
+    const object = item;
+    const itemKeys = Object.keys(object);
+    if (itemKeys.length !== 1) return "cannot resolve an ordered map item";
+    for (const existing of container) if (Object.prototype.hasOwnProperty.call(existing, itemKeys[0])) return "cannot resolve an ordered map item";
+    container.push(object);
     return "";
-  },
-  finalize: (carrier) => carrier.list
+  }
 });
 var pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
   create: () => [],
@@ -34561,6 +34541,16 @@ var pairsTag = defineSequenceTag("tag:yaml.org,2002:pairs", {
     return "";
   }
 });
+function isPlainObject3(data) {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return false;
+  const prototype = Object.getPrototypeOf(data);
+  return prototype === null || prototype === Object.prototype;
+}
+function pick2(object, keys) {
+  const result = {};
+  for (const key of keys) if (object[key] !== void 0) result[key] = object[key];
+  return result;
+}
 var mapTag = defineMappingTag("tag:yaml.org,2002:map", {
   create: () => ({}),
   identify: isPlainObject3,
@@ -36280,6 +36270,29 @@ function isDirectory2(filePath) {
 }
 
 // src/utils/config.ts
+var MAX_PROVIDER_VALUES = 1024;
+var MAX_PROVIDER_CONFIGS = 128;
+var MAX_GLOB_MATCHES = 4096;
+var legacySetTag = defineMappingTag(
+  "tag:yaml.org,2002:set",
+  {
+    ...legacyMapTag,
+    identify: setTag.identify,
+    represent: setTag.represent,
+    addPair: (container, key, value) => {
+      if (value !== null) return "cannot resolve a set item";
+      return legacyMapTag.addPair(container, key, null);
+    }
+  }
+);
+var YAML_LOAD_SCHEMA = CORE_SCHEMA.withTags(
+  mergeTag,
+  binaryTag,
+  timestampTag,
+  omapTag,
+  pairsTag,
+  legacySetTag
+);
 function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
@@ -36298,6 +36311,11 @@ function providerFilePath(fileUrl, allowJavascript = false) {
   return rawPath;
 }
 function renderEnvTemplate(value, environment) {
+  if (/^(?:1|true|yes|yup|yeppers)$/i.test(
+    environment.PROMPTFOO_DISABLE_TEMPLATING ?? ""
+  )) {
+    return value;
+  }
   return value.replace(
     /\{\{\s*env(?:\.([A-Za-z_][A-Za-z0-9_]*)|\[['"]([^'"]+)['"]\])\s*\}\}/g,
     (template, dotName, bracketName) => environment[dotName ?? bracketName] ?? template
@@ -36324,6 +36342,7 @@ function extractFileDependencies(configPath) {
   const configDir = path5.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  let configParsed = false;
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
     if (!configContent.trim()) {
@@ -36331,15 +36350,24 @@ function extractFileDependencies(configPath) {
       return [];
     }
     const config2 = load(configContent, {
-      schema: CORE_SCHEMA.withTags(mergeTag)
+      schema: YAML_LOAD_SCHEMA
     });
     if (!config2) {
       debug("Config file is empty or invalid");
       return [];
     }
+    configParsed = true;
+    const rootEnvironment = environmentValues(config2.env, process.env);
+    const disableTemplateEnvVars = rootEnvironment.PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS ?? process.env.PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS;
+    const selfHosted = rootEnvironment.PROMPTFOO_SELF_HOSTED ?? process.env.PROMPTFOO_SELF_HOSTED;
+    const hidesProcessEnvironment = /^(?:1|true|yes|yup|yeppers)$/i.test(
+      disableTemplateEnvVars ?? selfHosted ?? ""
+    );
+    const baseEnvironment = hidesProcessEnvironment ? {} : process.env;
+    const configOverrides = environmentValues(config2.env, baseEnvironment);
     const configEnvironment = {
-      ...process.env,
-      ...environmentValues(config2.env, process.env)
+      ...baseEnvironment,
+      ...configOverrides
     };
     let realDependencyRoot;
     const isSafeDependencyPath = (absolutePath) => {
@@ -36397,12 +36425,12 @@ function extractFileDependencies(configPath) {
     };
     const processFileUrl = (fileUrl, isProvider = false, allowJavascript = false, environment = configEnvironment) => {
       const renderedFileUrl = renderEnvTemplate(fileUrl, environment);
-      if (/\{\{|\{%/.test(renderedFileUrl)) {
+      if (/\{\{|\{%|\{#/.test(renderedFileUrl)) {
         dependencies.add(`${dependencyRoot}${path5.sep}`);
         return [];
       }
       const filePath = isProvider ? providerFilePath(renderedFileUrl, allowJavascript) : renderedFileUrl.slice("file://".length);
-      const displayPath = isProvider ? providerFilePath(fileUrl, allowJavascript) : fileUrl.slice("file://".length);
+      const displayPath = isProvider ? fileUrl.startsWith("file://") ? providerFilePath(fileUrl, allowJavascript) : fileUrl : fileUrl.slice("file://".length);
       const absolutePath = resolveConfigDependency(
         filePath,
         "config file dependency",
@@ -36416,6 +36444,13 @@ function extractFileDependencies(configPath) {
       }
       if (le(filePath)) {
         const matches = Ui(absolutePath, { nodir: true });
+        if (matches.length > MAX_GLOB_MATCHES) {
+          dependencies.add(`${dependencyRoot}${path5.sep}`);
+          warning(
+            "Config dependency glob produced too many matches. Watching the repository workspace conservatively."
+          );
+          return [];
+        }
         const safeMatches = [];
         for (const match of matches) {
           const absoluteMatch = path5.resolve(match);
@@ -36444,12 +36479,39 @@ function extractFileDependencies(configPath) {
     };
     const inspectedProviderFiles = /* @__PURE__ */ new Set();
     const activeProviderObjects = /* @__PURE__ */ new WeakSet();
-    const processProviderValue = (value, isProviderReference = false, environment = configEnvironment) => {
+    let providerValuesVisited = 0;
+    let providerValueLimitReached = false;
+    let providerConfigLimitReached = false;
+    const processProviderValue = (value, isProviderReference = false, providerOverrides = {}, externalProviderConfig = false, callerProviderContext = false) => {
+      if (providerValueLimitReached) {
+        return;
+      }
+      providerValuesVisited += 1;
+      if (providerValuesVisited > MAX_PROVIDER_VALUES) {
+        providerValueLimitReached = true;
+        dependencies.add(`${dependencyRoot}${path5.sep}`);
+        warning(
+          "Provider dependency graph is too large to inspect safely. Watching the repository workspace conservatively."
+        );
+        return;
+      }
       if (typeof value === "string") {
-        if (!value.startsWith("file://")) {
+        const environment = {
+          ...configEnvironment,
+          ...providerOverrides
+        };
+        if (!renderEnvTemplate(value, environment).startsWith("file://")) {
+          if (/\{\{|\{%|\{#/.test(value)) {
+            dependencies.add(`${dependencyRoot}${path5.sep}`);
+          }
           return;
         }
-        processProviderReference(value, isProviderReference, environment);
+        processProviderReference(
+          value,
+          isProviderReference,
+          providerOverrides,
+          callerProviderContext
+        );
         return;
       }
       if (!value || typeof value !== "object") {
@@ -36462,29 +36524,78 @@ function extractFileDependencies(configPath) {
       try {
         if (Array.isArray(value)) {
           for (const item of value) {
-            processProviderValue(item, isProviderReference, environment);
+            processProviderValue(
+              item,
+              isProviderReference,
+              providerOverrides,
+              externalProviderConfig,
+              callerProviderContext
+            );
+            if (providerValueLimitReached) {
+              break;
+            }
           }
           return;
         }
         const providerEnvironment = {
-          ...environmentValues(value.env, environment),
-          ...environment
+          ...configEnvironment,
+          ...providerOverrides
+        };
+        const nestedProviderOverrides = {
+          ...environmentValues(
+            value.env,
+            providerEnvironment
+          ),
+          ...externalProviderConfig && callerProviderContext ? configOverrides : {},
+          ...providerOverrides
         };
         for (const [key, nestedValue] of Object.entries(value)) {
-          if (key.startsWith("file://")) {
-            processProviderReference(key, true, providerEnvironment);
+          if (key === "env") {
+            continue;
           }
-          processProviderValue(nestedValue, key === "id", providerEnvironment);
+          const mappedProviderOverrides = {
+            ...environmentValues(
+              nestedValue && typeof nestedValue === "object" ? nestedValue.env : void 0,
+              {
+                ...configEnvironment,
+                ...nestedProviderOverrides
+              }
+            ),
+            ...nestedProviderOverrides
+          };
+          const environment = {
+            ...configEnvironment,
+            ...mappedProviderOverrides
+          };
+          if (renderEnvTemplate(key, environment).startsWith("file://")) {
+            processProviderReference(key, true, mappedProviderOverrides, true);
+          } else if (/\{\{|\{%|\{#/.test(key)) {
+            dependencies.add(`${dependencyRoot}${path5.sep}`);
+          }
+          processProviderValue(
+            nestedValue,
+            key === "id",
+            nestedProviderOverrides,
+            false,
+            key === "id"
+          );
+          if (providerValueLimitReached) {
+            break;
+          }
         }
       } finally {
         activeProviderObjects.delete(value);
       }
     };
-    const processProviderReference = (provider, isProviderReference = true, environment = configEnvironment) => {
+    const processProviderReference = (provider, isProviderReference = true, providerOverrides = {}, callerProviderContext = false) => {
+      const environment = {
+        ...configEnvironment,
+        ...providerOverrides
+      };
       const allowJavascript = !isProviderReference;
       const renderedProvider = renderEnvTemplate(provider, environment);
       const providerPath = providerFilePath(renderedProvider, allowJavascript);
-      const displayProviderPath = providerFilePath(provider, allowJavascript);
+      const displayProviderPath = provider.startsWith("file://") ? providerFilePath(provider, allowJavascript) : provider;
       const providerPaths = processFileUrl(
         provider,
         true,
@@ -36510,15 +36621,31 @@ function extractFileDependencies(configPath) {
         if (!/\.(?:ya?ml|json)$/i.test(absolutePath) || inspectedProviderFiles.has(inspectionKey)) {
           continue;
         }
+        if (inspectedProviderFiles.size >= MAX_PROVIDER_CONFIGS) {
+          dependencies.add(`${dependencyRoot}${path5.sep}`);
+          if (!providerConfigLimitReached) {
+            providerConfigLimitReached = true;
+            warning(
+              "Too many provider config dependencies to inspect safely. Watching the repository workspace conservatively."
+            );
+          }
+          continue;
+        }
         inspectedProviderFiles.add(inspectionKey);
         try {
           const providerConfig = load(
             fs6.readFileSync(absolutePath, "utf8"),
             {
-              schema: CORE_SCHEMA.withTags(mergeTag)
+              schema: YAML_LOAD_SCHEMA
             }
           );
-          processProviderValue(providerConfig, false, environment);
+          processProviderValue(
+            providerConfig,
+            false,
+            providerOverrides,
+            true,
+            callerProviderContext
+          );
         } catch {
           warning(
             `Failed to inspect provider config dependency "${displayProviderPath}". Watching the repository workspace conservatively.`
@@ -36532,50 +36659,61 @@ function extractFileDependencies(configPath) {
         processProviderValue(providers, true);
       }
     }
+    const processPotentialFileUrl = (value) => {
+      const renderedValue = renderEnvTemplate(value, configEnvironment);
+      if (renderedValue.startsWith("file://")) {
+        processFileUrl(value);
+      } else if (/\{#|\{\{\s*env(?:\.|\[)|\{%[^%]*\benv(?:\.|\[)/.test(value)) {
+        dependencies.add(`${dependencyRoot}${path5.sep}`);
+      }
+    };
+    const processTemplatedDependency = (filePath, source) => {
+      const renderedPath = renderEnvTemplate(filePath, configEnvironment);
+      if (/\{\{|\{%|\{#/.test(renderedPath)) {
+        dependencies.add(`${dependencyRoot}${path5.sep}`);
+        return;
+      }
+      const absolutePath = resolveConfigDependency(
+        renderedPath,
+        source,
+        filePath
+      );
+      if (absolutePath) {
+        dependencies.add(absolutePath);
+      }
+    };
     if (config2.prompts) {
       for (const prompt of config2.prompts) {
-        if (typeof prompt === "string" && prompt.startsWith("file://")) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === "object" && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            "prompt file dependency"
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
+        if (typeof prompt === "string") {
+          processPotentialFileUrl(prompt);
+        } else if (typeof prompt === "object" && prompt !== null && typeof prompt.file === "string") {
+          processTemplatedDependency(prompt.file, "prompt file dependency");
         }
       }
     }
     const extractVarFiles = (vars) => {
       if (!vars) return;
       for (const value of Object.values(vars)) {
-        if (typeof value === "string" && value.startsWith("file://")) {
-          processFileUrl(value);
+        if (typeof value === "string") {
+          processPotentialFileUrl(value);
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
-          const absolutePath = resolveConfigDependency(
+          processTemplatedDependency(
             value.file,
             "test variable file dependency"
           );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
         }
       }
     };
     const extractAssertFiles = (asserts) => {
       if (!asserts) return;
       for (const assert of asserts) {
-        if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
-          processFileUrl(assert.value);
+        if (typeof assert.value === "string") {
+          processPotentialFileUrl(assert.value);
         } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
-          const absolutePath = resolveConfigDependency(
+          processTemplatedDependency(
             assert.value.file,
             "assertion file dependency"
           );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
         }
       }
     };
@@ -36598,6 +36736,15 @@ function extractFileDependencies(configPath) {
       return repositoryPath;
     });
   } catch (error2) {
+    if (configParsed) {
+      warning(
+        "Failed to extract config dependencies. Watching the repository workspace conservatively."
+      );
+      const relativeRoot = path5.relative(cwd, dependencyRoot);
+      return [
+        relativeRoot ? `${relativeRoot.split(path5.sep).join("/")}/` : "./"
+      ];
+    }
     warning(
       `Failed to extract dependencies from config: ${error2 instanceof Error ? error2.message : String(error2)}`
     );
