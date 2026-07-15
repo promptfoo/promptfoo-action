@@ -1399,6 +1399,41 @@ providers:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('visits a shared assert-set alias DAG once without exponential expansion', () => {
+    const levels = 18;
+    const aliases = [
+      'leaf: &level0',
+      '  - type: javascript',
+      '    value: file://assert/check.js:check',
+    ];
+    for (let level = 1; level <= levels; level++) {
+      aliases.push(`level${level}: &level${level}`);
+      aliases.push('  - type: assert-set');
+      aliases.push(`    assert: *level${level - 1}`);
+      aliases.push('  - type: assert-set');
+      aliases.push(`    assert: *level${level - 1}`);
+    }
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        ...aliases,
+        'tests:',
+        '  - assert:',
+        '      - type: assert-set',
+        `        assert: *level${levels}`,
+      ].join('\n'),
+    });
+    const startedAt = performance.now();
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'assert/check.js',
+      ...implicitConfigDependencies('promptfooconfig.yaml'),
+    ]);
+    expect(performance.now() - startedAt).toBeLessThan(1000);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
   it('safely ignores malformed nested assertion shapes while tracking valid siblings', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': [
