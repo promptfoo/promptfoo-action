@@ -501,6 +501,42 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test('should detect a removed prompt with a native wildcard separator after a Windows forward slash', async () => {
+      const currentPlatform = process.platform;
+      const promptRoot = path
+        .join(process.cwd(), 'prompts')
+        .split(path.sep)
+        .join('/');
+      const promptPattern = `${promptRoot}\\*.txt`;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: promptPattern });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'prompts/removed.txt', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockGlob.sync).toHaveBeenCalledWith(`${promptRoot}/*.txt`, {
+          cwd: process.cwd(),
+          nodir: true,
+        });
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
     test.each([
       ['[tr]', 't'],
       ['*', 't'],

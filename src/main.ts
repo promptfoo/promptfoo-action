@@ -63,7 +63,7 @@ function normalizeWindowsPromptGlob(pattern: string): string {
     nativePrefix
       .replace(/\\(\[[^\\]*\\\])(?=\\|$)/g, '/\\$1')
       .replace(/(?<!\/)\\(?![,.\-|^\]})])/g, '/') +
-    escapedSuffix.replace(/\\(?![?*()[\]{}+@!,.\-|^])/g, '/')
+    escapedSuffix.replace(/\\(?![()[\]{}+@!,.\-|^])/g, '/')
   );
 }
 
