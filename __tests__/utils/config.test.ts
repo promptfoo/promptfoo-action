@@ -945,6 +945,11 @@ providers:
     // Should also include directories for watching
     expect(deps).toContain('../config/providers/');
     expect(deps).toContain('../config/custom/');
+    expect(
+      mockFs.realpathSync.mock.calls.filter(
+        ([value]) => String(value) === '/test/config',
+      ),
+    ).toHaveLength(1);
   });
 
   it('should handle a glob without a base directory', () => {

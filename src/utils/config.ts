@@ -87,15 +87,18 @@ export function extractFileDependencies(configPath: string): string[] {
       return [];
     }
 
+    let realDependencyRoot: string | undefined;
     const isSafeDependencyPath = (absolutePath: string): boolean => {
       if (!isPathInside(dependencyRoot, absolutePath)) {
         return false;
       }
 
       try {
-        const realRoot = fs.realpathSync(dependencyRoot);
+        if (!realDependencyRoot) {
+          realDependencyRoot = fs.realpathSync(dependencyRoot);
+        }
         const realPath = fs.realpathSync(absolutePath);
-        return isPathInside(realRoot, realPath);
+        return isPathInside(realDependencyRoot, realPath);
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         return code === 'ENOENT' || code === 'ENOTDIR';
