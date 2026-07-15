@@ -1003,6 +1003,23 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should run when a repository-root negated extglob matches a deletion', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'other' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation(
+        (value: string, options?: { nonegate?: boolean }) =>
+          options?.nonegate === true && value.startsWith('!('),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue(['!(one|two)']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should skip when config dependencies do not match changed files', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);

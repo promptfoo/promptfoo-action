@@ -32,6 +32,11 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
+const DEPENDENCY_GLOB_MAGIC_OPTIONS = {
+  magicalBraces: true,
+  nonegate: true,
+  braceExpandMax: 1025,
+};
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
@@ -503,10 +508,7 @@ export async function run(): Promise<void> {
           }
 
           if (
-            glob.hasMagic(dep, {
-              magicalBraces: true,
-              braceExpandMax: 1025,
-            }) &&
+            glob.hasMagic(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS) &&
             changedFilesList.some((changedFile) =>
               path.matchesGlob(changedFile, dep),
             )

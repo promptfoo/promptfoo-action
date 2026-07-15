@@ -142,17 +142,24 @@ prompts:
     { prompt: '[ab]', expected: ['[ab]'] },
     { prompt: '{one,two}', expected: ['one', 'two'] },
     { prompt: '@(one|two)', expected: ['@(one|two)'] },
+    { prompt: '*(one|two)', expected: ['*(one|two)'] },
+    { prompt: '!(one|two)', expected: ['!(one|two)'] },
   ])('should retain an extensionless non-star prompt glob after deletion', ({
     prompt,
     expected,
   }) => {
     mockFs.readFileSync.mockReturnValue(`prompts: '${prompt}'\n`);
     mockGlob.hasMagic.mockImplementation(
-      (value: string, options?: { magicalBraces?: boolean }) =>
+      (
+        value: string,
+        options?: { magicalBraces?: boolean; nonegate?: boolean },
+      ) =>
+        value.includes('*') ||
         value.includes('?') ||
         value.includes('[') ||
         value.includes('@(') ||
-        (options?.magicalBraces === true && value.includes('{')),
+        (options?.magicalBraces === true && value.includes('{')) ||
+        (options?.nonegate === true && value.startsWith('!(')),
     );
     mockGlob.sync.mockReturnValue([]);
 

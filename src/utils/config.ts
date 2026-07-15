@@ -24,6 +24,11 @@ type TestVars = string | string[] | { [key: string]: unknown };
 
 type LegacyYamlSet = Record<string, unknown>;
 const MAX_BRACE_EXPANSIONS = 1024;
+const GLOB_MAGIC_OPTIONS = {
+  magicalBraces: true,
+  nonegate: true,
+  braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+};
 
 const legacySetTag = defineMappingTag<LegacyYamlSet>('tag:yaml.org,2002:set', {
   ...legacyMapTag,
@@ -154,12 +159,7 @@ export function extractFileDependencies(
       }
 
       // Check if the path contains glob patterns
-      if (
-        glob.hasMagic(filePath, {
-          magicalBraces: true,
-          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-        })
-      ) {
+      if (glob.hasMagic(filePath, GLOB_MAGIC_OPTIONS)) {
         const expandedPaths = braceExpand(filePath, {
           braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
         });
@@ -211,7 +211,7 @@ export function extractFileDependencies(
         }
 
         for (const absolutePattern of safePatterns) {
-          if (!glob.hasMagic(absolutePattern)) {
+          if (!glob.hasMagic(absolutePattern, GLOB_MAGIC_OPTIONS)) {
             dependencies.add(absolutePattern);
             continue;
           }
@@ -221,7 +221,7 @@ export function extractFileDependencies(
             .split(path.sep);
           let basePath = absoluteRoot;
           for (const part of pathParts) {
-            if (glob.hasMagic(part)) {
+            if (glob.hasMagic(part, GLOB_MAGIC_OPTIONS)) {
               break;
             }
             basePath = path.join(basePath, part);
@@ -338,15 +338,13 @@ export function extractFileDependencies(
           isEnvironmentTemplate ||
           (reference.includes('*') &&
             (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) ||
-              /^[^*]*\*+$/.test(reference))) ||
+              /^[^*]*\*+$/.test(reference) ||
+              (!/\s/.test(reference) && /\*\([^/]*\)/.test(reference)))) ||
           (!reference.includes('*') &&
             !reference.includes('\0') &&
             !/\s/.test(reference) &&
             !isTemplated &&
-            glob.hasMagic(reference, {
-              magicalBraces: true,
-              braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-            })) ||
+            glob.hasMagic(reference, GLOB_MAGIC_OPTIONS)) ||
           (/[\\/]/.test(reference) && !/\s/.test(reference)) ||
           /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
             reference,
@@ -481,10 +479,7 @@ export function extractFileDependencies(
           return;
         }
 
-        const isPromptGlob = glob.hasMagic(promptPath, {
-          magicalBraces: true,
-          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-        });
+        const isPromptGlob = glob.hasMagic(promptPath, GLOB_MAGIC_OPTIONS);
         const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(promptPath);
         const hasFixedExtension = /\.[A-Za-z0-9_-]+$/.test(promptPath);
         if (!isStructuredPrompt && (!isPromptGlob || hasFixedExtension)) {
