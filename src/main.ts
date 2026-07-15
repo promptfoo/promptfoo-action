@@ -49,7 +49,11 @@ function validatePromptGlob(pattern: string): void {
     throw invalidPromptGlobError();
   }
 
-  const braces: Array<{ start: number; nested: boolean }> = [];
+  const braces: Array<{
+    start: number;
+    nested: boolean;
+    inCharacterClass: boolean;
+  }> = [];
   let escaped = false;
   let inCharacterClass = false;
   for (let index = 0; index < pattern.length; index++) {
@@ -67,17 +71,21 @@ function validatePromptGlob(pattern: string): void {
       continue;
     }
     if (character === ']') {
+      while (braces[braces.length - 1]?.inCharacterClass) braces.pop();
       inCharacterClass = false;
       continue;
     }
     if (character === '{') {
       if (braces.length > 0) braces[braces.length - 1].nested = true;
-      braces.push({ start: index + 1, nested: false });
+      braces.push({ start: index + 1, nested: false, inCharacterClass });
       continue;
     }
     if (character !== '}') continue;
     const brace = braces.pop();
-    if (!brace) throw invalidPromptGlobError();
+    if (!brace) {
+      if (inCharacterClass) continue;
+      throw invalidPromptGlobError();
+    }
     // A numeric-looking alternative beside a nested brace is a literal;
     // brace expansion only expands an entirely numeric brace body.
     if (brace.nested) continue;
@@ -130,6 +138,33 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
       !relativePath.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relativePath))
   );
+}
+
+function validateWorkingDirectory(
+  workspaceRoot: string,
+  workingDirectory: string,
+  realRoots: { workspaceRoot?: string; workingDirectory?: string },
+): void {
+  try {
+    if (!isPathInside(workspaceRoot, workingDirectory)) {
+      throw new Error('Working directory escapes the workspace');
+    }
+    realRoots.workspaceRoot ??= path.resolve(
+      fs.realpathSync(workspaceRoot).toString(),
+    );
+    realRoots.workingDirectory ??= path.resolve(
+      fs.realpathSync(workingDirectory).toString(),
+    );
+    if (!isPathInside(realRoots.workspaceRoot, realRoots.workingDirectory)) {
+      throw new Error('Working directory escapes the workspace');
+    }
+  } catch {
+    throw new PromptfooActionError(
+      'Invalid working directory: the working directory must stay within the workspace.',
+      ErrorCodes.INVALID_CONFIGURATION,
+      'Use a readable working directory contained within the workspace.',
+    );
+  }
 }
 
 function validatePromptPath(
@@ -374,6 +409,11 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    const realPromptRoots: {
+      workspaceRoot?: string;
+      workingDirectory?: string;
+    } = {};
+    validateWorkingDirectory(workspaceRoot, workingDirectory, realPromptRoots);
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
@@ -725,7 +765,11 @@ export async function run(): Promise<void> {
         ? []
         : changedFiles.split('\n').filter((f) => f));
 
-    for (const globPattern of promptFilesGlobs) {
+    for (const configuredGlobPattern of promptFilesGlobs) {
+      const globPattern =
+        process.platform === 'win32'
+          ? configuredGlobPattern.replace(/\\/g, '/')
+          : configuredGlobPattern;
       validatePromptGlob(globPattern);
       let matches: string[];
       try {
@@ -812,11 +856,12 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const evaluatedPromptFiles =
-      forceRun ||
-      configChanged ||
-      dependencyChanged ||
-      changedFilesList.length === 0
+    const evaluatedPromptFiles = useConfigPrompts
+      ? []
+      : forceRun ||
+          configChanged ||
+          dependencyChanged ||
+          changedFilesList.length === 0
         ? allPromptFiles
         : changedPromptFiles;
 
@@ -827,10 +872,6 @@ export async function run(): Promise<void> {
         'Rename the prompt file so its path does not contain CR or LF characters.',
       );
     }
-    const realPromptRoots: {
-      workspaceRoot?: string;
-      workingDirectory?: string;
-    } = {};
     for (const file of evaluatedPromptFiles) {
       validatePromptPath(
         workspaceRoot,
@@ -849,7 +890,9 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${evaluatedPromptFiles.join(', ')}`,
+        useConfigPrompts
+          ? 'Processing config-defined prompts.'
+          : `Processing all matching prompt files: ${evaluatedPromptFiles.join(', ')}`,
       );
     }
 

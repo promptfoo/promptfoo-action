@@ -13,7 +13,10 @@ export interface PromptfooConfig {
     | string
     | { id?: string; [key: string]: unknown }
     | Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: string | Array<string | { file?: string; [key: string]: unknown }>;
+  prompts?:
+    | string
+    | Array<string | { file?: string; [key: string]: unknown }>
+    | Record<string, string>;
   tests?:
     | string
     | Array<
@@ -43,6 +46,7 @@ const MAX_DEPENDENCY_PATH_LENGTH = 65536;
 const MAX_ASSERTION_DEPTH = 128;
 const MAX_NESTED_CONFIG_VALUES = 100000;
 const MAX_TRANSITIVE_CONFIG_BYTES = 1024 * 1024;
+const NONBLOCKING_READ_FLAGS = fs.constants.O_RDONLY | fs.constants.O_NONBLOCK;
 const TRANSITIVE_CONFIG_EXTENSION =
   /\.(?:yaml|yml|json|jsonl|csv|xlsx|xls)(?:#[^\r\n]*)?$/i;
 const BINARY_TRANSITIVE_CONFIG_EXTENSION = /\.(?:xlsx|xls)(?:#[^\r\n]*)?$/i;
@@ -68,7 +72,7 @@ const UNSAFE_PATH_CHARACTERS = /[\0\r\n]/;
 const PROVIDER_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/;
 const ASSERT_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/;
 const AUTH_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py)$/;
-const HTTP_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts)$/;
+const HTTP_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
 const JS_EXTENSION_CASE_INSENSITIVE = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
 
 function hasGlobMagic(value: string): boolean {
@@ -185,6 +189,41 @@ function resolvePhysicalPath(targetPath: string): string {
   );
 }
 
+function readBoundedRegularFile(
+  filePath: string,
+  allowedRoots: string[],
+): string | undefined {
+  const physicalPath = resolvePhysicalPath(filePath);
+  if (!allowedRoots.some((root) => isPathInside(root, physicalPath))) {
+    return undefined;
+  }
+  const fileDescriptor = fs.openSync(physicalPath, NONBLOCKING_READ_FLAGS);
+  try {
+    const openedStat = fs.fstatSync(fileDescriptor);
+    if (!openedStat.isFile() || openedStat.size > MAX_TRANSITIVE_CONFIG_BYTES) {
+      return undefined;
+    }
+    const currentPhysicalPath = resolvePhysicalPath(filePath);
+    if (!allowedRoots.some((root) => isPathInside(root, currentPhysicalPath))) {
+      return undefined;
+    }
+    const currentStat = fs.statSync(currentPhysicalPath);
+    if (
+      !currentStat.isFile() ||
+      currentStat.dev !== openedStat.dev ||
+      currentStat.ino !== openedStat.ino
+    ) {
+      return undefined;
+    }
+    const contents = fs.readFileSync(fileDescriptor, 'utf8');
+    return Buffer.byteLength(contents, 'utf8') > MAX_TRANSITIVE_CONFIG_BYTES
+      ? undefined
+      : contents;
+  } finally {
+    fs.closeSync(fileDescriptor);
+  }
+}
+
 /** Extracts repository-local file dependencies from a Promptfoo config. */
 export function extractFileDependencies(configPath: string): string[] {
   const dependencies = new Set<string>();
@@ -229,7 +268,14 @@ export function extractFileDependencies(configPath: string): string[] {
   };
 
   try {
-    const configContent = fs.readFileSync(configPath, 'utf8');
+    const configContent = readBoundedRegularFile(configPath, [
+      physicalConfigDir,
+      physicalCwd,
+    ]);
+    if (configContent === undefined) {
+      markUnsafeDependency();
+      return ['./'];
+    }
     if (!configContent.trim()) {
       core.debug('Config file is empty or invalid');
       return [];
@@ -350,6 +396,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const processFileUrl = (
       fileUrl: string,
       selector: 'provider' | 'assert' | 'auth' | 'http' | 'literal' = 'literal',
+      globBacked = true,
     ): void => {
       const filePath = fileUrl.slice('file://'.length);
       if (
@@ -381,20 +428,23 @@ export function extractFileDependencies(configPath: string): string[] {
                 : undefined;
 
       if (candidatePath && extensionPattern?.test(candidatePath)) {
-        processFilePath(candidatePath);
+        if (selector === 'http') {
+          processFilePath(filePath, globBacked);
+        }
+        processFilePath(candidatePath, globBacked);
         return;
       }
       if (
         candidatePath &&
         extensionPattern &&
         JS_EXTENSION_CASE_INSENSITIVE.test(candidatePath) &&
-        !HTTP_EXTENSION.test(candidatePath)
+        !extensionPattern.test(candidatePath)
       ) {
-        processFilePath(filePath);
-        processFilePath(candidatePath);
+        processFilePath(filePath, globBacked);
+        processFilePath(candidatePath, globBacked);
         return;
       }
-      processFilePath(filePath);
+      processFilePath(filePath, globBacked);
     };
 
     const extractNestedFileReferences = (value: unknown): boolean => {
@@ -451,14 +501,15 @@ export function extractFileDependencies(configPath: string): string[] {
       const absolutePath = resolveConfigDependency(filePath);
       if (!absolutePath) return;
       try {
-        const stat = fs.statSync(absolutePath);
-        if (stat.size > MAX_TRANSITIVE_CONFIG_BYTES) {
+        const contents = readBoundedRegularFile(absolutePath, [
+          physicalConfigDir,
+          physicalCwd,
+        ]);
+        if (contents === undefined) {
           markUnsafeDependency();
           return;
         }
-        const contents = fs.readFileSync(absolutePath, 'utf8').toString();
         if (
-          Buffer.byteLength(contents, 'utf8') > MAX_TRANSITIVE_CONFIG_BYTES ||
           contents.includes('file://') ||
           hasTransitiveNestedReference(contents)
         ) {
@@ -496,7 +547,7 @@ export function extractFileDependencies(configPath: string): string[] {
         typeof httpConfig.validateStatus === 'string' &&
         httpConfig.validateStatus.startsWith('file://')
       ) {
-        processFileUrl(httpConfig.validateStatus, 'http');
+        processFileUrl(httpConfig.validateStatus, 'http', false);
       }
 
       for (const field of [
@@ -507,7 +558,7 @@ export function extractFileDependencies(configPath: string): string[] {
       ]) {
         const reference = httpConfig[field];
         if (typeof reference === 'string' && reference.startsWith('file://')) {
-          processFileUrl(reference, 'http');
+          processFileUrl(reference, 'http', false);
         }
       }
       const session = httpConfig.session;
@@ -523,6 +574,7 @@ export function extractFileDependencies(configPath: string): string[] {
         processFileUrl(
           (session as Record<string, unknown>).responseParser as string,
           'http',
+          false,
         );
       }
 
@@ -540,7 +592,7 @@ export function extractFileDependencies(configPath: string): string[] {
       ) {
         const authPath = (auth as Record<string, unknown>).path;
         if (typeof authPath === 'string' && authPath.startsWith('file://')) {
-          processFileUrl(authPath, 'auth');
+          processFileUrl(authPath, 'auth', false);
         } else {
           processRawReference(authPath);
         }
@@ -922,6 +974,9 @@ export function extractFileDependencies(configPath: string): string[] {
         markUnsafeDependency();
       }
       if ('provider' in optionRecord) processProvider(optionRecord.provider);
+      if (extractNestedFileReferences(optionRecord)) {
+        markUnsafeDependency();
+      }
     };
 
     if (typeof config.defaultTest === 'string') {

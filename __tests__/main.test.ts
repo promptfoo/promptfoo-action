@@ -328,6 +328,122 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      '\r',
+      '\n',
+    ])('should ignore an unused matched prompt containing %j when use-config-prompts is enabled', async (lineBreak) => {
+      const unusedPrompt = `prompts/unused${lineBreak}::error::forged.txt`;
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([{ filename: unusedPrompt }]);
+      mockGlob.sync.mockReturnValue([unusedPrompt]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().includes('unused')) {
+          throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+        }
+        return filePath.toString();
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(
+        mockFs.realpathSync.mock.calls.some(([filePath]) =>
+          filePath.toString().includes('unused'),
+        ),
+      ).toBe(false);
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.not.arrayContaining(['--prompts']),
+        expect.any(Object),
+      );
+    });
+
+    test('should not log an unused prompt path when use-config-prompts has no changed-file list', async () => {
+      const unusedPrompt = 'prompts/unused\n::error::forged.txt';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockRejectedValueOnce(new Error('no diff'));
+      mockGlob.sync.mockReturnValue([unusedPrompt]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().includes('unused')) {
+          throw new Error('unused prompt must not be resolved');
+        }
+        return filePath.toString();
+      });
+
+      await run();
+
+      const output = [
+        ...mockCore.info.mock.calls,
+        ...mockCore.warning.mock.calls,
+        ...mockCore.setFailed.mock.calls,
+      ]
+        .flat()
+        .join('\n');
+      expect(output).not.toContain('::error::forged');
+      expect(
+        mockFs.realpathSync.mock.calls.some(([filePath]) =>
+          filePath.toString().includes('unused'),
+        ),
+      ).toBe(false);
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.not.arrayContaining(['--prompts']),
+        expect.any(Object),
+      );
+    });
+
+    test.each([
+      {
+        reason: 'lexically escapes the workspace',
+        input: '../outside',
+        physicalPath: undefined,
+      },
+      {
+        reason: 'is a symlink that escapes the workspace',
+        input: 'linked-evals',
+        physicalPath: path.resolve(process.cwd(), '..', 'outside'),
+      },
+    ])('should reject a working-directory that $reason before config-prompt evaluation', async ({
+      input,
+      physicalPath,
+    }) => {
+      const workingDirectory = path.resolve(process.cwd(), input);
+      withInputs({ 'working-directory': input });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts' || name === 'force-run',
+      );
+      if (physicalPath) {
+        mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+          filePath.toString() === workingDirectory
+            ? physicalPath
+            : filePath.toString(),
+        );
+      }
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid working directory: the working directory must stay within the workspace.\n\nHelp: Use a readable working directory contained within the workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockFs.existsSync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
       {
         reason: 'config',
         changedFile: 'promptfooconfig.yaml',
@@ -439,6 +555,61 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should normalize a Windows prompt glob before bounded brace preflight', async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      withInputs({ prompts: 'prompts\\{1..1024}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/1.txt']);
+
+      try {
+        await run();
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: originalPlatform,
+          configurable: true,
+        });
+      }
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/{1..1024}.txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should reject an oversized Windows prompt glob before expansion', async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      withInputs({ prompts: 'prompts\\{1..1025}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      try {
+        await run();
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: originalPlatform,
+          configurable: true,
+        });
+      }
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
     test.each([
       'prompts/{1..1025}.txt',
       'prompts/{1..1000000000}.txt',
@@ -518,6 +689,8 @@ describe('GitHub Action Main', () => {
       'prompts/[[:alpha:]]*.txt',
       'prompts/[[:digit:]]*.txt',
       'prompts/[]]*.txt',
+      'prompts/[{].txt',
+      'prompts/[}].txt',
     ])('should permit valid prompt-glob character class %s', async (globPattern) => {
       withInputs({ prompts: globPattern });
       mockOctokit.paginate.mockResolvedValue([
