@@ -574,6 +574,43 @@ prompts:
     );
   });
 
+  it.each([
+    [
+      'direct provider path',
+      'providers: "file://../outside\\n::error::FORGED-DIRECT-ANNOTATION.py"\n',
+    ],
+    [
+      'provider glob path',
+      'providers: "file://providers/linked\\n::error::FORGED-GLOB-ANNOTATION/*.py"\n',
+    ],
+    [
+      'structured prompt path',
+      'providers: "file://providers/linked\\n::error::FORGED-PROMPT-ANNOTATION.yaml"\n',
+    ],
+  ])('should redact CRLF-bearing %s from dependency warnings', (_name, configContent) => {
+    mockFs.readFileSync.mockReturnValue(configContent);
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) =>
+      String(filePath).includes('linked')
+        ? '/tmp/outside/SENSITIVE-LINK-TARGET'
+        : filePath,
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/tmp/outside/SENSITIVE-GLOB-MATCH.py']);
+
+    extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    const warnings = vi
+      .mocked(core.warning)
+      .mock.calls.map(([warning]) => String(warning));
+    expect(warnings.length).toBeGreaterThan(0);
+    expect(warnings.every((warning) => !/[\r\n]/.test(warning))).toBe(true);
+    expect(warnings.join('\n')).not.toContain('FORGED-');
+    expect(warnings.join('\n')).not.toContain('SENSITIVE-');
+  });
+
   it('should support Promptfoo legacy YAML tags in mapped configs and prompts', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       const candidate = String(filePath);
@@ -2117,6 +2154,37 @@ providers:
     expect(
       extractFileDependencies('/tmp/external/promptfooconfig.yaml'),
     ).toEqual(['providers/custom.py', 'providers']);
+  });
+
+  it.each([
+    new Error('EACCES: SENSITIVE-CONFIG-ROOT'),
+    new Error('ENOENT: SENSITIVE-CONFIG-ROOT'),
+  ])('should retain checkout glob matches when an unused external config root cannot be resolved (%s)', (rootError) => {
+    mockFs.readFileSync.mockReturnValue(
+      'providers: file:///test/working/providers/*.py\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/providers/first.py',
+      '/test/working/providers/second.py',
+    ]);
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate === '/tmp/external') throw rootError;
+      if (candidate.startsWith('/test/working')) {
+        return candidate.replace('/test/working', '/physical/checkout');
+      }
+      return candidate;
+    });
+
+    expect(
+      extractFileDependencies('/tmp/external/promptfooconfig.yaml'),
+    ).toEqual(['providers/first.py', 'providers/second.py', 'providers']);
+    const warnings = vi.mocked(core.warning).mock.calls.join('\n');
+    expect(warnings).not.toContain('SENSITIVE-CONFIG-ROOT');
   });
 
   it.each([

@@ -90,6 +90,10 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
   );
 }
 
+function sanitizeDependencyDisplayPath(filePath: string): string {
+  return /[\0\r\n]/.test(filePath) ? '[redacted]' : filePath;
+}
+
 export function normalizeConfigFilePath(
   filePath: string,
   platform: NodeJS.Platform = process.platform,
@@ -214,6 +218,22 @@ export function extractFileDependencies(
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const isDependencyPathInside = (targetPath: string): boolean =>
     isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
+  let physicalDependencyRoots: string[] | undefined;
+  const isPhysicalDependencyPathInside = (targetPath: string): boolean => {
+    if (!physicalDependencyRoots) {
+      physicalDependencyRoots = [];
+      for (const root of new Set([dependencyRoot, cwd])) {
+        try {
+          physicalDependencyRoots.push(fs.realpathSync(root));
+        } catch {
+          // Another allowed root may still contain this dependency.
+        }
+      }
+    }
+    return physicalDependencyRoots.some((root) =>
+      isPathInside(root, targetPath),
+    );
+  };
 
   try {
     if (/\.(?:[cm]?[jt]s)$/i.test(configPath)) {
@@ -327,10 +347,16 @@ export function extractFileDependencies(
 
         return absolutePath;
       } catch (error) {
+        const message = String(error);
+        const reason = message.includes(
+          'must stay within the repository workspace',
+        )
+          ? `${source} must stay within the repository workspace`
+          : message.includes('contains an invalid null byte')
+            ? `${source} contains an invalid null byte`
+            : `${source} is empty or invalid`;
         core.warning(
-          `Ignoring unsafe config dependency "${displayPath}": ${String(
-            error,
-          ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
+          `Ignoring unsafe config dependency "${sanitizeDependencyDisplayPath(displayPath)}": ${reason}`,
         );
         return undefined;
       }
@@ -417,9 +443,11 @@ export function extractFileDependencies(
       redactDisplayPath = false,
     ): void => {
       const rawFilePath = fileUrl.replace('file://', '');
-      const displayFilePath = redactDisplayPath
-        ? '[redacted]'
-        : displayFileUrl.replace('file://', '');
+      const displayFilePath = sanitizeDependencyDisplayPath(
+        redactDisplayPath
+          ? '[redacted]'
+          : displayFileUrl.replace('file://', ''),
+      );
       const filePath = normalizeConfigFilePath(
         stripFunctionSuffix
           ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1')
@@ -467,7 +495,7 @@ export function extractFileDependencies(
           }
           if (
             isDependencyPathInside(absoluteMatch) &&
-            isDependencyPathInside(physicalMatch)
+            isPhysicalDependencyPathInside(physicalMatch)
           ) {
             dependencies.add(absoluteMatch);
           } else {
@@ -787,7 +815,7 @@ export function extractFileDependencies(
             : absolutePromptFile;
           if (!isDependencyPathInside(physicalPromptFile)) {
             core.warning(
-              `Ignoring unsafe prompt file dependency "${displayPromptPath}": resolved path must stay within the repository workspace`,
+              `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within the repository workspace`,
             );
             continue;
           }
