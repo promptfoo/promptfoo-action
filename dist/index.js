@@ -37463,7 +37463,9 @@ async function run() {
         groqApiKey
       ];
       for (const [name, value] of Object.entries(process.env)) {
-        if (value && (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(name) || /(?:^|_)BEARER_TOKEN(?:_|$)/i.test(name) || name.toUpperCase() === "FAL_KEY" || name.toUpperCase() === "ABLIT_KEY")) {
+        if (value && (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
+          name
+        ) || /(?:^|_)BEARER_TOKEN(?:_|$)/i.test(name) || name.toUpperCase() === "FAL_KEY" || name.toUpperCase() === "ABLIT_KEY")) {
           apiKeys.push(value);
         }
       }
