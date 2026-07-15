@@ -279,6 +279,8 @@ export function extractFileDependencies(configPath: string): string[] {
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const dependencyRoots =
+    dependencyRoot === cwd ? [cwd] : [dependencyRoot, cwd];
   let configParsed = false;
 
   try {
@@ -315,27 +317,33 @@ export function extractFileDependencies(configPath: string): string[] {
       ...configOverrides,
     };
 
-    let realDependencyRoot: string | undefined;
-    let dependencyRootResolved = false;
+    const realDependencyRoots = new Map<string, string | undefined>();
     const isSafeDependencyPath = (absolutePath: string): boolean => {
-      if (!isPathInside(dependencyRoot, absolutePath)) {
+      const containingRoot = dependencyRoots.find((root) =>
+        isPathInside(root, absolutePath),
+      );
+      if (!containingRoot) {
         return false;
       }
 
       try {
-        if (!dependencyRootResolved) {
-          dependencyRootResolved = true;
-          realDependencyRoot = fs.realpathSync(dependencyRoot);
+        if (!realDependencyRoots.has(containingRoot)) {
+          realDependencyRoots.set(
+            containingRoot,
+            fs.realpathSync(containingRoot),
+          );
         }
       } catch {
+        realDependencyRoots.set(containingRoot, undefined);
         return false;
       }
+      const realDependencyRoot = realDependencyRoots.get(containingRoot);
       if (!realDependencyRoot) {
         return false;
       }
 
       let existingPath = absolutePath;
-      while (existingPath !== dependencyRoot) {
+      while (existingPath !== containingRoot) {
         try {
           const realPath = fs.realpathSync(existingPath);
           return isPathInside(realDependencyRoot, realPath);
@@ -373,12 +381,14 @@ export function extractFileDependencies(configPath: string): string[] {
 
         return absolutePath;
       } catch (error) {
-        if (
-          filePath.length > 0 &&
-          !filePath.includes('\0') &&
-          isPathInside(dependencyRoot, path.resolve(configDir, filePath))
-        ) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+        const containingRoot =
+          filePath.length > 0 && !filePath.includes('\0')
+            ? dependencyRoots.find((root) =>
+                isPathInside(root, path.resolve(configDir, filePath)),
+              )
+            : undefined;
+        if (containingRoot) {
+          dependencies.add(`${containingRoot}${path.sep}`);
         }
         core.warning(
           `Ignoring unsafe config dependency "${displayPath}": ${String(
@@ -854,12 +864,11 @@ export function extractFileDependencies(configPath: string): string[] {
         ) {
           return;
         }
-        const isContainedReference = isPathInside(
-          dependencyRoot,
-          path.resolve(configDir, providerPath),
+        const containingRoot = dependencyRoots.find((root) =>
+          isPathInside(root, path.resolve(configDir, providerPath)),
         );
-        if (isContainedReference && !isProviderGlob) {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
+        if (containingRoot && !isProviderGlob) {
+          dependencies.add(`${containingRoot}${path.sep}`);
         }
         return;
       }

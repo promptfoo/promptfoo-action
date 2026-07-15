@@ -2831,6 +2831,23 @@ prompts:
     expect(deps).toEqual(['providers/custom.py', 'prompts/prompt.txt']);
   });
 
+  it('should keep absolute checkout provider dependencies for an external config', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/repository/providers/direct.py
+  - file:///test/repository/providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/repository/providers/matched.py']);
+
+    expect(
+      extractFileDependencies('/private/configs/promptfooconfig.yaml'),
+    ).toEqual(['providers/direct.py', 'providers/matched.py', 'providers/']);
+  });
+
   it('should keep dependencies whose names begin with two dots', () => {
     const configContent = `
 providers:
