@@ -361,7 +361,9 @@ export function extractFileDependencies(
         }
 
         const isPromptGlob = glob.hasMagic(promptPath);
-        if (!isPromptGlob && !/\.(?:json|ya?ml)$/i.test(promptPath)) {
+        const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(promptPath);
+        const hasFixedExtension = /\.[A-Za-z0-9_-]+$/.test(promptPath);
+        if (!isStructuredPrompt && (!isPromptGlob || hasFixedExtension)) {
           return;
         }
 

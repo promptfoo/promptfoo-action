@@ -98,6 +98,7 @@ prompts:
 
     expect(deps).toContain('../config/prompts/main.txt');
     expect(deps).toContain('../config/prompts');
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
   });
 
   it('should watch the config directory for a root-level scalar prompt glob', () => {
@@ -857,6 +858,53 @@ prompts: file://configs/prompts.yaml
       '../config/defs',
       '../config/shared/nested.txt',
     ]);
+  });
+
+  it('should skip non-structured matches during extensionless prompt-glob inspection', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('defs/one.yaml')) {
+        return 'content: file://shared/nested.txt\n';
+      }
+      return 'prompts: file://defs/*\n';
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/config/defs/one.yaml',
+      '/test/config/defs/skip.txt',
+    ]);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/defs/one.yaml',
+      '../config/defs/skip.txt',
+      '../config/defs',
+      '../config/shared/nested.txt',
+    ]);
+  });
+
+  it('should inspect structured prompt matches selected by an extglob extension', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('prompts/chat.yaml')) {
+        return 'content: file://nested/system.txt\n';
+      }
+      return 'prompts: file://prompts/*.@(json|yaml)\n';
+    });
+    mockGlob.hasMagic.mockImplementation(
+      (value: string) => value.includes('*') || value.includes('@('),
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/prompts/chat.yaml']);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/prompts/chat.yaml',
+      '../config/prompts',
+      '../config/nested/system.txt',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(2);
   });
 
   it('should conservatively watch templated nested prompt paths', () => {
