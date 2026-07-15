@@ -38896,8 +38896,10 @@ function extractFileDependencies(configPath) {
           );
           return;
         }
+        const rawTestPath = tests.startsWith("file://") ? tests.slice("file://".length) : tests;
+        const rebasedTestPath = path6.isAbsolute(rawTestPath) || isForeignWindowsPath(rawTestPath) ? rawTestPath : path6.resolve(testBaseDir, rawTestPath);
         const resolvedPaths = processFileUrl(
-          (tests.startsWith("file://") ? tests : `file://${tests}`).replace(TEST_FILE_SELECTOR_PATTERN, "$1").replace(TEST_SHEET_SELECTOR_PATTERN, "$1")
+          `file://${rebasedTestPath}`.replace(TEST_FILE_SELECTOR_PATTERN, "$1").replace(TEST_SHEET_SELECTOR_PATTERN, "$1")
         );
         for (const testFile of resolvedPaths ?? []) {
           if (!/\.(?:ya?ml|jsonl?|csv)$/i.test(testFile) || visitedTestFiles.has(testFile) || !fs6.existsSync(testFile)) {

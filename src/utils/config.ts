@@ -1239,8 +1239,15 @@ export function extractFileDependencies(configPath: string): string[] {
           );
           return;
         }
+        const rawTestPath = tests.startsWith('file://')
+          ? tests.slice('file://'.length)
+          : tests;
+        const rebasedTestPath =
+          path.isAbsolute(rawTestPath) || isForeignWindowsPath(rawTestPath)
+            ? rawTestPath
+            : path.resolve(testBaseDir, rawTestPath);
         const resolvedPaths = processFileUrl(
-          (tests.startsWith('file://') ? tests : `file://${tests}`)
+          `file://${rebasedTestPath}`
             .replace(TEST_FILE_SELECTOR_PATTERN, '$1')
             .replace(TEST_SHEET_SELECTOR_PATTERN, '$1'),
         );

@@ -3220,6 +3220,23 @@ tests:
     ).toBe(false);
   });
 
+  it('should reject foreign absolute test paths without rebasing or leaking them', () => {
+    if (process.platform === 'win32') return;
+    mockFs.readFileSync.mockReturnValue(
+      "tests: 'file://C:\\private\\TEST_PATH_SECRET_MARKER.yaml'",
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(core.warning)
+        .mock.calls.some((call) => String(call[0]).includes('SECRET_MARKER')),
+    ).toBe(false);
+  });
+
   it('should extract nested default-test, external-test, and generator-config dependencies', () => {
     mockFs.existsSync.mockImplementation((filePath: string) =>
       /(?:defaults|cases)\.ya?ml$/.test(filePath),
@@ -3348,6 +3365,42 @@ tests:
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['evals/tests/cases.yaml', 'evals/tests/vars.yaml']);
+  });
+
+  it('should extract nested string and generator test paths relative to an external test file', () => {
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      /tests\/(?:cases|nested\/child)\.yaml$/.test(filePath),
+    );
+    mockFs.readFileSync.mockImplementation((filePath: string) => {
+      if (filePath.endsWith('promptfooconfig.yaml')) {
+        return 'tests: file://tests/cases.yaml';
+      }
+      if (filePath.endsWith('cases.yaml')) {
+        return `
+- nested/child.yaml
+- path: nested/generate.py:build_cases
+  config:
+    dataset: file://datasets/current.yaml
+`;
+      }
+      return `
+vars:
+  input: example
+assert:
+  - type: javascript
+    value: file://validators/nested.cjs:validate
+`;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/tests/cases.yaml',
+      'evals/tests/nested/child.yaml',
+      'evals/validators/nested.cjs',
+      'evals/tests/nested/generate.py',
+      'evals/datasets/current.yaml',
+    ]);
   });
 
   it('should extract dependencies reachable through an external test ref', () => {
