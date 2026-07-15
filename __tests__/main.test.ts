@@ -93,6 +93,7 @@ vi.mock('fs', async () => {
   return {
     ...actual,
     readFileSync: vi.fn(),
+    realpathSync: vi.fn(),
     existsSync: vi.fn(),
     unlinkSync: vi.fn(),
     promises: {
@@ -129,6 +130,7 @@ const mockExec = exec as unknown as {
 };
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
@@ -246,6 +248,7 @@ function setupCommonMocks(): MockOctokit {
       shareableUrl: 'https://example.com/results',
     }),
   );
+  mockFs.realpathSync.mockImplementation((value: fs.PathLike) => String(value));
   mockFs.existsSync.mockReturnValue(false);
 
   // Setup exec mock
@@ -1941,6 +1944,73 @@ describe('GitHub Action Main', () => {
   });
 
   describe('security validation', () => {
+    test('should reject an in-checkout config path that resolves through an escaping symlink', async () => {
+      withInputs({ config: 'config-link/promptfooconfig.yaml' });
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const filePath = String(value);
+        if (filePath.endsWith('/config-link/promptfooconfig.yaml')) {
+          return '/private/secrets/promptfooconfig.yaml';
+        }
+        return filePath;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Config file path must stay within the repository workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        '/private/secrets',
+      );
+    });
+
+    test('should reject an in-checkout config path that cannot be canonicalized', async () => {
+      withInputs({ config: 'config-link/promptfooconfig.yaml' });
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const filePath = String(value);
+        if (filePath.endsWith('/config-link/promptfooconfig.yaml')) {
+          throw Object.assign(new Error('REALPATH_SECRET_CANARY'), {
+            code: 'EACCES',
+          });
+        }
+        return filePath;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Config file path must stay within the repository workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        'REALPATH_SECRET_CANARY',
+      );
+    });
+
+    test('should allow an explicitly external config path without canonicalizing it as checkout content', async () => {
+      withInputs({ config: '/private/configs/promptfooconfig.yaml' });
+      mockFs.realpathSync.mockImplementation((value: fs.PathLike) => {
+        const filePath = String(value);
+        if (filePath.startsWith('/private/configs')) {
+          throw Object.assign(new Error('EXTERNAL_REALPATH_SECRET_CANARY'), {
+            code: 'EACCES',
+          });
+        }
+        return filePath;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        '/private/configs/promptfooconfig.yaml',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should use the GitHub API instead of PR refs for changed files', async () => {
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {

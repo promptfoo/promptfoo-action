@@ -38129,7 +38129,7 @@ function providerFilePath(fileUrl, allowJavascript = false) {
   const functionSeparator = rawPath.lastIndexOf(":");
   const scriptPath = rawPath.slice(0, functionSeparator);
   const functionName = rawPath.slice(functionSeparator + 1);
-  const isSupportedScript = /\.py$/i.test(scriptPath) || (allowJavascript ? /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(scriptPath) : /\.(?:go|rb)$/i.test(scriptPath));
+  const isSupportedScript = /\.py$/i.test(scriptPath) || (allowJavascript ? /\.(?:js|cjs|mjs|ts|cts|mts)$/.test(scriptPath) : /\.(?:go|rb)$/i.test(scriptPath));
   const isValidFunctionName = functionName.length === 0 || (/\.go$/i.test(scriptPath) ? /^(?:call_api|CallApi)$/.test(functionName) : /^[^\\/:\0]+$/u.test(functionName));
   if (functionSeparator > 1 && isSupportedScript && isValidFunctionName) {
     return scriptPath;
@@ -38242,7 +38242,7 @@ function extractFileDependencies(configPath) {
   const configDir = path6.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
-  const dependencyRoots = Array.from(/* @__PURE__ */ new Set([configDir, cwd]));
+  const dependencyRoots = dependencyRoot === cwd ? [cwd] : [dependencyRoot, cwd];
   let configParsed = false;
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
@@ -39160,6 +39160,26 @@ var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
+function isPathInside2(baseDir, targetPath) {
+  const relativePath = path7.relative(baseDir, targetPath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relativePath);
+}
+function validateCheckoutConfigPath(configAbsolutePath, workspaceRoot) {
+  if (!isPathInside2(workspaceRoot, configAbsolutePath)) {
+    return;
+  }
+  try {
+    const realWorkspaceRoot = fs7.realpathSync(workspaceRoot);
+    const realConfigPath = fs7.realpathSync(configAbsolutePath);
+    if (isPathInside2(realWorkspaceRoot, realConfigPath)) {
+      return;
+    }
+  } catch {
+  }
+  throw new Error(
+    "Config file path must stay within the repository workspace."
+  );
+}
 function validateGitRevision(ref) {
   const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
   const safeHeadRevision = /^HEAD(?:~[1-9][0-9]*|\^[1-9]?)?$/.test(ref);
@@ -39297,6 +39317,7 @@ async function run() {
       )
     );
     const configAbsolutePath = path7.resolve(workingDirectory, configPath);
+    validateCheckoutConfigPath(configAbsolutePath, workspaceRoot);
     const configRepositoryPath = toRepositoryPath(
       path7.relative(workspaceRoot, configAbsolutePath)
     );

@@ -118,7 +118,7 @@ function providerFilePath(fileUrl: string, allowJavascript = false): string {
   const isSupportedScript =
     /\.py$/i.test(scriptPath) ||
     (allowJavascript
-      ? /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(scriptPath)
+      ? /\.(?:js|cjs|mjs|ts|cts|mts)$/.test(scriptPath)
       : /\.(?:go|rb)$/i.test(scriptPath));
   const isValidFunctionName =
     functionName.length === 0 ||
@@ -279,7 +279,8 @@ export function extractFileDependencies(configPath: string): string[] {
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
-  const dependencyRoots = Array.from(new Set([configDir, cwd]));
+  const dependencyRoots =
+    dependencyRoot === cwd ? [cwd] : [dependencyRoot, cwd];
   let configParsed = false;
 
   try {

@@ -498,6 +498,20 @@ providers:
     ]);
   });
 
+  it('should preserve an uppercase JavaScript status-validator filename with a literal colon', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https://example.test
+    config:
+      validateStatus: file://validators/status.JS:validateStatus
+`);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['validators/status.JS:validateStatus']);
+  });
+
   it('should extract HTTP auth and credential paths from targets', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -3008,7 +3022,7 @@ providers:
     ).toHaveLength(0);
   });
 
-  it('should keep valid relative dependencies for a config directory symlinked outside the checkout', () => {
+  it('should reject relative dependencies for a config directory symlinked outside the checkout', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.realpathSync.mockImplementation((value: unknown) => {
       const filePath = String(value);
@@ -3029,8 +3043,10 @@ providers:
       extractFileDependencies(
         '/test/repository/config-link/promptfooconfig.yaml',
       ),
-    ).toEqual(['config-link/providers/current.py']);
-    expect(core.warning).not.toHaveBeenCalled();
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
   });
 
   it('should keep dependencies whose names begin with two dots', () => {

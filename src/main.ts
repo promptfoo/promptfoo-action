@@ -38,6 +38,39 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function isPathInside(baseDir: string, targetPath: string): boolean {
+  const relativePath = path.relative(baseDir, targetPath);
+  return (
+    relativePath === '' ||
+    (relativePath !== '..' &&
+      !relativePath.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativePath))
+  );
+}
+
+function validateCheckoutConfigPath(
+  configAbsolutePath: string,
+  workspaceRoot: string,
+): void {
+  if (!isPathInside(workspaceRoot, configAbsolutePath)) {
+    return;
+  }
+
+  try {
+    const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+    const realConfigPath = fs.realpathSync(configAbsolutePath);
+    if (isPathInside(realWorkspaceRoot, realConfigPath)) {
+      return;
+    }
+  } catch {
+    // A repository-controlled path that cannot be canonicalized is unsafe.
+  }
+
+  throw new Error(
+    'Config file path must stay within the repository workspace.',
+  );
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -231,6 +264,7 @@ export async function run(): Promise<void> {
       ),
     );
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
+    validateCheckoutConfigPath(configAbsolutePath, workspaceRoot);
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
     );
