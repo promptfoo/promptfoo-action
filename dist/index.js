@@ -39433,7 +39433,13 @@ async function run() {
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
         changedFiles = filesInput;
-        const manualFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter(Boolean);
+        const manualFiles = filesInput.split(/\r?\n/).flatMap((file) => {
+          const trimmedFile = file.trim();
+          if (!trimmedFile) {
+            return [];
+          }
+          return file === trimmedFile ? [file] : [file, trimmedFile];
+        });
         explicitChangedFiles = manualFiles;
         info(
           `Using manually specified files: ${formatChangedFilesForLog(manualFiles)}`
@@ -39587,7 +39593,7 @@ async function run() {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
-    if (!useConfigPrompts && promptFiles.length > 0) {
+    if (!useConfigPrompts && !configChanged && !dependencyChanged && promptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
     }
     if (noShare) {

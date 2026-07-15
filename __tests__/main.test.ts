@@ -946,6 +946,22 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test('should not narrow evaluation when a prompt and provider dependency both change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'providers/current.py' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/current.py',
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+    });
+
     test.each([
       ['providers/invalid[.py', ['providers/invalid[.py']],
       ['providers/safe.py', ['providers/invalid[.py', 'providers/safe.py']],
@@ -1142,6 +1158,29 @@ describe('GitHub Action Main', () => {
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue([
         'providers/provider.py',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should preserve a leading space in a manual dependency path', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: ' providers/spaced.py\r\n' } },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' providers/spaced.py',
       ]);
 
       await run();
