@@ -39820,6 +39820,11 @@ function isPathInside(baseDir, targetPath) {
   const relativePath = path6.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
 }
+function warnSafe(message) {
+  warning(
+    message.replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t").replace(/\0/g, "\\0")
+  );
+}
 function stripNunjucksComments(value) {
   let result = "";
   let cursor = 0;
@@ -39892,6 +39897,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   const isSafeDependency = (targetPath) => isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
+  let configParsed = false;
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
     if (!configContent.trim()) {
@@ -39912,6 +39918,69 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       debug("Config file is empty or invalid");
       return [];
     }
+    configParsed = true;
+    let realDependencyRoots;
+    const getRealDependencyRoots = () => {
+      if (realDependencyRoots) {
+        return realDependencyRoots;
+      }
+      realDependencyRoots = [];
+      for (const lexical of /* @__PURE__ */ new Set([cwd, configDir, dependencyRoot])) {
+        try {
+          realDependencyRoots.push({
+            lexical,
+            real: fs6.realpathSync(lexical)
+          });
+        } catch {
+        }
+      }
+      return realDependencyRoots;
+    };
+    if (isPathInside(cwd, configDir)) {
+      const resolvedRoots = getRealDependencyRoots();
+      const realCwd = resolvedRoots.find(
+        ({ lexical }) => lexical === cwd
+      )?.real;
+      const realConfigDir = resolvedRoots.find(
+        ({ lexical }) => lexical === configDir
+      )?.real;
+      if (!realCwd || !realConfigDir || !isPathInside(realCwd, realConfigDir)) {
+        warnSafe(
+          "Ignoring unsafe config dependencies: config directory resolves outside the repository workspace"
+        );
+        return [];
+      }
+    }
+    const isSafeDirectDependency = (absolutePath) => {
+      try {
+        const realPath = fs6.realpathSync(absolutePath);
+        if (getRealDependencyRoots().some(
+          ({ real }) => isPathInside(real, realPath)
+        )) {
+          return true;
+        }
+        warnSafe(
+          "Ignoring unsafe config dependency: resolved path must stay within the repository workspace"
+        );
+        return false;
+      } catch (error2) {
+        const code = error2.code;
+        if (code === "ENOENT" || code === "ENOTDIR") {
+          try {
+            fs6.lstatSync(absolutePath);
+          } catch (lstatError) {
+            const lstatCode = lstatError.code;
+            if (lstatCode === "ENOENT" || lstatCode === "ENOTDIR") {
+              return true;
+            }
+          }
+        }
+        warnSafe(
+          "Ignoring unsafe config dependency: resolved path cannot be verified"
+        );
+        return false;
+      }
+    };
     const expandAndTrackEnvTemplates = (filePath) => {
       const uncommentedPath = stripNunjucksComments(filePath);
       const expandedPath = expandEnvTemplates(filePath);
@@ -39927,7 +39996,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         }
         return path6.resolve(configDir, filePath);
       } catch (error2) {
-        warning(
+        warnSafe(
           `Ignoring unsafe config dependency "${filePath}": ${String(
             error2
           ).replace(/^(?:[A-Za-z]+)?Error: /, "")}`
@@ -39937,7 +40006,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
     };
     const processFilePath = (filePath, source = "config file dependency", preserveGlobRoot = false, windowsPathsNoEscape = false) => {
       if (filePath.includes("\0")) {
-        warning(
+        warnSafe(
           `Ignoring unsafe config dependency "${filePath}": ${source} contains an invalid null byte`
         );
         return [];
@@ -39957,14 +40026,14 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         }) : [normalizedPath];
       } catch (error2) {
         dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
-        warning(
+        warnSafe(
           `Failed to parse config dependency glob (${source}): ${error2 instanceof Error ? error2.message : String(error2)}; conservatively watching the dependency root`
         );
         return [];
       }
       if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
         dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`);
-        warning(
+        warnSafe(
           "Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root"
         );
         return [];
@@ -39976,13 +40045,16 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         const traversalPath = expandedPath.replace(/\[\.\]/g, ".");
         return !isSafeDependency(path6.resolve(configDir, traversalPath));
       })) {
-        warning(
+        warnSafe(
           `Ignoring unsafe config dependency "${normalizedPath}": ${source} must stay within the repository workspace`
         );
         return [];
       }
       const absolutePath = resolveConfigDependency(normalizedPath, source);
       if (!absolutePath) {
+        return [];
+      }
+      if (!isGlob && !isSafeDirectDependency(absolutePath)) {
         return [];
       }
       if (isGlob) {
@@ -39994,24 +40066,22 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         const safeMatches = [];
         for (const match2 of matches) {
           const absoluteMatch = path6.resolve(match2);
-          let realDependencyRoot;
-          let realCwd;
           let realMatch;
           try {
-            realDependencyRoot = fs6.realpathSync(dependencyRoot);
-            realCwd = fs6.realpathSync(cwd);
             realMatch = fs6.realpathSync(absoluteMatch);
           } catch {
-            warning(
+            warnSafe(
               "Ignoring unsafe config dependency glob match: resolved path cannot be verified"
             );
             continue;
           }
-          if (isSafeDependency(absoluteMatch) && (isPathInside(realDependencyRoot, realMatch) || isPathInside(realCwd, realMatch))) {
+          if (isSafeDependency(absoluteMatch) && getRealDependencyRoots().some(
+            ({ real }) => isPathInside(real, realMatch)
+          )) {
             dependencies.add(absoluteMatch);
             safeMatches.push(absoluteMatch);
           } else {
-            warning(
+            warnSafe(
               "Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace"
             );
           }
@@ -40043,13 +40113,13 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       }
       return [absolutePath];
     };
-    const processFileUrl = (fileUrl, preserveGlobRoot = false, baseDir = configDir, isProvider = false) => {
+    const processFileUrl = (fileUrl, preserveGlobRoot = false, baseDir = configDir) => {
       let filePath = fileUrl.replace(/^file:\/\//, "");
       const expandedPath = expandAndTrackEnvTemplates(filePath);
       const hasEnvTemplate = expandedPath !== filePath;
       filePath = expandedPath;
       const functionIndex = filePath.lastIndexOf(":");
-      if (functionIndex > 1 && (/\.(?:py|rb|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex)) || isProvider && /\.(?:go|rb)$/i.test(filePath.slice(0, functionIndex)))) {
+      if (functionIndex > 1 && /\.(?:py|go|rb|[cm]?[jt]s)$/.test(filePath.slice(0, functionIndex))) {
         filePath = filePath.slice(0, functionIndex);
       }
       if (baseDir !== configDir) {
@@ -40077,7 +40147,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         return;
       }
       const providerPath = localProvider[1];
-      processFileUrl(`file://${providerPath}`, false, configDir, true);
+      processFileUrl(`file://${providerPath}`, false, configDir);
       const absolutePath = path6.resolve(configDir, providerPath);
       if (/\.(?:ya?ml|json)$/i.test(providerPath) && isSafeDependency(absolutePath)) {
         providerConfigFiles.add(absolutePath);
@@ -40277,12 +40347,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
             /^(?:file:\/\/|python:(?=[\s\S]+\.py(?::[^/\\]+)?$)|golang:(?=[\s\S]+\.go(?::[^/\\]+)?$)|ruby:(?=[\s\S]+\.rb(?::[^/\\]+)?$))([\s\S]+)$/i
           );
           if (localProvider) {
-            processFileUrl(
-              `file://${localProvider[1]}`,
-              true,
-              testBaseDir,
-              true
-            );
+            processFileUrl(`file://${localProvider[1]}`, true, testBaseDir);
             if (typeof item === "object" && item !== null) {
               for (const [providerKey, providerValue] of Object.entries(item)) {
                 if (providerKey !== "id") {
@@ -40363,18 +40428,20 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       }
       inspectedTestFiles.add(inspectionKey);
       try {
-        const realDependencyRoot = fs6.realpathSync(dependencyRoot);
-        const realCwd = fs6.realpathSync(cwd);
         const realTestFile = fs6.realpathSync(testFile);
-        if (!isPathInside(realDependencyRoot, realTestFile) && !isPathInside(realCwd, realTestFile)) {
-          warning(
+        const containingRoot = getRealDependencyRoots().find(
+          ({ real }) => isPathInside(real, realTestFile)
+        );
+        if (!containingRoot) {
+          dependencies.delete(testFile);
+          warnSafe(
             `Ignoring unsafe config dependency "${testFile}": test file dependency must stay within the repository workspace`
           );
           return;
         }
         if (/\.(?:xlsx?|py|[cm]?[jt]s)$/i.test(realTestFile)) {
           dependencies.add(
-            `${realDependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`
+            `${containingRoot.lexical.replace(/[\\/]+$/, "")}${path6.sep}`
           );
           return;
         }
@@ -40393,11 +40460,11 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
               ) : null;
               const values = assertionMatch ? splitCsvAssertionValues(assertionMatch[1]) : [value];
               if (!values) {
-                warning(
+                warnSafe(
                   `Failed to inspect CSV assertion in test file dependency "${testFile}"`
                 );
                 dependencies.add(
-                  `${realDependencyRoot.replace(/[\\/]+$/, "")}${path6.sep}`
+                  `${containingRoot.lexical.replace(/[\\/]+$/, "")}${path6.sep}`
                 );
                 continue;
               }
@@ -40464,7 +40531,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
           );
         }
       } catch {
-        warning(`Failed to inspect test file dependency "${testFile}"`);
+        warnSafe(`Failed to inspect test file dependency "${testFile}"`);
       }
     };
     const processTestFile = (testSource, testBaseDir) => {
@@ -40563,16 +40630,19 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
     return Array.from(dependencies).map((dep) => {
       const relativePath = path6.relative(cwd, dep);
       const repositoryPath = relativePath.split(path6.sep).join("/");
+      if (!repositoryPath) {
+        return "/";
+      }
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
         return `${repositoryPath}/`;
       }
       return repositoryPath;
     });
   } catch (error2) {
-    warning(
+    warnSafe(
       `Failed to extract dependencies from config: ${error2 instanceof Error ? error2.message : String(error2)}`
     );
-    return [];
+    return configParsed ? ["/"] : [];
   }
 }
 
@@ -40888,8 +40958,13 @@ function formatRepeatCommentMarkdown(summary2) {
 // src/main.ts
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
+var MAX_GLOB_PATTERN_LENGTH = 65536;
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
+}
+function isPathInside2(root, target) {
+  const relativePath = path7.relative(root, target);
+  return relativePath === "" || !relativePath.startsWith(`..${path7.sep}`) && relativePath !== ".." && !path7.isAbsolute(relativePath);
 }
 function parseGitDiffPaths(diff) {
   if (diff && !diff.endsWith("\0")) {
@@ -41017,8 +41092,11 @@ async function run() {
     const githubToken = getInput("github-token", {
       required: true
     });
-    const promptsInput = getInput("prompts", { required: false });
-    const promptFilesGlobs = promptsInput ? promptsInput.split("\n").filter((line) => line.trim()) : [];
+    const promptsInput = getInput("prompts", {
+      required: false,
+      trimWhitespace: false
+    });
+    const promptFilesGlobs = promptsInput ? promptsInput.split(/\r?\n/).filter((line) => line.trim()) : [];
     const configPath = getInput("config", {
       required: true
     });
@@ -41033,6 +41111,21 @@ async function run() {
       )
     );
     const configAbsolutePath = path7.resolve(workingDirectory, configPath);
+    if (isPathInside2(workspaceRoot, configAbsolutePath)) {
+      let realWorkspaceRoot;
+      let realConfigPath;
+      try {
+        realWorkspaceRoot = fs7.realpathSync(workspaceRoot);
+        realConfigPath = fs7.realpathSync(configAbsolutePath);
+      } catch {
+        throw new Error("Config file cannot be safely resolved.");
+      }
+      if (!isPathInside2(realWorkspaceRoot, realConfigPath)) {
+        throw new Error(
+          "Config file resolves outside the repository workspace."
+        );
+      }
+    }
     const configRepositoryPath = toRepositoryPath(
       path7.relative(workspaceRoot, configAbsolutePath)
     );
@@ -41065,7 +41158,8 @@ async function run() {
       required: false
     });
     const workflowFiles = getInput("workflow-files", {
-      required: false
+      required: false,
+      trimWhitespace: false
     });
     const workflowBase = getInput("workflow-base", {
       required: false
@@ -41186,7 +41280,18 @@ async function run() {
       const filesInput = workflowFiles || context2.payload.inputs?.files;
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
-        changedFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter(Boolean);
+        changedFiles = Array.from(
+          new Set(
+            filesInput.split("\n").flatMap((file) => {
+              const rawFile = file.endsWith("\r") ? file.slice(0, -1) : file;
+              const trimmedFile = rawFile.trim();
+              if (!trimmedFile) {
+                return [];
+              }
+              return rawFile === trimmedFile ? [rawFile] : [rawFile, trimmedFile];
+            })
+          )
+        );
         info(
           `Using manually specified files: ${JSON.stringify(changedFiles)}`
         );
@@ -41250,31 +41355,33 @@ async function run() {
       );
     }
     const promptFiles = [];
+    const allPromptFiles = [];
     const changedFilesList = changedFiles;
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
         nodir: true
       });
+      const allMatches = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...allMatches);
       if (changedFilesList.length > 0) {
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
           );
-          return repositoryFile !== configRepositoryPath && changedFilesList.includes(repositoryFile);
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path7.relative(workspaceRoot, path7.resolve(workingDirectory, file))
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
         promptFiles.push(...allMatches);
       }
     }
-    if (promptFiles.some((file) => /[\r\n]/.test(file))) {
+    if (allPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error(
         "Prompt file paths cannot contain carriage returns or line feeds."
       );
@@ -41288,7 +41395,7 @@ async function run() {
       ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         debug(
-          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
+          `Found ${dependencies.length} file dependencies in config: ${JSON.stringify(dependencies)}`
         );
         dependencyChanged = dependencies.some((dep) => {
           if (dep === "/") {
@@ -41297,20 +41404,35 @@ async function run() {
           if (changedFilesList.includes(dep)) {
             return true;
           }
-          if (changedFilesList.some(
-            (changedFile) => minimatch(changedFile, dep, {
-              dot: true,
-              windowsPathsNoEscape: true,
-              magicalBraces: true,
-              braceExpandMax: 1025
-            })
-          )) {
-            return true;
+          let globMatchFailed = false;
+          if (dep.length > MAX_GLOB_PATTERN_LENGTH) {
+            warning(
+              "Skipping config dependency glob matching because the pattern exceeds the maximum length"
+            );
+            globMatchFailed = true;
+          } else {
+            try {
+              if (changedFilesList.some(
+                (changedFile) => minimatch(changedFile, dep, {
+                  dot: true,
+                  windowsPathsNoEscape: true,
+                  magicalBraces: true,
+                  braceExpandMax: 1025
+                })
+              )) {
+                return true;
+              }
+            } catch {
+              warning(
+                "Failed to match a config dependency glob; conservatively running the evaluation"
+              );
+              globMatchFailed = true;
+            }
           }
           const depDir = dep.endsWith("/") ? dep : `${dep}/`;
           return changedFilesList.some(
             (changedFile) => changedFile.startsWith(depDir)
-          );
+          ) || globMatchFailed;
         });
         if (dependencyChanged) {
           info("Detected changes in config file dependencies");
@@ -41350,8 +41472,12 @@ async function run() {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
     let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
-    if (!useConfigPrompts && !configChanged && !dependencyChanged && promptFiles.length > 0) {
-      promptfooArgs = promptfooArgs.concat(["--prompts", ...promptFiles]);
+    const evaluationPromptFiles = configChanged || dependencyChanged ? allPromptFiles : promptFiles;
+    if (!useConfigPrompts && evaluationPromptFiles.length > 0) {
+      promptfooArgs = promptfooArgs.concat([
+        "--prompts",
+        ...evaluationPromptFiles
+      ]);
     }
     if (noShare) {
       promptfooArgs.push("--no-share");
@@ -41520,7 +41646,7 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(", ");
+      const modifiedFiles = evaluationPromptFiles.join(", ");
       let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
@@ -41551,9 +41677,9 @@ async function run() {
         ["Success", output.results.stats.successes.toString()],
         ["Failure", output.results.stats.failures.toString()]
       ]);
-      if (promptFiles.length > 0) {
+      if (evaluationPromptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
-        summary2.addList(promptFiles);
+        summary2.addList(evaluationPromptFiles);
       }
       if (repeatCheckResult) {
         summary2.addHeading("Repeat Check", 3);
