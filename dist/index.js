@@ -1073,14 +1073,14 @@ var require_util = __commonJS({
         }
         const port = url.port != null ? url.port : url.protocol === "https:" ? 443 : 80;
         let origin = url.origin != null ? url.origin : `${url.protocol || ""}//${url.hostname || ""}:${port}`;
-        let path7 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
+        let path8 = url.path != null ? url.path : `${url.pathname || ""}${url.search || ""}`;
         if (origin[origin.length - 1] === "/") {
           origin = origin.slice(0, origin.length - 1);
         }
-        if (path7 && path7[0] !== "/") {
-          path7 = `/${path7}`;
+        if (path8 && path8[0] !== "/") {
+          path8 = `/${path8}`;
         }
-        return new URL(`${origin}${path7}`);
+        return new URL(`${origin}${path8}`);
       }
       if (!isHttpOrHttpsPrefixed(url.origin || url.protocol)) {
         throw new InvalidArgumentError("Invalid URL protocol: the URL must start with `http:` or `https:`.");
@@ -1361,9 +1361,9 @@ var require_util = __commonJS({
     function isValidHeaderValue(characters) {
       return !headerCharRegex.test(characters);
     }
-    function parseRangeHeader(range) {
-      if (range == null || range === "") return { start: 0, end: null, size: null };
-      const m = range ? range.match(/^bytes (\d+)-(\d+)\/(\d+)?$/) : null;
+    function parseRangeHeader(range2) {
+      if (range2 == null || range2 === "") return { start: 0, end: null, size: null };
+      const m = range2 ? range2.match(/^bytes (\d+)-(\d+)\/(\d+)?$/) : null;
       return m ? {
         start: parseInt(m[1]),
         end: m[2] ? parseInt(m[2]) : null,
@@ -1531,39 +1531,39 @@ var require_diagnostics = __commonJS({
       });
       diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin }
+          request: { method, path: path8, origin }
         } = evt;
-        debuglog("sending request to %s %s/%s", method, origin, path7);
+        debuglog("sending request to %s %s/%s", method, origin, path8);
       });
       diagnosticsChannel.channel("undici:request:headers").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin },
+          request: { method, path: path8, origin },
           response: { statusCode }
         } = evt;
         debuglog(
           "received response to %s %s/%s - HTTP %d",
           method,
           origin,
-          path7,
+          path8,
           statusCode
         );
       });
       diagnosticsChannel.channel("undici:request:trailers").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin }
+          request: { method, path: path8, origin }
         } = evt;
-        debuglog("trailers received from %s %s/%s", method, origin, path7);
+        debuglog("trailers received from %s %s/%s", method, origin, path8);
       });
       diagnosticsChannel.channel("undici:request:error").subscribe((evt) => {
         const {
-          request: { method, path: path7, origin },
+          request: { method, path: path8, origin },
           error: error2
         } = evt;
         debuglog(
           "request to %s %s/%s errored - %s",
           method,
           origin,
-          path7,
+          path8,
           error2.message
         );
       });
@@ -1612,9 +1612,9 @@ var require_diagnostics = __commonJS({
         });
         diagnosticsChannel.channel("undici:client:sendHeaders").subscribe((evt) => {
           const {
-            request: { method, path: path7, origin }
+            request: { method, path: path8, origin }
           } = evt;
-          debuglog("sending request to %s %s/%s", method, origin, path7);
+          debuglog("sending request to %s %s/%s", method, origin, path8);
         });
       }
       diagnosticsChannel.channel("undici:websocket:open").subscribe((evt) => {
@@ -1677,7 +1677,7 @@ var require_request = __commonJS({
     var kHandler = /* @__PURE__ */ Symbol("handler");
     var Request = class {
       constructor(origin, {
-        path: path7,
+        path: path8,
         method,
         body,
         headers,
@@ -1692,11 +1692,11 @@ var require_request = __commonJS({
         expectContinue,
         servername
       }, handler2) {
-        if (typeof path7 !== "string") {
+        if (typeof path8 !== "string") {
           throw new InvalidArgumentError("path must be a string");
-        } else if (path7[0] !== "/" && !(path7.startsWith("http://") || path7.startsWith("https://")) && method !== "CONNECT") {
+        } else if (path8[0] !== "/" && !(path8.startsWith("http://") || path8.startsWith("https://")) && method !== "CONNECT") {
           throw new InvalidArgumentError("path must be an absolute URL or start with a slash");
-        } else if (invalidPathRegex.test(path7)) {
+        } else if (invalidPathRegex.test(path8)) {
           throw new InvalidArgumentError("invalid request path");
         }
         if (typeof method !== "string") {
@@ -1762,7 +1762,7 @@ var require_request = __commonJS({
         this.completed = false;
         this.aborted = false;
         this.upgrade = upgrade || null;
-        this.path = query ? buildURL(path7, query) : path7;
+        this.path = query ? buildURL(path8, query) : path8;
         this.origin = origin;
         this.idempotent = idempotent == null ? method === "HEAD" || method === "GET" : idempotent;
         this.blocking = blocking == null ? false : blocking;
@@ -3585,7 +3585,7 @@ var require_data_url = __commonJS({
 var require_webidl = __commonJS({
   "node_modules/undici/lib/web/fetch/webidl.js"(exports2, module2) {
     "use strict";
-    var { types, inspect } = require("node:util");
+    var { types: types2, inspect } = require("node:util");
     var { markAsUncloneable } = require("node:worker_threads");
     var { toUSVString } = require_util();
     var webidl = {};
@@ -3775,7 +3775,7 @@ var require_webidl = __commonJS({
           });
         }
         const result = {};
-        if (!types.isProxy(O3)) {
+        if (!types2.isProxy(O3)) {
           const keys2 = [...Object.getOwnPropertyNames(O3), ...Object.getOwnPropertySymbols(O3)];
           for (const key of keys2) {
             const typedKey = keyConverter(key, prefix, argument);
@@ -3904,14 +3904,14 @@ var require_webidl = __commonJS({
       return x3;
     };
     webidl.converters.ArrayBuffer = function(V3, prefix, argument, opts) {
-      if (webidl.util.Type(V3) !== "Object" || !types.isAnyArrayBuffer(V3)) {
+      if (webidl.util.Type(V3) !== "Object" || !types2.isAnyArrayBuffer(V3)) {
         throw webidl.errors.conversionFailed({
           prefix,
           argument: `${argument} ("${webidl.util.Stringify(V3)}")`,
           types: ["ArrayBuffer"]
         });
       }
-      if (opts?.allowShared === false && types.isSharedArrayBuffer(V3)) {
+      if (opts?.allowShared === false && types2.isSharedArrayBuffer(V3)) {
         throw webidl.errors.exception({
           header: "ArrayBuffer",
           message: "SharedArrayBuffer is not allowed."
@@ -3926,14 +3926,14 @@ var require_webidl = __commonJS({
       return V3;
     };
     webidl.converters.TypedArray = function(V3, T3, prefix, name, opts) {
-      if (webidl.util.Type(V3) !== "Object" || !types.isTypedArray(V3) || V3.constructor.name !== T3.name) {
+      if (webidl.util.Type(V3) !== "Object" || !types2.isTypedArray(V3) || V3.constructor.name !== T3.name) {
         throw webidl.errors.conversionFailed({
           prefix,
           argument: `${name} ("${webidl.util.Stringify(V3)}")`,
           types: [T3.name]
         });
       }
-      if (opts?.allowShared === false && types.isSharedArrayBuffer(V3.buffer)) {
+      if (opts?.allowShared === false && types2.isSharedArrayBuffer(V3.buffer)) {
         throw webidl.errors.exception({
           header: "ArrayBuffer",
           message: "SharedArrayBuffer is not allowed."
@@ -3948,13 +3948,13 @@ var require_webidl = __commonJS({
       return V3;
     };
     webidl.converters.DataView = function(V3, prefix, name, opts) {
-      if (webidl.util.Type(V3) !== "Object" || !types.isDataView(V3)) {
+      if (webidl.util.Type(V3) !== "Object" || !types2.isDataView(V3)) {
         throw webidl.errors.exception({
           header: prefix,
           message: `${name} is not a DataView.`
         });
       }
-      if (opts?.allowShared === false && types.isSharedArrayBuffer(V3.buffer)) {
+      if (opts?.allowShared === false && types2.isSharedArrayBuffer(V3.buffer)) {
         throw webidl.errors.exception({
           header: "ArrayBuffer",
           message: "SharedArrayBuffer is not allowed."
@@ -3969,13 +3969,13 @@ var require_webidl = __commonJS({
       return V3;
     };
     webidl.converters.BufferSource = function(V3, prefix, name, opts) {
-      if (types.isAnyArrayBuffer(V3)) {
+      if (types2.isAnyArrayBuffer(V3)) {
         return webidl.converters.ArrayBuffer(V3, prefix, name, { ...opts, allowShared: false });
       }
-      if (types.isTypedArray(V3)) {
+      if (types2.isTypedArray(V3)) {
         return webidl.converters.TypedArray(V3, V3.constructor, prefix, name, { ...opts, allowShared: false });
       }
-      if (types.isDataView(V3)) {
+      if (types2.isDataView(V3)) {
         return webidl.converters.DataView(V3, prefix, name, { ...opts, allowShared: false });
       }
       throw webidl.errors.conversionFailed({
@@ -5428,7 +5428,7 @@ var require_body = __commonJS({
         const boundary = `----formdata-undici-0${`${random(1e11)}`.padStart(11, "0")}`;
         const prefix = `--${boundary}\r
 Content-Disposition: form-data`;
-        const escape = (str) => str.replace(/\n/g, "%0A").replace(/\r/g, "%0D").replace(/"/g, "%22");
+        const escape2 = (str) => str.replace(/\n/g, "%0A").replace(/\r/g, "%0D").replace(/"/g, "%22");
         const normalizeLinefeeds = (value) => value.replace(/\r?\n|\r/g, "\r\n");
         const blobParts = [];
         const rn = new Uint8Array([13, 10]);
@@ -5436,14 +5436,14 @@ Content-Disposition: form-data`;
         let hasUnknownSizeValue = false;
         for (const [name, value] of object) {
           if (typeof value === "string") {
-            const chunk2 = textEncoder.encode(prefix + `; name="${escape(normalizeLinefeeds(name))}"\r
+            const chunk2 = textEncoder.encode(prefix + `; name="${escape2(normalizeLinefeeds(name))}"\r
 \r
 ${normalizeLinefeeds(value)}\r
 `);
             blobParts.push(chunk2);
             length += chunk2.byteLength;
           } else {
-            const chunk2 = textEncoder.encode(`${prefix}; name="${escape(normalizeLinefeeds(name))}"` + (value.name ? `; filename="${escape(value.name)}"` : "") + `\r
+            const chunk2 = textEncoder.encode(`${prefix}; name="${escape2(normalizeLinefeeds(name))}"` + (value.name ? `; filename="${escape2(value.name)}"` : "") + `\r
 Content-Type: ${value.type || "application/octet-stream"}\r
 \r
 `);
@@ -5712,7 +5712,7 @@ var require_client_h1 = __commonJS({
       kResume,
       kHTTPContext
     } = require_symbols();
-    var constants3 = require_constants2();
+    var constants4 = require_constants2();
     var EMPTY_BUF = Buffer.alloc(0);
     var FastBuffer = Buffer[Symbol.species];
     var addListener = util.addListener;
@@ -5787,7 +5787,7 @@ var require_client_h1 = __commonJS({
       constructor(client, socket, { exports: exports3 }) {
         assert(Number.isFinite(client[kMaxHeadersSize]) && client[kMaxHeadersSize] > 0);
         this.llhttp = exports3;
-        this.ptr = this.llhttp.llhttp_alloc(constants3.TYPE.RESPONSE);
+        this.ptr = this.llhttp.llhttp_alloc(constants4.TYPE.RESPONSE);
         this.client = client;
         this.socket = socket;
         this.timeout = null;
@@ -5882,11 +5882,11 @@ var require_client_h1 = __commonJS({
             currentBufferRef = null;
           }
           const offset = llhttp.llhttp_get_error_pos(this.ptr) - currentBufferPtr;
-          if (ret !== constants3.ERROR.OK) {
+          if (ret !== constants4.ERROR.OK) {
             const body = data.subarray(offset);
-            if (ret === constants3.ERROR.PAUSED_UPGRADE) {
+            if (ret === constants4.ERROR.PAUSED_UPGRADE) {
               this.onUpgrade(body);
-            } else if (ret === constants3.ERROR.PAUSED) {
+            } else if (ret === constants4.ERROR.PAUSED) {
               this.paused = true;
               socket.unshift(body);
             } else {
@@ -5909,10 +5909,10 @@ var require_client_h1 = __commonJS({
         } finally {
           currentParser = null;
         }
-        if (ret === constants3.ERROR.OK) {
+        if (ret === constants4.ERROR.OK) {
           return null;
         }
-        if (ret === constants3.ERROR.PAUSED || ret === constants3.ERROR.PAUSED_UPGRADE) {
+        if (ret === constants4.ERROR.PAUSED || ret === constants4.ERROR.PAUSED_UPGRADE) {
           this.paused = true;
           return null;
         }
@@ -5929,7 +5929,7 @@ var require_client_h1 = __commonJS({
           const len = new Uint8Array(llhttp.memory.buffer, ptr).indexOf(0);
           message = "Response does not match the HTTP/1.1 protocol (" + Buffer.from(llhttp.memory.buffer, ptr, len).toString() + ")";
         }
-        return new HTTPParserError(message, constants3.ERROR[ret], data);
+        return new HTTPParserError(message, constants4.ERROR[ret], data);
       }
       destroy() {
         assert(this.ptr != null);
@@ -6108,7 +6108,7 @@ var require_client_h1 = __commonJS({
           socket[kBlocking] = false;
           client[kResume]();
         }
-        return pause ? constants3.ERROR.PAUSED : 0;
+        return pause ? constants4.ERROR.PAUSED : 0;
       }
       onBody(buf) {
         const { client, socket, statusCode, maxResponseSize } = this;
@@ -6130,7 +6130,7 @@ var require_client_h1 = __commonJS({
         }
         this.bytesRead += buf.length;
         if (request2.onData(buf) === false) {
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         }
       }
       onMessageComplete() {
@@ -6166,13 +6166,13 @@ var require_client_h1 = __commonJS({
         if (socket[kWriting]) {
           assert(client[kRunning] === 0);
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (!shouldKeepAlive) {
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (socket[kReset] && client[kRunning] === 0) {
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (client[kPipelining] == null || client[kPipelining] === 1) {
           setImmediate(() => client[kResume]());
         } else {
@@ -6384,7 +6384,7 @@ var require_client_h1 = __commonJS({
       return method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && method !== "TRACE" && method !== "CONNECT";
     }
     function writeH1(client, request2) {
-      const { method, path: path7, host, upgrade, blocking, reset } = request2;
+      const { method, path: path8, host, upgrade, blocking, reset } = request2;
       let { body, headers, contentLength } = request2;
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH" || method === "QUERY" || method === "PROPFIND" || method === "PROPPATCH";
       if (util.isFormDataLike(body)) {
@@ -6451,7 +6451,7 @@ var require_client_h1 = __commonJS({
       if (blocking) {
         socket[kBlocking] = true;
       }
-      let header = `${method} ${path7} HTTP/1.1\r
+      let header = `${method} ${path8} HTTP/1.1\r
 `;
       if (typeof host === "string") {
         header += `host: ${host}\r
@@ -6977,7 +6977,7 @@ var require_client_h2 = __commonJS({
     }
     function writeH2(client, request2) {
       const session = client[kHTTP2Session];
-      const { method, path: path7, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
+      const { method, path: path8, host, upgrade, expectContinue, signal, headers: reqHeaders } = request2;
       let { body } = request2;
       if (upgrade) {
         util.errorRequest(client, request2, new Error("Upgrade not supported for H2"));
@@ -7044,7 +7044,7 @@ var require_client_h2 = __commonJS({
         });
         return true;
       }
-      headers[HTTP2_HEADER_PATH] = path7;
+      headers[HTTP2_HEADER_PATH] = path8;
       headers[HTTP2_HEADER_SCHEME] = "https";
       const expectsPayload = method === "PUT" || method === "POST" || method === "PATCH";
       if (body && typeof body.read === "function") {
@@ -7397,9 +7397,9 @@ var require_redirect_handler = __commonJS({
           return this.handler.onHeaders(statusCode, headers, resume, statusText);
         }
         const { origin, pathname, search } = util.parseURL(new URL(this.location, this.opts.origin && new URL(this.opts.path, this.opts.origin)));
-        const path7 = search ? `${pathname}${search}` : pathname;
+        const path8 = search ? `${pathname}${search}` : pathname;
         this.opts.headers = cleanRequestHeaders(this.opts.headers, statusCode === 303, this.opts.origin !== origin);
-        this.opts.path = path7;
+        this.opts.path = path8;
         this.opts.origin = origin;
         this.opts.maxRedirections = 0;
         this.opts.query = null;
@@ -8634,10 +8634,10 @@ var require_proxy_agent = __commonJS({
         };
         const {
           origin,
-          path: path7 = "/",
+          path: path8 = "/",
           headers = {}
         } = opts;
-        opts.path = origin + path7;
+        opts.path = origin + path8;
         if (!("host" in headers) && !("Host" in headers)) {
           const { host } = new URL2(origin);
           headers.host = host;
@@ -9130,8 +9130,8 @@ var require_retry_handler = __commonJS({
         }
         if (this.end == null) {
           if (statusCode === 206) {
-            const range = parseRangeHeader(headers["content-range"]);
-            if (range == null) {
+            const range2 = parseRangeHeader(headers["content-range"]);
+            if (range2 == null) {
               return this.handler.onHeaders(
                 statusCode,
                 rawHeaders,
@@ -9139,7 +9139,7 @@ var require_retry_handler = __commonJS({
                 statusMessage
               );
             }
-            const { start, size, end = size - 1 } = range;
+            const { start, size, end = size - 1 } = range2;
             assert(
               start != null && Number.isFinite(start),
               "content-range mismatch"
@@ -10496,15 +10496,15 @@ var require_mock_utils = __commonJS({
         isPromise
       }
     } = require("node:util");
-    function matchValue(match, value) {
-      if (typeof match === "string") {
-        return match === value;
+    function matchValue(match2, value) {
+      if (typeof match2 === "string") {
+        return match2 === value;
       }
-      if (match instanceof RegExp) {
-        return match.test(value);
+      if (match2 instanceof RegExp) {
+        return match2.test(value);
       }
-      if (typeof match === "function") {
-        return match(value) === true;
+      if (typeof match2 === "function") {
+        return match2(value) === true;
       }
       return false;
     }
@@ -10558,20 +10558,20 @@ var require_mock_utils = __commonJS({
       }
       return true;
     }
-    function safeUrl(path7) {
-      if (typeof path7 !== "string") {
-        return path7;
+    function safeUrl(path8) {
+      if (typeof path8 !== "string") {
+        return path8;
       }
-      const pathSegments = path7.split("?");
+      const pathSegments = path8.split("?");
       if (pathSegments.length !== 2) {
-        return path7;
+        return path8;
       }
       const qp = new URLSearchParams(pathSegments.pop());
       qp.sort();
       return [...pathSegments, qp.toString()].join("?");
     }
-    function matchKey(mockDispatch2, { path: path7, method, body, headers }) {
-      const pathMatch = matchValue(mockDispatch2.path, path7);
+    function matchKey(mockDispatch2, { path: path8, method, body, headers }) {
+      const pathMatch = matchValue(mockDispatch2.path, path8);
       const methodMatch = matchValue(mockDispatch2.method, method);
       const bodyMatch = typeof mockDispatch2.body !== "undefined" ? matchValue(mockDispatch2.body, body) : true;
       const headersMatch = matchHeaders(mockDispatch2, headers);
@@ -10593,7 +10593,7 @@ var require_mock_utils = __commonJS({
     function getMockDispatch(mockDispatches, key) {
       const basePath = key.query ? buildURL(key.path, key.query) : key.path;
       const resolvedPath = typeof basePath === "string" ? safeUrl(basePath) : basePath;
-      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path7 }) => matchValue(safeUrl(path7), resolvedPath));
+      let matchedMockDispatches = mockDispatches.filter(({ consumed }) => !consumed).filter(({ path: path8 }) => matchValue(safeUrl(path8), resolvedPath));
       if (matchedMockDispatches.length === 0) {
         throw new MockNotMatchedError(`Mock dispatch not matched for path '${resolvedPath}'`);
       }
@@ -10631,9 +10631,9 @@ var require_mock_utils = __commonJS({
       }
     }
     function buildKey(opts) {
-      const { path: path7, method, body, headers, query } = opts;
+      const { path: path8, method, body, headers, query } = opts;
       return {
-        path: path7,
+        path: path8,
         method,
         body,
         headers,
@@ -11096,10 +11096,10 @@ var require_pending_interceptors_formatter = __commonJS({
       }
       format(pendingInterceptors) {
         const withPrettyHeaders = pendingInterceptors.map(
-          ({ method, path: path7, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
+          ({ method, path: path8, data: { statusCode }, persist, times, timesInvoked, origin }) => ({
             Method: method,
             Origin: origin,
-            Path: path7,
+            Path: path8,
             "Status code": statusCode,
             Persistent: persist ? PERSISTENT : NOT_PERSISTENT,
             Invocations: timesInvoked,
@@ -12224,7 +12224,7 @@ var require_response = __commonJS({
     var { URLSerializer } = require_data_url();
     var { kConstruct } = require_symbols();
     var assert = require("node:assert");
-    var { types } = require("node:util");
+    var { types: types2 } = require("node:util");
     var textEncoder = new TextEncoder("utf-8");
     var Response = class _Response {
       // Creates network error Response.
@@ -12545,7 +12545,7 @@ var require_response = __commonJS({
       if (isBlobLike(V3)) {
         return webidl.converters.Blob(V3, prefix, name, { strict: false });
       }
-      if (ArrayBuffer.isView(V3) || types.isArrayBuffer(V3)) {
+      if (ArrayBuffer.isView(V3) || types2.isArrayBuffer(V3)) {
         return webidl.converters.BufferSource(V3, prefix, name);
       }
       if (util.isFormDataLike(V3)) {
@@ -14781,7 +14781,7 @@ var require_util4 = __commonJS({
     var { ProgressEvent } = require_progressevent();
     var { getEncoding } = require_encoding();
     var { serializeAMimeType, parseMIMEType } = require_data_url();
-    var { types } = require("node:util");
+    var { types: types2 } = require("node:util");
     var { StringDecoder } = require("string_decoder");
     var { btoa: btoa2 } = require("node:buffer");
     var staticPropertyDescriptors = {
@@ -14811,7 +14811,7 @@ var require_util4 = __commonJS({
               });
             }
             isFirstChunk = false;
-            if (!done && types.isUint8Array(value)) {
+            if (!done && types2.isUint8Array(value)) {
               bytes.push(value);
               if ((fr[kLastProgressEventFired] === void 0 || Date.now() - fr[kLastProgressEventFired] >= 50) && !fr[kAborted]) {
                 fr[kLastProgressEventFired] = Date.now();
@@ -15980,9 +15980,9 @@ var require_util6 = __commonJS({
         }
       }
     }
-    function validateCookiePath(path7) {
-      for (let i2 = 0; i2 < path7.length; ++i2) {
-        const code = path7.charCodeAt(i2);
+    function validateCookiePath(path8) {
+      for (let i2 = 0; i2 < path8.length; ++i2) {
+        const code = path8.charCodeAt(i2);
         if (code < 32 || // exclude CTLs (0-31)
         code === 127 || // DEL
         code === 59) {
@@ -17692,7 +17692,7 @@ var require_websocket = __commonJS({
     var { ByteParser } = require_receiver();
     var { kEnumerableProperty, isBlobLike } = require_util();
     var { getGlobalDispatcher } = require_global2();
-    var { types } = require("node:util");
+    var { types: types2 } = require("node:util");
     var { ErrorEvent, CloseEvent } = require_events();
     var { SendQueue } = require_sender();
     var WebSocket = class _WebSocket extends EventTarget {
@@ -17815,7 +17815,7 @@ var require_websocket = __commonJS({
           this.#sendQueue.add(data, () => {
             this.#bufferedAmount -= length;
           }, sendHints.string);
-        } else if (types.isArrayBuffer(data)) {
+        } else if (types2.isArrayBuffer(data)) {
           this.#bufferedAmount += data.byteLength;
           this.#sendQueue.add(data, () => {
             this.#bufferedAmount -= data.byteLength;
@@ -18027,7 +18027,7 @@ var require_websocket = __commonJS({
         if (isBlobLike(V3)) {
           return webidl.converters.Blob(V3, { strict: false });
         }
-        if (ArrayBuffer.isView(V3) || types.isArrayBuffer(V3)) {
+        if (ArrayBuffer.isView(V3) || types2.isArrayBuffer(V3)) {
           return webidl.converters.BufferSource(V3);
         }
       }
@@ -18675,11 +18675,11 @@ var require_undici = __commonJS({
           if (typeof opts.path !== "string") {
             throw new InvalidArgumentError("invalid opts.path");
           }
-          let path7 = opts.path;
+          let path8 = opts.path;
           if (!opts.path.startsWith("/")) {
-            path7 = `/${path7}`;
+            path8 = `/${path8}`;
           }
-          url = new URL(util.parseOrigin(url).origin + path7);
+          url = new URL(util.parseOrigin(url).origin + path8);
         } else {
           if (!opts) {
             opts = typeof url === "object" ? url : {};
@@ -18772,7 +18772,7 @@ var require_proxy = __commonJS({
       if (proxyVar) {
         try {
           return new DecodedURL(proxyVar);
-        } catch (_a2) {
+        } catch (_a3) {
           if (!proxyVar.startsWith("http://") && !proxyVar.startsWith("https://"))
             return new DecodedURL(`http://${proxyVar}`);
         }
@@ -19679,14 +19679,14 @@ var require_ms = __commonJS({
       if (str.length > 100) {
         return;
       }
-      var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
+      var match2 = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
         str
       );
-      if (!match) {
+      if (!match2) {
         return;
       }
-      var n7 = parseFloat(match[1]);
-      var type = (match[2] || "ms").toLowerCase();
+      var n7 = parseFloat(match2[1]);
+      var type = (match2[2] || "ms").toLowerCase();
       switch (type) {
         case "years":
         case "year":
@@ -19817,19 +19817,19 @@ var require_common = __commonJS({
             args.unshift("%O");
           }
           let index = 0;
-          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match, format) => {
-            if (match === "%%") {
+          args[0] = args[0].replace(/%([a-zA-Z%])/g, (match2, format) => {
+            if (match2 === "%%") {
               return "%";
             }
             index++;
             const formatter = createDebug.formatters[format];
             if (typeof formatter === "function") {
               const val = args[index];
-              match = formatter.call(self, val);
+              match2 = formatter.call(self, val);
               args.splice(index, 1);
               index--;
             }
-            return match;
+            return match2;
           });
           createDebug.formatArgs.call(self, args);
           const logFn = self.log || createDebug.log;
@@ -20064,12 +20064,12 @@ var require_browser = __commonJS({
       args.splice(1, 0, c3, "color: inherit");
       let index = 0;
       let lastC = 0;
-      args[0].replace(/%[a-zA-Z%]/g, (match) => {
-        if (match === "%%") {
+      args[0].replace(/%[a-zA-Z%]/g, (match2) => {
+        if (match2 === "%%") {
           return;
         }
         index++;
-        if (match === "%c") {
+        if (match2 === "%c") {
           lastC = index;
         }
       });
@@ -20427,10 +20427,10 @@ var require_src2 = __commonJS({
     var fs_1 = require("fs");
     var debug_1 = __importDefault(require_src());
     var log = debug_1.default("@kwsites/file-exists");
-    function check(path7, isFile, isDirectory3) {
-      log(`checking %s`, path7);
+    function check(path8, isFile, isDirectory3) {
+      log(`checking %s`, path8);
       try {
-        const stat2 = fs_1.statSync(path7);
+        const stat2 = fs_1.statSync(path8);
         if (stat2.isFile() && isFile) {
           log(`[OK] path represents a file`);
           return true;
@@ -20450,8 +20450,8 @@ var require_src2 = __commonJS({
         throw e;
       }
     }
-    function exists3(path7, type = exports2.READABLE) {
-      return check(path7, (type & exports2.FILE) > 0, (type & exports2.FOLDER) > 0);
+    function exists3(path8, type = exports2.READABLE) {
+      return check(path8, (type & exports2.FILE) > 0, (type & exports2.FOLDER) > 0);
     }
     exports2.exists = exists3;
     exports2.FILE = 1;
@@ -20518,7 +20518,7 @@ var require_dist3 = __commonJS({
 var require_main = __commonJS({
   "node_modules/dotenv/lib/main.js"(exports2, module2) {
     var fs8 = require("fs");
-    var path7 = require("path");
+    var path8 = require("path");
     var os7 = require("os");
     var crypto2 = require("crypto");
     var TIPS = [
@@ -20551,10 +20551,10 @@ var require_main = __commonJS({
       const obj = {};
       let lines = src.toString();
       lines = lines.replace(/\r\n?/mg, "\n");
-      let match;
-      while ((match = LINE.exec(lines)) != null) {
-        const key = match[1];
-        let value = match[2] || "";
+      let match2;
+      while ((match2 = LINE.exec(lines)) != null) {
+        const key = match2[1];
+        let value = match2[2] || "";
         value = value.trim();
         const maybeQuote = value[0];
         value = value.replace(/^(['"`])([\s\S]*)\1$/mg, "$2");
@@ -20657,7 +20657,7 @@ var require_main = __commonJS({
           possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
         }
       } else {
-        possibleVaultPath = path7.resolve(process.cwd(), ".env.vault");
+        possibleVaultPath = path8.resolve(process.cwd(), ".env.vault");
       }
       if (fs8.existsSync(possibleVaultPath)) {
         return possibleVaultPath;
@@ -20665,7 +20665,7 @@ var require_main = __commonJS({
       return null;
     }
     function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path7.join(os7.homedir(), envPath.slice(1)) : envPath;
+      return envPath[0] === "~" ? path8.join(os7.homedir(), envPath.slice(1)) : envPath;
     }
     function _configVault(options) {
       const debug3 = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
@@ -20682,7 +20682,7 @@ var require_main = __commonJS({
       return { parsed };
     }
     function configDotenv(options) {
-      const dotenvPath = path7.resolve(process.cwd(), ".env");
+      const dotenvPath = path8.resolve(process.cwd(), ".env");
       let encoding = "utf8";
       let processEnv = process.env;
       if (options && options.processEnv != null) {
@@ -20710,13 +20710,13 @@ var require_main = __commonJS({
       }
       let lastError;
       const parsedAll = {};
-      for (const path8 of optionPaths) {
+      for (const path9 of optionPaths) {
         try {
-          const parsed = DotenvModule.parse(fs8.readFileSync(path8, { encoding }));
+          const parsed = DotenvModule.parse(fs8.readFileSync(path9, { encoding }));
           DotenvModule.populate(parsedAll, parsed, options);
         } catch (e) {
           if (debug3) {
-            _debug(`failed to load ${path8} ${e.message}`);
+            _debug(`failed to load ${path9} ${e.message}`);
           }
           lastError = e;
         }
@@ -20729,7 +20729,7 @@ var require_main = __commonJS({
         const shortPaths = [];
         for (const filePath of optionPaths) {
           try {
-            const relative4 = path7.relative(process.cwd(), filePath);
+            const relative4 = path8.relative(process.cwd(), filePath);
             shortPaths.push(relative4);
           } catch (e) {
             if (debug3) {
@@ -21054,7 +21054,7 @@ var Summary = class {
       }
       try {
         yield access(pathFromEnv, import_fs.constants.R_OK | import_fs.constants.W_OK);
-      } catch (_a2) {
+      } catch (_a3) {
         throw new Error(`Unable to access summary file: '${pathFromEnv}'. Check if the file has correct read/write permissions.`);
       }
       this._filePath = pathFromEnv;
@@ -22077,14 +22077,14 @@ var Context = class {
    * Hydrate the context from the environment
    */
   constructor() {
-    var _a2, _b, _c;
+    var _a3, _b, _c;
     this.payload = {};
     if (process.env.GITHUB_EVENT_PATH) {
       if ((0, import_fs2.existsSync)(process.env.GITHUB_EVENT_PATH)) {
         this.payload = JSON.parse((0, import_fs2.readFileSync)(process.env.GITHUB_EVENT_PATH, { encoding: "utf8" }));
       } else {
-        const path7 = process.env.GITHUB_EVENT_PATH;
-        process.stdout.write(`GITHUB_EVENT_PATH ${path7} does not exist${import_os3.EOL}`);
+        const path8 = process.env.GITHUB_EVENT_PATH;
+        process.stdout.write(`GITHUB_EVENT_PATH ${path8} does not exist${import_os3.EOL}`);
       }
     }
     this.eventName = process.env.GITHUB_EVENT_NAME;
@@ -22097,7 +22097,7 @@ var Context = class {
     this.runAttempt = parseInt(process.env.GITHUB_RUN_ATTEMPT, 10);
     this.runNumber = parseInt(process.env.GITHUB_RUN_NUMBER, 10);
     this.runId = parseInt(process.env.GITHUB_RUN_ID, 10);
-    this.apiUrl = (_a2 = process.env.GITHUB_API_URL) !== null && _a2 !== void 0 ? _a2 : `https://api.github.com`;
+    this.apiUrl = (_a3 = process.env.GITHUB_API_URL) !== null && _a3 !== void 0 ? _a3 : `https://api.github.com`;
     this.serverUrl = (_b = process.env.GITHUB_SERVER_URL) !== null && _b !== void 0 ? _b : `https://github.com`;
     this.graphqlUrl = (_c = process.env.GITHUB_GRAPHQL_URL) !== null && _c !== void 0 ? _c : `https://api.github.com/graphql`;
   }
@@ -22177,8 +22177,8 @@ function getApiBaseUrl() {
   return process.env["GITHUB_API_URL"] || "https://api.github.com";
 }
 function getUserAgentWithOrchestrationId(baseUserAgent) {
-  var _a2;
-  const orchId = (_a2 = process.env["ACTIONS_ORCHESTRATION_ID"]) === null || _a2 === void 0 ? void 0 : _a2.trim();
+  var _a3;
+  const orchId = (_a3 = process.env["ACTIONS_ORCHESTRATION_ID"]) === null || _a3 === void 0 ? void 0 : _a3.trim();
   if (orchId) {
     const sanitizedId = orchId.replace(/[^a-z0-9_.-]/gi, "_");
     const tag = `actions_orchestration_id/${sanitizedId}`;
@@ -22338,12 +22338,12 @@ function isPlainObject(value) {
   const Ctor = Object.prototype.hasOwnProperty.call(proto, "constructor") && proto.constructor;
   return typeof Ctor === "function" && Ctor instanceof Ctor && Function.prototype.call(Ctor) === Function.prototype.call(value);
 }
-function mergeDeep(defaults2, options) {
-  const result = Object.assign({}, defaults2);
+function mergeDeep(defaults3, options) {
+  const result = Object.assign({}, defaults3);
   Object.keys(options).forEach((key) => {
     if (isPlainObject(options[key])) {
-      if (!(key in defaults2)) Object.assign(result, { [key]: options[key] });
-      else result[key] = mergeDeep(defaults2[key], options[key]);
+      if (!(key in defaults3)) Object.assign(result, { [key]: options[key] });
+      else result[key] = mergeDeep(defaults3[key], options[key]);
     } else {
       Object.assign(result, { [key]: options[key] });
     }
@@ -22358,7 +22358,7 @@ function removeUndefinedProperties(obj) {
   }
   return obj;
 }
-function merge(defaults2, route, options) {
+function merge(defaults3, route, options) {
   if (typeof route === "string") {
     let [method, url] = route.split(" ");
     options = Object.assign(url ? { method, url } : { url: method }, options);
@@ -22368,10 +22368,10 @@ function merge(defaults2, route, options) {
   options.headers = lowercaseKeys(options.headers);
   removeUndefinedProperties(options);
   removeUndefinedProperties(options.headers);
-  const mergedOptions = mergeDeep(defaults2 || {}, options);
+  const mergedOptions = mergeDeep(defaults3 || {}, options);
   if (options.url === "/graphql") {
-    if (defaults2 && defaults2.mediaType.previews?.length) {
-      mergedOptions.mediaType.previews = defaults2.mediaType.previews.filter(
+    if (defaults3 && defaults3.mediaType.previews?.length) {
+      mergedOptions.mediaType.previews = defaults3.mediaType.previews.filter(
         (preview) => !mergedOptions.mediaType.previews.includes(preview)
       ).concat(mergedOptions.mediaType.previews);
     }
@@ -22605,8 +22605,8 @@ function parse(options) {
     options.request ? { request: options.request } : null
   );
 }
-function endpointWithDefaults(defaults2, route, options) {
-  return parse(merge(defaults2, route, options));
+function endpointWithDefaults(defaults3, route, options) {
+  return parse(merge(defaults3, route, options));
 }
 function withDefaults(oldDefaults, newDefaults) {
   const DEFAULTS2 = merge(oldDefaults, newDefaults);
@@ -22927,15 +22927,15 @@ var applyReviverIteratively = (parsed, userReviver) => {
 var serializeBigInts = (text) => {
   return text.replace(
     stringsOrLargeNumbers,
-    (match, digits, fractional, exponential) => {
-      const isString = match[0] === '"';
-      const isNoise = isString && noiseValueWithQuotes.test(match);
-      if (isNoise) return match.substring(0, match.length - 1) + 'n"';
+    (match2, digits, fractional, exponential) => {
+      const isString = match2[0] === '"';
+      const isNoise = isString && noiseValueWithQuotes.test(match2);
+      if (isNoise) return match2.substring(0, match2.length - 1) + 'n"';
       const hasFractionalOrExponential = fractional || exponential;
       const isLessThanMaxSafeInt = digits && (digits.length < MAX_DIGITS || digits.length === MAX_DIGITS && digits <= MAX_INT);
       const isStandardValue = isString || hasFractionalOrExponential || isLessThanMaxSafeInt;
-      if (isStandardValue) return match;
-      return '"' + match + 'n"';
+      if (isStandardValue) return match2;
+      return '"' + match2 + 'n"';
     }
   );
 };
@@ -23354,21 +23354,21 @@ function createLogger(logger = {}) {
 var userAgentTrail = `octokit-core.js/${VERSION4} ${getUserAgent()}`;
 var Octokit = class {
   static VERSION = VERSION4;
-  static defaults(defaults2) {
+  static defaults(defaults3) {
     const OctokitWithDefaults = class extends this {
       constructor(...args) {
         const options = args[0] || {};
-        if (typeof defaults2 === "function") {
-          super(defaults2(options));
+        if (typeof defaults3 === "function") {
+          super(defaults3(options));
           return;
         }
         super(
           Object.assign(
             {},
-            defaults2,
+            defaults3,
             options,
-            options.userAgent && defaults2.userAgent ? {
-              userAgent: `${options.userAgent} ${defaults2.userAgent}`
+            options.userAgent && defaults3.userAgent ? {
+              userAgent: `${options.userAgent} ${defaults3.userAgent}`
             } : null
           )
         );
@@ -25764,14 +25764,14 @@ var endpoints_default = Endpoints;
 var endpointMethodsMap = /* @__PURE__ */ new Map();
 for (const [scope, endpoints] of Object.entries(endpoints_default)) {
   for (const [methodName, endpoint2] of Object.entries(endpoints)) {
-    const [route, defaults2, decorations] = endpoint2;
+    const [route, defaults3, decorations] = endpoint2;
     const [method, url] = route.split(/ /);
     const endpointDefaults = Object.assign(
       {
         method,
         url
       },
-      defaults2
+      defaults3
     );
     if (!endpointMethodsMap.has(scope)) {
       endpointMethodsMap.set(scope, /* @__PURE__ */ new Map());
@@ -25841,8 +25841,8 @@ function endpointsToMethods(octokit) {
   }
   return newMethods;
 }
-function decorate(octokit, scope, methodName, defaults2, decorations) {
-  const requestWithDefaults = octokit.request.defaults(defaults2);
+function decorate(octokit, scope, methodName, defaults3, decorations) {
+  const requestWithDefaults = octokit.request.defaults(defaults3);
   function withDecorations(...args) {
     let options = requestWithDefaults.endpoint.merge(...args);
     if (decorations.mapToData) {
@@ -29034,8 +29034,1814 @@ var Ui = Object.assign(ts, { stream: Bt, iterate: Ut });
 var Ze = Object.assign(Je, { glob: Je, globSync: ts, sync: Ui, globStream: Qe, stream: Ii, globStreamSync: Bt, streamSync: ji, globIterate: es, iterate: Bi, globIterateSync: Ut, iterateSync: zi, Glob: I, hasMagic: le, escape: tt, unescape: W });
 Ze.glob = Ze;
 
+// node_modules/balanced-match/dist/esm/index.js
+var balanced = (a, b2, str) => {
+  const ma = a instanceof RegExp ? maybeMatch(a, str) : a;
+  const mb = b2 instanceof RegExp ? maybeMatch(b2, str) : b2;
+  const r2 = ma !== null && mb != null && range(ma, mb, str);
+  return r2 && {
+    start: r2[0],
+    end: r2[1],
+    pre: str.slice(0, r2[0]),
+    body: str.slice(r2[0] + ma.length, r2[1]),
+    post: str.slice(r2[1] + mb.length)
+  };
+};
+var maybeMatch = (reg, str) => {
+  const m = str.match(reg);
+  return m ? m[0] : null;
+};
+var range = (a, b2, str) => {
+  let begs, beg, left, right = void 0, result;
+  let ai2 = str.indexOf(a);
+  let bi2 = str.indexOf(b2, ai2 + 1);
+  let i2 = ai2;
+  if (ai2 >= 0 && bi2 > 0) {
+    if (a === b2) {
+      return [ai2, bi2];
+    }
+    begs = [];
+    left = str.length;
+    while (i2 >= 0 && !result) {
+      if (i2 === ai2) {
+        begs.push(i2);
+        ai2 = str.indexOf(a, i2 + 1);
+      } else if (begs.length === 1) {
+        const r2 = begs.pop();
+        if (r2 !== void 0)
+          result = [r2, bi2];
+      } else {
+        beg = begs.pop();
+        if (beg !== void 0 && beg < left) {
+          left = beg;
+          right = bi2;
+        }
+        bi2 = str.indexOf(b2, i2 + 1);
+      }
+      i2 = ai2 < bi2 && ai2 >= 0 ? ai2 : bi2;
+    }
+    if (begs.length && right !== void 0) {
+      result = [left, right];
+    }
+  }
+  return result;
+};
+
+// node_modules/brace-expansion/dist/esm/index.js
+var escSlash = "\0SLASH" + Math.random() + "\0";
+var escOpen = "\0OPEN" + Math.random() + "\0";
+var escClose = "\0CLOSE" + Math.random() + "\0";
+var escComma = "\0COMMA" + Math.random() + "\0";
+var escPeriod = "\0PERIOD" + Math.random() + "\0";
+var escSlashPattern = new RegExp(escSlash, "g");
+var escOpenPattern = new RegExp(escOpen, "g");
+var escClosePattern = new RegExp(escClose, "g");
+var escCommaPattern = new RegExp(escComma, "g");
+var escPeriodPattern = new RegExp(escPeriod, "g");
+var slashPattern = /\\\\/g;
+var openPattern = /\\{/g;
+var closePattern = /\\}/g;
+var commaPattern = /\\,/g;
+var periodPattern = /\\\./g;
+var EXPANSION_MAX = 1e5;
+function numeric(str) {
+  return !isNaN(str) ? parseInt(str, 10) : str.charCodeAt(0);
+}
+function escapeBraces(str) {
+  return str.replace(slashPattern, escSlash).replace(openPattern, escOpen).replace(closePattern, escClose).replace(commaPattern, escComma).replace(periodPattern, escPeriod);
+}
+function unescapeBraces(str) {
+  return str.replace(escSlashPattern, "\\").replace(escOpenPattern, "{").replace(escClosePattern, "}").replace(escCommaPattern, ",").replace(escPeriodPattern, ".");
+}
+function parseCommaParts(str) {
+  if (!str) {
+    return [""];
+  }
+  const parts = [];
+  const m = balanced("{", "}", str);
+  if (!m) {
+    return str.split(",");
+  }
+  const { pre, body, post } = m;
+  const p2 = pre.split(",");
+  p2[p2.length - 1] += "{" + body + "}";
+  const postParts = parseCommaParts(post);
+  if (post.length) {
+    ;
+    p2[p2.length - 1] += postParts.shift();
+    p2.push.apply(p2, postParts);
+  }
+  parts.push.apply(parts, p2);
+  return parts;
+}
+function expand2(str, options = {}) {
+  if (!str) {
+    return [];
+  }
+  const { max = EXPANSION_MAX } = options;
+  if (str.slice(0, 2) === "{}") {
+    str = "\\{\\}" + str.slice(2);
+  }
+  return expand_(escapeBraces(str), max, true).map(unescapeBraces);
+}
+function embrace(str) {
+  return "{" + str + "}";
+}
+function isPadded(el) {
+  return /^-?0\d/.test(el);
+}
+function lte(i2, y2) {
+  return i2 <= y2;
+}
+function gte(i2, y2) {
+  return i2 >= y2;
+}
+function expand_(str, max, isTop) {
+  const expansions = [];
+  for (; ; ) {
+    const m = balanced("{", "}", str);
+    if (!m)
+      return [str];
+    const pre = m.pre;
+    if (/\$$/.test(m.pre)) {
+      const post2 = m.post.length ? expand_(m.post, max, false) : [""];
+      for (let k3 = 0; k3 < post2.length && k3 < max; k3++) {
+        const expansion = pre + "{" + m.body + "}" + post2[k3];
+        expansions.push(expansion);
+      }
+      return expansions;
+    }
+    const isNumericSequence = /^-?\d+\.\.-?\d+(?:\.\.-?\d+)?$/.test(m.body);
+    const isAlphaSequence = /^[a-zA-Z]\.\.[a-zA-Z](?:\.\.-?\d+)?$/.test(m.body);
+    const isSequence = isNumericSequence || isAlphaSequence;
+    const isOptions = m.body.indexOf(",") >= 0;
+    if (!isSequence && !isOptions) {
+      if (m.post.match(/,(?!,).*\}/)) {
+        str = m.pre + "{" + m.body + escClose + m.post;
+        isTop = true;
+        continue;
+      }
+      return [str];
+    }
+    const post = m.post.length ? expand_(m.post, max, false) : [""];
+    let n7;
+    if (isSequence) {
+      n7 = m.body.split(/\.\./);
+    } else {
+      n7 = parseCommaParts(m.body);
+      if (n7.length === 1 && n7[0] !== void 0) {
+        n7 = expand_(n7[0], max, false).map(embrace);
+        if (n7.length === 1) {
+          return post.map((p2) => m.pre + n7[0] + p2);
+        }
+      }
+    }
+    let N3;
+    if (isSequence && n7[0] !== void 0 && n7[1] !== void 0) {
+      const x3 = numeric(n7[0]);
+      const y2 = numeric(n7[1]);
+      const width = Math.max(n7[0].length, n7[1].length);
+      let incr = n7.length === 3 && n7[2] !== void 0 ? Math.max(Math.abs(numeric(n7[2])), 1) : 1;
+      let test = lte;
+      const reverse = y2 < x3;
+      if (reverse) {
+        incr *= -1;
+        test = gte;
+      }
+      const pad = n7.some(isPadded);
+      N3 = [];
+      for (let i2 = x3; test(i2, y2) && N3.length < max; i2 += incr) {
+        let c3;
+        if (isAlphaSequence) {
+          c3 = String.fromCharCode(i2);
+          if (c3 === "\\") {
+            c3 = "";
+          }
+        } else {
+          c3 = String(i2);
+          if (pad) {
+            const need = width - c3.length;
+            if (need > 0) {
+              const z2 = new Array(need + 1).join("0");
+              if (i2 < 0) {
+                c3 = "-" + z2 + c3.slice(1);
+              } else {
+                c3 = z2 + c3;
+              }
+            }
+          }
+        }
+        N3.push(c3);
+      }
+    } else {
+      N3 = [];
+      for (let j3 = 0; j3 < n7.length; j3++) {
+        N3.push.apply(N3, expand_(n7[j3], max, false));
+      }
+    }
+    for (let j3 = 0; j3 < N3.length; j3++) {
+      for (let k3 = 0; k3 < post.length && expansions.length < max; k3++) {
+        const expansion = pre + N3[j3] + post[k3];
+        if (!isTop || isSequence || expansion) {
+          expansions.push(expansion);
+        }
+      }
+    }
+    return expansions;
+  }
+}
+
+// node_modules/minimatch/dist/esm/assert-valid-pattern.js
+var MAX_PATTERN_LENGTH = 1024 * 64;
+var assertValidPattern = (pattern) => {
+  if (typeof pattern !== "string") {
+    throw new TypeError("invalid pattern");
+  }
+  if (pattern.length > MAX_PATTERN_LENGTH) {
+    throw new TypeError("pattern is too long");
+  }
+};
+
+// node_modules/minimatch/dist/esm/brace-expressions.js
+var posixClasses = {
+  "[:alnum:]": ["\\p{L}\\p{Nl}\\p{Nd}", true],
+  "[:alpha:]": ["\\p{L}\\p{Nl}", true],
+  "[:ascii:]": ["\\x00-\\x7f", false],
+  "[:blank:]": ["\\p{Zs}\\t", true],
+  "[:cntrl:]": ["\\p{Cc}", true],
+  "[:digit:]": ["\\p{Nd}", true],
+  "[:graph:]": ["\\p{Z}\\p{C}", true, true],
+  "[:lower:]": ["\\p{Ll}", true],
+  "[:print:]": ["\\p{C}", true],
+  "[:punct:]": ["\\p{P}", true],
+  "[:space:]": ["\\p{Z}\\t\\r\\n\\v\\f", true],
+  "[:upper:]": ["\\p{Lu}", true],
+  "[:word:]": ["\\p{L}\\p{Nl}\\p{Nd}\\p{Pc}", true],
+  "[:xdigit:]": ["A-Fa-f0-9", false]
+};
+var braceEscape = (s) => s.replace(/[[\]\\-]/g, "\\$&");
+var regexpEscape = (s) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+var rangesToString = (ranges) => ranges.join("");
+var parseClass = (glob, position) => {
+  const pos = position;
+  if (glob.charAt(pos) !== "[") {
+    throw new Error("not in a brace expression");
+  }
+  const ranges = [];
+  const negs = [];
+  let i2 = pos + 1;
+  let sawStart = false;
+  let uflag = false;
+  let escaping = false;
+  let negate = false;
+  let endPos = pos;
+  let rangeStart = "";
+  WHILE: while (i2 < glob.length) {
+    const c3 = glob.charAt(i2);
+    if ((c3 === "!" || c3 === "^") && i2 === pos + 1) {
+      negate = true;
+      i2++;
+      continue;
+    }
+    if (c3 === "]" && sawStart && !escaping) {
+      endPos = i2 + 1;
+      break;
+    }
+    sawStart = true;
+    if (c3 === "\\") {
+      if (!escaping) {
+        escaping = true;
+        i2++;
+        continue;
+      }
+    }
+    if (c3 === "[" && !escaping) {
+      for (const [cls, [unip, u, neg]] of Object.entries(posixClasses)) {
+        if (glob.startsWith(cls, i2)) {
+          if (rangeStart) {
+            return ["$.", false, glob.length - pos, true];
+          }
+          i2 += cls.length;
+          if (neg)
+            negs.push(unip);
+          else
+            ranges.push(unip);
+          uflag = uflag || u;
+          continue WHILE;
+        }
+      }
+    }
+    escaping = false;
+    if (rangeStart) {
+      if (c3 > rangeStart) {
+        ranges.push(braceEscape(rangeStart) + "-" + braceEscape(c3));
+      } else if (c3 === rangeStart) {
+        ranges.push(braceEscape(c3));
+      }
+      rangeStart = "";
+      i2++;
+      continue;
+    }
+    if (glob.startsWith("-]", i2 + 1)) {
+      ranges.push(braceEscape(c3 + "-"));
+      i2 += 2;
+      continue;
+    }
+    if (glob.startsWith("-", i2 + 1)) {
+      rangeStart = c3;
+      i2 += 2;
+      continue;
+    }
+    ranges.push(braceEscape(c3));
+    i2++;
+  }
+  if (endPos < i2) {
+    return ["", false, 0, false];
+  }
+  if (!ranges.length && !negs.length) {
+    return ["$.", false, glob.length - pos, true];
+  }
+  if (negs.length === 0 && ranges.length === 1 && /^\\?.$/.test(ranges[0]) && !negate) {
+    const r2 = ranges[0].length === 2 ? ranges[0].slice(-1) : ranges[0];
+    return [regexpEscape(r2), false, endPos - pos, false];
+  }
+  const sranges = "[" + (negate ? "^" : "") + rangesToString(ranges) + "]";
+  const snegs = "[" + (negate ? "" : "^") + rangesToString(negs) + "]";
+  const comb = ranges.length && negs.length ? "(" + sranges + "|" + snegs + ")" : ranges.length ? sranges : snegs;
+  return [comb, uflag, endPos - pos, true];
+};
+
+// node_modules/minimatch/dist/esm/unescape.js
+var unescape = (s, { windowsPathsNoEscape = false, magicalBraces = true } = {}) => {
+  if (magicalBraces) {
+    return windowsPathsNoEscape ? s.replace(/\[([^/\\])\]/g, "$1") : s.replace(/((?!\\).|^)\[([^/\\])\]/g, "$1$2").replace(/\\([^/])/g, "$1");
+  }
+  return windowsPathsNoEscape ? s.replace(/\[([^/\\{}])\]/g, "$1") : s.replace(/((?!\\).|^)\[([^/\\{}])\]/g, "$1$2").replace(/\\([^/{}])/g, "$1");
+};
+
+// node_modules/minimatch/dist/esm/ast.js
+var _a;
+var types = /* @__PURE__ */ new Set(["!", "?", "+", "*", "@"]);
+var isExtglobType = (c3) => types.has(c3);
+var isExtglobAST = (c3) => isExtglobType(c3.type);
+var adoptionMap = /* @__PURE__ */ new Map([
+  ["!", ["@"]],
+  ["?", ["?", "@"]],
+  ["@", ["@"]],
+  ["*", ["*", "+", "?", "@"]],
+  ["+", ["+", "@"]]
+]);
+var adoptionWithSpaceMap = /* @__PURE__ */ new Map([
+  ["!", ["?"]],
+  ["@", ["?"]],
+  ["+", ["?", "*"]]
+]);
+var adoptionAnyMap = /* @__PURE__ */ new Map([
+  ["!", ["?", "@"]],
+  ["?", ["?", "@"]],
+  ["@", ["?", "@"]],
+  ["*", ["*", "+", "?", "@"]],
+  ["+", ["+", "@", "?", "*"]]
+]);
+var usurpMap = /* @__PURE__ */ new Map([
+  ["!", /* @__PURE__ */ new Map([["!", "@"]])],
+  [
+    "?",
+    /* @__PURE__ */ new Map([
+      ["*", "*"],
+      ["+", "*"]
+    ])
+  ],
+  [
+    "@",
+    /* @__PURE__ */ new Map([
+      ["!", "!"],
+      ["?", "?"],
+      ["@", "@"],
+      ["*", "*"],
+      ["+", "+"]
+    ])
+  ],
+  [
+    "+",
+    /* @__PURE__ */ new Map([
+      ["?", "*"],
+      ["*", "*"]
+    ])
+  ]
+]);
+var startNoTraversal = "(?!(?:^|/)\\.\\.?(?:$|/))";
+var startNoDot = "(?!\\.)";
+var addPatternStart = /* @__PURE__ */ new Set(["[", "."]);
+var justDots = /* @__PURE__ */ new Set(["..", "."]);
+var reSpecials = new Set("().*{}+?[]^$\\!");
+var regExpEscape = (s) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+var qmark = "[^/]";
+var star = qmark + "*?";
+var starNoEmpty = qmark + "+?";
+var ID = 0;
+var AST = class {
+  type;
+  #root;
+  #hasMagic;
+  #uflag = false;
+  #parts = [];
+  #parent;
+  #parentIndex;
+  #negs;
+  #filledNegs = false;
+  #options;
+  #toString;
+  // set to true if it's an extglob with no children
+  // (which really means one child of '')
+  #emptyExt = false;
+  id = ++ID;
+  get depth() {
+    return (this.#parent?.depth ?? -1) + 1;
+  }
+  [/* @__PURE__ */ Symbol.for("nodejs.util.inspect.custom")]() {
+    return {
+      "@@type": "AST",
+      id: this.id,
+      type: this.type,
+      root: this.#root.id,
+      parent: this.#parent?.id,
+      depth: this.depth,
+      partsLength: this.#parts.length,
+      parts: this.#parts
+    };
+  }
+  constructor(type, parent, options = {}) {
+    this.type = type;
+    if (type)
+      this.#hasMagic = true;
+    this.#parent = parent;
+    this.#root = this.#parent ? this.#parent.#root : this;
+    this.#options = this.#root === this ? options : this.#root.#options;
+    this.#negs = this.#root === this ? [] : this.#root.#negs;
+    if (type === "!" && !this.#root.#filledNegs)
+      this.#negs.push(this);
+    this.#parentIndex = this.#parent ? this.#parent.#parts.length : 0;
+  }
+  get hasMagic() {
+    if (this.#hasMagic !== void 0)
+      return this.#hasMagic;
+    for (const p2 of this.#parts) {
+      if (typeof p2 === "string")
+        continue;
+      if (p2.type || p2.hasMagic)
+        return this.#hasMagic = true;
+    }
+    return this.#hasMagic;
+  }
+  // reconstructs the pattern
+  toString() {
+    return this.#toString !== void 0 ? this.#toString : !this.type ? this.#toString = this.#parts.map((p2) => String(p2)).join("") : this.#toString = this.type + "(" + this.#parts.map((p2) => String(p2)).join("|") + ")";
+  }
+  #fillNegs() {
+    if (this !== this.#root)
+      throw new Error("should only call on root");
+    if (this.#filledNegs)
+      return this;
+    this.toString();
+    this.#filledNegs = true;
+    let n7;
+    while (n7 = this.#negs.pop()) {
+      if (n7.type !== "!")
+        continue;
+      let p2 = n7;
+      let pp = p2.#parent;
+      while (pp) {
+        for (let i2 = p2.#parentIndex + 1; !pp.type && i2 < pp.#parts.length; i2++) {
+          for (const part of n7.#parts) {
+            if (typeof part === "string") {
+              throw new Error("string part in extglob AST??");
+            }
+            part.copyIn(pp.#parts[i2]);
+          }
+        }
+        p2 = pp;
+        pp = p2.#parent;
+      }
+    }
+    return this;
+  }
+  push(...parts) {
+    for (const p2 of parts) {
+      if (p2 === "")
+        continue;
+      if (typeof p2 !== "string" && !(p2 instanceof _a && p2.#parent === this)) {
+        throw new Error("invalid part: " + p2);
+      }
+      this.#parts.push(p2);
+    }
+  }
+  toJSON() {
+    const ret = this.type === null ? this.#parts.slice().map((p2) => typeof p2 === "string" ? p2 : p2.toJSON()) : [this.type, ...this.#parts.map((p2) => p2.toJSON())];
+    if (this.isStart() && !this.type)
+      ret.unshift([]);
+    if (this.isEnd() && (this === this.#root || this.#root.#filledNegs && this.#parent?.type === "!")) {
+      ret.push({});
+    }
+    return ret;
+  }
+  isStart() {
+    if (this.#root === this)
+      return true;
+    if (!this.#parent?.isStart())
+      return false;
+    if (this.#parentIndex === 0)
+      return true;
+    const p2 = this.#parent;
+    for (let i2 = 0; i2 < this.#parentIndex; i2++) {
+      const pp = p2.#parts[i2];
+      if (!(pp instanceof _a && pp.type === "!")) {
+        return false;
+      }
+    }
+    return true;
+  }
+  isEnd() {
+    if (this.#root === this)
+      return true;
+    if (this.#parent?.type === "!")
+      return true;
+    if (!this.#parent?.isEnd())
+      return false;
+    if (!this.type)
+      return this.#parent?.isEnd();
+    const pl = this.#parent ? this.#parent.#parts.length : 0;
+    return this.#parentIndex === pl - 1;
+  }
+  copyIn(part) {
+    if (typeof part === "string")
+      this.push(part);
+    else
+      this.push(part.clone(this));
+  }
+  clone(parent) {
+    const c3 = new _a(this.type, parent);
+    for (const p2 of this.#parts) {
+      c3.copyIn(p2);
+    }
+    return c3;
+  }
+  static #parseAST(str, ast, pos, opt, extDepth) {
+    const maxDepth = opt.maxExtglobRecursion ?? 2;
+    let escaping = false;
+    let inBrace = false;
+    let braceStart = -1;
+    let braceNeg = false;
+    if (ast.type === null) {
+      let i3 = pos;
+      let acc2 = "";
+      while (i3 < str.length) {
+        const c3 = str.charAt(i3++);
+        if (escaping || c3 === "\\") {
+          escaping = !escaping;
+          acc2 += c3;
+          continue;
+        }
+        if (inBrace) {
+          if (i3 === braceStart + 1) {
+            if (c3 === "^" || c3 === "!") {
+              braceNeg = true;
+            }
+          } else if (c3 === "]" && !(i3 === braceStart + 2 && braceNeg)) {
+            inBrace = false;
+          }
+          acc2 += c3;
+          continue;
+        } else if (c3 === "[") {
+          inBrace = true;
+          braceStart = i3;
+          braceNeg = false;
+          acc2 += c3;
+          continue;
+        }
+        const doRecurse = !opt.noext && isExtglobType(c3) && str.charAt(i3) === "(" && extDepth <= maxDepth;
+        if (doRecurse) {
+          ast.push(acc2);
+          acc2 = "";
+          const ext2 = new _a(c3, ast);
+          i3 = _a.#parseAST(str, ext2, i3, opt, extDepth + 1);
+          ast.push(ext2);
+          continue;
+        }
+        acc2 += c3;
+      }
+      ast.push(acc2);
+      return i3;
+    }
+    let i2 = pos + 1;
+    let part = new _a(null, ast);
+    const parts = [];
+    let acc = "";
+    while (i2 < str.length) {
+      const c3 = str.charAt(i2++);
+      if (escaping || c3 === "\\") {
+        escaping = !escaping;
+        acc += c3;
+        continue;
+      }
+      if (inBrace) {
+        if (i2 === braceStart + 1) {
+          if (c3 === "^" || c3 === "!") {
+            braceNeg = true;
+          }
+        } else if (c3 === "]" && !(i2 === braceStart + 2 && braceNeg)) {
+          inBrace = false;
+        }
+        acc += c3;
+        continue;
+      } else if (c3 === "[") {
+        inBrace = true;
+        braceStart = i2;
+        braceNeg = false;
+        acc += c3;
+        continue;
+      }
+      const doRecurse = !opt.noext && isExtglobType(c3) && str.charAt(i2) === "(" && /* c8 ignore start - the maxDepth is sufficient here */
+      (extDepth <= maxDepth || ast && ast.#canAdoptType(c3));
+      if (doRecurse) {
+        const depthAdd = ast && ast.#canAdoptType(c3) ? 0 : 1;
+        part.push(acc);
+        acc = "";
+        const ext2 = new _a(c3, part);
+        part.push(ext2);
+        i2 = _a.#parseAST(str, ext2, i2, opt, extDepth + depthAdd);
+        continue;
+      }
+      if (c3 === "|") {
+        part.push(acc);
+        acc = "";
+        parts.push(part);
+        part = new _a(null, ast);
+        continue;
+      }
+      if (c3 === ")") {
+        if (acc === "" && ast.#parts.length === 0) {
+          ast.#emptyExt = true;
+        }
+        part.push(acc);
+        acc = "";
+        ast.push(...parts, part);
+        return i2;
+      }
+      acc += c3;
+    }
+    ast.type = null;
+    ast.#hasMagic = void 0;
+    ast.#parts = [str.substring(pos - 1)];
+    return i2;
+  }
+  #canAdoptWithSpace(child2) {
+    return this.#canAdopt(child2, adoptionWithSpaceMap);
+  }
+  #canAdopt(child2, map = adoptionMap) {
+    if (!child2 || typeof child2 !== "object" || child2.type !== null || child2.#parts.length !== 1 || this.type === null) {
+      return false;
+    }
+    const gc = child2.#parts[0];
+    if (!gc || typeof gc !== "object" || gc.type === null) {
+      return false;
+    }
+    return this.#canAdoptType(gc.type, map);
+  }
+  #canAdoptType(c3, map = adoptionAnyMap) {
+    return !!map.get(this.type)?.includes(c3);
+  }
+  #adoptWithSpace(child2, index) {
+    const gc = child2.#parts[0];
+    const blank = new _a(null, gc, this.options);
+    blank.#parts.push("");
+    gc.push(blank);
+    this.#adopt(child2, index);
+  }
+  #adopt(child2, index) {
+    const gc = child2.#parts[0];
+    this.#parts.splice(index, 1, ...gc.#parts);
+    for (const p2 of gc.#parts) {
+      if (typeof p2 === "object")
+        p2.#parent = this;
+    }
+    this.#toString = void 0;
+  }
+  #canUsurpType(c3) {
+    const m = usurpMap.get(this.type);
+    return !!m?.has(c3);
+  }
+  #canUsurp(child2) {
+    if (!child2 || typeof child2 !== "object" || child2.type !== null || child2.#parts.length !== 1 || this.type === null || this.#parts.length !== 1) {
+      return false;
+    }
+    const gc = child2.#parts[0];
+    if (!gc || typeof gc !== "object" || gc.type === null) {
+      return false;
+    }
+    return this.#canUsurpType(gc.type);
+  }
+  #usurp(child2) {
+    const m = usurpMap.get(this.type);
+    const gc = child2.#parts[0];
+    const nt2 = m?.get(gc.type);
+    if (!nt2)
+      return false;
+    this.#parts = gc.#parts;
+    for (const p2 of this.#parts) {
+      if (typeof p2 === "object") {
+        p2.#parent = this;
+      }
+    }
+    this.type = nt2;
+    this.#toString = void 0;
+    this.#emptyExt = false;
+  }
+  static fromGlob(pattern, options = {}) {
+    const ast = new _a(null, void 0, options);
+    _a.#parseAST(pattern, ast, 0, options, 0);
+    return ast;
+  }
+  // returns the regular expression if there's magic, or the unescaped
+  // string if not.
+  toMMPattern() {
+    if (this !== this.#root)
+      return this.#root.toMMPattern();
+    const glob = this.toString();
+    const [re2, body, hasMagic, uflag] = this.toRegExpSource();
+    const anyMagic = hasMagic || this.#hasMagic || this.#options.nocase && !this.#options.nocaseMagicOnly && glob.toUpperCase() !== glob.toLowerCase();
+    if (!anyMagic) {
+      return body;
+    }
+    const flags = (this.#options.nocase ? "i" : "") + (uflag ? "u" : "");
+    return Object.assign(new RegExp(`^${re2}$`, flags), {
+      _src: re2,
+      _glob: glob
+    });
+  }
+  get options() {
+    return this.#options;
+  }
+  // returns the string match, the regexp source, whether there's magic
+  // in the regexp (so a regular expression is required) and whether or
+  // not the uflag is needed for the regular expression (for posix classes)
+  // TODO: instead of injecting the start/end at this point, just return
+  // the BODY of the regexp, along with the start/end portions suitable
+  // for binding the start/end in either a joined full-path makeRe context
+  // (where we bind to (^|/), or a standalone matchPart context (where
+  // we bind to ^, and not /).  Otherwise slashes get duped!
+  //
+  // In part-matching mode, the start is:
+  // - if not isStart: nothing
+  // - if traversal possible, but not allowed: ^(?!\.\.?$)
+  // - if dots allowed or not possible: ^
+  // - if dots possible and not allowed: ^(?!\.)
+  // end is:
+  // - if not isEnd(): nothing
+  // - else: $
+  //
+  // In full-path matching mode, we put the slash at the START of the
+  // pattern, so start is:
+  // - if first pattern: same as part-matching mode
+  // - if not isStart(): nothing
+  // - if traversal possible, but not allowed: /(?!\.\.?(?:$|/))
+  // - if dots allowed or not possible: /
+  // - if dots possible and not allowed: /(?!\.)
+  // end is:
+  // - if last pattern, same as part-matching mode
+  // - else nothing
+  //
+  // Always put the (?:$|/) on negated tails, though, because that has to be
+  // there to bind the end of the negated pattern portion, and it's easier to
+  // just stick it in now rather than try to inject it later in the middle of
+  // the pattern.
+  //
+  // We can just always return the same end, and leave it up to the caller
+  // to know whether it's going to be used joined or in parts.
+  // And, if the start is adjusted slightly, can do the same there:
+  // - if not isStart: nothing
+  // - if traversal possible, but not allowed: (?:/|^)(?!\.\.?$)
+  // - if dots allowed or not possible: (?:/|^)
+  // - if dots possible and not allowed: (?:/|^)(?!\.)
+  //
+  // But it's better to have a simpler binding without a conditional, for
+  // performance, so probably better to return both start options.
+  //
+  // Then the caller just ignores the end if it's not the first pattern,
+  // and the start always gets applied.
+  //
+  // But that's always going to be $ if it's the ending pattern, or nothing,
+  // so the caller can just attach $ at the end of the pattern when building.
+  //
+  // So the todo is:
+  // - better detect what kind of start is needed
+  // - return both flavors of starting pattern
+  // - attach $ at the end of the pattern when creating the actual RegExp
+  //
+  // Ah, but wait, no, that all only applies to the root when the first pattern
+  // is not an extglob. If the first pattern IS an extglob, then we need all
+  // that dot prevention biz to live in the extglob portions, because eg
+  // +(*|.x*) can match .xy but not .yx.
+  //
+  // So, return the two flavors if it's #root and the first child is not an
+  // AST, otherwise leave it to the child AST to handle it, and there,
+  // use the (?:^|/) style of start binding.
+  //
+  // Even simplified further:
+  // - Since the start for a join is eg /(?!\.) and the start for a part
+  // is ^(?!\.), we can just prepend (?!\.) to the pattern (either root
+  // or start or whatever) and prepend ^ or / at the Regexp construction.
+  toRegExpSource(allowDot) {
+    const dot = allowDot ?? !!this.#options.dot;
+    if (this.#root === this) {
+      this.#flatten();
+      this.#fillNegs();
+    }
+    if (!isExtglobAST(this)) {
+      const noEmpty = this.isStart() && this.isEnd() && !this.#parts.some((s) => typeof s !== "string");
+      const src = this.#parts.map((p2) => {
+        const [re2, _3, hasMagic, uflag] = typeof p2 === "string" ? _a.#parseGlob(p2, this.#hasMagic, noEmpty) : p2.toRegExpSource(allowDot);
+        this.#hasMagic = this.#hasMagic || hasMagic;
+        this.#uflag = this.#uflag || uflag;
+        return re2;
+      }).join("");
+      let start2 = "";
+      if (this.isStart()) {
+        if (typeof this.#parts[0] === "string") {
+          const dotTravAllowed = this.#parts.length === 1 && justDots.has(this.#parts[0]);
+          if (!dotTravAllowed) {
+            const aps = addPatternStart;
+            const needNoTrav = (
+              // dots are allowed, and the pattern starts with [ or .
+              dot && aps.has(src.charAt(0)) || // the pattern starts with \., and then [ or .
+              src.startsWith("\\.") && aps.has(src.charAt(2)) || // the pattern starts with \.\., and then [ or .
+              src.startsWith("\\.\\.") && aps.has(src.charAt(4))
+            );
+            const needNoDot = !dot && !allowDot && aps.has(src.charAt(0));
+            start2 = needNoTrav ? startNoTraversal : needNoDot ? startNoDot : "";
+          }
+        }
+      }
+      let end = "";
+      if (this.isEnd() && this.#root.#filledNegs && this.#parent?.type === "!") {
+        end = "(?:$|\\/)";
+      }
+      const final2 = start2 + src + end;
+      return [
+        final2,
+        unescape(src),
+        this.#hasMagic = !!this.#hasMagic,
+        this.#uflag
+      ];
+    }
+    const repeated = this.type === "*" || this.type === "+";
+    const start = this.type === "!" ? "(?:(?!(?:" : "(?:";
+    let body = this.#partsToRegExp(dot);
+    if (this.isStart() && this.isEnd() && !body && this.type !== "!") {
+      const s = this.toString();
+      const me2 = this;
+      me2.#parts = [s];
+      me2.type = null;
+      me2.#hasMagic = void 0;
+      return [s, unescape(this.toString()), false, false];
+    }
+    let bodyDotAllowed = !repeated || allowDot || dot || !startNoDot ? "" : this.#partsToRegExp(true);
+    if (bodyDotAllowed === body) {
+      bodyDotAllowed = "";
+    }
+    if (bodyDotAllowed) {
+      body = `(?:${body})(?:${bodyDotAllowed})*?`;
+    }
+    let final = "";
+    if (this.type === "!" && this.#emptyExt) {
+      final = (this.isStart() && !dot ? startNoDot : "") + starNoEmpty;
+    } else {
+      const close = this.type === "!" ? (
+        // !() must match something,but !(x) can match ''
+        "))" + (this.isStart() && !dot && !allowDot ? startNoDot : "") + star + ")"
+      ) : this.type === "@" ? ")" : this.type === "?" ? ")?" : this.type === "+" && bodyDotAllowed ? ")" : this.type === "*" && bodyDotAllowed ? `)?` : `)${this.type}`;
+      final = start + body + close;
+    }
+    return [
+      final,
+      unescape(body),
+      this.#hasMagic = !!this.#hasMagic,
+      this.#uflag
+    ];
+  }
+  #flatten() {
+    if (!isExtglobAST(this)) {
+      for (const p2 of this.#parts) {
+        if (typeof p2 === "object") {
+          p2.#flatten();
+        }
+      }
+    } else {
+      let iterations = 0;
+      let done = false;
+      do {
+        done = true;
+        for (let i2 = 0; i2 < this.#parts.length; i2++) {
+          const c3 = this.#parts[i2];
+          if (typeof c3 === "object") {
+            c3.#flatten();
+            if (this.#canAdopt(c3)) {
+              done = false;
+              this.#adopt(c3, i2);
+            } else if (this.#canAdoptWithSpace(c3)) {
+              done = false;
+              this.#adoptWithSpace(c3, i2);
+            } else if (this.#canUsurp(c3)) {
+              done = false;
+              this.#usurp(c3);
+            }
+          }
+        }
+      } while (!done && ++iterations < 10);
+    }
+    this.#toString = void 0;
+  }
+  #partsToRegExp(dot) {
+    return this.#parts.map((p2) => {
+      if (typeof p2 === "string") {
+        throw new Error("string type in extglob ast??");
+      }
+      const [re2, _3, _hasMagic, uflag] = p2.toRegExpSource(dot);
+      this.#uflag = this.#uflag || uflag;
+      return re2;
+    }).filter((p2) => !(this.isStart() && this.isEnd()) || !!p2).join("|");
+  }
+  static #parseGlob(glob, hasMagic, noEmpty = false) {
+    let escaping = false;
+    let re2 = "";
+    let uflag = false;
+    let inStar = false;
+    for (let i2 = 0; i2 < glob.length; i2++) {
+      const c3 = glob.charAt(i2);
+      if (escaping) {
+        escaping = false;
+        re2 += (reSpecials.has(c3) ? "\\" : "") + c3;
+        continue;
+      }
+      if (c3 === "*") {
+        if (inStar)
+          continue;
+        inStar = true;
+        re2 += noEmpty && /^[*]+$/.test(glob) ? starNoEmpty : star;
+        hasMagic = true;
+        continue;
+      } else {
+        inStar = false;
+      }
+      if (c3 === "\\") {
+        if (i2 === glob.length - 1) {
+          re2 += "\\\\";
+        } else {
+          escaping = true;
+        }
+        continue;
+      }
+      if (c3 === "[") {
+        const [src, needUflag, consumed, magic] = parseClass(glob, i2);
+        if (consumed) {
+          re2 += src;
+          uflag = uflag || needUflag;
+          i2 += consumed - 1;
+          hasMagic = hasMagic || magic;
+          continue;
+        }
+      }
+      if (c3 === "?") {
+        re2 += qmark;
+        hasMagic = true;
+        continue;
+      }
+      re2 += regExpEscape(c3);
+    }
+    return [re2, unescape(glob), !!hasMagic, uflag];
+  }
+};
+_a = AST;
+
+// node_modules/minimatch/dist/esm/escape.js
+var escape = (s, { windowsPathsNoEscape = false, magicalBraces = false } = {}) => {
+  if (magicalBraces) {
+    return windowsPathsNoEscape ? s.replace(/[?*()[\]{}]/g, "[$&]") : s.replace(/[?*()[\]\\{}]/g, "\\$&");
+  }
+  return windowsPathsNoEscape ? s.replace(/[?*()[\]]/g, "[$&]") : s.replace(/[?*()[\]\\]/g, "\\$&");
+};
+
+// node_modules/minimatch/dist/esm/index.js
+var minimatch = (p2, pattern, options = {}) => {
+  assertValidPattern(pattern);
+  if (!options.nocomment && pattern.charAt(0) === "#") {
+    return false;
+  }
+  return new Minimatch(pattern, options).match(p2);
+};
+var starDotExtRE = /^\*+([^+@!?*[(]*)$/;
+var starDotExtTest = (ext2) => (f) => !f.startsWith(".") && f.endsWith(ext2);
+var starDotExtTestDot = (ext2) => (f) => f.endsWith(ext2);
+var starDotExtTestNocase = (ext2) => {
+  ext2 = ext2.toLowerCase();
+  return (f) => !f.startsWith(".") && f.toLowerCase().endsWith(ext2);
+};
+var starDotExtTestNocaseDot = (ext2) => {
+  ext2 = ext2.toLowerCase();
+  return (f) => f.toLowerCase().endsWith(ext2);
+};
+var starDotStarRE = /^\*+\.\*+$/;
+var starDotStarTest = (f) => !f.startsWith(".") && f.includes(".");
+var starDotStarTestDot = (f) => f !== "." && f !== ".." && f.includes(".");
+var dotStarRE = /^\.\*+$/;
+var dotStarTest = (f) => f !== "." && f !== ".." && f.startsWith(".");
+var starRE = /^\*+$/;
+var starTest = (f) => f.length !== 0 && !f.startsWith(".");
+var starTestDot = (f) => f.length !== 0 && f !== "." && f !== "..";
+var qmarksRE = /^\?+([^+@!?*[(]*)?$/;
+var qmarksTestNocase = ([$0, ext2 = ""]) => {
+  const noext = qmarksTestNoExt([$0]);
+  if (!ext2)
+    return noext;
+  ext2 = ext2.toLowerCase();
+  return (f) => noext(f) && f.toLowerCase().endsWith(ext2);
+};
+var qmarksTestNocaseDot = ([$0, ext2 = ""]) => {
+  const noext = qmarksTestNoExtDot([$0]);
+  if (!ext2)
+    return noext;
+  ext2 = ext2.toLowerCase();
+  return (f) => noext(f) && f.toLowerCase().endsWith(ext2);
+};
+var qmarksTestDot = ([$0, ext2 = ""]) => {
+  const noext = qmarksTestNoExtDot([$0]);
+  return !ext2 ? noext : (f) => noext(f) && f.endsWith(ext2);
+};
+var qmarksTest = ([$0, ext2 = ""]) => {
+  const noext = qmarksTestNoExt([$0]);
+  return !ext2 ? noext : (f) => noext(f) && f.endsWith(ext2);
+};
+var qmarksTestNoExt = ([$0]) => {
+  const len = $0.length;
+  return (f) => f.length === len && !f.startsWith(".");
+};
+var qmarksTestNoExtDot = ([$0]) => {
+  const len = $0.length;
+  return (f) => f.length === len && f !== "." && f !== "..";
+};
+var defaultPlatform = typeof process === "object" && process ? typeof process.env === "object" && process.env && process.env.__MINIMATCH_TESTING_PLATFORM__ || process.platform : "posix";
+var path4 = {
+  win32: { sep: "\\" },
+  posix: { sep: "/" }
+};
+var sep3 = defaultPlatform === "win32" ? path4.win32.sep : path4.posix.sep;
+minimatch.sep = sep3;
+var GLOBSTAR = /* @__PURE__ */ Symbol("globstar **");
+minimatch.GLOBSTAR = GLOBSTAR;
+var qmark2 = "[^/]";
+var star2 = qmark2 + "*?";
+var twoStarDot = "(?:(?!(?:\\/|^)(?:\\.{1,2})($|\\/)).)*?";
+var twoStarNoDot = "(?:(?!(?:\\/|^)\\.).)*?";
+var filter = (pattern, options = {}) => (p2) => minimatch(p2, pattern, options);
+minimatch.filter = filter;
+var ext = (a, b2 = {}) => Object.assign({}, a, b2);
+var defaults2 = (def) => {
+  if (!def || typeof def !== "object" || !Object.keys(def).length) {
+    return minimatch;
+  }
+  const orig = minimatch;
+  const m = (p2, pattern, options = {}) => orig(p2, pattern, ext(def, options));
+  return Object.assign(m, {
+    Minimatch: class Minimatch extends orig.Minimatch {
+      constructor(pattern, options = {}) {
+        super(pattern, ext(def, options));
+      }
+      static defaults(options) {
+        return orig.defaults(ext(def, options)).Minimatch;
+      }
+    },
+    AST: class AST extends orig.AST {
+      /* c8 ignore start */
+      constructor(type, parent, options = {}) {
+        super(type, parent, ext(def, options));
+      }
+      /* c8 ignore stop */
+      static fromGlob(pattern, options = {}) {
+        return orig.AST.fromGlob(pattern, ext(def, options));
+      }
+    },
+    unescape: (s, options = {}) => orig.unescape(s, ext(def, options)),
+    escape: (s, options = {}) => orig.escape(s, ext(def, options)),
+    filter: (pattern, options = {}) => orig.filter(pattern, ext(def, options)),
+    defaults: (options) => orig.defaults(ext(def, options)),
+    makeRe: (pattern, options = {}) => orig.makeRe(pattern, ext(def, options)),
+    braceExpand: (pattern, options = {}) => orig.braceExpand(pattern, ext(def, options)),
+    match: (list, pattern, options = {}) => orig.match(list, pattern, ext(def, options)),
+    sep: orig.sep,
+    GLOBSTAR
+  });
+};
+minimatch.defaults = defaults2;
+var braceExpand = (pattern, options = {}) => {
+  assertValidPattern(pattern);
+  if (options.nobrace || !/\{(?:(?!\{).)*\}/.test(pattern)) {
+    return [pattern];
+  }
+  return expand2(pattern, { max: options.braceExpandMax });
+};
+minimatch.braceExpand = braceExpand;
+var makeRe = (pattern, options = {}) => new Minimatch(pattern, options).makeRe();
+minimatch.makeRe = makeRe;
+var match = (list, pattern, options = {}) => {
+  const mm = new Minimatch(pattern, options);
+  list = list.filter((f) => mm.match(f));
+  if (mm.options.nonull && !list.length) {
+    list.push(pattern);
+  }
+  return list;
+};
+minimatch.match = match;
+var globMagic = /[?*]|[+@!]\(.*?\)|\[|\]/;
+var regExpEscape2 = (s) => s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, "\\$&");
+var Minimatch = class {
+  options;
+  set;
+  pattern;
+  windowsPathsNoEscape;
+  nonegate;
+  negate;
+  comment;
+  empty;
+  preserveMultipleSlashes;
+  partial;
+  globSet;
+  globParts;
+  nocase;
+  isWindows;
+  platform;
+  windowsNoMagicRoot;
+  maxGlobstarRecursion;
+  regexp;
+  constructor(pattern, options = {}) {
+    assertValidPattern(pattern);
+    options = options || {};
+    this.options = options;
+    this.maxGlobstarRecursion = options.maxGlobstarRecursion ?? 200;
+    this.pattern = pattern;
+    this.platform = options.platform || defaultPlatform;
+    this.isWindows = this.platform === "win32";
+    const awe = "allowWindowsEscape";
+    this.windowsPathsNoEscape = !!options.windowsPathsNoEscape || options[awe] === false;
+    if (this.windowsPathsNoEscape) {
+      this.pattern = this.pattern.replace(/\\/g, "/");
+    }
+    this.preserveMultipleSlashes = !!options.preserveMultipleSlashes;
+    this.regexp = null;
+    this.negate = false;
+    this.nonegate = !!options.nonegate;
+    this.comment = false;
+    this.empty = false;
+    this.partial = !!options.partial;
+    this.nocase = !!this.options.nocase;
+    this.windowsNoMagicRoot = options.windowsNoMagicRoot !== void 0 ? options.windowsNoMagicRoot : !!(this.isWindows && this.nocase);
+    this.globSet = [];
+    this.globParts = [];
+    this.set = [];
+    this.make();
+  }
+  hasMagic() {
+    if (this.options.magicalBraces && this.set.length > 1) {
+      return true;
+    }
+    for (const pattern of this.set) {
+      for (const part of pattern) {
+        if (typeof part !== "string")
+          return true;
+      }
+    }
+    return false;
+  }
+  debug(..._3) {
+  }
+  make() {
+    const pattern = this.pattern;
+    const options = this.options;
+    if (!options.nocomment && pattern.charAt(0) === "#") {
+      this.comment = true;
+      return;
+    }
+    if (!pattern) {
+      this.empty = true;
+      return;
+    }
+    this.parseNegate();
+    this.globSet = [...new Set(this.braceExpand())];
+    if (options.debug) {
+      this.debug = (...args) => console.error(...args);
+    }
+    this.debug(this.pattern, this.globSet);
+    const rawGlobParts = this.globSet.map((s) => this.slashSplit(s));
+    this.globParts = this.preprocess(rawGlobParts);
+    this.debug(this.pattern, this.globParts);
+    let set = this.globParts.map((s, _3, __) => {
+      if (this.isWindows && this.windowsNoMagicRoot) {
+        const isUNC = s[0] === "" && s[1] === "" && (s[2] === "?" || !globMagic.test(s[2])) && !globMagic.test(s[3]);
+        const isDrive = /^[a-z]:/i.test(s[0]);
+        if (isUNC) {
+          return [
+            ...s.slice(0, 4),
+            ...s.slice(4).map((ss2) => this.parse(ss2))
+          ];
+        } else if (isDrive) {
+          return [s[0], ...s.slice(1).map((ss2) => this.parse(ss2))];
+        }
+      }
+      return s.map((ss2) => this.parse(ss2));
+    });
+    this.debug(this.pattern, set);
+    this.set = set.filter((s) => s.indexOf(false) === -1);
+    if (this.isWindows) {
+      for (let i2 = 0; i2 < this.set.length; i2++) {
+        const p2 = this.set[i2];
+        if (p2[0] === "" && p2[1] === "" && this.globParts[i2][2] === "?" && typeof p2[3] === "string" && /^[a-z]:$/i.test(p2[3])) {
+          p2[2] = "?";
+        }
+      }
+    }
+    this.debug(this.pattern, this.set);
+  }
+  // various transforms to equivalent pattern sets that are
+  // faster to process in a filesystem walk.  The goal is to
+  // eliminate what we can, and push all ** patterns as far
+  // to the right as possible, even if it increases the number
+  // of patterns that we have to process.
+  preprocess(globParts) {
+    if (this.options.noglobstar) {
+      for (const partset of globParts) {
+        for (let j3 = 0; j3 < partset.length; j3++) {
+          if (partset[j3] === "**") {
+            partset[j3] = "*";
+          }
+        }
+      }
+    }
+    const { optimizationLevel = 1 } = this.options;
+    if (optimizationLevel >= 2) {
+      globParts = this.firstPhasePreProcess(globParts);
+      globParts = this.secondPhasePreProcess(globParts);
+    } else if (optimizationLevel >= 1) {
+      globParts = this.levelOneOptimize(globParts);
+    } else {
+      globParts = this.adjascentGlobstarOptimize(globParts);
+    }
+    return globParts;
+  }
+  // just get rid of adjascent ** portions
+  adjascentGlobstarOptimize(globParts) {
+    return globParts.map((parts) => {
+      let gs2 = -1;
+      while (-1 !== (gs2 = parts.indexOf("**", gs2 + 1))) {
+        let i2 = gs2;
+        while (parts[i2 + 1] === "**") {
+          i2++;
+        }
+        if (i2 !== gs2) {
+          parts.splice(gs2, i2 - gs2);
+        }
+      }
+      return parts;
+    });
+  }
+  // get rid of adjascent ** and resolve .. portions
+  levelOneOptimize(globParts) {
+    return globParts.map((parts) => {
+      parts = parts.reduce((set, part) => {
+        const prev = set[set.length - 1];
+        if (part === "**" && prev === "**") {
+          return set;
+        }
+        if (part === "..") {
+          if (prev && prev !== ".." && prev !== "." && prev !== "**") {
+            set.pop();
+            return set;
+          }
+        }
+        set.push(part);
+        return set;
+      }, []);
+      return parts.length === 0 ? [""] : parts;
+    });
+  }
+  levelTwoFileOptimize(parts) {
+    if (!Array.isArray(parts)) {
+      parts = this.slashSplit(parts);
+    }
+    let didSomething = false;
+    do {
+      didSomething = false;
+      if (!this.preserveMultipleSlashes) {
+        for (let i2 = 1; i2 < parts.length - 1; i2++) {
+          const p2 = parts[i2];
+          if (i2 === 1 && p2 === "" && parts[0] === "")
+            continue;
+          if (p2 === "." || p2 === "") {
+            didSomething = true;
+            parts.splice(i2, 1);
+            i2--;
+          }
+        }
+        if (parts[0] === "." && parts.length === 2 && (parts[1] === "." || parts[1] === "")) {
+          didSomething = true;
+          parts.pop();
+        }
+      }
+      let dd = 0;
+      while (-1 !== (dd = parts.indexOf("..", dd + 1))) {
+        const p2 = parts[dd - 1];
+        if (p2 && p2 !== "." && p2 !== ".." && p2 !== "**" && !(this.isWindows && /^[a-z]:$/i.test(p2))) {
+          didSomething = true;
+          parts.splice(dd - 1, 2);
+          dd -= 2;
+        }
+      }
+    } while (didSomething);
+    return parts.length === 0 ? [""] : parts;
+  }
+  // First phase: single-pattern processing
+  // <pre> is 1 or more portions
+  // <rest> is 1 or more portions
+  // <p> is any portion other than ., .., '', or **
+  // <e> is . or ''
+  //
+  // **/.. is *brutal* for filesystem walking performance, because
+  // it effectively resets the recursive walk each time it occurs,
+  // and ** cannot be reduced out by a .. pattern part like a regexp
+  // or most strings (other than .., ., and '') can be.
+  //
+  // <pre>/**/../<p>/<p>/<rest> -> {<pre>/../<p>/<p>/<rest>,<pre>/**/<p>/<p>/<rest>}
+  // <pre>/<e>/<rest> -> <pre>/<rest>
+  // <pre>/<p>/../<rest> -> <pre>/<rest>
+  // **/**/<rest> -> **/<rest>
+  //
+  // **/*/<rest> -> */**/<rest> <== not valid because ** doesn't follow
+  // this WOULD be allowed if ** did follow symlinks, or * didn't
+  firstPhasePreProcess(globParts) {
+    let didSomething = false;
+    do {
+      didSomething = false;
+      for (let parts of globParts) {
+        let gs2 = -1;
+        while (-1 !== (gs2 = parts.indexOf("**", gs2 + 1))) {
+          let gss = gs2;
+          while (parts[gss + 1] === "**") {
+            gss++;
+          }
+          if (gss > gs2) {
+            parts.splice(gs2 + 1, gss - gs2);
+          }
+          let next = parts[gs2 + 1];
+          const p2 = parts[gs2 + 2];
+          const p22 = parts[gs2 + 3];
+          if (next !== "..")
+            continue;
+          if (!p2 || p2 === "." || p2 === ".." || !p22 || p22 === "." || p22 === "..") {
+            continue;
+          }
+          didSomething = true;
+          parts.splice(gs2, 1);
+          const other = parts.slice(0);
+          other[gs2] = "**";
+          globParts.push(other);
+          gs2--;
+        }
+        if (!this.preserveMultipleSlashes) {
+          for (let i2 = 1; i2 < parts.length - 1; i2++) {
+            const p2 = parts[i2];
+            if (i2 === 1 && p2 === "" && parts[0] === "")
+              continue;
+            if (p2 === "." || p2 === "") {
+              didSomething = true;
+              parts.splice(i2, 1);
+              i2--;
+            }
+          }
+          if (parts[0] === "." && parts.length === 2 && (parts[1] === "." || parts[1] === "")) {
+            didSomething = true;
+            parts.pop();
+          }
+        }
+        let dd = 0;
+        while (-1 !== (dd = parts.indexOf("..", dd + 1))) {
+          const p2 = parts[dd - 1];
+          if (p2 && p2 !== "." && p2 !== ".." && p2 !== "**") {
+            didSomething = true;
+            const needDot = dd === 1 && parts[dd + 1] === "**";
+            const splin = needDot ? ["."] : [];
+            parts.splice(dd - 1, 2, ...splin);
+            if (parts.length === 0)
+              parts.push("");
+            dd -= 2;
+          }
+        }
+      }
+    } while (didSomething);
+    return globParts;
+  }
+  // second phase: multi-pattern dedupes
+  // {<pre>/*/<rest>,<pre>/<p>/<rest>} -> <pre>/*/<rest>
+  // {<pre>/<rest>,<pre>/<rest>} -> <pre>/<rest>
+  // {<pre>/**/<rest>,<pre>/<rest>} -> <pre>/**/<rest>
+  //
+  // {<pre>/**/<rest>,<pre>/**/<p>/<rest>} -> <pre>/**/<rest>
+  // ^-- not valid because ** doens't follow symlinks
+  secondPhasePreProcess(globParts) {
+    for (let i2 = 0; i2 < globParts.length - 1; i2++) {
+      for (let j3 = i2 + 1; j3 < globParts.length; j3++) {
+        const matched = this.partsMatch(globParts[i2], globParts[j3], !this.preserveMultipleSlashes);
+        if (matched) {
+          globParts[i2] = [];
+          globParts[j3] = matched;
+          break;
+        }
+      }
+    }
+    return globParts.filter((gs2) => gs2.length);
+  }
+  partsMatch(a, b2, emptyGSMatch = false) {
+    let ai2 = 0;
+    let bi2 = 0;
+    let result = [];
+    let which2 = "";
+    while (ai2 < a.length && bi2 < b2.length) {
+      if (a[ai2] === b2[bi2]) {
+        result.push(which2 === "b" ? b2[bi2] : a[ai2]);
+        ai2++;
+        bi2++;
+      } else if (emptyGSMatch && a[ai2] === "**" && b2[bi2] === a[ai2 + 1]) {
+        result.push(a[ai2]);
+        ai2++;
+      } else if (emptyGSMatch && b2[bi2] === "**" && a[ai2] === b2[bi2 + 1]) {
+        result.push(b2[bi2]);
+        bi2++;
+      } else if (a[ai2] === "*" && b2[bi2] && (this.options.dot || !b2[bi2].startsWith(".")) && b2[bi2] !== "**") {
+        if (which2 === "b")
+          return false;
+        which2 = "a";
+        result.push(a[ai2]);
+        ai2++;
+        bi2++;
+      } else if (b2[bi2] === "*" && a[ai2] && (this.options.dot || !a[ai2].startsWith(".")) && a[ai2] !== "**") {
+        if (which2 === "a")
+          return false;
+        which2 = "b";
+        result.push(b2[bi2]);
+        ai2++;
+        bi2++;
+      } else {
+        return false;
+      }
+    }
+    return a.length === b2.length && result;
+  }
+  parseNegate() {
+    if (this.nonegate)
+      return;
+    const pattern = this.pattern;
+    let negate = false;
+    let negateOffset = 0;
+    for (let i2 = 0; i2 < pattern.length && pattern.charAt(i2) === "!"; i2++) {
+      negate = !negate;
+      negateOffset++;
+    }
+    if (negateOffset)
+      this.pattern = pattern.slice(negateOffset);
+    this.negate = negate;
+  }
+  // set partial to true to test if, for example,
+  // "/a/b" matches the start of "/*/b/*/d"
+  // Partial means, if you run out of file before you run
+  // out of pattern, then that's fine, as long as all
+  // the parts match.
+  matchOne(file, pattern, partial = false) {
+    let fileStartIndex = 0;
+    let patternStartIndex = 0;
+    if (this.isWindows) {
+      const fileDrive = typeof file[0] === "string" && /^[a-z]:$/i.test(file[0]);
+      const fileUNC = !fileDrive && file[0] === "" && file[1] === "" && file[2] === "?" && /^[a-z]:$/i.test(file[3]);
+      const patternDrive = typeof pattern[0] === "string" && /^[a-z]:$/i.test(pattern[0]);
+      const patternUNC = !patternDrive && pattern[0] === "" && pattern[1] === "" && pattern[2] === "?" && typeof pattern[3] === "string" && /^[a-z]:$/i.test(pattern[3]);
+      const fdi = fileUNC ? 3 : fileDrive ? 0 : void 0;
+      const pdi = patternUNC ? 3 : patternDrive ? 0 : void 0;
+      if (typeof fdi === "number" && typeof pdi === "number") {
+        const [fd, pd] = [
+          file[fdi],
+          pattern[pdi]
+        ];
+        if (fd.toLowerCase() === pd.toLowerCase()) {
+          pattern[pdi] = fd;
+          patternStartIndex = pdi;
+          fileStartIndex = fdi;
+        }
+      }
+    }
+    const { optimizationLevel = 1 } = this.options;
+    if (optimizationLevel >= 2) {
+      file = this.levelTwoFileOptimize(file);
+    }
+    if (pattern.includes(GLOBSTAR)) {
+      return this.#matchGlobstar(file, pattern, partial, fileStartIndex, patternStartIndex);
+    }
+    return this.#matchOne(file, pattern, partial, fileStartIndex, patternStartIndex);
+  }
+  #matchGlobstar(file, pattern, partial, fileIndex, patternIndex) {
+    const firstgs = pattern.indexOf(GLOBSTAR, patternIndex);
+    const lastgs = pattern.lastIndexOf(GLOBSTAR);
+    const [head, body, tail] = partial ? [
+      pattern.slice(patternIndex, firstgs),
+      pattern.slice(firstgs + 1),
+      []
+    ] : [
+      pattern.slice(patternIndex, firstgs),
+      pattern.slice(firstgs + 1, lastgs),
+      pattern.slice(lastgs + 1)
+    ];
+    if (head.length) {
+      const fileHead = file.slice(fileIndex, fileIndex + head.length);
+      if (!this.#matchOne(fileHead, head, partial, 0, 0)) {
+        return false;
+      }
+      fileIndex += head.length;
+      patternIndex += head.length;
+    }
+    let fileTailMatch = 0;
+    if (tail.length) {
+      if (tail.length + fileIndex > file.length)
+        return false;
+      let tailStart = file.length - tail.length;
+      if (this.#matchOne(file, tail, partial, tailStart, 0)) {
+        fileTailMatch = tail.length;
+      } else {
+        if (file[file.length - 1] !== "" || fileIndex + tail.length === file.length) {
+          return false;
+        }
+        tailStart--;
+        if (!this.#matchOne(file, tail, partial, tailStart, 0)) {
+          return false;
+        }
+        fileTailMatch = tail.length + 1;
+      }
+    }
+    if (!body.length) {
+      let sawSome = !!fileTailMatch;
+      for (let i3 = fileIndex; i3 < file.length - fileTailMatch; i3++) {
+        const f = String(file[i3]);
+        sawSome = true;
+        if (f === "." || f === ".." || !this.options.dot && f.startsWith(".")) {
+          return false;
+        }
+      }
+      return partial || sawSome;
+    }
+    const bodySegments = [[[], 0]];
+    let currentBody = bodySegments[0];
+    let nonGsParts = 0;
+    const nonGsPartsSums = [0];
+    for (const b2 of body) {
+      if (b2 === GLOBSTAR) {
+        nonGsPartsSums.push(nonGsParts);
+        currentBody = [[], 0];
+        bodySegments.push(currentBody);
+      } else {
+        currentBody[0].push(b2);
+        nonGsParts++;
+      }
+    }
+    let i2 = bodySegments.length - 1;
+    const fileLength = file.length - fileTailMatch;
+    for (const b2 of bodySegments) {
+      b2[1] = fileLength - (nonGsPartsSums[i2--] + b2[0].length);
+    }
+    return !!this.#matchGlobStarBodySections(file, bodySegments, fileIndex, 0, partial, 0, !!fileTailMatch);
+  }
+  // return false for "nope, not matching"
+  // return null for "not matching, cannot keep trying"
+  #matchGlobStarBodySections(file, bodySegments, fileIndex, bodyIndex, partial, globStarDepth, sawTail) {
+    const bs2 = bodySegments[bodyIndex];
+    if (!bs2) {
+      for (let i2 = fileIndex; i2 < file.length; i2++) {
+        sawTail = true;
+        const f = file[i2];
+        if (f === "." || f === ".." || !this.options.dot && f.startsWith(".")) {
+          return false;
+        }
+      }
+      return sawTail;
+    }
+    const [body, after] = bs2;
+    while (fileIndex <= after) {
+      const m = this.#matchOne(file.slice(0, fileIndex + body.length), body, partial, fileIndex, 0);
+      if (m && globStarDepth < this.maxGlobstarRecursion) {
+        const sub = this.#matchGlobStarBodySections(file, bodySegments, fileIndex + body.length, bodyIndex + 1, partial, globStarDepth + 1, sawTail);
+        if (sub !== false) {
+          return sub;
+        }
+      }
+      const f = file[fileIndex];
+      if (f === "." || f === ".." || !this.options.dot && f.startsWith(".")) {
+        return false;
+      }
+      fileIndex++;
+    }
+    return partial || null;
+  }
+  #matchOne(file, pattern, partial, fileIndex, patternIndex) {
+    let fi2;
+    let pi2;
+    let pl;
+    let fl;
+    for (fi2 = fileIndex, pi2 = patternIndex, fl = file.length, pl = pattern.length; fi2 < fl && pi2 < pl; fi2++, pi2++) {
+      this.debug("matchOne loop");
+      let p2 = pattern[pi2];
+      let f = file[fi2];
+      this.debug(pattern, p2, f);
+      if (p2 === false || p2 === GLOBSTAR) {
+        return false;
+      }
+      let hit;
+      if (typeof p2 === "string") {
+        hit = f === p2;
+        this.debug("string match", p2, f, hit);
+      } else {
+        hit = p2.test(f);
+        this.debug("pattern match", p2, f, hit);
+      }
+      if (!hit)
+        return false;
+    }
+    if (fi2 === fl && pi2 === pl) {
+      return true;
+    } else if (fi2 === fl) {
+      return partial;
+    } else if (pi2 === pl) {
+      return fi2 === fl - 1 && file[fi2] === "";
+    } else {
+      throw new Error("wtf?");
+    }
+  }
+  braceExpand() {
+    return braceExpand(this.pattern, this.options);
+  }
+  parse(pattern) {
+    assertValidPattern(pattern);
+    const options = this.options;
+    if (pattern === "**")
+      return GLOBSTAR;
+    if (pattern === "")
+      return "";
+    let m;
+    let fastTest = null;
+    if (m = pattern.match(starRE)) {
+      fastTest = options.dot ? starTestDot : starTest;
+    } else if (m = pattern.match(starDotExtRE)) {
+      fastTest = (options.nocase ? options.dot ? starDotExtTestNocaseDot : starDotExtTestNocase : options.dot ? starDotExtTestDot : starDotExtTest)(m[1]);
+    } else if (m = pattern.match(qmarksRE)) {
+      fastTest = (options.nocase ? options.dot ? qmarksTestNocaseDot : qmarksTestNocase : options.dot ? qmarksTestDot : qmarksTest)(m);
+    } else if (m = pattern.match(starDotStarRE)) {
+      fastTest = options.dot ? starDotStarTestDot : starDotStarTest;
+    } else if (m = pattern.match(dotStarRE)) {
+      fastTest = dotStarTest;
+    }
+    const re2 = AST.fromGlob(pattern, this.options).toMMPattern();
+    if (fastTest && typeof re2 === "object") {
+      Reflect.defineProperty(re2, "test", { value: fastTest });
+    }
+    return re2;
+  }
+  makeRe() {
+    if (this.regexp || this.regexp === false)
+      return this.regexp;
+    const set = this.set;
+    if (!set.length) {
+      this.regexp = false;
+      return this.regexp;
+    }
+    const options = this.options;
+    const twoStar = options.noglobstar ? star2 : options.dot ? twoStarDot : twoStarNoDot;
+    const flags = new Set(options.nocase ? ["i"] : []);
+    let re2 = set.map((pattern) => {
+      const pp = pattern.map((p2) => {
+        if (p2 instanceof RegExp) {
+          for (const f of p2.flags.split(""))
+            flags.add(f);
+        }
+        return typeof p2 === "string" ? regExpEscape2(p2) : p2 === GLOBSTAR ? GLOBSTAR : p2._src;
+      });
+      pp.forEach((p2, i2) => {
+        const next = pp[i2 + 1];
+        const prev = pp[i2 - 1];
+        if (p2 !== GLOBSTAR || prev === GLOBSTAR) {
+          return;
+        }
+        if (prev === void 0) {
+          if (next !== void 0 && next !== GLOBSTAR) {
+            pp[i2 + 1] = "(?:\\/|" + twoStar + "\\/)?" + next;
+          } else {
+            pp[i2] = twoStar;
+          }
+        } else if (next === void 0) {
+          pp[i2 - 1] = prev + "(?:\\/|\\/" + twoStar + ")?";
+        } else if (next !== GLOBSTAR) {
+          pp[i2 - 1] = prev + "(?:\\/|\\/" + twoStar + "\\/)" + next;
+          pp[i2 + 1] = GLOBSTAR;
+        }
+      });
+      const filtered = pp.filter((p2) => p2 !== GLOBSTAR);
+      if (this.partial && filtered.length >= 1) {
+        const prefixes = [];
+        for (let i2 = 1; i2 <= filtered.length; i2++) {
+          prefixes.push(filtered.slice(0, i2).join("/"));
+        }
+        return "(?:" + prefixes.join("|") + ")";
+      }
+      return filtered.join("/");
+    }).join("|");
+    const [open2, close] = set.length > 1 ? ["(?:", ")"] : ["", ""];
+    re2 = "^" + open2 + re2 + close + "$";
+    if (this.partial) {
+      re2 = "^(?:\\/|" + open2 + re2.slice(1, -1) + close + ")$";
+    }
+    if (this.negate)
+      re2 = "^(?!" + re2 + ").+$";
+    try {
+      this.regexp = new RegExp(re2, [...flags].join(""));
+    } catch {
+      this.regexp = false;
+    }
+    return this.regexp;
+  }
+  slashSplit(p2) {
+    if (this.preserveMultipleSlashes) {
+      return p2.split("/");
+    } else if (this.isWindows && /^\/\/[^/]+/.test(p2)) {
+      return ["", ...p2.split(/\/+/)];
+    } else {
+      return p2.split(/\/+/);
+    }
+  }
+  match(f, partial = this.partial) {
+    this.debug("match", f, this.pattern);
+    if (this.comment) {
+      return false;
+    }
+    if (this.empty) {
+      return f === "";
+    }
+    if (f === "/" && partial) {
+      return true;
+    }
+    const options = this.options;
+    if (this.isWindows) {
+      f = f.split("\\").join("/");
+    }
+    const ff = this.slashSplit(f);
+    this.debug(this.pattern, "split", ff);
+    const set = this.set;
+    this.debug(this.pattern, "set", set);
+    let filename = ff[ff.length - 1];
+    if (!filename) {
+      for (let i2 = ff.length - 2; !filename && i2 >= 0; i2--) {
+        filename = ff[i2];
+      }
+    }
+    for (const pattern of set) {
+      let file = ff;
+      if (options.matchBase && pattern.length === 1) {
+        file = [filename];
+      }
+      const hit = this.matchOne(file, pattern, partial);
+      if (hit) {
+        if (options.flipNegate) {
+          return true;
+        }
+        return !this.negate;
+      }
+    }
+    if (options.flipNegate) {
+      return false;
+    }
+    return this.negate;
+  }
+  static defaults(def) {
+    return minimatch.defaults(def).Minimatch;
+  }
+};
+minimatch.AST = AST;
+minimatch.Minimatch = Minimatch;
+minimatch.escape = escape;
+minimatch.unescape = unescape;
+
 // src/main.ts
-var path6 = __toESM(require("path"));
+var path7 = __toESM(require("path"));
 
 // node_modules/simple-git/dist/esm/index.js
 var import_file_exists = __toESM(require_dist2(), 1);
@@ -29626,8 +31432,8 @@ function toLinesWithContent(input = "", trimmed2 = true, separator = "\n") {
 function forEachLineWithContent(input, callback) {
   return toLinesWithContent(input, true).map((line) => callback(line));
 }
-function folderExists(path7) {
-  return (0, import_file_exists.exists)(path7, import_file_exists.FOLDER);
+function folderExists(path8) {
+  return (0, import_file_exists.exists)(path8, import_file_exists.FOLDER);
 }
 function append(target, item) {
   if (Array.isArray(target)) {
@@ -29717,8 +31523,8 @@ var init_util = __esm({
     objectToString = Object.prototype.toString.call.bind(Object.prototype.toString);
   }
 });
-function filterType(input, filter, def) {
-  if (filter(input)) {
+function filterType(input, filter2, def) {
+  if (filter2(input)) {
     return input;
   }
   return arguments.length > 2 ? def : void 0;
@@ -30029,8 +31835,8 @@ function checkIsRepoRootTask() {
     commands,
     format: "utf-8",
     onError,
-    parser(path7) {
-      return /^\.(git)?$/.test(path7.trim());
+    parser(path8) {
+      return /^\.(git)?$/.test(path8.trim());
     }
   };
 }
@@ -30464,11 +32270,11 @@ function parseGrep(grep) {
   const paths = /* @__PURE__ */ new Set();
   const results = {};
   forEachLineWithContent(grep, (input) => {
-    const [path7, line, preview] = input.split(NULL);
-    paths.add(path7);
-    (results[path7] = results[path7] || []).push({
+    const [path8, line, preview] = input.split(NULL);
+    paths.add(path8);
+    (results[path8] = results[path8] || []).push({
       line: asNumber(line),
-      path: path7,
+      path: path8,
       preview
     });
   });
@@ -30509,7 +32315,7 @@ function grep_default() {
 }
 var disallowedOptions;
 var Query;
-var _a;
+var _a2;
 var GrepQuery;
 var init_grep = __esm({
   "src/lib/tasks/grep.ts"() {
@@ -30520,9 +32326,9 @@ var init_grep = __esm({
     Query = /* @__PURE__ */ Symbol("grepQuery");
     GrepQuery = class {
       constructor() {
-        this[_a] = [];
+        this[_a2] = [];
       }
-      *[(_a = Query, Symbol.iterator)]() {
+      *[(_a2 = Query, Symbol.iterator)]() {
         for (const query of this[Query]) {
           yield query;
         }
@@ -31232,14 +33038,14 @@ var init_hash_object = __esm({
     init_task();
   }
 });
-function parseInit(bare, path7, text) {
+function parseInit(bare, path8, text) {
   const response = String(text).trim();
   let result;
   if (result = initResponseRegex.exec(response)) {
-    return new InitSummary(bare, path7, false, result[1]);
+    return new InitSummary(bare, path8, false, result[1]);
   }
   if (result = reInitResponseRegex.exec(response)) {
-    return new InitSummary(bare, path7, true, result[1]);
+    return new InitSummary(bare, path8, true, result[1]);
   }
   let gitDir = "";
   const tokens = response.split(" ");
@@ -31250,7 +33056,7 @@ function parseInit(bare, path7, text) {
       break;
     }
   }
-  return new InitSummary(bare, path7, /^re/i.test(response), gitDir);
+  return new InitSummary(bare, path8, /^re/i.test(response), gitDir);
 }
 var InitSummary;
 var initResponseRegex;
@@ -31259,9 +33065,9 @@ var init_InitSummary = __esm({
   "src/lib/responses/InitSummary.ts"() {
     "use strict";
     InitSummary = class {
-      constructor(bare, path7, existing, gitDir) {
+      constructor(bare, path8, existing, gitDir) {
         this.bare = bare;
-        this.path = path7;
+        this.path = path8;
         this.existing = existing;
         this.gitDir = gitDir;
       }
@@ -31273,7 +33079,7 @@ var init_InitSummary = __esm({
 function hasBareCommand(command) {
   return command.includes(bareCommand);
 }
-function initTask(bare = false, path7, customArgs) {
+function initTask(bare = false, path8, customArgs) {
   const commands = ["init", ...customArgs];
   if (bare && !hasBareCommand(commands)) {
     commands.splice(1, 0, bareCommand);
@@ -31282,7 +33088,7 @@ function initTask(bare = false, path7, customArgs) {
     commands,
     format: "utf-8",
     parser(text) {
-      return parseInit(commands.includes("--bare"), path7, text);
+      return parseInit(commands.includes("--bare"), path8, text);
     }
   };
 }
@@ -32097,12 +33903,12 @@ var init_FileStatusSummary = __esm({
     "use strict";
     fromPathRegex = /^(.+)\0(.+)$/;
     FileStatusSummary = class {
-      constructor(path7, index, working_dir) {
-        this.path = path7;
+      constructor(path8, index, working_dir) {
+        this.path = path8;
         this.index = index;
         this.working_dir = working_dir;
         if (index === "R" || working_dir === "R") {
-          const detail = fromPathRegex.exec(path7) || [null, path7, path7];
+          const detail = fromPathRegex.exec(path8) || [null, path8, path8];
           this.from = detail[2] || "";
           this.path = detail[1] || "";
         }
@@ -32133,14 +33939,14 @@ function splitLine(result, lineStr) {
     default:
       return;
   }
-  function data(index, workingDir, path7) {
+  function data(index, workingDir, path8) {
     const raw = `${index}${workingDir}`;
     const handler2 = parsers6.get(raw);
     if (handler2) {
-      handler2(result, path7);
+      handler2(result, path8);
     }
     if (raw !== "##" && raw !== "!!") {
-      result.files.push(new FileStatusSummary(path7, index, workingDir));
+      result.files.push(new FileStatusSummary(path8, index, workingDir));
     }
   }
 }
@@ -32491,9 +34297,9 @@ var init_simple_git_api = __esm({
           next
         );
       }
-      hashObject(path7, write) {
+      hashObject(path8, write) {
         return this._runTask(
-          hashObjectTask(path7, write === true),
+          hashObjectTask(path8, write === true),
           trailingFunctionArgument(arguments)
         );
       }
@@ -32847,8 +34653,8 @@ var init_branch = __esm({
   }
 });
 function toPath(input) {
-  const path7 = input.trim().replace(/^["']|["']$/g, "");
-  return path7 && (0, import_node_path2.normalize)(path7);
+  const path8 = input.trim().replace(/^["']|["']$/g, "");
+  return path8 && (0, import_node_path2.normalize)(path8);
 }
 var parseCheckIgnore;
 var init_CheckIgnore = __esm({
@@ -33133,8 +34939,8 @@ __export2(sub_module_exports, {
   subModuleTask: () => subModuleTask,
   updateSubModuleTask: () => updateSubModuleTask
 });
-function addSubModuleTask(repo, path7) {
-  return subModuleTask(["add", repo, path7]);
+function addSubModuleTask(repo, path8) {
+  return subModuleTask(["add", repo, path8]);
 }
 function initSubModuleTask(customArgs) {
   return subModuleTask(["init", ...customArgs]);
@@ -33448,8 +35254,8 @@ var require_git = __commonJS2({
       }
       return this._runTask(straightThroughStringTask2(command, this._trimmed), next);
     };
-    Git2.prototype.submoduleAdd = function(repo, path7, then) {
-      return this._runTask(addSubModuleTask2(repo, path7), trailingFunctionArgument2(arguments));
+    Git2.prototype.submoduleAdd = function(repo, path8, then) {
+      return this._runTask(addSubModuleTask2(repo, path8), trailingFunctionArgument2(arguments));
     };
     Git2.prototype.submoduleUpdate = function(args, then) {
       return this._runTask(
@@ -34108,11 +35914,11 @@ function getApiHost() {
 
 // src/utils/cache.ts
 var fs4 = __toESM(require("fs"));
-var path4 = __toESM(require("path"));
+var path5 = __toESM(require("path"));
 function getDefaultCacheConfig() {
   return {
     enabled: true,
-    path: process.env.PROMPTFOO_CACHE_PATH || path4.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
+    path: process.env.PROMPTFOO_CACHE_PATH || path5.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
     ttl: parseInt(process.env.PROMPTFOO_CACHE_TTL || "86400", 10),
     // 1 day default for CI
     maxSize: parseInt(process.env.PROMPTFOO_CACHE_MAX_SIZE || "52428800", 10),
@@ -34128,7 +35934,7 @@ function setupCacheEnvironment(cachePath) {
   process.env.PROMPTFOO_CACHE_ENABLED = "true";
   process.env.PROMPTFOO_CACHE_TYPE = "disk";
   if (cachePath) {
-    const absolutePath = path4.isAbsolute(cachePath) ? cachePath : path4.join(process.cwd(), cachePath);
+    const absolutePath = path5.isAbsolute(cachePath) ? cachePath : path5.join(process.cwd(), cachePath);
     process.env.PROMPTFOO_CACHE_PATH = absolutePath;
     if (!fs4.existsSync(absolutePath)) {
       fs4.mkdirSync(absolutePath, { recursive: true });
@@ -34165,7 +35971,7 @@ async function getCacheStats(cachePath) {
   function walkDir(dir) {
     const files = fs4.readdirSync(dir);
     for (const file of files) {
-      const filePath = path4.join(dir, file);
+      const filePath = path5.join(dir, file);
       const stat2 = fs4.statSync(filePath);
       if (stat2.isDirectory()) {
         walkDir(filePath);
@@ -34219,7 +36025,7 @@ async function cleanupOldCache(cachePath, maxAgeSeconds = 604800) {
   function cleanDir(dir) {
     const files = fs4.readdirSync(dir);
     for (const file of files) {
-      const filePath = path4.join(dir, file);
+      const filePath = path5.join(dir, file);
       const stat2 = fs4.statSync(filePath);
       if (stat2.isDirectory()) {
         cleanDir(filePath);
@@ -34248,7 +36054,7 @@ async function cleanupOldCache(cachePath, maxAgeSeconds = 604800) {
   return deletedCount;
 }
 async function createCacheManifest(cachePath, outputPath) {
-  const manifestPath = outputPath || path4.join(cachePath, ".cache-manifest.json");
+  const manifestPath = outputPath || path5.join(cachePath, ".cache-manifest.json");
   const stats = await getCacheStats(cachePath);
   const manifest = {
     version: "1.0.0",
@@ -34699,35 +36505,35 @@ var binaryTag = defineScalarTag("tag:yaml.org,2002:binary", {
 var YAML_DATE_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9])-([0-9][0-9])$");
 var YAML_TIMESTAMP_REGEXP = /* @__PURE__ */ new RegExp("^([0-9][0-9][0-9][0-9])-([0-9][0-9]?)-([0-9][0-9]?)(?:[Tt]|[ \\t]+)([0-9][0-9]?):([0-9][0-9]):([0-9][0-9])(?:\\.([0-9]*))?(?:[ \\t]*(Z|([-+])([0-9][0-9]?)(?::([0-9][0-9]))?))?$");
 function resolveYamlTimestamp(source) {
-  let match = YAML_DATE_REGEXP.exec(source);
-  if (match === null) match = YAML_TIMESTAMP_REGEXP.exec(source);
-  if (match === null) return NOT_RESOLVED;
-  const year = +match[1];
-  const month = +match[2] - 1;
-  const day = +match[3];
-  if (!match[4]) {
+  let match2 = YAML_DATE_REGEXP.exec(source);
+  if (match2 === null) match2 = YAML_TIMESTAMP_REGEXP.exec(source);
+  if (match2 === null) return NOT_RESOLVED;
+  const year = +match2[1];
+  const month = +match2[2] - 1;
+  const day = +match2[3];
+  if (!match2[4]) {
     const date2 = new Date(Date.UTC(year, month, day));
     if (date2.getUTCFullYear() !== year || date2.getUTCMonth() !== month || date2.getUTCDate() !== day) return NOT_RESOLVED;
     return date2;
   }
-  const hour = +match[4];
-  const minute = +match[5];
-  const second = +match[6];
+  const hour = +match2[4];
+  const minute = +match2[5];
+  const second = +match2[6];
   let fraction = 0;
   if (hour > 23 || minute > 59 || second > 59) return NOT_RESOLVED;
-  if (match[7]) {
-    let value = match[7].slice(0, 3);
+  if (match2[7]) {
+    let value = match2[7].slice(0, 3);
     while (value.length < 3) value += "0";
     fraction = +value;
   }
   const date = new Date(Date.UTC(year, month, day, hour, minute, second, fraction));
   if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month || date.getUTCDate() !== day) return NOT_RESOLVED;
-  if (match[9]) {
-    const offsetHour = +match[10];
-    const offsetMinute = +(match[11] || 0);
+  if (match2[9]) {
+    const offsetHour = +match2[10];
+    const offsetMinute = +(match2[11] || 0);
     if (offsetHour > 23 || offsetMinute > 59) return NOT_RESOLVED;
     const offset = (offsetHour * 60 + offsetMinute) * 6e4;
-    date.setTime(date.getTime() - (match[9] === "-" ? -offset : offset));
+    date.setTime(date.getTime() - (match2[9] === "-" ? -offset : offset));
   }
   return date;
 }
@@ -35048,12 +36854,12 @@ function makeSnippet(mark, options) {
   const re2 = /\r?\n|\r|\0/g;
   const lineStarts = [0];
   const lineEnds = [];
-  let match;
+  let match2;
   let foundLineNo = -1;
-  while (match = re2.exec(mark.buffer)) {
-    lineEnds.push(match.index);
-    lineStarts.push(match.index + match[0].length);
-    if (mark.position <= match.index && foundLineNo < 0) foundLineNo = lineStarts.length - 2;
+  while (match2 = re2.exec(mark.buffer)) {
+    lineEnds.push(match2.index);
+    lineStarts.push(match2.index + match2[0].length);
+    if (mark.position <= match2.index && foundLineNo < 0) foundLineNo = lineStarts.length - 2;
   }
   if (foundLineNo < 0) foundLineNo = lineStarts.length - 1;
   let result = "";
@@ -36328,9 +38134,9 @@ function readDirective(state) {
   if (name === "YAML") {
     if (state.directives.some((directive) => directive.kind === "yaml")) throwError(state, "duplication of %YAML directive");
     if (args.length !== 1) throwError(state, "YAML directive accepts exactly one argument");
-    const match = /^([0-9]+)\.([0-9]+)$/.exec(args[0]);
-    if (match === null) throwError(state, "ill-formed argument of the YAML directive");
-    if (parseInt(match[1], 10) !== 1) throwError(state, "unacceptable YAML version of the document");
+    const match2 = /^([0-9]+)\.([0-9]+)$/.exec(args[0]);
+    if (match2 === null) throwError(state, "ill-formed argument of the YAML directive");
+    if (parseInt(match2[1], 10) !== 1) throwError(state, "unacceptable YAML version of the document");
     state.directives.push({
       kind: "yaml",
       version: args[0]
@@ -36499,11 +38305,12 @@ var DEFAULT_DUMP_OPTIONS = {
 };
 
 // src/utils/config.ts
-var path5 = __toESM(require("path"));
+var path6 = __toESM(require("path"));
 var MAX_DEPENDENCY_PATH_LENGTH = 65536;
 var MAX_ASSERTION_DEPTH = 128;
 var MAX_NESTED_CONFIG_VALUES = 1e5;
 var MAX_TRANSITIVE_CONFIG_BYTES = 1024 * 1024;
+var NONBLOCKING_READ_FLAGS = fs5.constants.O_RDONLY | fs5.constants.O_NONBLOCK;
 var TRANSITIVE_CONFIG_EXTENSION = /\.(?:yaml|yml|json|jsonl|csv|xlsx|xls)(?:#[^\r\n]*)?$/i;
 var BINARY_TRANSITIVE_CONFIG_EXTENSION = /\.(?:xlsx|xls)(?:#[^\r\n]*)?$/i;
 var TRANSITIVE_NESTED_EXTENSIONS = /* @__PURE__ */ new Set([
@@ -36528,8 +38335,10 @@ var UNSAFE_PATH_CHARACTERS = /[\0\r\n]/;
 var PROVIDER_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py|go|rb)$/;
 var ASSERT_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py|rb)$/;
 var AUTH_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py)$/;
-var HTTP_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts)$/;
+var HTTP_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
 var JS_EXTENSION_CASE_INSENSITIVE = /\.(?:js|cjs|mjs|ts|cts|mts)$/i;
+var DYNAMIC_PROMPT_EXTENSION = /\.(?:js|cjs|mjs|ts|cts|mts|py|sh|bash|exe|bat|cmd|ps1|rb|pl)$/i;
+var TRANSITIVE_FILE_REFERENCE = /(?:^|[\n\r,:=[\]{}-][ \t]*["']?)file:(?:\/|\\\/|\\u002f){2}/i;
 function hasGlobMagic(value) {
   for (let index = 0; index < value.length; index++) {
     const character = value[index];
@@ -36541,6 +38350,14 @@ function hasGlobMagic(value) {
     }
   }
   return false;
+}
+function hasUnclosedCharacterClass(value) {
+  let inCharacterClass = false;
+  for (const character of value) {
+    if (character === "[") inCharacterClass = true;
+    if (character === "]") inCharacterClass = false;
+  }
+  return inCharacterClass;
 }
 function hasTransitiveNestedReference(contents) {
   for (const token of contents.split(/[\s,"'[\]{}()]+/)) {
@@ -36559,6 +38376,29 @@ function hasTransitiveNestedReference(contents) {
     )) {
       return true;
     }
+  }
+  return false;
+}
+function hasExternalConfigReference(value) {
+  const pending = [value];
+  const visited = /* @__PURE__ */ new WeakSet();
+  let processed = 0;
+  while (pending.length > 0) {
+    const current = pending.pop();
+    processed++;
+    if (typeof current !== "object" || current === null) continue;
+    if (ArrayBuffer.isView(current)) continue;
+    if (visited.has(current)) return true;
+    visited.add(current);
+    const reference = current.$ref;
+    if (typeof reference === "string" && !reference.startsWith("#")) {
+      return true;
+    }
+    const nestedValues = Object.values(current);
+    if (processed + pending.length + nestedValues.length > MAX_NESTED_CONFIG_VALUES) {
+      return true;
+    }
+    for (const nestedValue of nestedValues) pending.push(nestedValue);
   }
   return false;
 }
@@ -36586,8 +38426,8 @@ function hasUnsafeGroupedGlob(value) {
   return closingDelimiters.length > 0;
 }
 function isPathInside(baseDir, targetPath) {
-  const relativePath = path5.relative(baseDir, targetPath);
-  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
+  const relativePath = path6.relative(baseDir, targetPath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
 }
 function resolvePhysicalPath(targetPath) {
   let existingPath = targetPath;
@@ -36600,7 +38440,7 @@ function resolvePhysicalPath(targetPath) {
       if (code !== "ENOENT" && code !== "ENOTDIR") {
         throw error2;
       }
-      const parentPath = path5.dirname(existingPath);
+      const parentPath = path6.dirname(existingPath);
       if (parentPath === existingPath) {
         throw error2;
       }
@@ -36608,14 +38448,48 @@ function resolvePhysicalPath(targetPath) {
     }
   }
   const realExistingPath = fs5.realpathSync(existingPath).toString();
-  return path5.resolve(
+  return path6.resolve(
     realExistingPath,
-    path5.relative(existingPath, targetPath)
+    path6.relative(existingPath, targetPath)
   );
+}
+function readBoundedRegularFile(filePath, allowedRoots) {
+  const physicalPath = resolvePhysicalPath(filePath);
+  if (!allowedRoots.some((root) => isPathInside(root, physicalPath))) {
+    return void 0;
+  }
+  const fileDescriptor = fs5.openSync(physicalPath, NONBLOCKING_READ_FLAGS);
+  try {
+    const openedStat = fs5.fstatSync(fileDescriptor);
+    if (!openedStat.isFile() || openedStat.size > MAX_TRANSITIVE_CONFIG_BYTES) {
+      return void 0;
+    }
+    const currentPhysicalPath = resolvePhysicalPath(filePath);
+    if (!allowedRoots.some((root) => isPathInside(root, currentPhysicalPath))) {
+      return void 0;
+    }
+    const currentStat = fs5.statSync(currentPhysicalPath);
+    if (!currentStat.isFile() || currentStat.dev !== openedStat.dev || currentStat.ino !== openedStat.ino || currentStat.size !== openedStat.size || currentStat.mtimeMs !== openedStat.mtimeMs || currentStat.ctimeMs !== openedStat.ctimeMs) {
+      return void 0;
+    }
+    const contents = fs5.readFileSync(fileDescriptor, "utf8");
+    const finalPhysicalPath = resolvePhysicalPath(filePath);
+    if (!allowedRoots.some((root) => isPathInside(root, finalPhysicalPath))) {
+      return void 0;
+    }
+    const finalStat = fs5.statSync(finalPhysicalPath);
+    const finalOpenedStat = fs5.fstatSync(fileDescriptor);
+    if (!finalStat.isFile() || !finalOpenedStat.isFile() || finalStat.dev !== openedStat.dev || finalStat.ino !== openedStat.ino || finalStat.size !== openedStat.size || finalStat.mtimeMs !== openedStat.mtimeMs || finalStat.ctimeMs !== openedStat.ctimeMs || finalOpenedStat.dev !== openedStat.dev || finalOpenedStat.ino !== openedStat.ino || finalOpenedStat.size !== openedStat.size || finalOpenedStat.mtimeMs !== openedStat.mtimeMs || finalOpenedStat.ctimeMs !== openedStat.ctimeMs) {
+      return void 0;
+    }
+    return Buffer.byteLength(contents, "utf8") > MAX_TRANSITIVE_CONFIG_BYTES ? void 0 : contents;
+  } finally {
+    fs5.closeSync(fileDescriptor);
+  }
 }
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
-  const configDir = path5.dirname(configPath);
+  const configDir = path6.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
   let requiresFullEvaluation = false;
@@ -36648,8 +38522,19 @@ function extractFileDependencies(configPath) {
     }
     requiresFullEvaluation = true;
   };
+  if (JS_EXTENSION_CASE_INSENSITIVE.test(configPath)) {
+    markUnsafeDependency();
+    return ["./"];
+  }
   try {
-    const configContent = fs5.readFileSync(configPath, "utf8");
+    const configContent = readBoundedRegularFile(configPath, [
+      physicalConfigDir,
+      physicalCwd
+    ]);
+    if (configContent === void 0) {
+      markUnsafeDependency();
+      return ["./"];
+    }
     if (!configContent.trim()) {
       debug("Config file is empty or invalid");
       return [];
@@ -36661,12 +38546,15 @@ function extractFileDependencies(configPath) {
       debug("Config file is empty or invalid");
       return [];
     }
+    if (hasExternalConfigReference(config2)) {
+      markUnsafeDependency();
+    }
     const resolveConfigDependency = (filePath) => {
-      if (!filePath || filePath.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(filePath) || path5.isAbsolute(filePath) || path5.win32.isAbsolute(filePath)) {
+      if (!filePath || filePath.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(filePath) || path6.isAbsolute(filePath) || path6.win32.isAbsolute(filePath)) {
         markUnsafeDependency();
         return void 0;
       }
-      const absolutePath = path5.resolve(path5.join(configDir, filePath));
+      const absolutePath = path6.resolve(path6.join(configDir, filePath));
       if (!isPathInside(dependencyRoot, absolutePath)) {
         markUnsafeDependency();
         return void 0;
@@ -36685,7 +38573,7 @@ function extractFileDependencies(configPath) {
       return absolutePath;
     };
     const addDirectoryDependency = (directoryPath) => {
-      dependencies.add(`${directoryPath.replace(/[\\/]+$/, "")}${path5.sep}`);
+      dependencies.add(`${directoryPath.replace(/[\\/]+$/, "")}${path6.sep}`);
     };
     const processFilePath = (filePath, globBacked = true) => {
       if (!filePath || filePath.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(filePath) || filePath.includes("{{") || filePath.includes("{%")) {
@@ -36693,8 +38581,12 @@ function extractFileDependencies(configPath) {
         return;
       }
       const runtimeFilePath = globBacked ? filePath.replace(/\\/g, "/") : filePath;
+      if (globBacked && hasUnclosedCharacterClass(runtimeFilePath)) {
+        markUnsafeDependency();
+        return;
+      }
       if (globBacked && hasGlobMagic(runtimeFilePath)) {
-        const pathParts = path5.sep === "/" ? runtimeFilePath.split("/") : runtimeFilePath.split(/[\\/]/);
+        const pathParts = path6.sep === "/" ? runtimeFilePath.split("/") : runtimeFilePath.split(/[\\/]/);
         const firstMagicPart = pathParts.findIndex(hasGlobMagic);
         const hasCrossDirectoryAlternative = hasUnsafeGroupedGlob(runtimeFilePath);
         const hasParentAfterMagic = pathParts.slice(firstMagicPart).some((part) => part === "..");
@@ -36710,7 +38602,7 @@ function extractFileDependencies(configPath) {
           baseParts.push(part);
         }
         const basePath = resolveConfigDependency(
-          baseParts.length > 0 ? baseParts.join(path5.sep) : "."
+          baseParts.length > 0 ? baseParts.join(path6.sep) : "."
         );
         if (basePath) {
           addDirectoryDependency(basePath);
@@ -36735,7 +38627,7 @@ function extractFileDependencies(configPath) {
       }
       dependencies.add(absolutePath);
     };
-    const processFileUrl = (fileUrl, selector = "literal") => {
+    const processFileUrl = (fileUrl, selector = "literal", globBacked = true) => {
       const filePath = fileUrl.slice("file://".length);
       if (!filePath || filePath.length > MAX_DEPENDENCY_PATH_LENGTH || UNSAFE_PATH_CHARACTERS.test(filePath)) {
         markUnsafeDependency();
@@ -36745,15 +38637,18 @@ function extractFileDependencies(configPath) {
       const candidatePath = selectorIndex > -1 && (selector !== "http" || selectorIndex < filePath.length - 1) ? filePath.slice(0, selectorIndex) : void 0;
       const extensionPattern = selector === "provider" ? PROVIDER_EXTENSION : selector === "assert" ? ASSERT_EXTENSION : selector === "auth" ? AUTH_EXTENSION : selector === "http" ? HTTP_EXTENSION : void 0;
       if (candidatePath && extensionPattern?.test(candidatePath)) {
-        processFilePath(candidatePath);
+        if (selector === "http") {
+          processFilePath(filePath, globBacked);
+        }
+        processFilePath(candidatePath, globBacked);
         return;
       }
-      if (candidatePath && extensionPattern && JS_EXTENSION_CASE_INSENSITIVE.test(candidatePath) && !HTTP_EXTENSION.test(candidatePath)) {
-        processFilePath(filePath);
-        processFilePath(candidatePath);
+      if (candidatePath && extensionPattern && JS_EXTENSION_CASE_INSENSITIVE.test(candidatePath) && !extensionPattern.test(candidatePath)) {
+        processFilePath(filePath, globBacked);
+        processFilePath(candidatePath, globBacked);
         return;
       }
-      processFilePath(filePath);
+      processFilePath(filePath, globBacked);
     };
     const extractNestedFileReferences = (value) => {
       const pending = [value];
@@ -36762,15 +38657,50 @@ function extractFileDependencies(configPath) {
       while (pending.length > 0) {
         const current = pending.pop();
         processed++;
-        if (processed > MAX_NESTED_CONFIG_VALUES) return true;
         if (typeof current === "string" && current.startsWith("file://")) {
           processFileUrl(current, "auth");
           continue;
         }
+        if (typeof current === "string") {
+          for (const prefix of ["python:", "golang:", "ruby:"]) {
+            if (current.startsWith(prefix)) {
+              processFileUrl(
+                `file://${current.slice(prefix.length)}`,
+                "provider"
+              );
+              return true;
+            }
+          }
+        }
         if (typeof current !== "object" || current === null) continue;
+        if (ArrayBuffer.isView(current)) continue;
+        const providerId = current.id;
+        if (typeof providerId === "string") {
+          if (providerId.startsWith("exec:")) {
+            const executable = providerId.slice("exec:".length);
+            if (!/\s/.test(executable)) {
+              if (executable.startsWith("file://")) {
+                processFileUrl(executable, "provider");
+              } else {
+                processFilePath(executable);
+              }
+            }
+            return true;
+          } else if (providerId.startsWith("file://")) {
+            inspectTransitiveReference(providerId);
+            return true;
+          } else if (JS_EXTENSION_CASE_INSENSITIVE.test(providerId)) {
+            processFilePath(providerId);
+            return true;
+          }
+        }
         if (visited.has(current)) return true;
         visited.add(current);
-        pending.push(...Object.values(current));
+        const nestedValues = Object.values(current);
+        if (processed + pending.length + nestedValues.length > MAX_NESTED_CONFIG_VALUES) {
+          return true;
+        }
+        for (const nestedValue of nestedValues) pending.push(nestedValue);
       }
       return false;
     };
@@ -36796,13 +38726,19 @@ function extractFileDependencies(configPath) {
       const absolutePath = resolveConfigDependency(filePath);
       if (!absolutePath) return;
       try {
-        const stat2 = fs5.statSync(absolutePath);
-        if (stat2.size > MAX_TRANSITIVE_CONFIG_BYTES) {
+        const contents = readBoundedRegularFile(absolutePath, [
+          physicalConfigDir,
+          physicalCwd
+        ]);
+        if (contents === void 0) {
           markUnsafeDependency();
           return;
         }
-        const contents = fs5.readFileSync(absolutePath, "utf8").toString();
-        if (Buffer.byteLength(contents, "utf8") > MAX_TRANSITIVE_CONFIG_BYTES || contents.includes("file://") || hasTransitiveNestedReference(contents)) {
+        const canonicalContents = contents.replace(
+          /\\u([0-9a-f]{4})|\\\//gi,
+          (_match, code) => code ? String.fromCharCode(Number.parseInt(code, 16)) : "/"
+        );
+        if (TRANSITIVE_FILE_REFERENCE.test(canonicalContents) || hasTransitiveNestedReference(canonicalContents)) {
           markUnsafeDependency();
         }
       } catch {
@@ -36823,7 +38759,8 @@ function extractFileDependencies(configPath) {
         processFilePath(reference, false);
       };
       if (typeof httpConfig.validateStatus === "string" && httpConfig.validateStatus.startsWith("file://")) {
-        processFileUrl(httpConfig.validateStatus, "http");
+        processFileUrl(httpConfig.validateStatus, "http", false);
+        markUnsafeDependency();
       }
       for (const field of [
         "transformRequest",
@@ -36833,22 +38770,31 @@ function extractFileDependencies(configPath) {
       ]) {
         const reference = httpConfig[field];
         if (typeof reference === "string" && reference.startsWith("file://")) {
-          processFileUrl(reference, "http");
+          processFileUrl(reference, "http", false);
+          markUnsafeDependency();
         }
       }
       const session = httpConfig.session;
       if (typeof session === "object" && session !== null && typeof session.responseParser === "string" && session.responseParser.startsWith("file://")) {
         processFileUrl(
           session.responseParser,
-          "http"
+          "http",
+          false
         );
+        markUnsafeDependency();
       }
       const auth2 = httpConfig.auth;
       const authType = typeof auth2 === "object" && auth2 !== null ? auth2.type : void 0;
       if (typeof auth2 === "object" && auth2 !== null && (authType === "file" || typeof authType === "string" && (authType.includes("{{") || authType.includes("{%")))) {
         const authPath = auth2.path;
         if (typeof authPath === "string" && authPath.startsWith("file://")) {
-          processFileUrl(authPath, "auth");
+          processFileUrl(authPath, "auth", false);
+          const rawPath = authPath.slice("file://".length);
+          const selectorIndex = rawPath.lastIndexOf(":");
+          const candidatePath = selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
+          if (AUTH_EXTENSION.test(rawPath) || AUTH_EXTENSION.test(candidatePath)) {
+            markUnsafeDependency();
+          }
         } else {
           processRawReference(authPath);
         }
@@ -36902,20 +38848,17 @@ function extractFileDependencies(configPath) {
       if (providerId.startsWith("file://")) {
         processFileUrl(providerId, "provider");
         inspectTransitiveReference(providerId);
-        if (TRANSITIVE_CONFIG_EXTENSION.test(providerId.slice("file://".length))) {
-          markUnsafeDependency();
-        }
+        markUnsafeDependency();
         return;
       }
       if (providerId.startsWith("exec:")) {
         const executable = providerId.slice("exec:".length);
         if (executable.startsWith("file://")) {
           processFileUrl(executable, "provider");
-        } else if (/\s/.test(executable)) {
-          markUnsafeDependency();
-        } else {
+        } else if (!/\s/.test(executable)) {
           processFilePath(executable);
         }
+        markUnsafeDependency();
         return;
       }
       for (const prefix of ["python:", "golang:", "ruby:"]) {
@@ -36924,11 +38867,13 @@ function extractFileDependencies(configPath) {
             `file://${providerId.slice(prefix.length)}`,
             "provider"
           );
+          markUnsafeDependency();
           return;
         }
       }
       if (JS_EXTENSION_CASE_INSENSITIVE.test(providerId)) {
         processFilePath(providerId);
+        markUnsafeDependency();
       }
     };
     const processProvider = (provider) => {
@@ -36965,6 +38910,7 @@ function extractFileDependencies(configPath) {
       const processTransform = (value) => {
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value, "auth");
+          markUnsafeDependency();
         }
       };
       if (typeof record.id === "string") {
@@ -36993,7 +38939,22 @@ function extractFileDependencies(configPath) {
       const providers = Array.isArray(configuredProviders) ? configuredProviders : [configuredProviders];
       for (const provider of providers) processProvider(provider);
     }
+    if (config2.commandLineOptions) {
+      const envPaths = Array.isArray(config2.commandLineOptions.envPath) ? config2.commandLineOptions.envPath : [config2.commandLineOptions.envPath];
+      for (const envPath of envPaths) {
+        if (envPath === void 0) continue;
+        if (typeof envPath === "string") {
+          processFilePath(envPath);
+        } else {
+          markUnsafeDependency();
+        }
+      }
+      if ("grader" in config2.commandLineOptions) {
+        processProvider(config2.commandLineOptions.grader);
+      }
+    }
     const processConfigReference = (reference, selector = "literal") => {
+      if (/^https?:\/\//i.test(reference)) return;
       inspectTransitiveReference(reference);
       if (reference.startsWith("file://")) {
         processFileUrl(reference, selector);
@@ -37005,14 +38966,14 @@ function extractFileDependencies(configPath) {
     };
     const processPromptReference = (reference) => {
       if (reference.startsWith("exec:")) {
-        const executable = reference.slice("exec:".length);
-        if (executable.startsWith("file://")) {
-          processFileUrl(executable, "provider");
-        } else if (/\s/.test(executable)) {
-          markUnsafeDependency();
-        } else {
-          processFilePath(executable);
-        }
+        markUnsafeDependency();
+        return;
+      }
+      const rawPath = reference.startsWith("file://") ? reference.slice("file://".length) : reference;
+      const selectorIndex = rawPath.lastIndexOf(":");
+      const candidatePath = selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
+      if (DYNAMIC_PROMPT_EXTENSION.test(rawPath) || DYNAMIC_PROMPT_EXTENSION.test(candidatePath) || /[\\/]/.test(rawPath) && !path6.extname(rawPath) && !path6.extname(candidatePath)) {
+        markUnsafeDependency();
         return;
       }
       inspectTransitiveReference(reference);
@@ -37086,12 +39047,17 @@ function extractFileDependencies(configPath) {
       }
       for (const value of Object.values(vars)) {
         if (typeof value === "string" && value.startsWith("file://")) {
+          if (/\.ya?ml(?:#[^\r\n]*)?$/i.test(value)) {
+            inspectTransitiveReference(value);
+          }
           processFileUrl(value);
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
           const absolutePath = resolveConfigDependency(value.file);
           if (absolutePath) {
             dependencies.add(absolutePath);
           }
+        } else if (typeof value === "object" && value !== null && extractNestedFileReferences(value)) {
+          markUnsafeDependency();
         }
       }
     };
@@ -37112,12 +39078,21 @@ function extractFileDependencies(configPath) {
           markUnsafeDependency();
           continue;
         }
-        if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
-          processFileUrl(assert.value, "assert");
-        } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
-          const absolutePath = resolveConfigDependency(assert.value.file);
-          if (absolutePath) {
-            dependencies.add(absolutePath);
+        const values = Array.isArray(assert.value) ? assert.value : [assert.value];
+        for (const value of values) {
+          if (typeof value === "string" && value.startsWith("file://")) {
+            processFileUrl(value, "assert");
+            const rawPath = value.slice("file://".length);
+            const selectorIndex = rawPath.indexOf(":");
+            const candidatePath = selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
+            if (ASSERT_EXTENSION.test(rawPath) || ASSERT_EXTENSION.test(candidatePath)) {
+              markUnsafeDependency();
+            }
+          } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
+            const absolutePath = resolveConfigDependency(value.file);
+            if (absolutePath) {
+              dependencies.add(absolutePath);
+            }
           }
         }
         if ("assert" in assert && assert.assert !== void 0) {
@@ -37127,6 +39102,7 @@ function extractFileDependencies(configPath) {
           const reference = assert[field];
           if (typeof reference === "string" && reference.startsWith("file://")) {
             processFileUrl(reference, "auth");
+            markUnsafeDependency();
           }
         }
         if ("provider" in assert) processProvider(assert.provider);
@@ -37139,6 +39115,7 @@ function extractFileDependencies(configPath) {
       if ("provider" in test) processProvider(test.provider);
       if (typeof test.assertScoringFunction === "string" && test.assertScoringFunction.startsWith("file://")) {
         processFileUrl(test.assertScoringFunction, "auth");
+        markUnsafeDependency();
       }
       const options = test.options;
       if (typeof options !== "object" || options === null) return;
@@ -37147,12 +39124,18 @@ function extractFileDependencies(configPath) {
         const reference = optionRecord[field];
         if (typeof reference === "string" && reference.startsWith("file://")) {
           processFileUrl(reference, "auth");
+          markUnsafeDependency();
         }
       }
       if ("rubricPrompt" in optionRecord && extractNestedFileReferences(optionRecord.rubricPrompt)) {
         markUnsafeDependency();
       }
       if ("provider" in optionRecord) processProvider(optionRecord.provider);
+      const providerSpecificOptions = { ...optionRecord };
+      delete providerSpecificOptions.provider;
+      if (extractNestedFileReferences(providerSpecificOptions)) {
+        markUnsafeDependency();
+      }
     };
     if (typeof config2.defaultTest === "string") {
       processConfigReference(config2.defaultTest);
@@ -37161,9 +39144,18 @@ function extractFileDependencies(configPath) {
       extractAssertFiles(config2.defaultTest.assert);
       processTestHooks(config2.defaultTest);
     }
+    const processTestReference = (reference) => {
+      processConfigReference(reference, "auth");
+      const rawPath = reference.startsWith("file://") ? reference.slice("file://".length) : reference;
+      const selectorIndex = rawPath.lastIndexOf(":");
+      const candidatePath = selectorIndex > -1 ? rawPath.slice(0, selectorIndex) : rawPath;
+      if (JS_EXTENSION_CASE_INSENSITIVE.test(rawPath) || JS_EXTENSION_CASE_INSENSITIVE.test(candidatePath) || /\.py$/i.test(rawPath) || /\.py$/i.test(candidatePath)) {
+        markUnsafeDependency();
+      }
+    };
     const processTestInputs = (tests) => {
       if (typeof tests === "string") {
-        processConfigReference(tests, "auth");
+        processTestReference(tests);
         return;
       }
       if (!Array.isArray(tests)) {
@@ -37172,7 +39164,7 @@ function extractFileDependencies(configPath) {
       }
       for (const test of tests) {
         if (typeof test === "string") {
-          processConfigReference(test, "auth");
+          processTestReference(test);
           continue;
         }
         if (typeof test !== "object" || test === null) {
@@ -37180,7 +39172,7 @@ function extractFileDependencies(configPath) {
           continue;
         }
         if ("path" in test && typeof test.path === "string") {
-          processConfigReference(test.path, "auth");
+          processTestReference(test.path);
           if ("config" in test && test.config !== void 0) {
             markUnsafeDependency();
           }
@@ -37213,9 +39205,10 @@ function extractFileDependencies(configPath) {
       }
     }
     if (config2.nunjucksFilters) {
-      for (const filter of Object.values(config2.nunjucksFilters)) {
-        if (typeof filter === "string") {
-          processFilePath(filter);
+      for (const filter2 of Object.values(config2.nunjucksFilters)) {
+        if (typeof filter2 === "string") {
+          processFilePath(filter2);
+          markUnsafeDependency();
         } else {
           markUnsafeDependency();
         }
@@ -37227,7 +39220,8 @@ function extractFileDependencies(configPath) {
       } else {
         for (const extension of config2.extensions) {
           if (typeof extension === "string" && extension.startsWith("file://")) {
-            processFileUrl(extension, "auth");
+            processFileUrl(extension, "auth", false);
+            markUnsafeDependency();
           } else {
             markUnsafeDependency();
           }
@@ -37238,8 +39232,8 @@ function extractFileDependencies(configPath) {
       return ["./"];
     }
     return Array.from(dependencies).map((dependency) => {
-      const relativePath = path5.relative(cwd, dependency);
-      const repositoryPath = relativePath.split(path5.sep).join("/");
+      const relativePath = path6.relative(cwd, dependency);
+      const repositoryPath = relativePath.split(path6.sep).join("/");
       if (/[\\/]$/.test(dependency)) {
         return repositoryPath ? `${repositoryPath}/` : "./";
       }
@@ -37967,24 +39961,28 @@ function validatePromptGlob(pattern) {
       continue;
     }
     if (character === "]") {
+      while (braces[braces.length - 1]?.inCharacterClass) braces.pop();
       inCharacterClass = false;
       continue;
     }
     if (character === "{") {
       if (braces.length > 0) braces[braces.length - 1].nested = true;
-      braces.push({ start: index + 1, nested: false });
+      braces.push({ start: index + 1, nested: false, inCharacterClass });
       continue;
     }
     if (character !== "}") continue;
     const brace = braces.pop();
-    if (!brace) throw invalidPromptGlobError();
+    if (!brace) {
+      if (inCharacterClass) continue;
+      throw invalidPromptGlobError();
+    }
     if (brace.nested) continue;
     const body = pattern.slice(brace.start, index);
     if (!body.includes("..")) continue;
     const parts = body.split("..");
-    const numeric = parts.every((part) => /^-?\d+$/.test(part));
+    const numeric2 = parts.every((part) => /^-?\d+$/.test(part));
     const numericLike = parts.some((part) => /^-?\d/.test(part));
-    if (!numeric) {
+    if (!numeric2) {
       if (numericLike) throw invalidPromptGlobError();
       continue;
     }
@@ -38010,27 +40008,102 @@ function validatePromptGlob(pattern) {
   if (escaped || inCharacterClass || braces.length > 0) {
     throw invalidPromptGlobError();
   }
+  try {
+    const expandedPatterns = braceExpand(pattern, {
+      braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT + 1
+    });
+    if (expandedPatterns.length > PROMPT_GLOB_BRACE_EXPANSION_LIMIT) {
+      throw invalidPromptGlobError();
+    }
+    for (const expandedPattern of expandedPatterns) {
+      const normalizedDots = expandedPattern.replace(/\[\.\]/g, ".");
+      if (/(?:^|[/{,(|])\.\.(?:$|[/},)|])/.test(normalizedDots)) {
+        throw invalidPromptGlobError();
+      }
+      for (const segment of expandedPattern.split("/")) {
+        if (new Minimatch(segment, {
+          braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT,
+          dot: true,
+          nonegate: true
+        }).match("..")) {
+          throw invalidPromptGlobError();
+        }
+      }
+    }
+  } catch {
+    throw invalidPromptGlobError();
+  }
 }
 function toRepositoryPath(filePath) {
-  return filePath.split(path6.sep).join("/");
+  return filePath.split(path7.sep).join("/");
 }
 function isPathInside2(baseDir, targetPath) {
-  const relativePath = path6.relative(baseDir, targetPath);
-  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
+  const relativePath = path7.relative(baseDir, targetPath);
+  return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relativePath);
+}
+function validateGlobPrefix(workspaceRoot, workingDirectory, pattern, realRoots) {
+  const firstMagicIndex = pattern.search(/[*?{}[\]]|[@+!]\(/);
+  const staticPrefix = firstMagicIndex > -1 ? pattern.slice(0, firstMagicIndex) : pattern;
+  const resolvedPrefix = path7.resolve(workingDirectory, staticPrefix);
+  if (!isPathInside2(workspaceRoot, resolvedPrefix) || !isPathInside2(workingDirectory, resolvedPrefix)) {
+    throw invalidPromptGlobError();
+  }
+  let existingPrefix = resolvedPrefix;
+  while (true) {
+    try {
+      const physicalPrefix = path7.resolve(
+        fs7.realpathSync(existingPrefix).toString()
+      );
+      if (!isPathInside2(realRoots.workspaceRoot, physicalPrefix) || !isPathInside2(realRoots.workingDirectory, physicalPrefix)) {
+        throw invalidPromptGlobError();
+      }
+      return;
+    } catch (error2) {
+      if (error2 instanceof PromptfooActionError) throw error2;
+      const code = error2.code;
+      const parent = path7.dirname(existingPrefix);
+      if (code !== "ENOENT" && code !== "ENOTDIR" || parent === existingPrefix) {
+        throw invalidPromptGlobError();
+      }
+      existingPrefix = parent;
+    }
+  }
+}
+function validateWorkingDirectory(workspaceRoot, workingDirectory, realRoots) {
+  try {
+    if (!isPathInside2(workspaceRoot, workingDirectory)) {
+      throw new Error("Working directory escapes the workspace");
+    }
+    realRoots.workspaceRoot ??= path7.resolve(
+      fs7.realpathSync(workspaceRoot).toString()
+    );
+    realRoots.workingDirectory ??= path7.resolve(
+      fs7.realpathSync(workingDirectory).toString()
+    );
+    if (!isPathInside2(realRoots.workspaceRoot, realRoots.workingDirectory)) {
+      throw new Error("Working directory escapes the workspace");
+    }
+  } catch {
+    throw new PromptfooActionError(
+      "Invalid working directory: the working directory must stay within the workspace.",
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Use a readable working directory contained within the workspace."
+    );
+  }
 }
 function validatePromptPath(workspaceRoot, workingDirectory, filePath, realRoots) {
-  const resolvedPath = path6.resolve(workingDirectory, filePath);
+  const resolvedPath = path7.resolve(workingDirectory, filePath);
   try {
     if (!isPathInside2(workspaceRoot, resolvedPath) || !isPathInside2(workingDirectory, resolvedPath)) {
       throw new Error("Prompt path escapes the workspace");
     }
-    realRoots.workspaceRoot ??= path6.resolve(
+    realRoots.workspaceRoot ??= path7.resolve(
       fs7.realpathSync(workspaceRoot).toString()
     );
-    realRoots.workingDirectory ??= path6.resolve(
+    realRoots.workingDirectory ??= path7.resolve(
       fs7.realpathSync(workingDirectory).toString()
     );
-    const realPath = path6.resolve(fs7.realpathSync(resolvedPath).toString());
+    const realPath = path7.resolve(fs7.realpathSync(resolvedPath).toString());
     if (!isPathInside2(realRoots.workspaceRoot, realPath) || !isPathInside2(realRoots.workingDirectory, realPath)) {
       throw new Error("Prompt path escapes the workspace");
     }
@@ -38040,6 +40113,31 @@ function validatePromptPath(workspaceRoot, workingDirectory, filePath, realRoots
       "Invalid prompt file path: prompt files must stay within the working directory.",
       ErrorCodes.INVALID_CONFIGURATION,
       "Use readable prompt files and glob patterns contained within the working directory."
+    );
+  }
+}
+function validateConfigPath(workspaceRoot, workingDirectory, filePath, realRoots) {
+  const resolvedPath = path7.resolve(workingDirectory, filePath);
+  try {
+    if (!isPathInside2(workspaceRoot, resolvedPath) || !isPathInside2(workingDirectory, resolvedPath)) {
+      throw new Error("Config path escapes the workspace");
+    }
+    realRoots.workspaceRoot ??= path7.resolve(
+      fs7.realpathSync(workspaceRoot).toString()
+    );
+    realRoots.workingDirectory ??= path7.resolve(
+      fs7.realpathSync(workingDirectory).toString()
+    );
+    const realPath = path7.resolve(fs7.realpathSync(resolvedPath).toString());
+    if (!isPathInside2(realRoots.workspaceRoot, realPath) || !isPathInside2(realRoots.workingDirectory, realPath)) {
+      throw new Error("Config path escapes the workspace");
+    }
+    return resolvedPath;
+  } catch {
+    throw new PromptfooActionError(
+      "Invalid config file path: config files must stay within the working directory.",
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Use readable config files contained within the working directory."
     );
   }
 }
@@ -38187,15 +40285,48 @@ async function run() {
     const version = getInput("promptfoo-version", { required: false }) || "latest";
     validatePromptfooVersion(version);
     const workspaceRoot = process.cwd();
-    const workingDirectory = path6.resolve(
-      path6.join(
+    const workingDirectory = path7.resolve(
+      path7.join(
         workspaceRoot,
         getInput("working-directory", { required: false }) || "."
       )
     );
-    const configAbsolutePath = path6.resolve(workingDirectory, configPath);
-    const configRepositoryPath = toRepositoryPath(
-      path6.relative(workspaceRoot, configAbsolutePath)
+    const realPromptRoots = {};
+    validateWorkingDirectory(workspaceRoot, workingDirectory, realPromptRoots);
+    let configPaths = [configPath];
+    if (/[*?{}[\]]|[@+!]\(/.test(configPath)) {
+      validatePromptGlob(configPath);
+      validateGlobPrefix(
+        workspaceRoot,
+        workingDirectory,
+        configPath,
+        realPromptRoots
+      );
+      try {
+        const expandedConfigPaths = Ui(configPath, {
+          cwd: workingDirectory,
+          nodir: true,
+          braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT
+        });
+        if (expandedConfigPaths.length > 0) {
+          configPaths = expandedConfigPaths;
+        }
+      } catch {
+        throw invalidPromptGlobError();
+      }
+    }
+    const configAbsolutePaths = configPaths.map(
+      (configuredPath) => validateConfigPath(
+        workspaceRoot,
+        workingDirectory,
+        configuredPath,
+        realPromptRoots
+      )
+    );
+    const configRepositoryPaths = new Set(
+      configAbsolutePaths.map(
+        (configuredPath) => toRepositoryPath(path7.relative(workspaceRoot, configuredPath))
+      )
     );
     const noShare = getBooleanInput("no-share", {
       required: false
@@ -38281,9 +40412,9 @@ async function run() {
       };
       const resolveContainedEnvFile = (envFilePath) => {
         validateEnvFilePath(envFilePath);
-        const resolvedPath = path6.resolve(envFilePath);
-        const relativePath = path6.relative(workingDirectory, resolvedPath);
-        if (relativePath === ".." || relativePath.startsWith(`..${path6.sep}`) || path6.isAbsolute(relativePath)) {
+        const resolvedPath = path7.resolve(envFilePath);
+        const relativePath = path7.relative(workingDirectory, resolvedPath);
+        if (relativePath === ".." || relativePath.startsWith(`..${path7.sep}`) || path7.isAbsolute(relativePath)) {
           throw new PromptfooActionError(
             `Environment file ${envFilePath} must stay within the working directory`,
             ErrorCodes.INVALID_CONFIGURATION,
@@ -38293,12 +40424,12 @@ async function run() {
         if (!fs7.existsSync(resolvedPath)) {
           return resolvedPath;
         }
-        const realWorkingDirectory = path6.resolve(
+        const realWorkingDirectory = path7.resolve(
           fs7.realpathSync(workingDirectory).toString()
         );
-        const realPath = path6.resolve(fs7.realpathSync(resolvedPath).toString());
-        const realRelativePath = path6.relative(realWorkingDirectory, realPath);
-        if (realRelativePath === ".." || realRelativePath.startsWith(`..${path6.sep}`) || path6.isAbsolute(realRelativePath)) {
+        const realPath = path7.resolve(fs7.realpathSync(resolvedPath).toString());
+        const realRelativePath = path7.relative(realWorkingDirectory, realPath);
+        if (realRelativePath === ".." || realRelativePath.startsWith(`..${path7.sep}`) || path7.isAbsolute(realRelativePath)) {
           throw new PromptfooActionError(
             `Environment file ${envFilePath} must stay within the working directory`,
             ErrorCodes.INVALID_CONFIGURATION,
@@ -38307,7 +40438,7 @@ async function run() {
         }
         return resolvedPath;
       };
-      const implicitEnvFilePath = path6.join(workingDirectory, ".env");
+      const implicitEnvFilePath = path7.join(workingDirectory, ".env");
       const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
       const implicitEnvExists = fs7.existsSync(implicitEnvFilePath);
       const implicitVaultExists = process.env.DOTENV_KEY && fs7.existsSync(implicitVaultFilePath);
@@ -38317,7 +40448,7 @@ async function run() {
       const explicitEnvFiles = envFiles.split(",").map((envFile) => {
         validateEnvFilePath(envFile);
         return envFile.trim();
-      }).filter(Boolean).map((envFile) => path6.resolve(path6.join(workingDirectory, envFile))).map((envFilePath) => {
+      }).filter(Boolean).map((envFile) => path7.resolve(path7.join(workingDirectory, envFile))).map((envFilePath) => {
         resolveContainedEnvFile(envFilePath);
         const vaultPath = envFilePath.endsWith(".vault") ? envFilePath : `${envFilePath}.vault`;
         const effectivePath = process.env.DOTENV_KEY && fs7.existsSync(vaultPath) ? vaultPath : envFilePath;
@@ -38444,9 +40575,9 @@ async function run() {
           info(
             `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`
           );
-        } catch (error2) {
+        } catch {
           warning(
-            `Could not compare commits: ${error2}. Will process all matching prompt files.`
+            "Could not compare commits. Will process all matching prompt files."
           );
           changedFiles = "";
         }
@@ -38468,8 +40599,17 @@ async function run() {
       changedFiles
     );
     const changedFilesList = changedFileNames || (containsQuotedControlPath ? [] : changedFiles.split("\n").filter((f) => f));
-    for (const globPattern of promptFilesGlobs) {
+    for (const configuredGlobPattern of promptFilesGlobs) {
+      const isWindows = process.platform === "win32";
+      const normalizedPattern = configuredGlobPattern.replace(/\\/g, "/");
+      const globPattern = isWindows ? normalizedPattern : configuredGlobPattern;
       validatePromptGlob(globPattern);
+      validateGlobPrefix(
+        workspaceRoot,
+        workingDirectory,
+        globPattern,
+        realPromptRoots
+      );
       let matches;
       try {
         matches = Ui(globPattern, {
@@ -38477,15 +40617,29 @@ async function run() {
           nodir: true,
           braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT
         });
+        if (matches.length === 0 && !isWindows && configuredGlobPattern.startsWith("./") && normalizedPattern !== globPattern) {
+          validatePromptGlob(normalizedPattern);
+          validateGlobPrefix(
+            workspaceRoot,
+            workingDirectory,
+            normalizedPattern,
+            realPromptRoots
+          );
+          matches = Ui(normalizedPattern, {
+            cwd: workingDirectory,
+            nodir: true,
+            braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT
+          });
+        }
       } catch {
         throw invalidPromptGlobError();
       }
       for (const file of matches) {
-        const resolvedPromptPath = path6.resolve(workingDirectory, file);
+        const resolvedPromptPath = path7.resolve(workingDirectory, file);
         const repositoryFile = toRepositoryPath(
-          path6.relative(workspaceRoot, resolvedPromptPath)
+          path7.relative(workspaceRoot, resolvedPromptPath)
         );
-        if (repositoryFile === configRepositoryPath) {
+        if (configRepositoryPaths.has(repositoryFile)) {
           continue;
         }
         if (seenPromptFiles.has(repositoryFile)) {
@@ -38493,7 +40647,7 @@ async function run() {
         }
         seenPromptFiles.add(repositoryFile);
         const promptFile = toRepositoryPath(
-          path6.relative(workingDirectory, resolvedPromptPath)
+          path7.relative(workingDirectory, resolvedPromptPath)
         );
         allPromptFiles.push(promptFile);
         if (changedFilesList.includes(repositoryFile)) {
@@ -38501,9 +40655,11 @@ async function run() {
         }
       }
     }
-    const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
+    const configChanged = changedFilesList.length > 0 && changedFilesList.some((file) => configRepositoryPaths.has(file));
     let dependencyChanged = false;
-    const dependencies = extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+    const dependencies = configAbsolutePaths.flatMap(
+      (configuredPath) => extractFileDependencies(configuredPath).map(toRepositoryPath)
+    );
     if (changedFilesList.length > 0) {
       if (dependencies.length > 0) {
         debug(`Found ${dependencies.length} file dependencies in config`);
@@ -38531,7 +40687,7 @@ async function run() {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
-    const evaluatedPromptFiles = forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? allPromptFiles : changedPromptFiles;
+    const evaluatedPromptFiles = useConfigPrompts ? [] : forceRun || configChanged || dependencyChanged || changedFilesList.length === 0 ? allPromptFiles : changedPromptFiles;
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
         "Invalid prompt file path: line breaks are not allowed.",
@@ -38539,7 +40695,6 @@ async function run() {
         "Rename the prompt file so its path does not contain CR or LF characters."
       );
     }
-    const realPromptRoots = {};
     for (const file of evaluatedPromptFiles) {
       validatePromptPath(
         workspaceRoot,
@@ -38554,15 +40709,15 @@ async function run() {
     }
     if (changedFilesList.length === 0) {
       info(
-        `Processing all matching prompt files: ${evaluatedPromptFiles.join(", ")}`
+        useConfigPrompts ? "Processing config-defined prompts." : `Processing all matching prompt files: ${evaluatedPromptFiles.join(", ")}`
       );
     }
     startGroup("Setting up cache");
-    const resolvedCachePath = cachePath ? path6.resolve(workingDirectory, cachePath) : void 0;
+    const resolvedCachePath = cachePath ? path7.resolve(workingDirectory, cachePath) : void 0;
     setupCacheEnvironment(resolvedCachePath);
     if (process.env.CI === "true") {
       const cleanedCount = await cleanupOldCache(
-        process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
+        process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path7.join(process.env.HOME || "/tmp", ".promptfoo", "cache"),
         7 * 24 * 60 * 60
         // 7 days
       );
@@ -38570,14 +40725,14 @@ async function run() {
         info(`Cleaned ${cleanedCount} old cache entries`);
       }
     }
-    const cacheDir = process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path6.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
+    const cacheDir = process.env.PROMPTFOO_CACHE_PATH || resolvedCachePath || path7.join(process.env.HOME || "/tmp", ".promptfoo", "cache");
     await logCacheMetrics(cacheDir);
     endGroup();
-    const outputFile = path6.join(
+    const outputFile = path7.join(
       workingDirectory,
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`
     );
-    let promptfooArgs = ["eval", "-c", configPath, "-o", outputFile];
+    let promptfooArgs = ["eval", "-c", ...configPaths, "-o", outputFile];
     if (!useConfigPrompts && evaluatedPromptFiles.length > 0) {
       promptfooArgs = promptfooArgs.concat([
         "--prompts",
@@ -38661,7 +40816,7 @@ async function run() {
       "npx",
       [
         "--prefix",
-        path6.resolve(__dirname, ".."),
+        path7.resolve(__dirname, ".."),
         `promptfoo@${version}`,
         ...promptfooArgs
       ],
