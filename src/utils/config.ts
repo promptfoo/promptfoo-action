@@ -121,12 +121,11 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): void => {
+    const processFileUrl = (fileUrl: string, resolvedPath?: string): void => {
       const filePath = normalizeConfigFilePath(fileUrl.replace('file://', ''));
-      const absolutePath = resolveConfigDependency(
-        filePath,
-        'config file dependency',
-      );
+      const absolutePath =
+        resolvedPath ??
+        resolveConfigDependency(filePath, 'config file dependency');
       if (!absolutePath) {
         return;
       }
@@ -264,12 +263,12 @@ export function extractFileDependencies(configPath: string): string[] {
     const inspectVarFile = (value: string): void => {
       const fileUrl = value.startsWith('file://') ? value : `file://${value}`;
       const filePath = normalizeConfigFilePath(fileUrl.slice('file://'.length));
-      processFileUrl(fileUrl);
       const absolutePath = resolveConfigDependency(
         filePath,
         'test variable file dependency',
       );
       if (!absolutePath) return;
+      processFileUrl(fileUrl, absolutePath);
 
       const varFiles = glob.hasMagic(filePath, globOptions)
         ? glob.sync(absolutePath, { nodir: true, ...globOptions })

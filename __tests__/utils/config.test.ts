@@ -890,6 +890,7 @@ vars:
     expect(core.warning).toHaveBeenCalledWith(
       expect.stringContaining('must stay within the repository workspace'),
     );
+    expect(core.warning).toHaveBeenCalledTimes(1);
   });
 
   it('should reject an external vars-map symlink outside the workspace without reading or leaking it', () => {
