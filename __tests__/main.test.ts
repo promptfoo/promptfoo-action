@@ -1410,6 +1410,35 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      {
+        label: 'filename',
+        file: { filename: 'data/unsafe\0context.json' },
+      },
+      {
+        label: 'previous filename',
+        file: {
+          filename: 'data/context.json',
+          previous_filename: 'data/unsafe\0context.json',
+          status: 'renamed',
+        },
+      },
+    ])('should reject a NUL byte in a pull-request API $label', async ({
+      file,
+    }) => {
+      mockOctokit.paginate.mockResolvedValue([file]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Pull request file paths must not contain null bytes',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test.each([
       'push',
       'workflow_dispatch',
     ])('should retain the old dependency name in a %s rename diff', async (eventName) => {

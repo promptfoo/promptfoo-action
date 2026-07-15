@@ -401,14 +401,17 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles
-          .flatMap((file) =>
-            file.previous_filename
-              ? [file.filename, file.previous_filename]
-              : [file.filename],
-          )
-          .join('\0')
-          .concat('\0');
+        const pullRequestFilePaths = pullRequestFiles.flatMap((file) =>
+          file.previous_filename
+            ? [file.filename, file.previous_filename]
+            : [file.filename],
+        );
+        if (pullRequestFilePaths.some((filePath) => filePath.includes('\0'))) {
+          throw new Error(
+            'Pull request file paths must not contain null bytes',
+          );
+        }
+        changedFiles = pullRequestFilePaths.join('\0').concat('\0');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
