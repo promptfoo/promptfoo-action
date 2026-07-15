@@ -222,12 +222,27 @@ export function extractFileDependencies(
   const isPhysicalDependencyPathInside = (targetPath: string): boolean => {
     if (!physicalDependencyRoots) {
       physicalDependencyRoots = [];
-      for (const root of new Set([dependencyRoot, cwd])) {
+      let physicalConfigDir: string | undefined;
+      let physicalCwd: string | undefined;
+      for (const root of new Set([configDir, cwd])) {
         try {
-          physicalDependencyRoots.push(fs.realpathSync(root));
+          const physicalRoot = fs.realpathSync(root);
+          physicalDependencyRoots.push(physicalRoot);
+          if (root === configDir) physicalConfigDir = physicalRoot;
+          if (root === cwd) physicalCwd = physicalRoot;
         } catch {
           // Another allowed root may still contain this dependency.
         }
+      }
+      if (
+        isPathInside(cwd, configDir) &&
+        (!physicalConfigDir ||
+          !physicalCwd ||
+          !isPathInside(physicalCwd, physicalConfigDir))
+      ) {
+        throw new Error(
+          'Config directory symlinks must stay within the repository workspace',
+        );
       }
     }
     return physicalDependencyRoots.some((root) =>
@@ -236,6 +251,9 @@ export function extractFileDependencies(
   };
 
   try {
+    if (isPathInside(cwd, configDir)) {
+      isPhysicalDependencyPathInside(configDir);
+    }
     if (/\.(?:[cm]?[jt]s)$/i.test(configPath)) {
       core.warning(
         'JavaScript/TypeScript config dependencies cannot be extracted statically; watching all repository changes',
@@ -450,7 +468,7 @@ export function extractFileDependencies(
       );
       const filePath = normalizeConfigFilePath(
         stripFunctionSuffix
-          ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1')
+          ? rawFilePath.replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/, '$1')
           : rawFilePath,
       );
       const globPath = filePath.replace(/\\/g, '/');
@@ -550,6 +568,36 @@ export function extractFileDependencies(
         displayFilePath,
       );
       if (!absolutePath) return;
+
+      let pathExists = true;
+      try {
+        fs.lstatSync(absolutePath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+          core.warning(
+            `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`,
+          );
+          return;
+        }
+        pathExists = false;
+      }
+      if (pathExists) {
+        let physicalPath: string;
+        try {
+          physicalPath = fs.realpathSync(absolutePath);
+        } catch {
+          core.warning(
+            `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`,
+          );
+          return;
+        }
+        if (!isPhysicalDependencyPathInside(physicalPath)) {
+          core.warning(
+            `Ignoring unsafe config dependency "${displayFilePath}": resolved path must stay within an allowed dependency root`,
+          );
+          return;
+        }
+      }
 
       if (isDirectory(absolutePath) || /[\\/]$/.test(fileUrl)) {
         // It's a directory, preserve trailing slash if it was there
@@ -659,7 +707,7 @@ export function extractFileDependencies(
     ): void => {
       const rawPath = promptPath
         .replace(/^file:\/\//, '')
-        .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/i, '$1');
+        .replace(/(\.(?:[cm]?[jt]s|py|go|rb)):[^/\\]+$/, '$1');
       const normalizedPath = normalizeConfigFilePath(rawPath).replace(
         /\\/g,
         '/',
@@ -1260,7 +1308,7 @@ export function extractFileDependencies(
       for (const value of values) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
-          if (/\.(?:[cm]?[jt]s|py):[^/\\]+$/i.test(value)) {
+          if (/\.(?:[cm]?[jt]s|py|go|rb):[^/\\]+$/.test(value)) {
             processFileUrl(value, true);
           }
         } else if (
@@ -1300,7 +1348,7 @@ export function extractFileDependencies(
           assert.value.startsWith('file://')
         ) {
           processFileUrl(assert.value);
-          if (/\.(?:[cm]?[jt]s|py|rb):[^/\\]+$/i.test(assert.value)) {
+          if (/\.(?:[cm]?[jt]s|py|go|rb):[^/\\]+$/.test(assert.value)) {
             processFileUrl(assert.value, true);
           }
         } else if (

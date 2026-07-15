@@ -755,6 +755,37 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
 
+    test('should parse CRLF-separated prompt globs without stripping significant spaces', async () => {
+      withInputs({
+        prompts: 'prompts/ leading/*.txt\r\nprompts/trailing *.txt\r\n',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/ leading/one.txt' },
+        { filename: 'prompts/trailing two.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string | string[]) => {
+        if (pattern === 'prompts/ leading/*.txt') {
+          return ['prompts/ leading/one.txt'];
+        }
+        if (pattern === 'prompts/trailing *.txt') {
+          return ['prompts/trailing two.txt'];
+        }
+        return [];
+      });
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/ leading/*.txt',
+        expect.any(Object),
+      );
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/trailing *.txt',
+        expect.any(Object),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should match whitespace-padded CRLF workflow_dispatch file inputs', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
         value: 'workflow_dispatch',

@@ -14,6 +14,7 @@ vi.mock('fs', async () => {
     ...realFs,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    lstatSync: vi.fn(),
     realpathSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
@@ -29,6 +30,7 @@ describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
     existsSync: Mock;
+    lstatSync: Mock;
     realpathSync: Mock;
     statSync: Mock;
   };
@@ -44,6 +46,11 @@ describe('extractFileDependencies', () => {
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
+    mockFs.lstatSync.mockImplementation(() => {
+      const error = new Error('ENOENT');
+      (error as NodeJS.ErrnoException).code = 'ENOENT';
+      throw error;
+    });
     mockFs.realpathSync.mockImplementation((filePath: unknown) => filePath);
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
@@ -1326,6 +1333,7 @@ tests:
 
     expect(deps).toEqual([
       '../config/data/context.rb:v2',
+      '../config/data/context.rb',
       '../config/expected/output.py:v3',
       '../config/expected/output.py',
     ]);
@@ -1337,6 +1345,8 @@ tests:
   - vars:
       javascript: file://vars/build.cjs:generateValue
       python: file://vars/build.py:generate_value
+      ruby: file://vars/build.rb:generate_value
+      golang: file://vars/build.go:GenerateValue
     assert:
       - type: contains
         value: file://validators/check.cjs:knownValue
@@ -1344,6 +1354,8 @@ tests:
         value: file://validators/check.py:known_value
       - type: contains
         value: file://validators/check.rb:MyModule::Nested.method
+      - type: contains
+        value: file://validators/check.go:Check
 `);
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
@@ -1352,9 +1364,12 @@ tests:
       expect.arrayContaining([
         '../config/vars/build.cjs',
         '../config/vars/build.py',
+        '../config/vars/build.rb',
+        '../config/vars/build.go',
         '../config/validators/check.cjs',
         '../config/validators/check.py',
         '../config/validators/check.rb',
+        '../config/validators/check.go',
       ]),
     );
   });
@@ -1791,7 +1806,10 @@ providers:
       validateStatus: file://validators/status.js
   - id: https
     config:
-      validateStatus: file://validators/named-status.py:validate_status
+      validateStatus: file://validators/named-status.mjs:validateStatus
+  - id: http
+    config:
+      validateStatus: file://validators/UPPER.JS:validateStatus
   - id: openai:gpt-4o
     config:
       validateStatus: status >= 200 && status < 300
@@ -1801,7 +1819,8 @@ providers:
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual([
       'evals/validators/status.js',
-      'evals/validators/named-status.py',
+      'evals/validators/named-status.mjs',
+      'evals/validators/UPPER.JS:validateStatus',
     ]);
   });
 
@@ -2247,6 +2266,76 @@ providers:
     expect(
       extractFileDependencies('/tmp/external/promptfooconfig.yaml'),
     ).toEqual(['providers/custom.py', 'providers']);
+  });
+
+  it('should reject a config directory symlinked outside the checkout before reading it', () => {
+    mockFs.readFileSync.mockReturnValue('providers: file://providers/*.py\n');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/config-link/providers/custom.py',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.startsWith('/test/working/config-link')) {
+        return candidate.replace(
+          '/test/working/config-link',
+          '/physical/external-config',
+        );
+      }
+      if (candidate === '/test/working') return '/physical/checkout';
+      return candidate;
+    });
+
+    expect(() =>
+      extractFileDependencies('/test/working/config-link/promptfooconfig.yaml'),
+    ).toThrow(
+      'Failed to extract dependencies from config: Config directory symlinks must stay within the repository workspace',
+    );
+    expect(mockFs.readFileSync).not.toHaveBeenCalled();
+  });
+
+  it('should preserve missing direct dependencies but reject dangling and escaping symlinks', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/missing.py
+  - file://providers/safe.py
+  - file://providers/dangling.py
+  - file://providers/escaping.py
+  - file://providers/unreadable.py
+`);
+    mockFs.lstatSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('/missing.py')) {
+        const error = new Error('ENOENT');
+        (error as NodeJS.ErrnoException).code = 'ENOENT';
+        throw error;
+      }
+      if (candidate.endsWith('/unreadable.py')) {
+        const error = new Error('EACCES: SENSITIVE-UNREADABLE-PATH');
+        (error as NodeJS.ErrnoException).code = 'EACCES';
+        throw error;
+      }
+      return {} as fs.Stats;
+    });
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('/dangling.py')) {
+        throw new Error('ENOENT: SENSITIVE-DANGLING-TARGET');
+      }
+      if (candidate.endsWith('/escaping.py')) {
+        return '/tmp/outside/SENSITIVE-ESCAPING-TARGET.py';
+      }
+      return candidate;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/providers/missing.py', 'evals/providers/safe.py']);
+    const warnings = vi.mocked(core.warning).mock.calls.join('\n');
+    expect(warnings).toContain('resolved path must stay within');
+    expect(warnings).not.toContain('SENSITIVE-');
   });
 
   it.each([
