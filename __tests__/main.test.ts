@@ -565,6 +565,56 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      ['a huge numeric range', 'prompts/{1..1000000000}.txt'],
+      [
+        'a numeric range inside a character class',
+        'prompts/[{1..5000000}].txt',
+      ],
+      [
+        'an even-backslash numeric range',
+        `prompts/${String.fromCharCode(92).repeat(2)}{1..1000000000}.txt`,
+      ],
+      ['an unsafe integer range', 'prompts/{1..9007199254740993}.txt'],
+      ['a zero-step range', 'prompts/{1..10..0}.txt'],
+      [
+        'a zero-padded range',
+        `prompts/{${'0'.repeat(32_000)}1..${'0'.repeat(31_997)}1024}.txt`,
+      ],
+      ['a NUL byte', 'prompts/invalid\0pattern.txt'],
+      ['an oversized pattern', `prompts/${'a'.repeat(65_537)}.txt`],
+    ])('should reject %s before resolving an action prompt glob', async (_name, pattern) => {
+      withInputs({ prompts: pattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Action prompt glob pattern is invalid or exceeds the maximum expansion size.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should allow a small numeric-range action prompt glob', async () => {
+      withInputs({ prompts: 'prompts/{1..3}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/1.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/{1..3}.txt',
+        expect.objectContaining({ braceExpandMax: 1025 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should handle empty prompts input', async () => {
       mockCore.getInput.mockImplementation((name: string) => {
         const inputs: Record<string, string> = {

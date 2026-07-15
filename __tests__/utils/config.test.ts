@@ -821,6 +821,31 @@ nunjucksFilters:
     );
   });
 
+  it('should reject slash-prefixed Windows file URLs before glob parsing and bound warnings', () => {
+    const providers = Array.from(
+      { length: 120 },
+      (_, index) => `  - 'file:///C:/outside/provider-${index}.py'`,
+    );
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'providers:',
+        ...providers,
+        "tests: 'file:///D:/outside/cases.yaml'",
+        "defaultTest: 'file:///E:/outside/defaults.yaml'",
+      ].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
   it.each([
     ['scalar', 'prompts: file://prompts/prompt.txt'],
     ['legacy map', 'prompts:\n  file://prompts/prompt.txt: labeled-prompt'],
@@ -2976,7 +3001,12 @@ tests:
 
   it('should bound brace-only test-glob expansion before enumeration', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
-    mockFs.readFileSync.mockReturnValue("tests: 'file://case-{1..1025}.yaml'");
+    const alternatives = Array.from({ length: 1025 }, (_, index) => index).join(
+      ',',
+    );
+    mockFs.readFileSync.mockReturnValue(
+      `tests: 'file://case-{${alternatives}}.yaml'`,
+    );
     mockGlob.hasMagic.mockImplementation(
       (value: string, options?: { magicalBraces?: boolean }) =>
         value.includes('*') ||
@@ -3595,17 +3625,110 @@ tests: "file://tests/\\0*.yaml"
   });
 
   it.each([
+    ['a prompt', "prompts: 'file://prompts/{1..1000000000}.txt'"],
+    ['a provider', "providers: 'file://providers/{1..1000000000}.py'"],
+    ['a test', "tests: 'file://tests/{1..1000000000}.yaml'"],
+    ['a test character class', "tests: 'file://tests/[{1..5000000}].yaml'"],
+    [
+      'an even-backslash test range',
+      `tests: 'file://tests/${String.fromCharCode(92).repeat(2)}{1..1000000000}.yaml'`,
+    ],
+    [
+      'a zero-padded test range',
+      `tests: 'file://tests/{${'0'.repeat(32_000)}1..${'0'.repeat(31_997)}1024}.yaml'`,
+    ],
+    ['a default test', "defaultTest: 'file://defaults/{1..1000000000}.yaml'"],
+    [
+      'a Nunjucks filter',
+      "nunjucksFilters:\n  custom: 'filters/{1..1000000000}.js'",
+    ],
+    [
+      'a multipart asset',
+      [
+        'providers:',
+        '  - id: https',
+        '    config:',
+        '      multipart:',
+        '        parts:',
+        '          - kind: file',
+        '            source:',
+        '              type: path',
+        "              path: 'assets/{1..1000000000}.txt'",
+      ].join('\n'),
+    ],
+  ])('should reject a huge numeric brace range in %s before glob parsing', (_source, config) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/working');
+    mockFs.readFileSync.mockReturnValue(config);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['/']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+    );
+  });
+
+  it('should preserve POSIX-escaped glob literals while normalizing Windows separators', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/working');
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'tests:',
+        "  - 'file://tests/\\{1..1000000000\\}.yaml'",
+        "  - 'file://tests/\\{1..1000000000}.yaml'",
+        "  - 'file://tests/\\[literal\\].yaml'",
+        "  - 'file://tests/\\(literal\\).yaml'",
+        "  - 'file://tests\\nested/\\[mixed\\].yaml'",
+        "  - 'file://tests\\nested\\cases.yaml'",
+      ].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'tests/\\{1..1000000000\\}.yaml',
+      'tests/\\{1..1000000000}.yaml',
+      'tests/\\[literal\\].yaml',
+      'tests/\\(literal\\).yaml',
+      'tests/nested/\\[mixed\\].yaml',
+      'tests/nested/cases.yaml',
+    ]);
+    expect(core.warning).not.toHaveBeenCalled();
+  });
+
+  it('should reject an oversized config dependency before glob parsing', () => {
+    const longGlob = `tests/${'x'.repeat(70_000)}*.yaml`;
+    mockFs.readFileSync.mockReturnValue(
+      [
+        'providers:',
+        '  - file://providers/custom.py',
+        `tests: file://${longGlob}`,
+      ].join('\n'),
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/providers/custom.py', '../config/']);
+    expect(mockGlob.hasMagic).toHaveBeenCalledTimes(1);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to parse config dependency glob'),
+    );
+  });
+
+  it.each([
     ['an Error', new TypeError('pattern is too long')],
     ['a non-Error', 'pattern is too long'],
   ])('should preserve dependencies when glob parsing throws %s', (_source, error) => {
-    const longGlob = `tests/${'x'.repeat(70_000)}*.yaml`;
+    const longGlob = 'tests/malformed-*.yaml';
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file://providers/custom.py
 tests: file://${longGlob}
 `);
     mockGlob.hasMagic.mockImplementation((value: string) => {
-      if (value.length > 65_536) {
+      if (value.includes('malformed-')) {
         throw error;
       }
       return value.includes('*');

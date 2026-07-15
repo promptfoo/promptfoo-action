@@ -21,6 +21,7 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
+import { isSafeGlobPattern } from './utils/glob';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -34,6 +35,7 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const MAX_GLOB_PATTERN_LENGTH = 65_536;
+const MAX_GLOB_BRACE_EXPANSIONS = 1025;
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
@@ -540,12 +542,25 @@ export async function run(): Promise<void> {
     };
 
     for (const globPattern of promptFilesGlobs) {
+      if (
+        /[\r\n]/.test(globPattern) ||
+        !isSafeGlobPattern(
+          globPattern,
+          MAX_GLOB_PATTERN_LENGTH,
+          MAX_GLOB_BRACE_EXPANSIONS,
+          path.sep === '\\',
+        )
+      ) {
+        throw new Error(
+          'Action prompt glob pattern is invalid or exceeds the maximum expansion size.',
+        );
+      }
       let matches: string[];
       try {
         matches = glob.sync(globPattern, {
           cwd: workingDirectory,
           nodir: true,
-          braceExpandMax: 1025,
+          braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
         });
       } catch {
         throw new Error('Failed to resolve action prompt glob pattern safely.');

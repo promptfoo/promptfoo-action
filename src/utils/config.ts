@@ -15,6 +15,7 @@ import {
 import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import { isDirectory } from './fs';
+import { isSafeGlobPattern } from './glob';
 
 const MAX_BRACE_EXPANSIONS = 1024;
 const MAX_PROVIDER_REFERENCE_LENGTH = 65_536;
@@ -325,9 +326,23 @@ export function extractFileDependencies(
         );
         return [];
       }
+      const driveNormalizedPath = filePath.replace(/^\/(?=[a-z]:[\\/])/i, '');
+      const preservePosixGlobEscapes =
+        path.sep === '/' && /\\[()[\]{}]/.test(driveNormalizedPath);
       const normalizedPath = windowsPathsNoEscape
-        ? filePath.replace(/\\/g, path.sep)
-        : filePath;
+        ? preservePosixGlobEscapes
+          ? driveNormalizedPath.replace(
+              /(\\+)([()[\]{}])|\\+/g,
+              (
+                _match,
+                slashes: string | undefined,
+                escaped: string | undefined,
+              ) => (escaped ? `${slashes}${escaped}` : path.sep),
+            )
+          : driveNormalizedPath.replace(/\\/g, path.sep)
+        : driveNormalizedPath;
+      const useWindowsPathsNoEscape =
+        windowsPathsNoEscape && !preservePosixGlobEscapes;
       if (isForeignWindowsPath(normalizedPath)) {
         if (!warnedForeignWindowsPath) {
           warnedForeignWindowsPath = true;
@@ -337,10 +352,26 @@ export function extractFileDependencies(
         }
         return [];
       }
+      if (
+        !isSafeGlobPattern(
+          normalizedPath,
+          MAX_PROVIDER_REFERENCE_LENGTH,
+          MAX_BRACE_EXPANSIONS,
+          useWindowsPathsNoEscape,
+        )
+      ) {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+        warnSafe(
+          normalizedPath.length > MAX_PROVIDER_REFERENCE_LENGTH
+            ? 'Failed to parse config dependency glob: pattern is invalid or exceeds the maximum expansion size; conservatively watching the dependency root'
+            : 'Skipping config dependency glob with too many brace alternatives; conservatively watching the dependency root',
+        );
+        return [];
+      }
       const globOptions = {
         magicalBraces: true,
         braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-        ...(windowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}),
+        ...(useWindowsPathsNoEscape ? { windowsPathsNoEscape: true } : {}),
       };
       let isGlob: boolean;
       let expandedPaths: string[];
@@ -1259,6 +1290,7 @@ export function extractFileDependencies(
               absolute: true,
               nodir: true,
               nocase: true,
+              braceExpandMax: MAX_BRACE_EXPANSIONS,
             },
           );
           for (const nestedTestFile of nestedTestFiles) {
