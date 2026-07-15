@@ -378,6 +378,7 @@ export function extractFileDependencies(configPath: string): string[] {
       isFileBearingConfigValue: boolean = false,
       parentKey?: string,
       grandparentKey?: string,
+      greatGrandparentKey?: string,
     ): void => {
       if (providerTraversalCount >= 1024) {
         stopProviderTraversal();
@@ -541,6 +542,7 @@ export function extractFileDependencies(configPath: string): string[] {
         isFileBearingConfigValue,
         parentKey,
         grandparentKey,
+        greatGrandparentKey,
       ]);
       const visitedContexts = visitedProviderValues.get(value);
       if (visitedContexts?.has(providerValueContextKey)) {
@@ -575,6 +577,7 @@ export function extractFileDependencies(configPath: string): string[] {
               isFileBearingConfigValue,
               parentKey,
               grandparentKey,
+              greatGrandparentKey,
             );
           }
           return;
@@ -616,6 +619,35 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         for (const [key, nestedValue] of Object.entries(value)) {
           if (key === 'env' || (key === 'path' && fileAuthPath !== undefined)) {
+            continue;
+          }
+          if (
+            parentKey === 'parts' &&
+            grandparentKey === 'multipart' &&
+            greatGrandparentKey === 'config' &&
+            'kind' in value &&
+            value.kind === 'file' &&
+            key === 'source' &&
+            typeof nestedValue === 'object' &&
+            nestedValue !== null &&
+            'type' in nestedValue &&
+            nestedValue.type === 'path' &&
+            'path' in nestedValue &&
+            typeof nestedValue.path === 'string'
+          ) {
+            const multipartPath = renderEnvTemplates(nestedValue.path, {
+              ...process.env,
+              ...providerEnv,
+            });
+            processProviderValue(
+              multipartPath.startsWith('file://')
+                ? multipartPath
+                : `file://${multipartPath}`,
+              true,
+              providerEnv,
+              false,
+              true,
+            );
             continue;
           }
           if (
@@ -671,6 +703,7 @@ export function extractFileDependencies(configPath: string): string[] {
               (parentKey === 'json_schema' && key === 'schema'),
             key,
             parentKey,
+            grandparentKey,
           );
         }
       } finally {

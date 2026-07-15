@@ -535,6 +535,71 @@ providers:
     ]);
   });
 
+  it('should extract plain and env-templated HTTP multipart upload paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  - prompts/example.txt
+providers:
+  - id: https://example.test/upload
+    env:
+      UPLOAD_PATH: ./fixtures/from-env.pdf
+    config:
+      method: POST
+      multipart:
+        parts:
+          - kind: file
+            name: report
+            source:
+              type: path
+              path: ./fixtures/report.pdf
+          - kind: file
+            name: env-report
+            source:
+              type: path
+              path: "{{ env.UPLOAD_PATH }}"
+          - kind: file
+            name: file-url-report
+            source:
+              type: path
+              path: file://fixtures/from-file-url.pdf
+          - kind: file
+            name: generated
+            source:
+              type: generated
+              path: ./fixtures/ignored.pdf
+      body:
+        parts:
+          - source:
+              type: path
+              path: ./fixtures/body-data.pdf
+        multipart:
+          parts:
+            - kind: file
+              name: body-metadata
+              source:
+                type: path
+                path: ./fixtures/body-metadata.pdf
+      metadata:
+        multipart:
+          parts:
+            - kind: file
+              name: metadata
+              source:
+                type: path
+                path: ./fixtures/metadata.pdf
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/fixtures/report.pdf',
+      'evals/fixtures/from-env.pdf',
+      'evals/fixtures/from-file-url.pdf',
+    ]);
+  });
+
   it('should revisit an aliased HTTP file-auth value in its auth context', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
