@@ -847,6 +847,8 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_REMOTE_APP_BASE_URL',
       'PROMPTFOO_SHARING_APP_BASE_URL',
       'PROMPTFOO_CACHE_PATH',
+      'PROMPTFOO_CACHE_MAX_SIZE',
+      'PROMPTFOO_CACHE_MAX_FILE_COUNT',
       'PROMPTFOO_CONFIG_DIR',
       'PROMPTFOO_PASS_RATE_THRESHOLD',
       'PROMPTFOO_API_KEY',
@@ -1101,6 +1103,116 @@ describe('GitHub Action Main', () => {
           delete process.env.OPENAI_BASE_URL;
         } else {
           process.env.OPENAI_BASE_URL = originalBaseUrl;
+        }
+      }
+    });
+
+    test('should validate the implicit .env.vault when DOTENV_KEY and plaintext .env both exist', async () => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return (
+          value.endsWith(`${path.sep}.env`) ||
+          value.endsWith(`${path.sep}.env.vault`)
+        );
+      });
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      const originalBaseUrl = process.env.OPENAI_BASE_URL;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.vault')
+            ? { OPENAI_BASE_URL: 'http://attacker.invalid/v1' }
+            : { CUSTOM_PROVIDER_SETTING: 'plaintext' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('OPENAI_BASE_URL'),
+        );
+        expect(dotenv.config).toHaveBeenCalledWith(
+          expect.objectContaining({
+            path: expect.stringMatching(/(?:^|[/\\\\])\.env\.vault$/),
+          }),
+        );
+        expect(mockCore.info).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /Loading environment variables from .*\.env\.vault$/,
+          ),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.OPENAI_BASE_URL).toBe(originalBaseUrl);
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+        if (originalBaseUrl === undefined) {
+          delete process.env.OPENAI_BASE_URL;
+        } else {
+          process.env.OPENAI_BASE_URL = originalBaseUrl;
+        }
+      }
+    });
+
+    test('should mask every supported provider fallback loaded from an environment file', async () => {
+      withInputs({ 'env-files': '.env.local' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith('.env.local'),
+      );
+
+      const providerKeys = {
+        OPENAI_API_KEY: 'env-openai-key',
+        AZURE_OPENAI_API_KEY: 'env-azure-key',
+        ANTHROPIC_API_KEY: 'env-anthropic-key',
+        HF_API_TOKEN: 'env-huggingface-key',
+        AWS_ACCESS_KEY_ID: 'env-aws-access-key-id',
+        AWS_SECRET_ACCESS_KEY: 'env-aws-secret-access-key',
+        REPLICATE_API_KEY: 'env-replicate-key',
+        PALM_API_KEY: 'env-palm-key',
+        VERTEX_API_KEY: 'env-vertex-key',
+        COHERE_API_KEY: 'env-cohere-key',
+        MISTRAL_API_KEY: 'env-mistral-key',
+        GROQ_API_KEY: 'env-groq-key',
+      };
+      const originals = Object.fromEntries(
+        Object.keys(providerKeys).map((key) => [key, process.env[key]]),
+      );
+      for (const key of Object.keys(providerKeys)) {
+        delete process.env[key];
+      }
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          Object.assign(options?.processEnv ?? process.env, providerKeys);
+          return { parsed: providerKeys };
+        },
+      );
+
+      try {
+        await run();
+
+        for (const value of Object.values(providerKeys)) {
+          expect(mockCore.setSecret).toHaveBeenCalledWith(value);
+        }
+      } finally {
+        for (const key of Object.keys(providerKeys)) {
+          const value = originals[key];
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
         }
       }
     });

@@ -286,13 +286,12 @@ export async function run(): Promise<void> {
       const implicitEnvFilePath = path.join(workingDirectory, '.env');
       const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
       const implicitEnvExists = fs.existsSync(implicitEnvFilePath);
-      const implicitFilePath = implicitEnvExists
-        ? implicitEnvFilePath
-        : implicitVaultFilePath;
-      if (
-        implicitEnvExists ||
-        (process.env.DOTENV_KEY && fs.existsSync(implicitVaultFilePath))
-      ) {
+      const implicitVaultExists =
+        process.env.DOTENV_KEY && fs.existsSync(implicitVaultFilePath);
+      const implicitFilePath = implicitVaultExists
+        ? implicitVaultFilePath
+        : implicitEnvFilePath;
+      if (implicitEnvExists || implicitVaultExists) {
         core.info(`Loading environment variables from ${implicitFilePath}`);
         loadEnvironmentFile(implicitFilePath, process.env, false);
         core.info(`Successfully loaded ${implicitFilePath}`);
@@ -333,6 +332,18 @@ export async function run(): Promise<void> {
         cohereApiKey,
         mistralApiKey,
         groqApiKey,
+        process.env.OPENAI_API_KEY,
+        process.env.AZURE_OPENAI_API_KEY,
+        process.env.ANTHROPIC_API_KEY,
+        process.env.HF_API_TOKEN,
+        process.env.AWS_ACCESS_KEY_ID,
+        process.env.AWS_SECRET_ACCESS_KEY,
+        process.env.REPLICATE_API_KEY,
+        process.env.PALM_API_KEY,
+        process.env.VERTEX_API_KEY,
+        process.env.COHERE_API_KEY,
+        process.env.MISTRAL_API_KEY,
+        process.env.GROQ_API_KEY,
         process.env.PROMPTFOO_API_KEY,
       ];
       for (const key of apiKeys) {

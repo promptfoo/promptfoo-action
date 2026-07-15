@@ -36904,6 +36904,8 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_CACHE_PATH",
   "PROMPTFOO_API_KEY",
   "PROMPTFOO_AUTHOR",
+  "PROMPTFOO_CACHE_MAX_FILE_COUNT",
+  "PROMPTFOO_CACHE_MAX_SIZE",
   "PROMPTFOO_CACHE_TTL",
   "PROMPTFOO_CA_CERT_PATH",
   "PROMPTFOO_CLOUD_API_URL",
@@ -37532,8 +37534,9 @@ async function run() {
       const implicitEnvFilePath = path6.join(workingDirectory, ".env");
       const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
       const implicitEnvExists = fs7.existsSync(implicitEnvFilePath);
-      const implicitFilePath = implicitEnvExists ? implicitEnvFilePath : implicitVaultFilePath;
-      if (implicitEnvExists || process.env.DOTENV_KEY && fs7.existsSync(implicitVaultFilePath)) {
+      const implicitVaultExists = process.env.DOTENV_KEY && fs7.existsSync(implicitVaultFilePath);
+      const implicitFilePath = implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath;
+      if (implicitEnvExists || implicitVaultExists) {
         info(`Loading environment variables from ${implicitFilePath}`);
         loadEnvironmentFile(implicitFilePath, process.env, false);
         info(`Successfully loaded ${implicitFilePath}`);
@@ -37568,6 +37571,18 @@ async function run() {
         cohereApiKey,
         mistralApiKey,
         groqApiKey,
+        process.env.OPENAI_API_KEY,
+        process.env.AZURE_OPENAI_API_KEY,
+        process.env.ANTHROPIC_API_KEY,
+        process.env.HF_API_TOKEN,
+        process.env.AWS_ACCESS_KEY_ID,
+        process.env.AWS_SECRET_ACCESS_KEY,
+        process.env.REPLICATE_API_KEY,
+        process.env.PALM_API_KEY,
+        process.env.VERTEX_API_KEY,
+        process.env.COHERE_API_KEY,
+        process.env.MISTRAL_API_KEY,
+        process.env.GROQ_API_KEY,
         process.env.PROMPTFOO_API_KEY
       ];
       for (const key of apiKeys) {
