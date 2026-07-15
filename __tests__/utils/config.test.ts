@@ -1102,6 +1102,20 @@ tests:
     ).toEqual(['tests/generate.py']);
   });
 
+  it('should track file-backed config passed to a generated-test script', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: file://tests/generate.py:build_tests
+  config:
+    fixture: file://data/cases.json
+    schema: file://schemas/cases.yaml
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['data/cases.json', 'schemas/cases.yaml', 'tests/generate.py']);
+  });
+
   it('should strip spreadsheet sheet selectors from test file dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:

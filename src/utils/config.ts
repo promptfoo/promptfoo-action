@@ -1124,6 +1124,7 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
       if (typeof tests.path === 'string') {
+        processRubricReferences(tests.config, config.env);
         extractTestFiles(tests.path, baseDir);
         return;
       }
