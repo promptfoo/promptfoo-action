@@ -388,7 +388,36 @@ tests:
     expect(deps).toEqual([
       '../config/data/context.rb:v2',
       '../config/expected/output.py:v3',
+      '../config/expected/output.py',
     ]);
+  });
+
+  it('should track executable variable and assertion files with function selectors', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      javascript: file://vars/build.cjs:generateValue
+      python: file://vars/build.py:generate_value
+    assert:
+      - type: contains
+        value: file://validators/check.cjs:knownValue
+      - type: contains
+        value: file://validators/check.py:known_value
+      - type: contains
+        value: file://validators/check.rb:MyModule::Nested.method
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(
+      expect.arrayContaining([
+        '../config/vars/build.cjs',
+        '../config/vars/build.py',
+        '../config/validators/check.cjs',
+        '../config/validators/check.py',
+        '../config/validators/check.rb',
+      ]),
+    );
   });
 
   it('should extract defaultTest files', () => {
@@ -455,6 +484,10 @@ shared: &shared
   it.each([
     ['providers', 'providers:\n  $ref: providers.yaml#/providers'],
     ['inline providers', 'providers: { $ref: providers.yaml#/providers }'],
+    [
+      'explicit-key providers',
+      'providers:\n  ? $ref\n  : providers.yaml#/providers',
+    ],
     [
       'assertions',
       'tests:\n  - assert:\n      $ref: assertions.yaml#/assertions',

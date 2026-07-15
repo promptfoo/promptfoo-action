@@ -74,7 +74,9 @@ export function extractFileDependencies(
     }
 
     if (
-      /(?:^|[,{]\s*|\n\s*(?:-\s*)?)["']?\$ref["']?\s*:/m.test(configContent)
+      /(?:^|[,{]|\n)\s*(?:-\s*)?(?:\?\s*)?["']?\$ref["']?\s*:/m.test(
+        configContent,
+      )
     ) {
       core.warning(
         'YAML $ref dependencies cannot be extracted statically; watching all repository changes',
@@ -296,6 +298,9 @@ export function extractFileDependencies(
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
+          if (/\.(?:[cm]?[jt]s|py):[^/\\]+$/i.test(value)) {
+            processFileUrl(value, true);
+          }
         } else if (
           typeof value === 'object' &&
           value !== null &&
@@ -324,6 +329,9 @@ export function extractFileDependencies(
           assert.value.startsWith('file://')
         ) {
           processFileUrl(assert.value);
+          if (/\.(?:[cm]?[jt]s|py|rb):[^/\\]+$/i.test(assert.value)) {
+            processFileUrl(assert.value, true);
+          }
         } else if (
           typeof assert.value === 'object' &&
           assert.value !== null &&

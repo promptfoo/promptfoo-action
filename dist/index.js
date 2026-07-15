@@ -36304,7 +36304,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       debug("Config file is empty or invalid");
       return [];
     }
-    if (/(?:^|[,{]\s*|\n\s*(?:-\s*)?)["']?\$ref["']?\s*:/m.test(configContent)) {
+    if (/(?:^|[,{]|\n)\s*(?:-\s*)?(?:\?\s*)?["']?\$ref["']?\s*:/m.test(
+      configContent
+    )) {
       warning(
         "YAML $ref dependencies cannot be extracted statically; watching all repository changes"
       );
@@ -36454,6 +36456,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       for (const value of Object.values(vars)) {
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value);
+          if (/\.(?:[cm]?[jt]s|py):[^/\\]+$/i.test(value)) {
+            processFileUrl(value, true);
+          }
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
           const absolutePath = resolveConfigDependency(
             value.file,
@@ -36470,6 +36475,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       for (const assert of asserts) {
         if (typeof assert.value === "string" && assert.value.startsWith("file://")) {
           processFileUrl(assert.value);
+          if (/\.(?:[cm]?[jt]s|py|rb):[^/\\]+$/i.test(assert.value)) {
+            processFileUrl(assert.value, true);
+          }
         } else if (typeof assert.value === "object" && assert.value !== null && "file" in assert.value && typeof assert.value.file === "string") {
           const absolutePath = resolveConfigDependency(
             assert.value.file,
