@@ -13,15 +13,17 @@ import {
   setTag,
   timestampTag,
 } from 'js-yaml';
-import { braceExpand } from 'minimatch';
 import * as path from 'path';
 import { isDirectory } from './fs';
+import {
+  canSafelyInspectGlob,
+  MAX_BRACE_EXPANSIONS,
+  safelyExpandGlob,
+} from './glob';
 
 const MAX_PROVIDER_VALUES = 1_024;
 const MAX_PROVIDER_CONFIGS = 128;
 const MAX_GLOB_MATCHES = 4_096;
-const MAX_GLOB_PATTERN_LENGTH = 64 * 1_024;
-const MAX_BRACE_EXPANSIONS = 1_024;
 const MAX_STRUCTURED_FILE_BYTES = 10 * 1_024 * 1_024;
 const FILE_BEARING_PROVIDER_KEYS = new Set([
   'file',
@@ -377,11 +379,14 @@ function mayRenderFileUrl(value: string): boolean {
 }
 
 function hasGlobMagic(pattern: string): boolean | undefined {
-  if (pattern.length > MAX_GLOB_PATTERN_LENGTH) {
+  if (!canSafelyInspectGlob(pattern)) {
     return undefined;
   }
   try {
-    return glob.hasMagic(pattern, { magicalBraces: true });
+    return glob.hasMagic(pattern, {
+      magicalBraces: true,
+      braceExpandMax: MAX_BRACE_EXPANSIONS,
+    });
   } catch {
     return undefined;
   }
@@ -603,10 +608,8 @@ export function extractFileDependencies(configPath: string): string[] {
         return [];
       }
       if (isFileGlob) {
-        const expandedPaths = braceExpand(filePath, {
-          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
-        });
-        if (expandedPaths.length > MAX_BRACE_EXPANSIONS) {
+        const expandedPaths = safelyExpandGlob(filePath);
+        if (!expandedPaths) {
           dependencies.add(`${dependencyRoot}${path.sep}`);
           core.warning(
             'Config dependency glob has too many brace alternatives. Watching the repository workspace conservatively.',

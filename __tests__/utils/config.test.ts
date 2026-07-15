@@ -1777,6 +1777,7 @@ providers:
     expect(deps).toEqual(['providers/']);
     expect(mockGlob.hasMagic).toHaveBeenCalledWith('providers/{one,two}.py', {
       magicalBraces: true,
+      braceExpandMax: 1_024,
     });
     expect(mockGlob.sync).toHaveBeenCalledWith(
       [
@@ -1812,9 +1813,13 @@ providers:
 
   it('should bound brace expansion before scanning provider glob alternatives', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    const alternatives = Array.from(
+      { length: 1_025 },
+      (_, index) => `provider-${index}`,
+    ).join(',');
     mockFs.readFileSync.mockReturnValue(`
 providers:
-  - file://providers/{1..2000}.yaml
+  - file://providers/{${alternatives}}.yaml
 `);
     mockGlob.hasMagic.mockImplementation(
       (value: string, options?: { magicalBraces?: boolean }) =>
@@ -1827,6 +1832,29 @@ providers:
 
     expect(deps).toEqual(['./']);
     expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'providers/{1..1000000000}.yaml',
+    String.raw`providers/\\{1..1000000000}.yaml`,
+    'providers/[{1..5000000}].yaml',
+    `providers/{${'0'.repeat(32_000)}1..1024}.yaml`,
+    'providers/{1..10..0}.yaml',
+  ])('should reject an unsafe numeric provider glob before glob inspection (%s)', (providerPath) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(
+      `providers:\n  - file://${providerPath}\n`,
+    );
+    mockGlob.hasMagic.mockImplementation(() => true);
+
+    expect(
+      extractFileDependencies('/test/repository/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.hasMagic).not.toHaveBeenCalled();
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      'Ignoring an invalid or oversized config dependency glob. Watching the repository workspace conservatively.',
+    );
   });
 
   it('should preserve concrete root-level brace alternatives for deleted files', () => {

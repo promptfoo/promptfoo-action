@@ -4,6 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -21,6 +22,7 @@ import {
   PromptfooActionError,
 } from './utils/errors';
 import { isDirectory } from './utils/fs';
+import { MAX_BRACE_EXPANSIONS, safelyExpandGlob } from './utils/glob';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -225,17 +227,21 @@ function matchesDependencyGlob(
   changedFiles: string[],
 ): boolean {
   try {
-    return (
-      glob.hasMagic(dependency, {
+    if (!safelyExpandGlob(dependency)) return false;
+    if (
+      !glob.hasMagic(dependency, {
         magicalBraces: true,
-        braceExpandMax: 1_025,
-      }) &&
-      changedFiles.some((changedFile) =>
-        path.posix.matchesGlob(
-          changedFile.replace(/\\/g, '/'),
-          dependency.replace(/\\/g, '/'),
-        ),
-      )
+        braceExpandMax: MAX_BRACE_EXPANSIONS,
+      })
+    ) {
+      return false;
+    }
+    const matcher = new Minimatch(dependency.replace(/\\/g, '/'), {
+      braceExpandMax: MAX_BRACE_EXPANSIONS,
+      platform: 'linux',
+    });
+    return changedFiles.some((changedFile) =>
+      matcher.match(changedFile.replace(/\\/g, '/')),
     );
   } catch {
     return false;
@@ -579,16 +585,31 @@ export async function run(): Promise<void> {
       explicitChangedFiles ?? changedFiles.split('\0').filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
+      if (!safelyExpandGlob(globPattern)) {
+        throw new Error(
+          'Prompt file glob is invalid or too large to expand safely.',
+        );
+      }
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,
+        braceExpandMax: MAX_BRACE_EXPANSIONS,
       });
-      const allMatches = matches.filter((file) => {
-        const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
-        );
-        return repositoryFile !== configRepositoryPath;
-      });
+      const allMatches = matches
+        .map((file) =>
+          toRepositoryPath(
+            path.relative(
+              workingDirectory,
+              path.resolve(workingDirectory, file),
+            ),
+          ),
+        )
+        .filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          );
+          return repositoryFile !== configRepositoryPath;
+        });
       allPromptFiles.push(...allMatches);
 
       if (changedFilesList.length > 0) {
@@ -695,7 +716,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${JSON.stringify(evaluationPromptFiles)}`,
       );
     }
 
