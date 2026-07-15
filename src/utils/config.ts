@@ -132,6 +132,15 @@ export function extractFileDependencies(
       return [];
     }
 
+    const expandAndTrackEnvTemplates = (filePath: string): string => {
+      const uncommentedPath = filePath.replace(/\{#(?:[^#]|#(?!\}))*#\}/g, '');
+      const expandedPath = expandEnvTemplates(filePath);
+      if (expandedPath !== uncommentedPath) {
+        dependencies.add(`${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`);
+      }
+      return expandedPath;
+    };
+
     const resolveConfigDependency = (
       filePath: string,
       source: string,
@@ -173,11 +182,10 @@ export function extractFileDependencies(
         ? filePath.replace(/\\/g, path.sep)
         : filePath;
       const traversalPath = normalizedPath.replace(/\[\.\]/g, '.');
-      if (
-        windowsPathsNoEscape &&
+      const hasTraversalAlternative =
         (/[{}]/.test(normalizedPath) || traversalPath !== normalizedPath) &&
-        /(?:^|[/{,])\.\.(?:[/},]|$)/.test(traversalPath)
-      ) {
+        /(?:^|[/{,])\.\.(?:[/},]|$)/.test(traversalPath);
+      if (windowsPathsNoEscape && hasTraversalAlternative) {
         core.warning(
           `Ignoring unsafe config dependency "${normalizedPath}": ${source} must stay within the repository workspace`,
         );
@@ -226,7 +234,15 @@ export function extractFileDependencies(
           }
           globRoot = path.join(globRoot, part);
         }
-        if (globRoot !== initialGlobRoot || preserveGlobRoot) {
+        if (
+          globRoot === dependencyRoot &&
+          !hasTraversalAlternative &&
+          !dependencies.has(
+            `${dependencyRoot.replace(/[\\/]+$/, '')}${path.sep}`,
+          )
+        ) {
+          dependencies.add(absolutePath);
+        } else if (globRoot !== initialGlobRoot || preserveGlobRoot) {
           dependencies.add(
             preserveGlobRoot
               ? `${globRoot.replace(/[\\/]+$/, '')}${path.sep}`
@@ -255,7 +271,7 @@ export function extractFileDependencies(
       isProvider = false,
     ): void => {
       let filePath = fileUrl.replace(/^file:\/\//, '');
-      const expandedPath = expandEnvTemplates(filePath);
+      const expandedPath = expandAndTrackEnvTemplates(filePath);
       const hasEnvTemplate = expandedPath !== filePath;
       filePath = expandedPath;
       const functionIndex = filePath.lastIndexOf(':');
@@ -331,7 +347,7 @@ export function extractFileDependencies(
             path.resolve(baseDir, varFile),
           );
           for (const resolvedVarFile of processFilePath(
-            expandEnvTemplates(relativeVarFile),
+            expandAndTrackEnvTemplates(relativeVarFile),
             'test variable file dependency',
             true,
             true,
@@ -408,6 +424,14 @@ export function extractFileDependencies(
         return;
       }
       if (typeof value !== 'object' || value === null) {
+        return;
+      }
+      if (
+        value instanceof Uint8Array ||
+        value instanceof Date ||
+        value instanceof Map ||
+        value instanceof Set
+      ) {
         return;
       }
       const inspectedValues = includeFileUrls
@@ -502,7 +526,11 @@ export function extractFileDependencies(
             /%[a-f\d]{2}/i.test(refPath) &&
             !/%(?![a-f\d]{2})/i.test(refPath)
           ) {
-            refPath = decodeURIComponent(refPath);
+            try {
+              refPath = decodeURIComponent(refPath);
+            } catch {
+              // Keep malformed percent-encoded paths literal.
+            }
           }
 
           const relativeRefPath = path.relative(
@@ -696,7 +724,7 @@ export function extractFileDependencies(
         // Remote source (https://, s3://, ...) — not a local file dependency.
         return;
       }
-      filePath = expandEnvTemplates(filePath);
+      filePath = expandAndTrackEnvTemplates(filePath);
 
       // Drop an Excel sheet reference while preserving `#` in other filenames.
       const fileName = path.basename(filePath);
@@ -764,13 +792,15 @@ export function extractFileDependencies(
         if (typeof test !== 'object' || test === null) {
           continue;
         }
-        if (test.path) {
+        if (typeof test.path === 'string') {
           processTestFile(test.path);
           extractNestedFileUrls(test.config);
+          extractNestedFileUrls({ provider: test.provider });
           continue;
         }
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
+        extractNestedFileUrls({ provider: test.provider });
       }
     }
 

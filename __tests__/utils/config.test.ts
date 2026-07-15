@@ -261,6 +261,46 @@ tests:
     ).toEqual(['../config/data/vars.yaml', '../config/expected/output.txt']);
   });
 
+  it('should ignore truthy non-string test paths without dropping inline dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - path: 1
+    vars:
+      context: file://data/context.txt
+  - path: {}
+    assert:
+      - type: contains
+        value: file://expected/output.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/data/context.txt', '../config/expected/output.txt']);
+  });
+
+  it('should not enumerate atomic YAML values while extracting nested dependencies', () => {
+    const entries = vi.spyOn(Object, 'entries');
+    const values = vi.spyOn(Object, 'values');
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - vars:
+      blob: !!binary AAECAwQFBgcICQ==
+      generated: 2026-07-15T00:00:00Z
+      context: file://data/context.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/data/context.txt']);
+    expect(
+      [...entries.mock.calls, ...values.mock.calls].some(
+        ([value]) => value instanceof Uint8Array || value instanceof Date,
+      ),
+    ).toBe(false);
+    entries.mockRestore();
+    values.mockRestore();
+  });
+
   it('should extract dependencies nested in a file-backed YAML test', () => {
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) => {
@@ -305,6 +345,16 @@ tests:
       '../config/tests/cases.yaml',
       '../config/tests/providers/custom.py',
     ]);
+  });
+
+  it('should extract an inline per-test provider dependency', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests:\n  - provider: file://providers/custom.py:call_api',
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/providers/custom.py']);
   });
 
   it.each([
@@ -578,6 +628,20 @@ tests:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['suite index.yaml']);
+  });
+
+  it('should preserve malformed UTF-8 $ref paths without dropping sibling dependencies', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - $ref: suite%E0%A4.yaml#/cases
+  - vars:
+      context: file://data/context.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['suite%E0%A4.yaml', 'data/context.txt']);
   });
 
   it('should conservatively evaluate all changes for nested JSON-schema id scopes', () => {
@@ -1073,6 +1137,7 @@ tests:
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual([
       `../config/tests/cases.${extension}`,
+      '../config/',
       '../config/data/prod.txt',
       '../config/data/',
     ]);
@@ -1117,6 +1182,7 @@ tests:
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual([
       '../config/tests/cases.yaml',
+      '../config/',
       '../config/expected/prod/real.txt',
       '../config/expected/',
     ]);
@@ -1411,7 +1477,7 @@ tests:
 
     expect(
       extractFileDependencies('/test/workspace/promptfooconfig.yaml'),
-    ).toEqual(['tests/cases.yaml', '/']);
+    ).toEqual(['tests/cases.yaml', '{tests,legacy}/*.yaml']);
   });
 
   it('should expand env-templated test paths conservatively', () => {
@@ -1425,7 +1491,24 @@ tests:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/tests/active.yaml', '../config/tests/']);
+    ).toEqual([
+      '../config/',
+      '../config/tests/active.yaml',
+      '../config/tests/',
+    ]);
+  });
+
+  it('should conservatively track env-templated paths from a nested config', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/workspace');
+    mockFs.readFileSync.mockReturnValue('tests: "file://{{ env.TEST_FILE }}"');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/workspace/evals/tests/active.yaml']);
+
+    expect(
+      extractFileDependencies('/test/workspace/evals/promptfooconfig.yaml'),
+    ).toEqual(['/', 'evals/tests/active.yaml', 'evals/']);
   });
 
   it('should expand a full Nunjucks env expression that renders nested paths', () => {
@@ -1440,7 +1523,7 @@ tests:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['providers/prod.cjs', '/']);
+    ).toEqual(['/', 'providers/prod.cjs']);
     expect(mockGlob.sync).toHaveBeenCalledWith(
       '/test/config/**/*.cjs',
       expect.objectContaining({ nodir: true }),
@@ -1457,7 +1540,8 @@ tests:
     ).toEqual(['../config/{{ vars.suite }}.cjs']);
   });
 
-  it('should preserve the config directory for an empty root test glob', () => {
+  it('should preserve the pattern for an empty workspace-root test glob', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
     mockFs.readFileSync.mockReturnValue('tests: file://*.yaml');
     mockGlob.hasMagic.mockImplementation((value: string) =>
       value.includes('*'),
@@ -1466,7 +1550,20 @@ tests:
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toContain('../config/');
+    ).toEqual(['*.yaml']);
+  });
+
+  it('should preserve the pattern for an empty workspace-root prompt glob', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockReturnValue('prompts: [file://*.txt]');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['*.txt']);
   });
 
   it('should preserve an absolute test glob directory when its last match is deleted', () => {
@@ -1913,7 +2010,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/provider.py']);
+    expect(deps).toEqual(['../config/provider.py', '../config/*.py']);
   });
 
   it('should build nested base directories for globs', () => {

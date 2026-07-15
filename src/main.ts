@@ -4,6 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -539,6 +540,17 @@ export async function run(): Promise<void> {
 
           // Direct file match
           if (changedFilesList.includes(dep)) {
+            return true;
+          }
+
+          if (
+            changedFilesList.some((changedFile) =>
+              minimatch(changedFile, dep, {
+                dot: true,
+                windowsPathsNoEscape: true,
+              }),
+            )
+          ) {
             return true;
           }
 
