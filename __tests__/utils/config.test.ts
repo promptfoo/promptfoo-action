@@ -327,6 +327,123 @@ tests:
     ]);
   });
 
+  it.each([
+    'yaml',
+    'json',
+    'jsonl',
+  ])('should extract contained $ref dependencies from a file-backed %s test', (extension) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        const target = String(filePath);
+        if (target.endsWith(`cases.${extension}`)) {
+          if (extension === 'yaml') {
+            return '- $ref: data/case.yaml#/case';
+          }
+          return JSON.stringify({ $ref: 'data/case.yaml#/case' });
+        }
+        if (target.endsWith('data/case.yaml')) {
+          return '$ref: nested/case.json#/case';
+        }
+        if (target.endsWith('data/nested/case.json')) {
+          return JSON.stringify({ case: { vars: 'vars/inputs.yaml' } });
+        }
+        return `tests: file://tests/cases.${extension}`;
+      },
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      `tests/cases.${extension}`,
+      'data/case.yaml',
+      'data/nested/case.json',
+      'tests/vars/inputs.yaml',
+    ]);
+  });
+
+  it('should extract a contained $ref from the main config tests field', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('tests-pointer.yaml')
+          ? [
+              'cases:',
+              '  - vars: vars/inputs.yaml',
+              '    assert:',
+              '      - type: javascript',
+              '        value:',
+              '          file: validators/check.js',
+            ].join('\n')
+          : 'tests:\n  $ref: tests-pointer.yaml#/cases',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      'tests-pointer.yaml',
+      'vars/inputs.yaml',
+      'validators/check.js',
+    ]);
+  });
+
+  it('should ignore fragment-only, remote, and outside-workspace test $refs', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/config');
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? [
+              '- $ref: "#/definitions/case"',
+              '- $ref: https://example.test/case.yaml#/case',
+              '- $ref: data:application/json,%7B%7D',
+              '- $ref: ../outside.yaml#/case',
+              '- $ref: file:///test/outside.yaml#/case',
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['tests/cases.yaml']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('test $ref dependency must stay within'),
+    );
+  });
+
+  it('should strip supported function qualifiers from nested file URLs', () => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) =>
+        String(filePath).endsWith('cases.yaml')
+          ? [
+              '- assertScoringFunction: file://validators/score.py:calculate_score',
+              '  options:',
+              '    transform: file://transforms/output.js:customTransform',
+              '    transformVars: file://transforms/vars.ts:customTransformVars',
+              '  assert:',
+              '    - type: javascript',
+              '      value: file://validators/assert.js:customFunction',
+              '    - type: contains',
+              '      value: file://expected/cases:prod.yaml',
+            ].join('\n')
+          : 'tests: file://tests/cases.yaml',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/tests/cases.yaml',
+      '../config/validators/assert.js',
+      '../config/expected/cases:prod.yaml',
+      '../config/validators/score.py',
+      '../config/transforms/output.js',
+      '../config/transforms/vars.ts',
+    ]);
+  });
+
   it('should ignore non-object entries in a file-backed test', () => {
     mockFs.readFileSync.mockImplementation(
       (filePath: fs.PathOrFileDescriptor) =>
@@ -713,6 +830,35 @@ prompts:
     );
 
     expect(deps).toEqual(['providers/custom.py', 'prompts/prompt.txt']);
+  });
+
+  it.each([
+    ['main-config', 'tests:\n  $ref: data/cases.yaml#/cases'],
+    ['external-test', 'tests: file://tests/cases.yaml'],
+  ])('should resolve %s test $refs from the configured working directory', (source, configContent) => {
+    mockFs.readFileSync.mockImplementation(
+      (filePath: fs.PathOrFileDescriptor) => {
+        const target = String(filePath);
+        if (target.endsWith('/tests/cases.yaml')) {
+          return '- $ref: data/cases.yaml#/cases/0';
+        }
+        if (target.endsWith('/data/cases.yaml')) {
+          return 'cases:\n  - vars:\n      subject: tracked';
+        }
+        return configContent;
+      },
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+      '/test/working/evals',
+    );
+
+    expect(deps).toContain('evals/data/cases.yaml');
+    if (source === 'external-test') {
+      expect(deps).toContain('evals/tests/cases.yaml');
+    }
   });
 
   it('should keep dependencies whose names begin with two dots', () => {

@@ -36,7 +36,10 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
  * Extracts file dependencies from a promptfoo configuration file.
  * This includes custom provider files, prompt files, test data files, etc.
  */
-export function extractFileDependencies(configPath: string): string[] {
+export function extractFileDependencies(
+  configPath: string,
+  refResolutionRoot = process.cwd(),
+): string[] {
   const dependencies = new Set<string>();
   const configDir = path.dirname(configPath);
   const cwd = process.cwd();
@@ -157,11 +160,15 @@ export function extractFileDependencies(configPath: string): string[] {
       fileUrl: string,
       preserveGlobRoot = false,
     ): void => {
-      processFilePath(
-        fileUrl.replace(/^file:\/\//, ''),
-        'config file dependency',
-        preserveGlobRoot,
-      );
+      let filePath = fileUrl.replace(/^file:\/\//, '');
+      const functionIndex = filePath.lastIndexOf(':');
+      if (
+        functionIndex > 1 &&
+        /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex))
+      ) {
+        filePath = filePath.slice(0, functionIndex);
+      }
+      processFilePath(filePath, 'config file dependency', preserveGlobRoot);
     };
 
     // Extract provider files
@@ -270,9 +277,15 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     const inspectedNestedValues = new WeakSet<object>();
-    const extractNestedFileUrls = (value: unknown): void => {
+    const inspectedRefValues = new WeakSet<object>();
+    const extractNestedFileUrls = (
+      value: unknown,
+      refBaseDir = refResolutionRoot,
+      includeFileUrls = true,
+      testBaseDir = configDir,
+    ): void => {
       if (typeof value === 'string') {
-        if (value.startsWith('file://')) {
+        if (includeFileUrls && value.startsWith('file://')) {
           processFileUrl(value, true);
         }
         return;
@@ -280,23 +293,59 @@ export function extractFileDependencies(configPath: string): string[] {
       if (typeof value !== 'object' || value === null) {
         return;
       }
-      if (inspectedNestedValues.has(value)) {
+      const inspectedValues = includeFileUrls
+        ? inspectedNestedValues
+        : inspectedRefValues;
+      if (inspectedValues.has(value)) {
         return;
       }
-      inspectedNestedValues.add(value);
+      inspectedValues.add(value);
       if (Array.isArray(value)) {
         for (const item of value) {
-          extractNestedFileUrls(item);
+          extractNestedFileUrls(item, refBaseDir, includeFileUrls, testBaseDir);
         }
         return;
       }
-      for (const item of Object.values(value)) {
-        extractNestedFileUrls(item);
+      const nestedTest = value as PromptfooTestConfig;
+      extractVarFiles(nestedTest.vars, testBaseDir);
+      extractAssertFiles(nestedTest.assert);
+      for (const [key, item] of Object.entries(value)) {
+        if (key === '$ref' && typeof item === 'string') {
+          let refPath = item.split('#', 1)[0];
+          if (!refPath) {
+            continue;
+          }
+          if (refPath.startsWith('file://')) {
+            refPath = refPath.slice('file://'.length);
+          } else if (
+            /^[a-z][a-z\d+.-]*:/i.test(refPath) &&
+            !/^[a-z]:[\\/]/i.test(refPath)
+          ) {
+            continue;
+          }
+
+          const relativeRefPath = path.relative(
+            configDir,
+            path.resolve(refBaseDir, refPath),
+          );
+          for (const refFile of processFilePath(
+            relativeRefPath,
+            'test $ref dependency',
+          )) {
+            inspectTestFile(refFile, path.dirname(refFile), testBaseDir);
+          }
+          continue;
+        }
+        extractNestedFileUrls(item, refBaseDir, includeFileUrls, testBaseDir);
       }
     };
 
     const inspectedTestFiles = new Set<string>();
-    const inspectTestFile = (testFile: string): void => {
+    const inspectTestFile = (
+      testFile: string,
+      refBaseDir = refResolutionRoot,
+      testBaseDir = path.dirname(testFile),
+    ): void => {
       if (
         inspectedTestFiles.has(testFile) ||
         !/\.(?:ya?ml|jsonl?)$/i.test(testFile) ||
@@ -337,9 +386,9 @@ export function extractFileDependencies(configPath: string): string[] {
           if (typeof nestedTest !== 'object' || nestedTest === null) {
             continue;
           }
-          extractVarFiles(nestedTest.vars, path.dirname(testFile));
+          extractVarFiles(nestedTest.vars, testBaseDir);
           extractAssertFiles(nestedTest.assert);
-          extractNestedFileUrls(nestedTest);
+          extractNestedFileUrls(nestedTest, refBaseDir, true, testBaseDir);
         }
       } catch {
         core.warning(`Failed to inspect test file dependency "${testFile}"`);
@@ -395,6 +444,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Process tests
     if (config.tests) {
+      extractNestedFileUrls(config.tests, refResolutionRoot, false);
       const tests = Array.isArray(config.tests) ? config.tests : [config.tests];
       for (const test of tests) {
         if (typeof test === 'string') {

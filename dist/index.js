@@ -36284,7 +36284,7 @@ function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
-function extractFileDependencies(configPath) {
+function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path5.dirname(configPath);
   const cwd = process.cwd();
@@ -36369,11 +36369,12 @@ function extractFileDependencies(configPath) {
       return [absolutePath];
     };
     const processFileUrl = (fileUrl, preserveGlobRoot = false) => {
-      processFilePath(
-        fileUrl.replace(/^file:\/\//, ""),
-        "config file dependency",
-        preserveGlobRoot
-      );
+      let filePath = fileUrl.replace(/^file:\/\//, "");
+      const functionIndex = filePath.lastIndexOf(":");
+      if (functionIndex > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex))) {
+        filePath = filePath.slice(0, functionIndex);
+      }
+      processFilePath(filePath, "config file dependency", preserveGlobRoot);
     };
     if (config2.providers) {
       for (const provider of config2.providers) {
@@ -36452,9 +36453,10 @@ function extractFileDependencies(configPath) {
       }
     };
     const inspectedNestedValues = /* @__PURE__ */ new WeakSet();
-    const extractNestedFileUrls = (value) => {
+    const inspectedRefValues = /* @__PURE__ */ new WeakSet();
+    const extractNestedFileUrls = (value, refBaseDir = refResolutionRoot, includeFileUrls = true, testBaseDir = configDir) => {
       if (typeof value === "string") {
-        if (value.startsWith("file://")) {
+        if (includeFileUrls && value.startsWith("file://")) {
           processFileUrl(value, true);
         }
         return;
@@ -36462,22 +36464,48 @@ function extractFileDependencies(configPath) {
       if (typeof value !== "object" || value === null) {
         return;
       }
-      if (inspectedNestedValues.has(value)) {
+      const inspectedValues = includeFileUrls ? inspectedNestedValues : inspectedRefValues;
+      if (inspectedValues.has(value)) {
         return;
       }
-      inspectedNestedValues.add(value);
+      inspectedValues.add(value);
       if (Array.isArray(value)) {
         for (const item of value) {
-          extractNestedFileUrls(item);
+          extractNestedFileUrls(item, refBaseDir, includeFileUrls, testBaseDir);
         }
         return;
       }
-      for (const item of Object.values(value)) {
-        extractNestedFileUrls(item);
+      const nestedTest = value;
+      extractVarFiles(nestedTest.vars, testBaseDir);
+      extractAssertFiles(nestedTest.assert);
+      for (const [key, item] of Object.entries(value)) {
+        if (key === "$ref" && typeof item === "string") {
+          let refPath = item.split("#", 1)[0];
+          if (!refPath) {
+            continue;
+          }
+          if (refPath.startsWith("file://")) {
+            refPath = refPath.slice("file://".length);
+          } else if (/^[a-z][a-z\d+.-]*:/i.test(refPath) && !/^[a-z]:[\\/]/i.test(refPath)) {
+            continue;
+          }
+          const relativeRefPath = path5.relative(
+            configDir,
+            path5.resolve(refBaseDir, refPath)
+          );
+          for (const refFile of processFilePath(
+            relativeRefPath,
+            "test $ref dependency"
+          )) {
+            inspectTestFile(refFile, path5.dirname(refFile), testBaseDir);
+          }
+          continue;
+        }
+        extractNestedFileUrls(item, refBaseDir, includeFileUrls, testBaseDir);
       }
     };
     const inspectedTestFiles = /* @__PURE__ */ new Set();
-    const inspectTestFile = (testFile) => {
+    const inspectTestFile = (testFile, refBaseDir = refResolutionRoot, testBaseDir = path5.dirname(testFile)) => {
       if (inspectedTestFiles.has(testFile) || !/\.(?:ya?ml|jsonl?)$/i.test(testFile) || !fs6.existsSync(testFile)) {
         return;
       }
@@ -36500,9 +36528,9 @@ function extractFileDependencies(configPath) {
           if (typeof nestedTest !== "object" || nestedTest === null) {
             continue;
           }
-          extractVarFiles(nestedTest.vars, path5.dirname(testFile));
+          extractVarFiles(nestedTest.vars, testBaseDir);
           extractAssertFiles(nestedTest.assert);
-          extractNestedFileUrls(nestedTest);
+          extractNestedFileUrls(nestedTest, refBaseDir, true, testBaseDir);
         }
       } catch {
         warning(`Failed to inspect test file dependency "${testFile}"`);
@@ -36540,6 +36568,7 @@ function extractFileDependencies(configPath) {
       extractAssertFiles(config2.defaultTest.assert);
     }
     if (config2.tests) {
+      extractNestedFileUrls(config2.tests, refResolutionRoot, false);
       const tests = Array.isArray(config2.tests) ? config2.tests : [config2.tests];
       for (const test of tests) {
         if (typeof test === "string") {
@@ -37241,7 +37270,10 @@ async function run() {
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies = extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+      const dependencies = extractFileDependencies(
+        configAbsolutePath,
+        workingDirectory
+      ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`

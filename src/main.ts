@@ -488,8 +488,10 @@ export async function run(): Promise<void> {
     // Extract dependencies from config file
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
-      const dependencies =
-        extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
+      const dependencies = extractFileDependencies(
+        configAbsolutePath,
+        workingDirectory,
+      ).map(toRepositoryPath);
       if (dependencies.length > 0) {
         core.debug(
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,

@@ -432,6 +432,7 @@ describe('GitHub Action Main', () => {
       );
       expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
         path.join(process.cwd(), 'evals', 'promptfooconfig.yaml'),
+        path.join(process.cwd(), 'evals'),
       );
     });
 
