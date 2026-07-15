@@ -38657,6 +38657,9 @@ function extractFileDependencies(configPath) {
       while (pending.length > 0) {
         const current = pending.pop();
         processed++;
+        if (typeof current === "string" && (current.includes("{{") || current.includes("{%"))) {
+          return true;
+        }
         if (typeof current === "string" && current.startsWith("file://")) {
           processFileUrl(current, "auth");
           continue;
@@ -38738,7 +38741,7 @@ function extractFileDependencies(configPath) {
           /\\u([0-9a-f]{4})|\\\//gi,
           (_match, code) => code ? String.fromCharCode(Number.parseInt(code, 16)) : "/"
         );
-        if (TRANSITIVE_FILE_REFERENCE.test(canonicalContents) || hasTransitiveNestedReference(canonicalContents)) {
+        if (canonicalContents.includes("{{") || canonicalContents.includes("{%") || TRANSITIVE_FILE_REFERENCE.test(canonicalContents) || hasTransitiveNestedReference(canonicalContents)) {
           markUnsafeDependency();
         }
       } catch {
@@ -38751,6 +38754,7 @@ function extractFileDependencies(configPath) {
         return;
       }
       const httpConfig = providerConfig;
+      const isTemplated = (value) => value.includes("{{") || value.includes("{%");
       if (extractNestedFileReferences(httpConfig.body)) {
         markUnsafeDependency();
       }
@@ -38758,8 +38762,10 @@ function extractFileDependencies(configPath) {
         if (typeof reference !== "string") return;
         processFilePath(reference, false);
       };
-      if (typeof httpConfig.validateStatus === "string" && httpConfig.validateStatus.startsWith("file://")) {
-        processFileUrl(httpConfig.validateStatus, "http", false);
+      if (typeof httpConfig.validateStatus === "string" && (httpConfig.validateStatus.startsWith("file://") || isTemplated(httpConfig.validateStatus))) {
+        if (httpConfig.validateStatus.startsWith("file://")) {
+          processFileUrl(httpConfig.validateStatus, "http", false);
+        }
         markUnsafeDependency();
       }
       for (const field of [
@@ -38769,18 +38775,21 @@ function extractFileDependencies(configPath) {
         "sessionParser"
       ]) {
         const reference = httpConfig[field];
-        if (typeof reference === "string" && reference.startsWith("file://")) {
-          processFileUrl(reference, "http", false);
+        if (typeof reference === "string" && (reference.startsWith("file://") || isTemplated(reference))) {
+          if (reference.startsWith("file://")) {
+            processFileUrl(reference, "http", false);
+          }
           markUnsafeDependency();
         }
       }
       const session = httpConfig.session;
-      if (typeof session === "object" && session !== null && typeof session.responseParser === "string" && session.responseParser.startsWith("file://")) {
-        processFileUrl(
-          session.responseParser,
-          "http",
-          false
-        );
+      if (typeof session === "object" && session !== null && typeof session.responseParser === "string" && (session.responseParser.startsWith("file://") || isTemplated(
+        session.responseParser
+      ))) {
+        const responseParser = session.responseParser;
+        if (responseParser.startsWith("file://")) {
+          processFileUrl(responseParser, "http", false);
+        }
         markUnsafeDependency();
       }
       const auth2 = httpConfig.auth;
@@ -38845,6 +38854,10 @@ function extractFileDependencies(configPath) {
       }
     };
     const processProviderId = (providerId) => {
+      if (providerId.includes("{{") || providerId.includes("{%")) {
+        markUnsafeDependency();
+        return;
+      }
       if (providerId.startsWith("file://")) {
         processFileUrl(providerId, "provider");
         inspectTransitiveReference(providerId);
@@ -38908,7 +38921,9 @@ function extractFileDependencies(configPath) {
         }
       };
       const processTransform = (value) => {
-        if (typeof value === "string" && value.startsWith("file://")) {
+        if (typeof value === "string" && (value.includes("{{") || value.includes("{%"))) {
+          markUnsafeDependency();
+        } else if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value, "auth");
           markUnsafeDependency();
         }
@@ -38944,7 +38959,11 @@ function extractFileDependencies(configPath) {
       for (const envPath of envPaths) {
         if (envPath === void 0) continue;
         if (typeof envPath === "string") {
-          processFilePath(envPath);
+          if (envPath.includes(",")) {
+            markUnsafeDependency();
+          } else {
+            processFilePath(envPath);
+          }
         } else {
           markUnsafeDependency();
         }
@@ -39100,8 +39119,10 @@ function extractFileDependencies(configPath) {
         }
         for (const field of ["transform", "contextTransform"]) {
           const reference = assert[field];
-          if (typeof reference === "string" && reference.startsWith("file://")) {
-            processFileUrl(reference, "auth");
+          if (typeof reference === "string" && (reference.startsWith("file://") || reference.includes("{{") || reference.includes("{%"))) {
+            if (reference.startsWith("file://")) {
+              processFileUrl(reference, "auth");
+            }
             markUnsafeDependency();
           }
         }
@@ -39113,8 +39134,10 @@ function extractFileDependencies(configPath) {
     };
     const processTestHooks = (test) => {
       if ("provider" in test) processProvider(test.provider);
-      if (typeof test.assertScoringFunction === "string" && test.assertScoringFunction.startsWith("file://")) {
-        processFileUrl(test.assertScoringFunction, "auth");
+      if (typeof test.assertScoringFunction === "string" && (test.assertScoringFunction.startsWith("file://") || test.assertScoringFunction.includes("{{") || test.assertScoringFunction.includes("{%"))) {
+        if (test.assertScoringFunction.startsWith("file://")) {
+          processFileUrl(test.assertScoringFunction, "auth");
+        }
         markUnsafeDependency();
       }
       const options = test.options;
@@ -39122,8 +39145,10 @@ function extractFileDependencies(configPath) {
       const optionRecord = options;
       for (const field of ["postprocess", "transform", "transformVars"]) {
         const reference = optionRecord[field];
-        if (typeof reference === "string" && reference.startsWith("file://")) {
-          processFileUrl(reference, "auth");
+        if (typeof reference === "string" && (reference.startsWith("file://") || reference.includes("{{") || reference.includes("{%"))) {
+          if (reference.startsWith("file://")) {
+            processFileUrl(reference, "auth");
+          }
           markUnsafeDependency();
         }
       }
@@ -39932,6 +39957,8 @@ var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 var PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
 var MAX_PROMPT_GLOB_LENGTH = 65536;
+var MAX_PROMPT_EXTGLOB_COUNT = 1024;
+var MAX_PROMPT_EXTGLOB_DEPTH = 64;
 function invalidPromptGlobError() {
   return new PromptfooActionError(
     "Invalid prompt glob: the pattern could not be expanded safely.",
@@ -39946,6 +39973,8 @@ function validatePromptGlob(pattern) {
   const braces = [];
   let escaped = false;
   let inCharacterClass = false;
+  let extglobCount = 0;
+  let extglobDepth = 0;
   for (let index = 0; index < pattern.length; index++) {
     const character = pattern[index];
     if (escaped) {
@@ -39963,6 +39992,19 @@ function validatePromptGlob(pattern) {
     if (character === "]") {
       while (braces[braces.length - 1]?.inCharacterClass) braces.pop();
       inCharacterClass = false;
+      continue;
+    }
+    if (!inCharacterClass && "*?@+!".includes(character) && pattern[index + 1] === "(") {
+      extglobCount++;
+      extglobDepth++;
+      if (extglobCount > MAX_PROMPT_EXTGLOB_COUNT || extglobDepth > MAX_PROMPT_EXTGLOB_DEPTH) {
+        throw invalidPromptGlobError();
+      }
+      index++;
+      continue;
+    }
+    if (!inCharacterClass && character === ")" && extglobDepth > 0) {
+      extglobDepth--;
       continue;
     }
     if (character === "{") {
@@ -40005,7 +40047,7 @@ function validatePromptGlob(pattern) {
       throw invalidPromptGlobError();
     }
   }
-  if (escaped || inCharacterClass || braces.length > 0) {
+  if (escaped || inCharacterClass || braces.length > 0 || extglobDepth > 0) {
     throw invalidPromptGlobError();
   }
   try {
@@ -40294,6 +40336,7 @@ async function run() {
     const realPromptRoots = {};
     validateWorkingDirectory(workspaceRoot, workingDirectory, realPromptRoots);
     let configPaths = [configPath];
+    let configGlobRepositoryRoot;
     if (/[*?{}[\]]|[@+!]\(/.test(configPath)) {
       validatePromptGlob(configPath);
       validateGlobPrefix(
@@ -40302,6 +40345,20 @@ async function run() {
         configPath,
         realPromptRoots
       );
+      const normalizedConfigPattern = configPath.replace(/\\/g, "/");
+      const firstMagicIndex = normalizedConfigPattern.search(/[*?{}[\]]|[@+!]\(/);
+      const staticPrefix = normalizedConfigPattern.slice(0, firstMagicIndex);
+      const directoryPrefix = staticPrefix.slice(
+        0,
+        staticPrefix.lastIndexOf("/") + 1
+      );
+      const repositoryRoot = toRepositoryPath(
+        path7.relative(
+          workspaceRoot,
+          path7.resolve(workingDirectory, directoryPrefix)
+        )
+      );
+      configGlobRepositoryRoot = repositoryRoot ? `${repositoryRoot}/` : repositoryRoot;
       try {
         const expandedConfigPaths = Ui(configPath, {
           cwd: workingDirectory,
@@ -40655,7 +40712,9 @@ async function run() {
         }
       }
     }
-    const configChanged = changedFilesList.length > 0 && changedFilesList.some((file) => configRepositoryPaths.has(file));
+    const configChanged = changedFilesList.length > 0 && changedFilesList.some(
+      (file) => configRepositoryPaths.has(file) || configGlobRepositoryRoot !== void 0 && file.startsWith(configGlobRepositoryRoot)
+    );
     let dependencyChanged = false;
     const dependencies = configAbsolutePaths.flatMap(
       (configuredPath) => extractFileDependencies(configuredPath).map(toRepositoryPath)
