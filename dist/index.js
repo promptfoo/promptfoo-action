@@ -39891,6 +39891,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
   const configDir = path6.dirname(configPath);
   const cwd = process.cwd();
   const dependencyRoot = isPathInside(cwd, configDir) ? cwd : configDir;
+  const isSafeDependency = (targetPath) => isPathInside(dependencyRoot, targetPath) || isPathInside(cwd, targetPath);
   try {
     const configContent = fs6.readFileSync(configPath, "utf8");
     if (!configContent.trim()) {
@@ -39973,10 +39974,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       );
       if (expandedPaths.some((expandedPath) => {
         const traversalPath = expandedPath.replace(/\[\.\]/g, ".");
-        return !isPathInside(
-          dependencyRoot,
-          path6.resolve(configDir, traversalPath)
-        );
+        return !isSafeDependency(path6.resolve(configDir, traversalPath));
       })) {
         warning(
           `Ignoring unsafe config dependency "${normalizedPath}": ${source} must stay within the repository workspace`
@@ -39996,7 +39994,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         const safeMatches = [];
         for (const match2 of matches) {
           const absoluteMatch = path6.resolve(match2);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
+          if (isSafeDependency(absoluteMatch)) {
             dependencies.add(absoluteMatch);
             safeMatches.push(absoluteMatch);
           } else {
@@ -40068,7 +40066,7 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       const providerPath = localProvider[1];
       processFileUrl(`file://${providerPath}`, false, configDir, true);
       const absolutePath = path6.resolve(configDir, providerPath);
-      if (/\.(?:ya?ml|json)$/i.test(providerPath) && isPathInside(dependencyRoot, absolutePath)) {
+      if (/\.(?:ya?ml|json)$/i.test(providerPath) && isSafeDependency(absolutePath)) {
         providerConfigFiles.add(absolutePath);
       }
     };
@@ -40353,8 +40351,9 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
       inspectedTestFiles.add(inspectionKey);
       try {
         const realDependencyRoot = fs6.realpathSync(dependencyRoot);
+        const realCwd = fs6.realpathSync(cwd);
         const realTestFile = fs6.realpathSync(testFile);
-        if (!isPathInside(realDependencyRoot, realTestFile)) {
+        if (!isPathInside(realDependencyRoot, realTestFile) && !isPathInside(realCwd, realTestFile)) {
           warning(
             `Ignoring unsafe config dependency "${testFile}": test file dependency must stay within the repository workspace`
           );
@@ -41175,7 +41174,9 @@ async function run() {
       const compareBase = workflowBase || context2.payload.inputs?.base || "HEAD~1";
       if (filesInput) {
         changedFiles = filesInput.split(/\r?\n/).map((file) => file.trim()).filter(Boolean);
-        info(`Using manually specified files: ${filesInput}`);
+        info(
+          `Using manually specified files: ${JSON.stringify(changedFiles)}`
+        );
       } else {
         validateGitRevision(compareBase);
         try {
@@ -41189,7 +41190,7 @@ async function run() {
           ]);
           changedFiles = parseGitDiffPaths(diff);
           info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`
+            `Comparing against ${compareBase}, found changed files: ${JSON.stringify(changedFiles)}`
           );
         } catch (error2) {
           warning(
@@ -41216,7 +41217,7 @@ async function run() {
           ]);
           changedFiles = parseGitDiffPaths(diff);
           info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${JSON.stringify(changedFiles)}`
           );
         } catch (error2) {
           warning(
