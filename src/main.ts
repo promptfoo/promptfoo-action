@@ -506,6 +506,18 @@ export async function run(): Promise<void> {
             return true;
           }
 
+          if (
+            glob.hasMagic(dep, {
+              magicalBraces: true,
+              braceExpandMax: 1025,
+            }) &&
+            changedFilesList.some((changedFile) =>
+              path.matchesGlob(changedFile, dep),
+            )
+          ) {
+            return true;
+          }
+
           // Check if the dependency is a directory and any changed file is within it
           if (dep.endsWith('/') || isDirectory(dep)) {
             const depDir = dep.endsWith('/') ? dep : `${dep}/`;

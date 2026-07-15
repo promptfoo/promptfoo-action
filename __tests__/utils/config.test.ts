@@ -1179,6 +1179,47 @@ metadata: !!pairs [ { version: one } ]
     expect(core.warning).not.toHaveBeenCalled();
   });
 
+  it('should treat an inline binary var value as atomic and retain later dependencies', () => {
+    const entriesSpy = vi.spyOn(Object, 'entries');
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  vars:
+    payload: !!binary SGVsbG8=
+    context: file://fixtures/context.txt
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/fixtures/context.txt']);
+    expect(
+      entriesSpy.mock.calls.some(([value]) => ArrayBuffer.isView(value)),
+    ).toBe(false);
+    entriesSpy.mockRestore();
+  });
+
+  it('should treat a top-level binary vars value as atomic and retain later dependencies', () => {
+    const valuesSpy = vi.spyOn(Object, 'values');
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  vars: !!binary SGVsbG8=
+  assert:
+    - type: javascript
+      value: file://checks/later.js:score
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/checks/later.js']);
+    expect(
+      valuesSpy.mock.calls.some(([value]) => ArrayBuffer.isView(value)),
+    ).toBe(false);
+    valuesSpy.mockRestore();
+  });
+
   it('should track files nested in a defaultTest provider config', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
@@ -1911,6 +1952,66 @@ assert: &asserts
       'evals/current.txt',
       'evals/',
     ]);
+  });
+
+  it('should preserve a deleted workspace-root defaultTest glob as a pattern', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('working/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('working/defaults/default.yaml')) {
+        return 'vars: { context: file://gone*.txt }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['defaults/default.yaml', 'gone*.txt']);
+  });
+
+  it('should preserve a populated workspace-root defaultTest glob as a pattern', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('working/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('working/defaults/default.yaml')) {
+        return 'vars: { context: file://*.txt }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/current.txt']);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['defaults/default.yaml', 'current.txt', '*.txt']);
+  });
+
+  it('should preserve an explicit dot workspace-root defaultTest glob as a pattern', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('working/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('working/defaults/default.yaml')) {
+        return 'vars: { context: file://./*.txt }';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['defaults/default.yaml', '*.txt']);
   });
 
   it('should reject a file-backed defaultTest outside the repository', () => {

@@ -195,11 +195,15 @@ export function extractFileDependencies(configPath: string): string[] {
         if (basePath) {
           const absoluteBasePath = path.resolve(configDir, basePath);
           if (isPathInside(dependencyRoot, absoluteBasePath)) {
-            dependencies.add(
-              matches.length === 0
-                ? `${absoluteBasePath}${path.sep}`
-                : absoluteBasePath,
-            );
+            if (path.relative(cwd, absoluteBasePath) === '') {
+              dependencies.add(absolutePath);
+            } else {
+              dependencies.add(
+                matches.length === 0
+                  ? `${absoluteBasePath}${path.sep}`
+                  : absoluteBasePath,
+              );
+            }
           } else {
             core.warning(
               'Ignoring unsafe config dependency glob base: config file dependency glob base must stay within the repository workspace',
@@ -207,7 +211,11 @@ export function extractFileDependencies(configPath: string): string[] {
             dependencies.add(`${configDir}${path.sep}`);
           }
         } else {
-          dependencies.add(`${configDir}${path.sep}`);
+          dependencies.add(
+            path.relative(cwd, configDir) === ''
+              ? absolutePath
+              : `${configDir}${path.sep}`,
+          );
         }
         return safeMatches;
       } else if (isDirectory(absolutePath)) {
@@ -281,7 +289,11 @@ export function extractFileDependencies(configPath: string): string[] {
         for (const item of value) {
           extractFileReferences(item, inspectNestedFiles);
         }
-      } else if (typeof value === 'object' && value !== null) {
+      } else if (
+        typeof value === 'object' &&
+        value !== null &&
+        !ArrayBuffer.isView(value)
+      ) {
         const visitedValues = inspectNestedFiles
           ? visitedNestedFileValues
           : visitedFileValues;
@@ -425,7 +437,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         return;
       }
-      if (!vars || typeof vars !== 'object') return;
+      if (!vars || typeof vars !== 'object' || ArrayBuffer.isView(vars)) return;
       for (const value of Object.values(vars)) {
         extractFileReferences(value);
       }
