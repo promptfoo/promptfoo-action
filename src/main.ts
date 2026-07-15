@@ -661,12 +661,13 @@ export async function run(): Promise<void> {
     const selectedPromptFiles =
       configChanged || dependencyChanged ? allPromptFiles : promptFiles;
     const seenPromptFiles = new Set<string>();
-    const promptsToEvaluate = selectedPromptFiles.filter((promptFile) => {
+    const promptsToEvaluate: string[] = [];
+    for (const promptFile of selectedPromptFiles) {
       const absolutePrompt = path.resolve(workingDirectory, promptFile);
-      if (seenPromptFiles.has(absolutePrompt)) return false;
+      if (seenPromptFiles.has(absolutePrompt)) continue;
       seenPromptFiles.add(absolutePrompt);
-      return true;
-    });
+      promptsToEvaluate.push(path.relative(workingDirectory, absolutePrompt));
+    }
     const evaluatedPromptFiles = useConfigPrompts ? [] : promptsToEvaluate;
     if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new PromptfooActionError(
@@ -732,7 +733,7 @@ export async function run(): Promise<void> {
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${evaluatedPromptFiles.join(', ')}`,
       );
     }
 

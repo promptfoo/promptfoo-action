@@ -1297,6 +1297,85 @@ describe('GitHub Action Main', () => {
       expect(commentBody).not.toContain(absolutePrompt);
     });
 
+    test('should normalize an absolute action prompt match before evaluation and PR comments', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts', 'prompt1.txt');
+      withInputs({
+        prompts: path.join(process.cwd(), 'prompts', '*.txt'),
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      const promptfooArgs = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(promptfooArgs).toContain('prompts/prompt1.txt');
+      expect(promptfooArgs).not.toContain(absolutePrompt);
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body;
+      expect(commentBody).toContain(
+        'Evaluated prompt files: prompts/prompt1.txt',
+      );
+      expect(commentBody).not.toContain(absolutePrompt);
+    });
+
+    test('should normalize the first absolute prompt match when relative and absolute action globs overlap', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts', 'prompt1.txt');
+      withInputs({
+        prompts: `${path.join(process.cwd(), 'prompts', '*.txt')}\nprompts/prompt1.*`,
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+      ]);
+      mockGlob.sync
+        .mockReturnValueOnce([absolutePrompt])
+        .mockReturnValueOnce(['prompts/prompt1.txt']);
+
+      await run();
+
+      const promptfooArgs = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(promptfooArgs).toContain('prompts/prompt1.txt');
+      expect(promptfooArgs).not.toContain(absolutePrompt);
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0]?.[0].body;
+      expect(commentBody).toContain(
+        'Evaluated prompt files: prompts/prompt1.txt',
+      );
+      expect(commentBody).not.toContain(absolutePrompt);
+    });
+
+    test('should normalize absolute prompt matches in a manual no-change run before logging', async () => {
+      const absolutePrompt = path.join(process.cwd(), 'prompts', 'prompt1.txt');
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      withInputs({
+        prompts: path.join(process.cwd(), 'prompts', '*.txt'),
+      });
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+      mockGitInterface.diff.mockResolvedValue('');
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: prompts/prompt1.txt',
+      );
+      expect(
+        mockCore.info.mock.calls.some((call) =>
+          String(call[0]).includes(absolutePrompt),
+        ),
+      ).toBe(false);
+      const promptfooArgs = mockExec.exec.mock.calls[0]?.[1] as string[];
+      expect(promptfooArgs).toContain('prompts/prompt1.txt');
+      expect(promptfooArgs).not.toContain(absolutePrompt);
+    });
+
     test('should run when the last file from an extension-style dependency directory is deleted', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'providers.v1/deleted.py', status: 'removed' },
