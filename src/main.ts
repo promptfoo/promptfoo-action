@@ -145,6 +145,10 @@ function calculateSuccessRate(stats: {
   return (stats.successes / total) * 100;
 }
 
+function formatChangedFilesForLog(files: string[]): string {
+  return files.map((file) => JSON.stringify(file).slice(1, -1)).join('\n');
+}
+
 export async function run(): Promise<void> {
   try {
     const openaiApiKey: string = core.getInput('openai-api-key', {
@@ -339,6 +343,7 @@ export async function run(): Promise<void> {
 
     const event = github.context.eventName;
     let changedFiles = '';
+    let explicitChangedFiles: string[] | undefined;
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -364,13 +369,11 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles
-          .flatMap((file) =>
-            file.previous_filename
-              ? [file.filename, file.previous_filename]
-              : [file.filename],
-          )
-          .join('\n');
+        explicitChangedFiles = pullRequestFiles.flatMap((file) =>
+          file.previous_filename
+            ? [file.filename, file.previous_filename]
+            : [file.filename],
+        );
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -388,7 +391,14 @@ export async function run(): Promise<void> {
       if (filesInput) {
         // Option 1: Use provided file list
         changedFiles = filesInput;
-        core.info(`Using manually specified files: ${changedFiles}`);
+        const manualFiles: string[] = filesInput
+          .split(/\r?\n/)
+          .map((file: string) => file.trim())
+          .filter(Boolean);
+        explicitChangedFiles = manualFiles;
+        core.info(
+          `Using manually specified files: ${formatChangedFilesForLog(manualFiles)}`,
+        );
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
@@ -396,12 +406,13 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${formatChangedFilesForLog(changedFiles.split('\0').filter(Boolean))}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -429,12 +440,13 @@ export async function run(): Promise<void> {
           changedFiles = await gitInterface.diff([
             '--name-only',
             '--no-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${formatChangedFilesForLog(changedFiles.split('\0').filter(Boolean))}`,
           );
         } catch (error) {
           core.warning(
@@ -457,10 +469,8 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles
-      .split(/\r?\n/)
-      .map((file) => file.trim())
-      .filter(Boolean);
+    const changedFilesList =
+      explicitChangedFiles ?? changedFiles.split('\0').filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {

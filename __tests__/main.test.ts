@@ -46,7 +46,7 @@ const { mockGitInterface } = vi.hoisted(() => ({
     }),
     revparse: vi.fn(() => Promise.resolve('mock-commit-hash\n')),
     diff: vi.fn((_options?: string[]) =>
-      Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+      Promise.resolve('prompts/prompt1.txt\0promptfooconfig.yaml\0'),
     ),
   },
 }));
@@ -165,7 +165,7 @@ function setupCommonMocks(): MockOctokit {
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
-    'prompts/prompt1.txt\npromptfooconfig.yaml',
+    'prompts/prompt1.txt\0promptfooconfig.yaml\0',
   );
   mockCache.cleanupOldCache.mockResolvedValue(0);
   mockCache.createCacheManifest.mockResolvedValue();
@@ -623,6 +623,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -695,6 +696,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -888,6 +890,7 @@ describe('GitHub Action Main', () => {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
           '--no-renames',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -984,6 +987,42 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should preserve a leading space in a changed PR dependency path', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: ' providers/provider.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' providers/provider.py',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
+        expect.any(Object),
+      );
+    });
+
+    test('should preserve a newline in a changed PR dependency path', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'providers/line\nbreak.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/line\nbreak.py',
+      ]);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
+        expect.any(Object),
+      );
+    });
+
     test.each([
       'push',
       'workflow_dispatch',
@@ -1002,7 +1041,7 @@ describe('GitHub Action Main', () => {
       mockGitInterface.diff.mockImplementationOnce((options = []) =>
         Promise.resolve(
           options.includes('--no-renames')
-            ? 'providers/provider.py\nproviders/renamed.py'
+            ? 'providers/provider.py\0providers/renamed.py\0'
             : 'providers/renamed.py',
         ),
       );
@@ -1048,6 +1087,43 @@ describe('GitHub Action Main', () => {
         expect.arrayContaining(['promptfoo@latest', 'eval']),
         expect.any(Object),
       );
+    });
+
+    test('should preserve spaces and tabs in push dependency paths', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockImplementationOnce((options = []) =>
+        Promise.resolve(
+          options.includes('-z')
+            ? ' providers/spaced.py\0providers/tab\tname.py\0'
+            : ' providers/spaced.py\n"providers/tab\\tname.py"\n',
+        ),
+      );
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        ' providers/spaced.py',
+        'providers/tab\tname.py',
+      ]);
+
+      await run();
+
+      expect(mockGitInterface.diff).toHaveBeenCalledWith(
+        expect.arrayContaining(['--name-only', '--no-renames', '-z']),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['promptfoo@latest', 'eval']),
+        expect.any(Object),
+      );
+      const loggedFiles = mockCore.info.mock.calls.flat().join('\n');
+      expect(loggedFiles).toContain('providers/tab\\tname.py');
+      expect(loggedFiles).not.toContain('\0');
     });
 
     test('should run when a file inside a dependency directory changes', async () => {
@@ -1721,6 +1797,7 @@ describe('GitHub Action Main', () => {
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
         '--no-renames',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',
