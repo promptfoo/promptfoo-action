@@ -2884,6 +2884,125 @@ providers:
     );
   });
 
+  it('should ignore a null-byte vars glob without dropping later dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `vars: ["data/\\0*.yaml", data/safe.yaml]`;
+      }
+      if (String(filePath).endsWith('evals/data/safe.yaml')) {
+        return 'context: file://fixtures/context.txt';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.includes('\0')) {
+        throw new TypeError('glob pattern cannot contain a null byte');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/data/safe.yaml',
+      'evals/fixtures/context.txt',
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('contains an invalid null byte'),
+    );
+  });
+
+  it('should ignore a null-byte nested-config glob without dropping later dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return `
+provider: "file://providers/bad\\0*.yaml"
+assert:
+  - type: javascript
+    value: file://checks/safe.js:score
+`;
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.includes('\0')) {
+        throw new TypeError('glob pattern cannot contain a null byte');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/defaults/default.yaml',
+      'evals/checks/safe.js',
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('contains an invalid null byte'),
+    );
+  });
+
+  it('should ignore a null-byte defaultTest glob without dropping other dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/safe.py
+defaultTest: "file://defaults/bad\\0*.yaml"
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.includes('\0')) {
+        throw new TypeError('glob pattern cannot contain a null byte');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/safe.py']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('contains an invalid null byte'),
+    );
+  });
+
+  it('should ignore a null-byte templated defaultTest without watching the workspace', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/safe.py
+defaultTest: "file://defaults/bad\\0{{ env.NAME }}.yaml"
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) => {
+      if (value.includes('\0')) {
+        throw new TypeError('glob pattern cannot contain a null byte');
+      }
+      return value.includes('*');
+    });
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/providers/safe.py']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('contains an invalid null byte'),
+    );
+  });
+
   it('should ignore unsafe object-form variable and assertion dependencies', () => {
     const configContent = `
 tests:
