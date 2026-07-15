@@ -1783,6 +1783,28 @@ tests:
     ).toEqual(['evals/uploads/document.pdf', 'evals/uploads/attachment.pdf']);
   });
 
+  it('should extract HTTP validateStatus file dependencies with and without an export selector', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: http
+    config:
+      validateStatus: file://validators/status.js
+  - id: https
+    config:
+      validateStatus: file://validators/named-status.py:validate_status
+  - id: openai:gpt-4o
+    config:
+      validateStatus: status >= 200 && status < 300
+`);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([
+      'evals/validators/status.js',
+      'evals/validators/named-status.py',
+    ]);
+  });
+
   it('should conservatively watch an unresolved multipart source path', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:

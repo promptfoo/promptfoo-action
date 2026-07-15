@@ -750,7 +750,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using 2 manually specified file(s).',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
@@ -774,6 +774,30 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should not expose forged workflow commands from manual file input logs', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: {
+            files: 'data/context.json\n::error::FORGED-MANUAL-ANNOTATION',
+          },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.info.mock.calls.join('\n')).not.toContain(
+        'FORGED-MANUAL-ANNOTATION',
+      );
     });
 
     test('should preserve significant whitespace in manual workflow file paths', async () => {
@@ -889,7 +913,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: action-input-file.txt',
+        'Using 1 manually specified file(s).',
       );
       // Since we're providing files directly, diff shouldn't be called
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
@@ -1276,6 +1300,53 @@ describe('GitHub Action Main', () => {
           'prompts/prompt2.txt',
         ]),
       );
+    });
+
+    test('should report all evaluated input prompts in a dependency-triggered PR comment', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/prompt1.txt' },
+        { filename: 'providers/custom.py' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      const body = mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(body).toContain('prompts/prompt1.txt, prompts/prompt2.txt');
+    });
+
+    test('should report all evaluated input prompts in a dependency-triggered workflow summary', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValue(
+        'prompts/prompt1.txt\0providers/custom.py\0',
+      );
+      mockGlob.sync.mockReturnValue([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'providers/custom.py',
+      ]);
+
+      await run();
+
+      expect(mockCore.summary.addList).toHaveBeenCalledWith([
+        'prompts/prompt1.txt',
+        'prompts/prompt2.txt',
+      ]);
     });
 
     test('should run when a repository-root directory sentinel is returned', async () => {

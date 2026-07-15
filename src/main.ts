@@ -396,11 +396,7 @@ export async function run(): Promise<void> {
           return file === trimmed ? [file] : [file, trimmed];
         });
         changedFiles = manualFiles.join('\0');
-        core.info(
-          `Using manually specified files: ${manualLines
-            .map((file: string) => file.trim())
-            .join('\n')}`,
-        );
+        core.info(`Using ${manualLines.length} manually specified file(s).`);
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
@@ -646,6 +642,7 @@ export async function run(): Promise<void> {
         ...selectedPromptFiles,
       ]);
     }
+    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
     // Check if sharing is enabled and validate authentication upfront
     if (noShare) {
       // Override config-level sharing as well as the action's default behavior.
@@ -874,7 +871,7 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
+      const modifiedFiles = evaluatedPromptFiles.join(', ');
       let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
@@ -910,9 +907,9 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (promptFiles.length > 0) {
+      if (evaluatedPromptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
-        summary.addList(promptFiles);
+        summary.addList(evaluatedPromptFiles);
       }
 
       if (repeatCheckResult) {
