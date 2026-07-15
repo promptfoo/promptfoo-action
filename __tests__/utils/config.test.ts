@@ -2510,6 +2510,59 @@ assert: &asserts
     expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/fixturegone/']);
   });
 
+  it('should watch the real parent for deleted concrete brace dependencies', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
+        return 'defaultTest: file://defaults/default.yaml';
+      }
+      if (String(filePath).endsWith('evals/defaults/default.yaml')) {
+        return 'vars: ["data/{one,two}.yaml"]';
+      }
+      throw new Error(`Unexpected file: ${String(filePath)}`);
+    });
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(mockGlob.sync.mock.calls[0]?.[0]).toEqual([
+      '/test/working/evals/data/one.yaml',
+      '/test/working/evals/data/two.yaml',
+    ]);
+    expect(deps).toEqual(['evals/defaults/default.yaml', 'evals/data/']);
+    expect(deps).not.toContain('evals/data/one.yaml/');
+    expect(deps).not.toContain('evals/data/two.yaml/');
+  });
+
+  it('should watch the real parent for deleted concrete defaultTest brace files', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'defaultTest: file://defaults/{one,two}.yaml',
+    );
+    mockGlob.hasMagic.mockImplementation(
+      (value: string, options?: { magicalBraces?: boolean }) =>
+        value.includes('*') ||
+        (options?.magicalBraces === true && value.includes('{')),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(mockGlob.sync.mock.calls[0]?.[0]).toEqual([
+      '/test/working/evals/defaults/one.yaml',
+      '/test/working/evals/defaults/two.yaml',
+    ]);
+    expect(deps).toEqual(['evals/defaults/']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+  });
+
   it('should preserve the missing absolute glob directory for a deleted defaultTest dependency', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('evals/promptfooconfig.yaml')) {
