@@ -1545,6 +1545,30 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      ['repository workspace', '', process.cwd()],
+      ['working directory', 'evals', path.join(process.cwd(), 'evals')],
+    ])('should fail safely when the %s cannot be resolved', async (_label, workingDirectory, inaccessiblePath) => {
+      withInputs({ 'working-directory': workingDirectory });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString() === inaccessiblePath) {
+          throw new Error(`EACCES: sensitive filesystem detail ${filePath}`);
+        }
+        return filePath.toString();
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Could not resolve the repository workspace or working directory safely',
+      );
+      expect(mockCore.setFailed.mock.calls.join('\n')).not.toContain(
+        'sensitive filesystem detail',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
       'prompts/{1..100000..1000}.txt',
       'prompts/[{}]*.txt',
       String.raw`prompts/\{1..1000000000\}.txt`,

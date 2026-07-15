@@ -1110,6 +1110,7 @@ export function extractFileDependencies(
         try {
           physicalPromptFile = fs.realpathSync(absolutePromptFile);
         } catch {
+          hasDynamicPromptDependencies = true;
           warnUnsafeDependency(
             'prompt file dependency',
             `Ignoring unsafe prompt file dependency "${sanitizeDependencyDisplayPath(displayPromptPath)}": resolved path must stay within an allowed dependency root`,
@@ -1123,7 +1124,6 @@ export function extractFileDependencies(
           );
           continue;
         }
-        let promptContent: string | undefined;
         try {
           if (visitedStructuredFiles.has(physicalPromptFile)) continue;
           visitedStructuredFiles.add(physicalPromptFile);
@@ -1144,7 +1144,7 @@ export function extractFileDependencies(
             );
             continue;
           }
-          promptContent = fs.readFileSync(physicalPromptFile, 'utf8');
+          const promptContent = fs.readFileSync(physicalPromptFile, 'utf8');
           const parsed = absolutePromptFile.endsWith('.jsonl')
             ? promptContent
                 .split(/\r?\n/)
@@ -1157,15 +1157,10 @@ export function extractFileDependencies(
                 });
           walk(parsed, physicalPromptFile);
         } catch {
-          if (
-            promptContent !== undefined &&
-            absolutePromptFile.endsWith('.jsonl')
-          ) {
-            hasDynamicPromptDependencies = true;
-            core.warning(
-              'Structured dependency file could not be parsed safely; watching all repository changes',
-            );
-          }
+          hasDynamicPromptDependencies = true;
+          core.warning(
+            'Structured dependency file could not be parsed safely; watching all repository changes',
+          );
         }
       }
     };

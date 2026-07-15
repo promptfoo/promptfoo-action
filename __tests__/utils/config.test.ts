@@ -325,6 +325,29 @@ prompts:
     );
   });
 
+  it('should fail closed when a structured prompt cannot be resolved safely', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('promptfooconfig.yaml')) {
+        return 'prompts:\n  - file: prompts/blocked.yaml\n';
+      }
+      throw new Error('inaccessible prompt was read');
+    });
+    mockFs.realpathSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/prompts/blocked.yaml')) {
+        throw new Error('EACCES: sensitive filesystem detail');
+      }
+      return filePath;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(core.warning).mock.calls.join('\n')).not.toContain(
+      'sensitive filesystem detail',
+    );
+  });
+
   it.each([
     [
       'prompt',
@@ -345,6 +368,53 @@ prompts:
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['./']);
+  });
+
+  it.each([
+    [
+      'malformed object JSON',
+      'prompts:\n  - file: prompts/broken.json\n',
+      '/prompts/broken.json',
+      '{"content":"file://partials/system.txt",',
+    ],
+    [
+      'malformed object YAML',
+      'prompts:\n  - file: prompts/broken.yaml\n',
+      '/prompts/broken.yaml',
+      'content: [file://partials/system.txt\n',
+    ],
+    [
+      'unreadable mapped JSON',
+      'prompts:\n  file://prompts/blocked.json: mapped prompt\n',
+      '/prompts/blocked.json',
+      new Error('EACCES: sensitive JSON detail'),
+    ],
+    [
+      'unreadable mapped YAML',
+      'prompts:\n  file://prompts/blocked.yaml: mapped prompt\n',
+      '/prompts/blocked.yaml',
+      new Error('EACCES: sensitive YAML detail'),
+    ],
+  ])('should fail closed for a %s structured prompt', (_kind, configContent, suffix, promptContent) => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) return configContent;
+      if (candidate.endsWith(suffix)) {
+        if (promptContent instanceof Error) throw promptContent;
+        return promptContent;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(core.warning).toHaveBeenCalledWith(
+      'Structured dependency file could not be parsed safely; watching all repository changes',
+    );
+    expect(vi.mocked(core.warning).mock.calls.join('\n')).not.toContain(
+      'sensitive',
+    );
   });
 
   it('should not read an escaping object-form structured prompt symlink', () => {
@@ -1088,7 +1158,7 @@ node: &node
     ]);
   });
 
-  it('should ignore unsafe and malformed mapped structured prompts', () => {
+  it('should fail closed for a malformed mapped structured prompt', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       const candidate = String(filePath);
       if (candidate.endsWith('promptfooconfig.yaml')) {
@@ -1104,7 +1174,7 @@ prompts:
 
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toEqual(['prompts/broken.json']);
+    ).toEqual(['./']);
   });
 
   it('should not read mapped structured prompts that resolve outside the workspace', () => {
@@ -1131,9 +1201,13 @@ prompts:
   });
 
   it.each([
-    ['escape', '/tmp/outside/SENSITIVE-LINK-TARGET.yaml'],
-    ['EACCES', new Error('EACCES: SENSITIVE-LINK-DETAIL')],
-  ])('should not read a structured prompt symlink when existence checks fail (%s)', (_name, realpathResult) => {
+    [
+      'escape',
+      '/tmp/outside/SENSITIVE-LINK-TARGET.yaml',
+      ['providers/linked.yaml'],
+    ],
+    ['EACCES', new Error('EACCES: SENSITIVE-LINK-DETAIL'), ['./']],
+  ])('should not read a structured prompt symlink when existence checks fail (%s)', (_name, realpathResult, expectedDependencies) => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       if (String(filePath).endsWith('promptfooconfig.yaml')) {
         return 'providers: file://providers/linked.yaml\n';
@@ -1152,7 +1226,7 @@ prompts:
 
     expect(
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toEqual(['providers/linked.yaml']);
+    ).toEqual(expectedDependencies);
     expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
     const warnings = vi.mocked(core.warning).mock.calls.join('\n');
     expect(warnings).toContain('resolved path must stay within');
@@ -1510,7 +1584,11 @@ tests:
   });
 
   it('should extract nested generator config files and string test references', () => {
-    mockFs.readFileSync.mockReturnValue(`
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('/tests/cases.yaml')) return '[]\n';
+      if (candidate.endsWith('.json')) return '{}\n';
+      return `
 tests:
   - file://tests/cases.yaml
   - inline test reference
@@ -1521,7 +1599,8 @@ tests:
         - nested:
             source: file://data/second.json
             enabled: true
-`);
+`;
+    });
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
@@ -2070,6 +2149,9 @@ config:
           vars: { context: 'file://data/context.jsonl' },
         })}\n`;
       }
+      if (candidate.endsWith('/data/context.yaml')) return 'context: value\n';
+      if (candidate.endsWith('/data/context.json')) return '{}\n';
+      if (candidate.endsWith('/data/context.jsonl')) return '{}\n';
       throw new Error(`unexpected read: ${candidate}`);
     });
 
@@ -2512,6 +2594,9 @@ tests:
       if (candidate.endsWith('/tests/cases.yaml')) {
         return '- vars: file://data/context.yaml\n';
       }
+      if (candidate.endsWith('/tests/data/context.yaml')) {
+        return 'context: value\n';
+      }
       throw new Error(`unexpected read: ${candidate}`);
     });
 
@@ -2531,6 +2616,9 @@ tests:
       }
       if (candidate.endsWith('/tests/scenario-cases.yaml')) {
         return '- vars: data/scenario-context.yaml\n  provider: python:providers/scenario.py:grade\n  assert:\n    - type: javascript\n      value: file://validators/scenario.js:check\n';
+      }
+      if (candidate.endsWith('/data/scenario-context.yaml')) {
+        return 'context: value\n';
       }
       throw new Error(`unexpected read: ${candidate}`);
     });
@@ -2630,6 +2718,7 @@ tests:
     - data/external-second.yaml
 `;
       }
+      if (candidate.includes('/data/')) return 'context: value\n';
       throw new Error(`unexpected read: ${candidate}`);
     });
 

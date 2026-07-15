@@ -495,8 +495,16 @@ export async function run(): Promise<void> {
     const allPromptFiles: string[] = [];
     const seenPromptPaths = new Set<string>();
     const changedFilesList = changedFiles.split('\0').filter((file) => file);
-    const physicalWorkspaceRoot = fs.realpathSync(workspaceRoot);
-    const physicalWorkingDirectory = fs.realpathSync(workingDirectory);
+    let physicalWorkspaceRoot: string;
+    let physicalWorkingDirectory: string;
+    try {
+      physicalWorkspaceRoot = fs.realpathSync(workspaceRoot);
+      physicalWorkingDirectory = fs.realpathSync(workingDirectory);
+    } catch {
+      throw new Error(
+        'Could not resolve the repository workspace or working directory safely',
+      );
+    }
 
     for (const globPattern of promptFilesGlobs) {
       if (
