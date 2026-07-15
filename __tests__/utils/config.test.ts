@@ -220,6 +220,49 @@ prompts:
     ]);
   });
 
+  it('should support Promptfoo legacy YAML tags in mapped configs and prompts', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const candidate = String(filePath);
+      if (candidate.endsWith('promptfooconfig.yaml')) {
+        return `
+metadata:
+  binary: !!binary SGVsbG8=
+  timestamp: 2024-01-02
+  ordered: !!omap [{a: 1}, {b: 2}]
+  pairs: !!pairs [{a: 1}, {b: 2}]
+  set: !!set {a: null, b: null}
+prompts:
+  file://prompts/chat.yaml: yaml prompt
+`;
+      }
+      if (candidate.endsWith('/prompts/chat.yaml')) {
+        return `
+metadata:
+  binary: !!binary SGVsbG8=
+  set: !!set {a: null}
+system: file://partials/system.txt
+`;
+      }
+      throw new Error(`unexpected read: ${candidate}`);
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'partials/system.txt']);
+  });
+
+  it('should reject invalid Promptfoo legacy YAML sets', () => {
+    mockFs.readFileSync.mockReturnValue(`
+metadata: !!set {a: not-null}
+prompts:
+  file://prompts/main.txt: prompt
+`);
+
+    expect(() =>
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toThrow(/cannot resolve a set item/);
+  });
+
   it('should extract safe globbed YAML prompts while tolerating cycles and unsafe matches', () => {
     mockFs.readFileSync.mockImplementation((filePath: unknown) => {
       const candidate = String(filePath);

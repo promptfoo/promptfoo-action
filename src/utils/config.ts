@@ -1,7 +1,18 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
+import {
+  binaryTag,
+  CORE_SCHEMA,
+  defineMappingTag,
+  legacyMapTag,
+  load as loadYaml,
+  mergeTag,
+  omapTag,
+  pairsTag,
+  setTag,
+  timestampTag,
+} from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
@@ -26,6 +37,28 @@ export interface PromptfooConfig {
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
   };
 }
+
+const legacySetTag = defineMappingTag<Record<string, unknown>>(
+  'tag:yaml.org,2002:set',
+  {
+    ...legacyMapTag,
+    identify: setTag.identify,
+    represent: setTag.represent,
+    addPair: (container, key, value) => {
+      if (value !== null) return 'cannot resolve a set item';
+      return legacyMapTag.addPair(container, key, null);
+    },
+  },
+);
+
+const YAML_LOAD_SCHEMA = CORE_SCHEMA.withTags(
+  mergeTag,
+  binaryTag,
+  timestampTag,
+  omapTag,
+  pairsTag,
+  legacySetTag,
+);
 
 function isPathInside(baseDir: string, targetPath: string): boolean {
   const relativePath = path.relative(baseDir, targetPath);
@@ -85,7 +118,7 @@ export function extractFileDependencies(
     }
 
     const config = loadYaml(configContent, {
-      schema: CORE_SCHEMA.withTags(mergeTag),
+      schema: YAML_LOAD_SCHEMA,
     }) as PromptfooConfig;
 
     if (!config) {
@@ -248,7 +281,7 @@ export function extractFileDependencies(
           const parsed = promptFile.endsWith('.json')
             ? JSON.parse(promptContent)
             : loadYaml(promptContent, {
-                schema: CORE_SCHEMA.withTags(mergeTag),
+                schema: YAML_LOAD_SCHEMA,
               });
           walk(parsed);
         } catch {
