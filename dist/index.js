@@ -38730,17 +38730,17 @@ async function run() {
       if (path7.isAbsolute(repositoryRelativePath) || repositoryRelativePath.split(path7.sep)[0] === "..") {
         return false;
       }
-      const workingDirectoryPath = toRepositoryPath(
-        path7.relative(workingDirectory, absolutePath)
-      );
       return promptFilesGlobs.some((pattern) => {
-        const normalizedPattern = path7.posix.normalize(pattern);
-        const candidatePath = path7.isAbsolute(pattern) ? toRepositoryPath(absolutePath) : workingDirectoryPath;
-        return minimatch(candidatePath, normalizedPattern, {
+        const absolutePattern = path7.isAbsolute(pattern) ? pattern : `${toRepositoryPath(workingDirectory)}/${pattern}`;
+        const traversalPattern = absolutePattern.replace(
+          /\/\*\*(?:\/\.\.)+(?=\/|$)/g,
+          "/**"
+        );
+        return minimatch(toRepositoryPath(absolutePath), traversalPattern, {
           nonegate: true,
           nocomment: true,
           nocase: ["darwin", "win32"].includes(process.platform),
-          nocaseMagicOnly: true,
+          nocaseMagicOnly: false,
           optimizationLevel: 2,
           platform: process.platform,
           windowsPathsNoEscape: false

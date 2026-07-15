@@ -271,19 +271,22 @@ export async function run(): Promise<void> {
         return false;
       }
 
-      const workingDirectoryPath = toRepositoryPath(
-        path.relative(workingDirectory, absolutePath),
-      );
       return promptFilesGlobs.some((pattern) => {
-        const normalizedPattern = path.posix.normalize(pattern);
-        const candidatePath = path.isAbsolute(pattern)
-          ? toRepositoryPath(absolutePath)
-          : workingDirectoryPath;
-        return minimatch(candidatePath, normalizedPattern, {
+        const absolutePattern = path.isAbsolute(pattern)
+          ? pattern
+          : `${toRepositoryPath(workingDirectory)}/${pattern}`;
+        // glob can traverse into a child and back out for `**/..`, so a
+        // deleted path may have matched even though minimatch cannot replay
+        // that traversal. Conservatively preserve every possible match.
+        const traversalPattern = absolutePattern.replace(
+          /\/\*\*(?:\/\.\.)+(?=\/|$)/g,
+          '/**',
+        );
+        return minimatch(toRepositoryPath(absolutePath), traversalPattern, {
           nonegate: true,
           nocomment: true,
           nocase: ['darwin', 'win32'].includes(process.platform),
-          nocaseMagicOnly: true,
+          nocaseMagicOnly: false,
           optimizationLevel: 2,
           platform: process.platform,
           windowsPathsNoEscape: false,

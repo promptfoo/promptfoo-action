@@ -443,6 +443,80 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      [
+        '../../packages/shared/prompts/*.txt',
+        'packages/shared/prompts/removed.txt',
+        '../../packages/shared/prompts/remaining.txt',
+      ],
+      [
+        '../app/prompts/*.txt',
+        'packages/app/prompts/removed.txt',
+        '../app/prompts/remaining.txt',
+      ],
+      [
+        '../../**/*.txt',
+        'packages/shared/prompts/removed.txt',
+        '../../packages/shared/prompts/remaining.txt',
+      ],
+      [
+        'prompts/**/../*.txt',
+        'packages/app/prompts/sub/removed.txt',
+        'prompts/sub/remaining.txt',
+      ],
+    ])('should preserve deletion matching for the working-directory-relative glob %s', async (promptPattern, removedPrompt, remainingPrompt) => {
+      withInputs({
+        prompts: promptPattern,
+        'working-directory': 'packages/app',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: removedPrompt, status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([remainingPrompt]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec.mock.calls[0][1]).toEqual(
+        expect.arrayContaining(['--prompts', remainingPrompt]),
+      );
+    });
+
+    test.each([
+      'darwin',
+      'win32',
+    ])('should detect a removed prompt with case differences on %s', async (platform) => {
+      const currentPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: platform,
+        configurable: true,
+      });
+
+      try {
+        withInputs({ prompts: 'prompts/*.txt' });
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'Prompts/OLD.TXT', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockExec.exec.mock.calls[0][1]).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: currentPlatform,
+          configurable: true,
+        });
+      }
+    });
+
     test('should ignore a removed prompt path outside the workspace', async () => {
       withInputs({
         prompts: '../../../outside/*.txt',
