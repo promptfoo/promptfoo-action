@@ -36578,7 +36578,7 @@ function extractFileDependencies(configPath) {
         return absolutePath;
       } catch (error2) {
         warning(
-          `Ignoring unsafe config dependency "${displayPath}": ${String(
+          `Skipping unsafe config dependency content "${displayPath}"; its path may still be tracked for change detection: ${String(
             error2
           ).replace(/^(?:[A-Za-z]+)?Error: /, "")}`
         );
@@ -36636,25 +36636,29 @@ function extractFileDependencies(configPath) {
       return resolvedPaths;
     };
     const visitedProviderConfigs = /* @__PURE__ */ new Set();
-    const visitedProviderValues = /* @__PURE__ */ new WeakSet();
+    const visitedProviderValues = /* @__PURE__ */ new WeakMap();
     const envTemplatePattern = /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
     const withEnvOverrides = (baseEnv, overrides) => {
       if (typeof overrides !== "object" || overrides === null || Array.isArray(overrides)) {
         return baseEnv;
       }
       const mergedEnv = { ...baseEnv };
+      const renderEnv = { ...process.env, ...baseEnv };
       for (const [key, value] of Object.entries(overrides)) {
-        if (typeof value === "string") {
-          mergedEnv[key] = value.replace(
+        if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+          mergedEnv[key] = String(value).replace(
             envTemplatePattern,
-            (template, envKey) => baseEnv[envKey] ?? template
+            (template, envKey) => renderEnv[envKey] ?? template
           );
         }
       }
       return mergedEnv;
     };
-    const configEnv = withEnvOverrides(process.env, config2.env);
-    const processProviderValue = (value, nestedReference = false, activeEnv = configEnv) => {
+    const getEnvContextKey = (activeEnv) => JSON.stringify(
+      Object.keys(activeEnv).sort().map((key) => [key, activeEnv[key]])
+    );
+    const configEnv = withEnvOverrides({}, config2.env);
+    const processProviderValue = (value, nestedReference = false, activeEnv = configEnv, externalProviderConfig = false) => {
       if (typeof value === "string") {
         if (!value.startsWith("file://")) {
           return;
@@ -36664,7 +36668,7 @@ function extractFileDependencies(configPath) {
         const providerPath = rawProviderPath.replace(
           envTemplatePattern,
           (template, key) => {
-            const envValue = activeEnv[key];
+            const envValue = activeEnv[key] ?? process.env[key];
             if (envValue === void 0) {
               unresolvedTemplate = true;
               return template;
@@ -36704,10 +36708,13 @@ function extractFileDependencies(configPath) {
           }
         }
         for (const absolutePath of resolvedPaths) {
-          if (!/\.(?:ya?ml|json)$/i.test(absolutePath) || visitedProviderConfigs.has(absolutePath)) {
+          const providerConfigKey = `${absolutePath}\0${getEnvContextKey(
+            activeEnv
+          )}`;
+          if (!/\.(?:ya?ml|json)$/i.test(absolutePath) || visitedProviderConfigs.has(providerConfigKey)) {
             continue;
           }
-          visitedProviderConfigs.add(absolutePath);
+          visitedProviderConfigs.add(providerConfigKey);
           try {
             const providerConfig = load(
               fs6.readFileSync(absolutePath, "utf8"),
@@ -36715,7 +36722,12 @@ function extractFileDependencies(configPath) {
                 schema: CORE_SCHEMA.withTags(mergeTag)
               }
             );
-            processProviderValue(providerConfig, nestedReference, activeEnv);
+            processProviderValue(
+              providerConfig,
+              nestedReference,
+              activeEnv,
+              true
+            );
           } catch {
             warning(
               `Failed to extract nested provider dependencies from "${rawProviderPath}"; tracking the provider config file only`
@@ -36727,20 +36739,29 @@ function extractFileDependencies(configPath) {
       if (typeof value !== "object" || value === null) {
         return;
       }
-      if (visitedProviderValues.has(value)) {
+      const envContextKey = getEnvContextKey(activeEnv);
+      const visitedContexts = visitedProviderValues.get(value);
+      if (visitedContexts?.has(envContextKey)) {
         return;
       }
-      visitedProviderValues.add(value);
+      if (visitedContexts) {
+        visitedContexts.add(envContextKey);
+      } else {
+        visitedProviderValues.set(value, /* @__PURE__ */ new Set([envContextKey]));
+      }
       if (Array.isArray(value)) {
         for (const entry of value) {
-          processProviderValue(entry, nestedReference, activeEnv);
+          processProviderValue(
+            entry,
+            nestedReference,
+            activeEnv,
+            externalProviderConfig
+          );
         }
         return;
       }
-      const providerEnv = withEnvOverrides(
-        activeEnv,
-        "env" in value ? value.env : void 0
-      );
+      const valueEnv = "env" in value ? value.env : void 0;
+      const providerEnv = externalProviderConfig ? { ...withEnvOverrides({}, valueEnv), ...activeEnv } : withEnvOverrides(activeEnv, valueEnv);
       for (const [key, nestedValue] of Object.entries(value)) {
         if (key.startsWith("file://")) {
           const mappedProviderEnv = typeof nestedValue === "object" && nestedValue !== null && "env" in nestedValue ? withEnvOverrides(providerEnv, nestedValue.env) : providerEnv;

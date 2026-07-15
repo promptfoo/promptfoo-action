@@ -112,7 +112,7 @@ export function extractFileDependencies(configPath: string): string[] {
         return absolutePath;
       } catch (error) {
         core.warning(
-          `Ignoring unsafe config dependency "${displayPath}": ${String(
+          `Skipping unsafe config dependency content "${displayPath}"; its path may still be tracked for change detection: ${String(
             error,
           ).replace(/^(?:[A-Za-z]+)?Error: /, '')}`,
         );
@@ -189,7 +189,7 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Extract provider files
     const visitedProviderConfigs = new Set<string>();
-    const visitedProviderValues = new WeakSet<object>();
+    const visitedProviderValues = new WeakMap<object, Set<string>>();
     const envTemplatePattern = /\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g;
     const withEnvOverrides = (
       baseEnv: NodeJS.ProcessEnv,
@@ -204,21 +204,33 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       const mergedEnv = { ...baseEnv };
+      const renderEnv = { ...process.env, ...baseEnv };
       for (const [key, value] of Object.entries(overrides)) {
-        if (typeof value === 'string') {
-          mergedEnv[key] = value.replace(
+        if (
+          typeof value === 'string' ||
+          typeof value === 'number' ||
+          typeof value === 'boolean'
+        ) {
+          mergedEnv[key] = String(value).replace(
             envTemplatePattern,
-            (template: string, envKey: string) => baseEnv[envKey] ?? template,
+            (template: string, envKey: string) => renderEnv[envKey] ?? template,
           );
         }
       }
       return mergedEnv;
     };
-    const configEnv = withEnvOverrides(process.env, config.env);
+    const getEnvContextKey = (activeEnv: NodeJS.ProcessEnv): string =>
+      JSON.stringify(
+        Object.keys(activeEnv)
+          .sort()
+          .map((key) => [key, activeEnv[key]]),
+      );
+    const configEnv = withEnvOverrides({}, config.env);
     const processProviderValue = (
       value: unknown,
       nestedReference: boolean = false,
       activeEnv: NodeJS.ProcessEnv = configEnv,
+      externalProviderConfig: boolean = false,
     ): void => {
       if (typeof value === 'string') {
         if (!value.startsWith('file://')) {
@@ -230,7 +242,7 @@ export function extractFileDependencies(configPath: string): string[] {
         const providerPath = rawProviderPath.replace(
           envTemplatePattern,
           (template: string, key: string) => {
-            const envValue = activeEnv[key];
+            const envValue = activeEnv[key] ?? process.env[key];
             if (envValue === undefined) {
               unresolvedTemplate = true;
               return template;
@@ -284,14 +296,17 @@ export function extractFileDependencies(configPath: string): string[] {
         }
 
         for (const absolutePath of resolvedPaths) {
+          const providerConfigKey = `${absolutePath}\0${getEnvContextKey(
+            activeEnv,
+          )}`;
           if (
             !/\.(?:ya?ml|json)$/i.test(absolutePath) ||
-            visitedProviderConfigs.has(absolutePath)
+            visitedProviderConfigs.has(providerConfigKey)
           ) {
             continue;
           }
 
-          visitedProviderConfigs.add(absolutePath);
+          visitedProviderConfigs.add(providerConfigKey);
           try {
             const providerConfig = loadYaml(
               fs.readFileSync(absolutePath, 'utf8'),
@@ -299,7 +314,12 @@ export function extractFileDependencies(configPath: string): string[] {
                 schema: CORE_SCHEMA.withTags(mergeTag),
               },
             );
-            processProviderValue(providerConfig, nestedReference, activeEnv);
+            processProviderValue(
+              providerConfig,
+              nestedReference,
+              activeEnv,
+              true,
+            );
           } catch {
             core.warning(
               `Failed to extract nested provider dependencies from "${rawProviderPath}"; tracking the provider config file only`,
@@ -313,22 +333,33 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
-      if (visitedProviderValues.has(value)) {
+      const envContextKey = getEnvContextKey(activeEnv);
+      const visitedContexts = visitedProviderValues.get(value);
+      if (visitedContexts?.has(envContextKey)) {
         return;
       }
-      visitedProviderValues.add(value);
+      if (visitedContexts) {
+        visitedContexts.add(envContextKey);
+      } else {
+        visitedProviderValues.set(value, new Set([envContextKey]));
+      }
 
       if (Array.isArray(value)) {
         for (const entry of value) {
-          processProviderValue(entry, nestedReference, activeEnv);
+          processProviderValue(
+            entry,
+            nestedReference,
+            activeEnv,
+            externalProviderConfig,
+          );
         }
         return;
       }
 
-      const providerEnv = withEnvOverrides(
-        activeEnv,
-        'env' in value ? value.env : undefined,
-      );
+      const valueEnv = 'env' in value ? value.env : undefined;
+      const providerEnv = externalProviderConfig
+        ? { ...withEnvOverrides({}, valueEnv), ...activeEnv }
+        : withEnvOverrides(activeEnv, valueEnv);
       for (const [key, nestedValue] of Object.entries(value)) {
         if (key.startsWith('file://')) {
           const mappedProviderEnv =
