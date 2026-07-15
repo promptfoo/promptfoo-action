@@ -10,6 +10,7 @@ vi.mock('fs', async () => {
   return {
     ...realFs,
     readFileSync: vi.fn(),
+    realpathSync: vi.fn(),
     existsSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
@@ -24,6 +25,7 @@ vi.mock('glob');
 describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
+    realpathSync: Mock;
     existsSync: Mock;
     statSync: Mock;
   };
@@ -38,6 +40,7 @@ describe('extractFileDependencies', () => {
     // Default mock implementations
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
+    mockFs.realpathSync.mockImplementation((value: unknown) => String(value));
     mockFs.existsSync.mockReturnValue(false);
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
@@ -82,6 +85,23 @@ providers:
     expect(deps).toEqual(['../config/providers/provider.py']);
   });
 
+  it('should extract function-qualified JavaScript, Ruby, and Go providers', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.js:handlers.callApi
+  - file://providers/provider.rb:generate_response
+  - file://providers/provider.go:CallApi
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.js',
+      '../config/providers/provider.rb',
+      '../config/providers/provider.go',
+    ]);
+  });
+
   it('should preserve an absolute provider inside the repository', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -112,6 +132,24 @@ providers:
     );
 
     expect(deps).toEqual(['providers/']);
+  });
+
+  it('should preserve the workspace watch root for an absolute root-level provider glob', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/repository/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([]);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
   });
 
   it('should extract nested file references from a provider YAML file', () => {
@@ -158,6 +196,92 @@ providers:
     expect(deps).toEqual([
       '../config/providers/provider.yaml',
       '../config/providers/nested.py',
+    ]);
+  });
+
+  it('should recursively extract second-level YAML and JSON provider references', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      const value = String(filePath);
+      if (value.endsWith('provider.yaml')) {
+        return `
+id: openai:chat:gpt-4
+config:
+  tools: file://configs/tools.json
+`;
+      }
+      if (value.endsWith('tools.json')) {
+        return '{"schema":"file://configs/schema.yaml"}';
+      }
+      if (value.endsWith('schema.yaml')) {
+        return 'systemPrompt: file://prompts/system.txt';
+      }
+      return `
+providers:
+  - file://providers/provider.yaml
+`;
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.yaml',
+      '../config/configs/tools.json',
+      '../config/configs/schema.yaml',
+      '../config/prompts/system.txt',
+    ]);
+  });
+
+  it('should preserve absolute file references nested in provider YAML', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('provider.yaml')) {
+        return `
+id: openai:chat:gpt-4
+config:
+  schema: file:///test/repository/providers/schema.json
+`;
+      }
+      if (String(filePath).endsWith('schema.json')) {
+        return '{}';
+      }
+      return `
+providers:
+  - file://providers/provider.yaml
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/provider.yaml', 'providers/schema.json']);
+  });
+
+  it('should retain dependencies when provider YAML contains cyclic aliases', () => {
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('provider.yaml')) {
+        return `
+id: file://providers/provider.py:call_api
+config: &config
+  schema: file://providers/schema.json
+  recursive: *config
+`;
+      }
+      if (String(filePath).endsWith('schema.json')) {
+        return '{}';
+      }
+      return `
+providers:
+  - file://providers/provider.yaml
+`;
+    });
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/providers/provider.yaml',
+      '../config/providers/provider.py',
+      '../config/providers/schema.json',
     ]);
   });
 
@@ -233,6 +357,89 @@ providers: file://providers/provider.yaml
     );
   });
 
+  it('should reject a provider YAML symlink outside the workspace without leaking its contents', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath.endsWith('/providers/external.yaml')) {
+        return '/test/outside/external.yaml';
+      }
+      return filePath;
+    });
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/providers/external.yaml')) {
+        return 'secret: SYMLINK_SECRET_CANARY_019F62C3: invalid';
+      }
+      return `
+providers:
+  - file://providers/external.yaml
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'SYMLINK_SECRET_CANARY_019F62C3',
+    );
+  });
+
+  it('should sanitize malformed provider YAML errors before warning', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockImplementation((filePath: unknown) => {
+      if (String(filePath).endsWith('/providers/invalid.yaml')) {
+        return 'secret: PARSER_SECRET_CANARY_019F62C3: invalid';
+      }
+      return `
+providers:
+  - file://providers/invalid.yaml
+`;
+    });
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/invalid.yaml', './']);
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'PARSER_SECRET_CANARY_019F62C3',
+    );
+  });
+
+  it.each([
+    ['ENOENT', ['providers/missing.py']],
+    ['ENOTDIR', ['providers/missing.py']],
+    ['EACCES', []],
+  ])('should handle %s while checking a provider dependency real path', (code, expected) => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath.endsWith('/providers/missing.py')) {
+        throw Object.assign(new Error('REALPATH_SECRET_CANARY'), { code });
+      }
+      return filePath;
+    });
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/missing.py
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(expected);
+    expect(vi.mocked(core.warning).mock.calls.flat().join('\n')).not.toContain(
+      'REALPATH_SECRET_CANARY',
+    );
+  });
+
   it('should reject an absolute provider outside the repository', () => {
     vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
     mockFs.readFileSync.mockReturnValue(`
@@ -250,15 +457,15 @@ providers:
     );
   });
 
-  it('should not reinterpret an invalid JavaScript provider suffix', () => {
+  it('should not reinterpret an invalid provider function selector', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
-  - file://providers/provider.js:callApi
+  - file://providers/provider.js:not-valid
 `);
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/provider.js:callApi']);
+    expect(deps).toEqual(['../config/providers/provider.js:not-valid']);
   });
 
   it('should preserve a Windows drive colon in a Python provider', () => {
@@ -530,7 +737,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.py']);
+    expect(deps).toEqual(['../config/providers/custom.py', '../config/']);
   });
 
   it('should extract all file types from complex config', () => {
@@ -642,7 +849,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/provider.py']);
+    expect(deps).toEqual(['../config/provider.py', '../config/']);
   });
 
   it('should build nested base directories for globs', () => {

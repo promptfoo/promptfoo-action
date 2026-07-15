@@ -36288,8 +36288,12 @@ function providerFilePath(fileUrl) {
   const encodedPath = fileUrl.slice("file://".length);
   const rawPath = process.platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(encodedPath) ? encodedPath.slice(1) : encodedPath;
   const functionSeparator = rawPath.lastIndexOf(":");
-  if (functionSeparator > 1 && rawPath.slice(0, functionSeparator).endsWith(".py")) {
-    return rawPath.slice(0, functionSeparator);
+  const scriptPath = rawPath.slice(0, functionSeparator);
+  const functionName = rawPath.slice(functionSeparator + 1);
+  if (functionSeparator > 1 && /\.(?:py|js|cjs|mjs|ts|cts|mts|go|rb)$/i.test(scriptPath) && /^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)*$/.test(
+    functionName
+  )) {
+    return scriptPath;
   }
   return rawPath;
 }
@@ -36311,7 +36315,20 @@ function extractFileDependencies(configPath) {
       debug("Config file is empty or invalid");
       return [];
     }
-    const resolveConfigDependency = (filePath, source, preserveAbsolute = false) => {
+    const isSafeDependencyPath = (absolutePath) => {
+      if (!isPathInside(dependencyRoot, absolutePath)) {
+        return false;
+      }
+      try {
+        const realRoot = fs6.realpathSync(dependencyRoot);
+        const realPath = fs6.realpathSync(absolutePath);
+        return isPathInside(realRoot, realPath);
+      } catch (error2) {
+        const code = error2.code;
+        return code === "ENOENT" || code === "ENOTDIR";
+      }
+    };
+    const resolveConfigDependency = (filePath, source) => {
       try {
         if (!filePath) {
           throw new Error(`${source} is empty`);
@@ -36319,8 +36336,8 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = preserveAbsolute && path5.isAbsolute(filePath) ? path5.normalize(filePath) : path5.resolve(path5.join(configDir, filePath));
-        if (!isPathInside(dependencyRoot, absolutePath)) {
+        const absolutePath = path5.resolve(configDir, filePath);
+        if (!isSafeDependencyPath(absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
           );
@@ -36339,18 +36356,19 @@ function extractFileDependencies(configPath) {
       const filePath = isProvider ? providerFilePath(fileUrl) : fileUrl.slice("file://".length);
       const absolutePath = resolveConfigDependency(
         filePath,
-        "config file dependency",
-        isProvider
+        "config file dependency"
       );
       if (!absolutePath) {
-        return void 0;
+        return [];
       }
       if (le(filePath)) {
         const matches = Ui(absolutePath, { nodir: true });
+        const safeMatches = [];
         for (const match of matches) {
           const absoluteMatch = path5.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
+          if (isSafeDependencyPath(absoluteMatch)) {
             dependencies.add(absoluteMatch);
+            safeMatches.push(absoluteMatch);
           } else {
             warning(
               `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`
@@ -36361,68 +36379,80 @@ function extractFileDependencies(configPath) {
         while (le(basePath)) {
           basePath = path5.dirname(basePath);
         }
-        if (basePath !== configDir) {
-          dependencies.add(`${basePath.replace(/[\\/]+$/, "")}${path5.sep}`);
-        }
+        dependencies.add(`${basePath.replace(/[\\/]+$/, "")}${path5.sep}`);
+        return safeMatches;
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
         dependencies.add(directoryPath);
       } else {
         dependencies.add(absolutePath);
       }
-      return absolutePath;
+      return [absolutePath];
     };
     const inspectedProviderFiles = /* @__PURE__ */ new Set();
-    const processProviderValue = (value, isProviderReference = false) => {
+    const inspectedProviderObjects = /* @__PURE__ */ new WeakSet();
+    const processProviderValue = (value) => {
       if (typeof value === "string") {
         if (!value.startsWith("file://")) {
           return;
         }
-        if (isProviderReference) {
-          processProviderReference(value);
-        } else {
-          processFileUrl(value);
-        }
-        return;
-      }
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          processProviderValue(item, isProviderReference);
-        }
+        processProviderReference(value);
         return;
       }
       if (!value || typeof value !== "object") {
+        return;
+      }
+      if (inspectedProviderObjects.has(value)) {
+        return;
+      }
+      inspectedProviderObjects.add(value);
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          processProviderValue(item);
+        }
         return;
       }
       for (const [key, nestedValue] of Object.entries(value)) {
         if (key.startsWith("file://")) {
           processProviderReference(key);
         }
-        processProviderValue(nestedValue, key === "id");
+        processProviderValue(nestedValue);
       }
     };
     const processProviderReference = (provider) => {
-      const absolutePath = processFileUrl(provider, true);
       const providerPath = providerFilePath(provider);
-      if (!absolutePath || le(providerPath) || !/\.(?:ya?ml|json)$/i.test(providerPath) || inspectedProviderFiles.has(absolutePath)) {
+      const providerPaths = processFileUrl(provider, true);
+      const isProviderConfig = /\.(?:ya?ml|json)$/i.test(providerPath);
+      if (providerPaths.length === 0) {
+        if (isProviderConfig) {
+          dependencies.add(`${dependencyRoot}${path5.sep}`);
+        }
         return;
       }
-      inspectedProviderFiles.add(absolutePath);
-      try {
-        const providerConfig = load(fs6.readFileSync(absolutePath, "utf8"), {
-          schema: CORE_SCHEMA.withTags(mergeTag)
-        });
-        processProviderValue(providerConfig);
-      } catch (error2) {
-        warning(
-          `Failed to inspect provider config dependency "${providerPath}": ${String(error2).replace(/^(?:[A-Za-z]+)?Error: /, "")}. Watching the repository workspace conservatively.`
-        );
-        dependencies.add(`${dependencyRoot}${path5.sep}`);
+      for (const absolutePath of providerPaths) {
+        if (!/\.(?:ya?ml|json)$/i.test(absolutePath) || inspectedProviderFiles.has(absolutePath)) {
+          continue;
+        }
+        inspectedProviderFiles.add(absolutePath);
+        try {
+          const providerConfig = load(
+            fs6.readFileSync(absolutePath, "utf8"),
+            {
+              schema: CORE_SCHEMA.withTags(mergeTag)
+            }
+          );
+          processProviderValue(providerConfig);
+        } catch {
+          warning(
+            `Failed to inspect provider config dependency "${providerPath}". Watching the repository workspace conservatively.`
+          );
+          dependencies.add(`${dependencyRoot}${path5.sep}`);
+        }
       }
     };
     for (const providers of [config2.providers, config2.targets]) {
       if (providers) {
-        processProviderValue(providers, true);
+        processProviderValue(providers);
       }
     }
     if (config2.prompts) {
