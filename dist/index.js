@@ -38320,6 +38320,11 @@ function isDirectory2(filePath) {
 
 // src/utils/config.ts
 var MAX_BRACE_EXPANSIONS = 1024;
+var GLOB_MAGIC_OPTIONS = {
+  magicalBraces: true,
+  nonegate: true,
+  braceExpandMax: MAX_BRACE_EXPANSIONS + 1
+};
 var legacySetTag = defineMappingTag("tag:yaml.org,2002:set", {
   ...legacyMapTag,
   identify: setTag.identify,
@@ -38396,10 +38401,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         );
         return;
       }
-      if (le(filePath, {
-        magicalBraces: true,
-        braceExpandMax: MAX_BRACE_EXPANSIONS + 1
-      })) {
+      if (le(filePath, GLOB_MAGIC_OPTIONS)) {
         const expandedPaths = braceExpand(filePath, {
           braceExpandMax: MAX_BRACE_EXPANSIONS + 1
         });
@@ -38448,7 +38450,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           }
         }
         for (const absolutePattern of safePatterns) {
-          if (!le(absolutePattern)) {
+          if (!le(absolutePattern, GLOB_MAGIC_OPTIONS)) {
             dependencies.add(absolutePattern);
             continue;
           }
@@ -38456,7 +38458,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           const pathParts = path6.relative(absoluteRoot, absolutePattern).split(path6.sep);
           let basePath = absoluteRoot;
           for (const part of pathParts) {
-            if (le(part)) {
+            if (le(part, GLOB_MAGIC_OPTIONS)) {
               break;
             }
             basePath = path6.join(basePath, part);
@@ -38514,7 +38516,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (!declaredFile && !isExecutable && !isFileUrl && /\s/.test(reference) && /(?:^|\s)(?:\/|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reference) && !/^\s*(?:\/|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reference)) {
           return;
         }
-        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) || /^[^*]*\*+$/.test(reference)) || /[\\/]/.test(reference) && !/\s/.test(reference) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
+        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) || /^[^*]*\*+$/.test(reference) || !/\s/.test(reference) && /\*\([^/]*\)/.test(reference)) || !reference.includes("*") && !reference.includes("\0") && !/\s/.test(reference) && !isTemplated && le(reference, GLOB_MAGIC_OPTIONS) || /[\\/]/.test(reference) && !/\s/.test(reference) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
           reference
         );
         if (!looksLikePath) {
@@ -38612,10 +38614,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           }
           return;
         }
-        const isPromptGlob = le(promptPath, {
-          magicalBraces: true,
-          braceExpandMax: MAX_BRACE_EXPANSIONS + 1
-        });
+        const isPromptGlob = le(promptPath, GLOB_MAGIC_OPTIONS);
         const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(promptPath);
         const hasFixedExtension = /\.[A-Za-z0-9_-]+$/.test(promptPath);
         if (!isStructuredPrompt && (!isPromptGlob || hasFixedExtension)) {
@@ -38689,16 +38688,13 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (typeof prompt === "string") {
           processPromptReference(prompt);
         } else if (typeof prompt === "object" && prompt !== null) {
-          const fileBackedPromptId = typeof prompt.id === "string" && (/^(?:file:\/\/|exec:)/.test(prompt.id) || /\*/.test(prompt.id) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
-            prompt.id
-          ));
-          const promptReference = prompt.raw || (fileBackedPromptId ? prompt.id : prompt.file || prompt.id);
+          const promptReference = prompt.raw || prompt.file || prompt.id;
           if (typeof promptReference === "string") {
             const promptConfig = prompt.config;
             const promptBasePath = typeof promptConfig === "object" && promptConfig !== null && "basePath" in promptConfig && typeof promptConfig.basePath === "string" ? promptConfig.basePath : void 0;
             processPromptReference(
               promptReference,
-              Boolean(prompt.file && !prompt.raw && !fileBackedPromptId),
+              Boolean(prompt.file && !prompt.raw),
               promptBasePath ? path6.resolve(executionCwd, promptBasePath) : executionCwd
             );
           }
@@ -39079,6 +39075,11 @@ function formatRepeatCommentMarkdown(summary2) {
 // src/main.ts
 var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
+var DEPENDENCY_GLOB_MAGIC_OPTIONS = {
+  magicalBraces: true,
+  nonegate: true,
+  braceExpandMax: 1025
+};
 function toRepositoryPath(filePath) {
   return filePath.split(path7.sep).join("/");
 }
@@ -39449,10 +39450,7 @@ async function run() {
           if (dep === "./") {
             return true;
           }
-          if (le(dep, {
-            magicalBraces: true,
-            braceExpandMax: 1025
-          }) && changedFilesList.some(
+          if (le(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS) && changedFilesList.some(
             (changedFile) => path7.matchesGlob(changedFile, dep)
           )) {
             return true;
