@@ -38405,6 +38405,12 @@ function renderEnvironmentTemplates(value, env) {
     return rendered ?? template;
   });
 }
+function renderPathEnvironmentVariables(value, env) {
+  return value.replace(
+    /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+    (template, bracedName, bareName) => env[bracedName ?? bareName] ?? template
+  );
+}
 function extractFileDependencies(configPath, executionCwd = process.cwd()) {
   const dependencies = /* @__PURE__ */ new Set();
   let hasDynamicPromptDependencies = false;
@@ -38763,14 +38769,21 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           processFileUrl(provider.id, true);
         }
         if (typeof provider === "object" && provider !== null) {
+          const providerOptions = provider.config ? provider : Object.values(provider).find(
+            (entry) => typeof entry === "object" && entry !== null
+          );
+          if (typeof providerOptions !== "object" || providerOptions === null) {
+            continue;
+          }
+          const providerRecord = providerOptions;
           const providerEnv = Object.fromEntries(
             Object.entries(
-              typeof provider.env === "object" && provider.env !== null ? provider.env : {}
+              typeof providerRecord.env === "object" && providerRecord.env !== null ? providerRecord.env : {}
             ).flatMap(
               ([name, value]) => typeof value === "string" ? [[name, renderEnvironmentTemplates(value, templateEnv)]] : []
             )
           );
-          extractNestedConfigDependencies(provider.config, {
+          extractNestedConfigDependencies(providerRecord.config, {
             ...templateEnv,
             ...providerEnv
           });
@@ -38799,15 +38812,23 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           const promptExecutionCwd = typeof promptConfig?.basePath === "string" ? path6.resolve(executionCwd, promptConfig.basePath) : executionCwd;
           const rawPromptPath = isExecutable ? executableParts[0] ?? "" : reference;
           if (!rawPromptPath) return;
+          const renderedPromptPath = isExecutable ? rawPromptPath : renderPathEnvironmentVariables(rawPromptPath, templateEnv);
+          if (/\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)/.test(
+            renderedPromptPath
+          )) {
+            hasDynamicPromptDependencies = true;
+            return;
+          }
           const promptPath = isExecutable ? path6.resolve(
             promptExecutionCwd,
             normalizeConfigFilePath(
-              rawPromptPath.replace(/^file:\/\//, "")
+              renderedPromptPath.replace(/^file:\/\//, "")
             )
-          ) : rawPromptPath;
+          ) : renderedPromptPath;
           processFileUrl(
             promptPath.startsWith("file://") ? promptPath : `file://${promptPath}`,
-            true
+            true,
+            rawPromptPath
           );
           extractNestedPromptFileUrls(promptPath);
           for (const executableArgument of executableParts.slice(1)) {
