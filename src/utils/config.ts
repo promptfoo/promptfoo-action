@@ -498,7 +498,9 @@ export function extractFileDependencies(configPath: string): string[] {
           } else {
             core.warning(
               `Ignoring unsafe config dependency match "${
-                renderedFileUrl === fileUrl ? match : displayPath
+                renderedFileUrl === fileUrl
+                  ? '<redacted unsafe config dependency match>'
+                  : displayPath
               }": config file dependency glob match must stay within the repository workspace`,
             );
           }

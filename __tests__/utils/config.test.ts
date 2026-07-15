@@ -2917,9 +2917,48 @@ providers:
       '../config/providers/custom.py',
       '../config/providers/',
     ]);
-    expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('/test/secrets/leaked.py'),
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('<redacted unsafe config dependency match>');
+    expect(warnings).not.toContain('/test/secrets/leaked.py');
+  });
+
+  it('should reject escaping and inaccessible checkout glob matches for an external config without leaking paths', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    const forgedMatch =
+      '/test/repository/providers/link\n::error::GLOB_MATCH_CANARY_019F62C3.py';
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/repository/providers/*.py
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
     );
+    mockGlob.sync.mockReturnValue([
+      forgedMatch,
+      '/test/repository/providers/denied.py',
+      '/test/repository/providers/safe.py',
+    ]);
+    mockFs.realpathSync.mockImplementation((value: unknown) => {
+      const filePath = String(value);
+      if (filePath === forgedMatch) {
+        return '/private/secrets/provider.py';
+      }
+      if (filePath.endsWith('/providers/denied.py')) {
+        throw Object.assign(new Error('REALPATH_SECRET_CANARY'), {
+          code: 'EACCES',
+        });
+      }
+      return filePath;
+    });
+
+    expect(
+      extractFileDependencies('/private/configs/promptfooconfig.yaml'),
+    ).toEqual(['providers/safe.py', 'providers/']);
+    const warnings = vi.mocked(core.warning).mock.calls.flat().join('\n');
+    expect(warnings).toContain('Ignoring unsafe config dependency match');
+    expect(warnings).not.toContain('GLOB_MATCH_CANARY_019F62C3');
+    expect(warnings).not.toContain('REALPATH_SECRET_CANARY');
+    expect(warnings).not.toContain('/providers/denied.py');
   });
 
   it('should extract all file types from complex config', () => {
