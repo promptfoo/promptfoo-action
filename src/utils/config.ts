@@ -369,9 +369,18 @@ export function extractFileDependencies(configPath: string): string[] {
     const inspectedVarFiles = new Set<string>();
     const inspectedVarPaths = new Set<string>();
     const inspectVarFile = (value: string): void => {
-      const fileUrl = value.startsWith('file://') ? value : `file://${value}`;
-      const filePath = normalizeConfigFilePath(fileUrl.slice('file://'.length));
-      if (watchDynamicFilePath(filePath)) return;
+      const rawFileUrl = value.startsWith('file://')
+        ? value
+        : `file://${value}`;
+      const rawFilePath = normalizeConfigFilePath(
+        rawFileUrl.slice('file://'.length),
+      );
+      if (watchDynamicFilePath(rawFilePath)) return;
+      const filePath = rawFilePath.replace(
+        /(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i,
+        '$1',
+      );
+      const fileUrl = `file://${filePath}`;
       const absolutePath = resolveConfigDependency(
         filePath,
         'test variable file dependency',
@@ -380,6 +389,7 @@ export function extractFileDependencies(configPath: string): string[] {
       if (inspectedVarPaths.has(absolutePath)) return;
       inspectedVarPaths.add(absolutePath);
       const varFiles = processFileUrl(fileUrl, absolutePath);
+      if (/\.(?:[cm]?[jt]s|py)$/i.test(filePath)) return;
       for (const varFile of varFiles) {
         if (inspectedVarFiles.has(varFile)) continue;
         inspectedVarFiles.add(varFile);
