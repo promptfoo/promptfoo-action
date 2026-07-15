@@ -36329,7 +36329,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       }
       return absolutePath;
     };
-    const excludedParameters = /* @__PURE__ */ new WeakSet();
+    const excludedParameterParents = /* @__PURE__ */ new WeakSet();
     const readConfig = (filePath) => {
       const lexicalStats = fs6.lstatSync(filePath);
       const configStats = lexicalStats.isSymbolicLink() ? fs6.statSync(filePath) : lexicalStats;
@@ -36382,7 +36382,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
           if (Array.isArray(providerConfig.functions)) {
             for (const functionConfig of providerConfig.functions) {
               if (typeof functionConfig === "object" && functionConfig !== null && "parameters" in functionConfig && typeof functionConfig.parameters === "object" && functionConfig.parameters !== null) {
-                excludedParameters.add(functionConfig.parameters);
+                excludedParameterParents.add(functionConfig);
               }
             }
           }
@@ -36391,7 +36391,7 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
               if (typeof tool !== "object" || tool === null || !("function" in tool) || typeof tool.function !== "object" || tool.function === null || !("parameters" in tool.function) || typeof tool.function.parameters !== "object" || tool.function.parameters === null) {
                 continue;
               }
-              excludedParameters.add(tool.function.parameters);
+              excludedParameterParents.add(tool.function);
             }
           }
         }
@@ -36493,9 +36493,6 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
       if (typeof next.value !== "object" || next.value === null || !Array.isArray(next.value) && Object.getPrototypeOf(next.value) !== Object.prototype) {
         continue;
       }
-      if (excludedParameters.has(next.value)) {
-        continue;
-      }
       const objectsForFile = inspectedObjects.get(next.file) ?? /* @__PURE__ */ new WeakSet();
       inspectedObjects.set(next.file, objectsForFile);
       if (objectsForFile.has(next.value)) {
@@ -36535,7 +36532,9 @@ function extractFileDependencies(configPath, workspaceRoot = process.cwd(), work
         }
       }
       pending.push(
-        ...Object.values(record).map((value) => ({
+        ...Object.entries(record).filter(
+          ([key]) => key !== "parameters" || !excludedParameterParents.has(record)
+        ).map(([, value]) => ({
           value,
           file: next.file
         }))
@@ -38046,8 +38045,9 @@ async function run() {
       const implicitEnvFilePath = path7.join(workingDirectory, ".env");
       const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
       const implicitEnvExists = fs8.existsSync(implicitEnvFilePath);
-      const implicitFilePath = implicitEnvExists ? implicitEnvFilePath : implicitVaultFilePath;
-      if (implicitEnvExists || process.env.DOTENV_KEY && fs8.existsSync(implicitVaultFilePath)) {
+      const implicitVaultExists = process.env.DOTENV_KEY && fs8.existsSync(implicitVaultFilePath);
+      const implicitFilePath = implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath;
+      if (implicitEnvExists || implicitVaultExists) {
         info(`Loading environment variables from ${implicitFilePath}`);
         loadEnvironmentFile(implicitFilePath, process.env, false);
         info(`Successfully loaded ${implicitFilePath}`);

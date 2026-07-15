@@ -286,13 +286,12 @@ export async function run(): Promise<void> {
       const implicitEnvFilePath = path.join(workingDirectory, '.env');
       const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
       const implicitEnvExists = fs.existsSync(implicitEnvFilePath);
-      const implicitFilePath = implicitEnvExists
-        ? implicitEnvFilePath
-        : implicitVaultFilePath;
-      if (
-        implicitEnvExists ||
-        (process.env.DOTENV_KEY && fs.existsSync(implicitVaultFilePath))
-      ) {
+      const implicitVaultExists =
+        process.env.DOTENV_KEY && fs.existsSync(implicitVaultFilePath);
+      const implicitFilePath = implicitVaultExists
+        ? implicitVaultFilePath
+        : implicitEnvFilePath;
+      if (implicitEnvExists || implicitVaultExists) {
         core.info(`Loading environment variables from ${implicitFilePath}`);
         loadEnvironmentFile(implicitFilePath, process.env, false);
         core.info(`Successfully loaded ${implicitFilePath}`);
