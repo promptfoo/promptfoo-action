@@ -38369,11 +38369,11 @@ function extractFileDependencies(configPath) {
         const selectorIndex = providerPath.lastIndexOf(":");
         const candidatePath = providerPath.slice(0, selectorIndex);
         const selector = providerPath.slice(selectorIndex + 1);
-        const executablePattern = nestedReference ? /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i : /\.(?:py|go|rb)$/i;
+        const executablePattern = nestedReference ? /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i : /\.(?:py|go|rb|js|cjs|mjs|ts|cts|mts)$/i;
         const isJavascriptReference = /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(
           candidatePath
         );
-        const isValidSelector = /\.go$/i.test(candidatePath) ? /^(?:call_api|CallApi)$/.test(selector) : nestedReference && isJavascriptReference ? selector.length > 0 && !/[\\/:\0]/.test(selector) : /^[\p{L}_$][\p{L}\p{N}_$]*(?:\.[\p{L}_$][\p{L}\p{N}_$]*)*[!?]?$/u.test(
+        const isValidSelector = /\.go$/i.test(candidatePath) ? /^(?:call_api|CallApi)$/.test(selector) : isJavascriptReference ? selector.length > 0 && !/[\\/:\0]/.test(selector) : /^[\p{L}_$][\p{L}\p{N}_$]*(?:\.[\p{L}_$][\p{L}\p{N}_$]*)*[!?]?$/u.test(
           selector
         );
         const cleanPath = selectorIndex > 1 && executablePattern.test(candidatePath) && isValidSelector ? candidatePath : providerPath;
@@ -38390,9 +38390,12 @@ function extractFileDependencies(configPath) {
             stopProviderTraversal();
             break;
           }
-          const providerConfigKey = `${absolutePath}\0${getEnvContextKey(
-            activeEnv
-          )}`;
+          const providerConfigKey = JSON.stringify([
+            absolutePath,
+            getEnvContextKey(activeEnv),
+            nestedReference,
+            referencedFromProviderObject
+          ]);
           if (!/\.(?:ya?ml|json)$/i.test(absolutePath) || visitedProviderConfigs.has(providerConfigKey)) {
             continue;
           }
@@ -38479,7 +38482,9 @@ function extractFileDependencies(configPath) {
           }
           return;
         }
-        const valueEnv = "env" in value ? value.env : void 0;
+        const isProviderOptionsObject = externalProviderConfig || isProviderReference && ("id" in value || "env" in value || "config" in value);
+        const isProviderMap = isProviderReference && !isProviderOptionsObject;
+        const valueEnv = isProviderOptionsObject && "env" in value ? value.env : void 0;
         const providerEnv = externalProviderConfig && referencedFromProviderObject ? { ...withEnvOverrides({}, valueEnv), ...activeEnv } : withEnvOverrides(activeEnv, valueEnv);
         const fileAuthPath = parentKey === "auth" && grandparentKey === "config" && "type" in value && value.type === "file" && "path" in value && typeof value.path === "string" ? renderEnvTemplates(value.path, {
           ...process.env,
@@ -38529,7 +38534,7 @@ function extractFileDependencies(configPath) {
             providerEnv,
             false,
             true,
-            key === "id",
+            key === "id" || isProviderMap,
             FILE_BEARING_PROVIDER_KEYS.has(key) || (parentKey === "response_format" || parentKey === "responseFormat") && (key === "schema" || key === "json_schema") || parentKey === "json_schema" && key === "schema",
             key,
             parentKey

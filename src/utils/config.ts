@@ -441,13 +441,13 @@ export function extractFileDependencies(configPath: string): string[] {
         const selector = providerPath.slice(selectorIndex + 1);
         const executablePattern = nestedReference
           ? /\.(?:py|js|cjs|mjs|ts|cts|mts)$/i
-          : /\.(?:py|go|rb)$/i;
+          : /\.(?:py|go|rb|js|cjs|mjs|ts|cts|mts)$/i;
         const isJavascriptReference = /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(
           candidatePath,
         );
         const isValidSelector = /\.go$/i.test(candidatePath)
           ? /^(?:call_api|CallApi)$/.test(selector)
-          : nestedReference && isJavascriptReference
+          : isJavascriptReference
             ? selector.length > 0 && !/[\\/:\0]/.test(selector)
             : /^[\p{L}_$][\p{L}\p{N}_$]*(?:\.[\p{L}_$][\p{L}\p{N}_$]*)*[!?]?$/u.test(
                 selector,
@@ -478,9 +478,12 @@ export function extractFileDependencies(configPath: string): string[] {
             stopProviderTraversal();
             break;
           }
-          const providerConfigKey = `${absolutePath}\0${getEnvContextKey(
-            activeEnv,
-          )}`;
+          const providerConfigKey = JSON.stringify([
+            absolutePath,
+            getEnvContextKey(activeEnv),
+            nestedReference,
+            referencedFromProviderObject,
+          ]);
           if (
             !/\.(?:ya?ml|json)$/i.test(absolutePath) ||
             visitedProviderConfigs.has(providerConfigKey)
@@ -577,7 +580,13 @@ export function extractFileDependencies(configPath: string): string[] {
           return;
         }
 
-        const valueEnv = 'env' in value ? value.env : undefined;
+        const isProviderOptionsObject =
+          externalProviderConfig ||
+          (isProviderReference &&
+            ('id' in value || 'env' in value || 'config' in value));
+        const isProviderMap = isProviderReference && !isProviderOptionsObject;
+        const valueEnv =
+          isProviderOptionsObject && 'env' in value ? value.env : undefined;
         const providerEnv =
           externalProviderConfig && referencedFromProviderObject
             ? { ...withEnvOverrides({}, valueEnv), ...activeEnv }
@@ -654,7 +663,7 @@ export function extractFileDependencies(configPath: string): string[] {
             providerEnv,
             false,
             true,
-            key === 'id',
+            key === 'id' || isProviderMap,
             FILE_BEARING_PROVIDER_KEYS.has(key) ||
               ((parentKey === 'response_format' ||
                 parentKey === 'responseFormat') &&

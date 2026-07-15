@@ -90,7 +90,7 @@ providers: file://providers/custom.py:call_api
     expect(deps).toEqual(['../config/providers/custom.py']);
   });
 
-  it('should preserve an unsupported top-level TypeScript provider selector', () => {
+  it('should strip a top-level TypeScript provider selector', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - id: file://providers/custom.ts:callApi
@@ -98,7 +98,7 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
-    expect(deps).toEqual(['../config/providers/custom.ts:callApi']);
+    expect(deps).toEqual(['../config/providers/custom.ts']);
   });
 
   it('should strip function selectors from Go and Ruby file providers', () => {
@@ -673,6 +673,25 @@ providers:
     expect(deps).toEqual(['tools/current.ts']);
   });
 
+  it('should ignore ordinary nested env objects when resolving provider dependencies', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4
+    env:
+      PROVIDER_TOOLS_PATH: current.ts
+    config:
+      env:
+        PROVIDER_TOOLS_PATH: default.ts
+      tools: "file://tools/{{ env.PROVIDER_TOOLS_PATH }}"
+`);
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['evals/tools/current.ts']);
+  });
+
   it('should resolve bracket and default-filter env templates in nested provider dependencies', () => {
     process.env.PROVIDER_TOOLS_PATH = 'file://tools/current.ts:getTools';
     mockFs.readFileSync.mockReturnValue(`
@@ -958,6 +977,34 @@ id: "file://providers/{{ env.PROVIDER_FILE }}.py:call_api"
     );
 
     expect(deps).toEqual(['evals/providers.yaml', 'evals/providers/suite.py']);
+  });
+
+  it('should revisit a provider file when bare and wrapped references share an env context', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? `
+env:
+  PROVIDER_FILE: suite
+providers:
+  - file://providers.yaml
+  - id: file://providers.yaml
+`
+        : `
+env:
+  PROVIDER_FILE: provider
+id: "file://providers/{{ env.PROVIDER_FILE }}.py:call_api"
+`,
+    );
+
+    const deps = extractFileDependencies(
+      '/test/working/evals/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([
+      'evals/providers.yaml',
+      'evals/providers/provider.py',
+      'evals/providers/suite.py',
+    ]);
   });
 
   it('should prefer an outer provider-file env over nested provider-file defaults', () => {
