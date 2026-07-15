@@ -38390,6 +38390,12 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     };
     const processFileUrl = (fileUrl) => {
       const filePath = fileUrl.replace("file://", "").replace(/\\/g, "/");
+      if (filePath.includes("\0")) {
+        warning(
+          "Ignoring unsafe config dependency: config file dependency contains an invalid null byte"
+        );
+        return;
+      }
       if (le(filePath, {
         magicalBraces: true,
         braceExpandMax: MAX_BRACE_EXPANSIONS + 1
@@ -38442,6 +38448,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           }
         }
         for (const absolutePattern of safePatterns) {
+          if (!le(absolutePattern)) {
+            dependencies.add(absolutePattern);
+            continue;
+          }
           const absoluteRoot = path6.parse(absolutePattern).root;
           const pathParts = path6.relative(absoluteRoot, absolutePattern).split(path6.sep);
           let basePath = absoluteRoot;
@@ -38494,16 +38504,17 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       const processPromptReference = (reference, declaredFile = false, promptExecutionCwd = executionCwd) => {
         const isExecutable = reference.startsWith("exec:");
         const isFileUrl = reference.startsWith("file://");
-        const isTemplated = /\{[{%#]/.test(reference);
-        const isEnvironmentTemplate = /\{\{-?\s*env(?:\.|\s*\[)/.test(
-          reference
-        );
+        const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
+        const isEnvironmentTemplate = /^\s*\{\{-?\s*env(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(reference);
         if (!declaredFile && !isExecutable && !isFileUrl && (reference.length > 65536 || ["\n", "portkey://", "langfuse://", "helicone://"].some(
           (value) => reference.includes(value)
         ))) {
           return;
         }
-        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) || /^[^*]*\*+$/.test(reference)) || /[\\/]/.test(reference) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
+        if (!declaredFile && !isExecutable && !isFileUrl && /\s/.test(reference) && /(?:^|\s)(?:\/|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reference) && !/^\s*(?:\/|\.{1,2}[\\/]|[A-Za-z]:[\\/])/.test(reference)) {
+          return;
+        }
+        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) || /^[^*]*\*+$/.test(reference)) || /[\\/]/.test(reference) && !/\s/.test(reference) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
           reference
         );
         if (!looksLikePath) {
@@ -38527,12 +38538,37 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             }
           }
         }
-        const executableParts = isExecutable ? (reference.replace(/^exec:/, "").match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? []).map((part) => part.replace(/^['"]|['"]$/g, "")) : [];
+        const executableParts = isExecutable ? (reference.replace(/^exec:/, "").replace(
+          /\{\{[^}]*\}\}/g,
+          (template) => template.replace(/\s+/g, "")
+        ).match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? []).map((part) => part.replace(/^['"]|['"]$/g, "")) : [];
         const promptPath = (isExecutable ? executableParts[0] ?? "" : reference).replace(/^file:\/\//, "").replace(/(\.(?:cjs|cts|js|mjs|mts|py|ts|go|rb)):[^\\/]+$/i, "$1").replace(/\\/g, "/");
         const promptPatterns = processFileUrl(`file://${promptPath}`);
+        if (promptPath.includes("\0")) {
+          return;
+        }
         for (const rawExecutableArgument of executableParts.slice(1)) {
           const equalsIndex = rawExecutableArgument.indexOf("=");
           const executableArgument = rawExecutableArgument.startsWith("-") && equalsIndex >= 0 ? rawExecutableArgument.slice(equalsIndex + 1) : rawExecutableArgument;
+          if (/\{[{%#]/.test(executableArgument)) {
+            const staticSegments = [];
+            for (const segment of executableArgument.split(/[\\/]/)) {
+              if (/\{[{%#]/.test(segment)) {
+                break;
+              }
+              staticSegments.push(segment);
+            }
+            const watchedDirectory = resolvePromptProbe(
+              staticSegments.length > 0 ? staticSegments.join(path6.sep) : ".",
+              promptExecutionCwd
+            );
+            if (watchedDirectory) {
+              dependencies.add(
+                `${watchedDirectory.replace(/[\\/]+$/, "")}${path6.sep}`
+              );
+            }
+            continue;
+          }
           const argumentPath = resolvePromptProbe(
             executableArgument,
             promptExecutionCwd
@@ -38576,7 +38612,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           }
           return;
         }
-        const isPromptGlob = le(promptPath);
+        const isPromptGlob = le(promptPath, {
+          magicalBraces: true,
+          braceExpandMax: MAX_BRACE_EXPANSIONS + 1
+        });
         const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(promptPath);
         const hasFixedExtension = /\.[A-Za-z0-9_-]+$/.test(promptPath);
         if (!isStructuredPrompt && (!isPromptGlob || hasFixedExtension)) {
@@ -38650,13 +38689,16 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (typeof prompt === "string") {
           processPromptReference(prompt);
         } else if (typeof prompt === "object" && prompt !== null) {
-          const promptReference = prompt.raw || prompt.id || prompt.file;
+          const fileBackedPromptId = typeof prompt.id === "string" && (/^(?:file:\/\/|exec:)/.test(prompt.id) || /\*/.test(prompt.id) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
+            prompt.id
+          ));
+          const promptReference = prompt.raw || (fileBackedPromptId ? prompt.id : prompt.file || prompt.id);
           if (typeof promptReference === "string") {
             const promptConfig = prompt.config;
             const promptBasePath = typeof promptConfig === "object" && promptConfig !== null && "basePath" in promptConfig && typeof promptConfig.basePath === "string" ? promptConfig.basePath : void 0;
             processPromptReference(
               promptReference,
-              Boolean(prompt.file && !prompt.raw && !prompt.id),
+              Boolean(prompt.file && !prompt.raw && !fileBackedPromptId),
               promptBasePath ? path6.resolve(executionCwd, promptBasePath) : executionCwd
             );
           }
@@ -38664,8 +38706,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       }
     }
     const extractVarFiles = (vars) => {
-      if (!isTraversableRecord(vars)) return;
-      for (const value of Object.values(vars)) {
+      const values = typeof vars === "string" ? [vars] : Array.isArray(vars) ? vars : isTraversableRecord(vars) ? Object.values(vars) : [];
+      for (const value of values) {
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value);
         } else if (typeof value === "object" && value !== null && "file" in value && typeof value.file === "string") {
