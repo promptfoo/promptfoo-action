@@ -225,6 +225,24 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    let physicalWorkspaceRoot: string;
+    let physicalWorkingDirectory: string;
+    try {
+      physicalWorkspaceRoot = fs.realpathSync(workspaceRoot);
+      physicalWorkingDirectory = fs.realpathSync(workingDirectory);
+    } catch {
+      throw new Error(
+        'Could not resolve the repository workspace or working directory safely',
+      );
+    }
+    if (
+      !isPathInside(workspaceRoot, workingDirectory) ||
+      !isPathInside(physicalWorkspaceRoot, physicalWorkingDirectory)
+    ) {
+      throw new Error(
+        'Working directory must stay within the repository workspace',
+      );
+    }
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
@@ -526,7 +544,6 @@ export async function run(): Promise<void> {
         target.push(file);
       }
     };
-    let physicalWorkspaceRoot: string | undefined;
     let promptGlobFailed = false;
     const changedFilesList = changedFiles
       .split(changedFiles.includes('\0') ? '\0' : /\r?\n/)
@@ -572,6 +589,7 @@ export async function run(): Promise<void> {
       }
       const allMatches = matches
         .filter((file) => {
+          if (useConfigPrompts) return true;
           const absoluteFile = path.resolve(workingDirectory, file);
           if (!isPathInside(workspaceRoot, absoluteFile)) {
             core.warning(
@@ -580,7 +598,6 @@ export async function run(): Promise<void> {
             return false;
           }
           try {
-            physicalWorkspaceRoot ??= fs.realpathSync(workspaceRoot);
             const physicalFile = fs.realpathSync(absoluteFile);
             if (!isPathInside(physicalWorkspaceRoot, physicalFile)) {
               core.warning(

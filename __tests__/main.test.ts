@@ -1718,6 +1718,12 @@ describe('GitHub Action Main', () => {
       mockGlob.sync.mockReturnValue([
         'prompts/unused\r\n::warning::SENSITIVE-REVIEW-TOKEN.txt',
       ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (String(filePath).includes('SENSITIVE-REVIEW-TOKEN')) {
+          throw new Error('EACCES: SENSITIVE-REVIEW-TOKEN');
+        }
+        return String(filePath);
+      });
       mockConfig.extractFileDependencies.mockReturnValue([
         'providers/custom.py',
       ]);
@@ -1727,6 +1733,12 @@ describe('GitHub Action Main', () => {
       const args = mockExec.exec.mock.calls[0][1] as string[];
       expect(args).not.toContain('--prompts');
       expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockFs.realpathSync).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockCore.warning).not.toHaveBeenCalledWith(
+        'Ignoring unreadable prompt glob match: unable to resolve path',
+      );
       expect(mockExec.exec).toHaveBeenCalled();
       expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1735,6 +1747,88 @@ describe('GitHub Action Main', () => {
           ),
         }),
       );
+    });
+
+    test('should omit unused CRLF action-prompt matches from a no-change config-prompt log', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockResolvedValue('');
+      mockGlob.sync.mockReturnValue([
+        'prompts/unused\r\n::warning::SENSITIVE-REVIEW-TOKEN.txt',
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Processing all matching prompt files: []',
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      ['lexical escape', '../outside-evals'],
+      ['symlink escape', 'linked-evals'],
+    ])('should reject a %s working directory in config-prompt mode before evaluation', async (_label, workingDirectory) => {
+      withInputs({
+        'working-directory': workingDirectory,
+        prompts: 'prompts/*.txt',
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const candidate = String(filePath);
+        return candidate === path.join(process.cwd(), 'linked-evals')
+          ? '/tmp/outside/SENSITIVE-EVALS'
+          : candidate;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Working directory must stay within the repository workspace',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed.mock.calls.join('\n')).not.toContain(
+        'SENSITIVE-',
+      );
+    });
+
+    test.each([
+      ['repository workspace', '', process.cwd()],
+      ['working directory', 'evals', path.join(process.cwd(), 'evals')],
+    ])('should fail safely when the %s cannot be resolved', async (_label, workingDirectory, inaccessiblePath) => {
+      withInputs({ 'working-directory': workingDirectory });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (String(filePath) === inaccessiblePath) {
+          throw new Error('EACCES: SENSITIVE-REVIEW-TOKEN');
+        }
+        return String(filePath);
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Could not resolve the repository workspace or working directory safely',
+      );
+      expect(mockCore.setFailed.mock.calls.join('\n')).not.toContain(
+        'SENSITIVE-',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should skip an unrelated change when an unchanged prompt filename contains a newline', async () => {

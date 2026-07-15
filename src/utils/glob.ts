@@ -65,6 +65,16 @@ export function preflightGlob(
       index++;
       continue;
     }
+    if (character === ']') {
+      let classIndex = expectedClosers.length - 1;
+      while (classIndex >= 0 && expectedClosers[classIndex].closer === '}') {
+        classIndex--;
+      }
+      if (classIndex >= 0 && expectedClosers[classIndex].closer === ']') {
+        expectedClosers.length = classIndex;
+        continue;
+      }
+    }
     if (expectedClosers[expectedClosers.length - 1]?.closer === ']') {
       if (character === '{') {
         if (expectedClosers.length >= MAX_GLOB_DELIMITER_DEPTH)
@@ -72,7 +82,6 @@ export function preflightGlob(
         expectedClosers.push({ closer: '}', opener: index });
         continue;
       }
-      if (character === ']') expectedClosers.pop();
       continue;
     }
     if (character === '{' || character === '[') {
