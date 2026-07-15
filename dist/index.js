@@ -38694,10 +38694,8 @@ function validatePromptGlob(pattern) {
       inCharacterClass = true;
       continue;
     }
-    if (inCharacterClass) {
-      if (character === "]") {
-        inCharacterClass = false;
-      }
+    if (inCharacterClass && character === "]") {
+      inCharacterClass = false;
       continue;
     }
     if (character === "{") {

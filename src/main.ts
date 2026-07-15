@@ -69,10 +69,8 @@ function validatePromptGlob(pattern: string): void {
       inCharacterClass = true;
       continue;
     }
-    if (inCharacterClass) {
-      if (character === ']') {
-        inCharacterClass = false;
-      }
+    if (inCharacterClass && character === ']') {
+      inCharacterClass = false;
       continue;
     }
     if (character === '{') {

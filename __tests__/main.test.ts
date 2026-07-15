@@ -435,6 +435,7 @@ describe('GitHub Action Main', () => {
 
     test.each([
       ['oversized numeric range', 'prompts/{1..1000000000}.txt'],
+      ['numeric range in character class', 'prompts/[{1..1000000000}].txt'],
       ['over-limit numeric range', 'prompts/{1..1025}.txt'],
       ['unsafe integer range', 'prompts/{1..999999999999999999999999}.txt'],
       ['zero numeric step', 'prompts/{1..4..0}.txt'],
