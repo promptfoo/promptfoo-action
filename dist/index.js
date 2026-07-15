@@ -36419,7 +36419,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         ))) {
           return;
         }
-        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") || /[\\/]/.test(reference) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
+        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && !/\s/.test(reference) || /[\\/]/.test(reference) || /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
           reference
         );
         if (!looksLikePath) {

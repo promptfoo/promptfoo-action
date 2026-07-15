@@ -101,6 +101,22 @@ prompts:
     expect(mockGlob.sync).toHaveBeenCalledTimes(1);
   });
 
+  it('should expand a bare scalar prompt glob inside a directory with spaces', () => {
+    mockFs.readFileSync.mockReturnValue("prompts: 'prompt files/*.txt'\n");
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/config/prompt files/main.txt']);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/prompt files/main.txt',
+      '../config/prompt files',
+    ]);
+    expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+  });
+
   it('should watch the config directory for a root-level scalar prompt glob', () => {
     mockFs.readFileSync.mockReturnValue("prompts: '*.txt'\n");
     mockGlob.hasMagic.mockImplementation((value: string) =>
@@ -253,6 +269,8 @@ prompts:
   it.each([
     'prompts: |\n  Return **bold** output for the user.\n',
     'prompts: |\n  Calculate price * discount_percent.\n',
+    'prompts: "Return **bold** output for the user."\n',
+    'prompts: "Calculate price * discount_percent."\n',
     'prompts: What is the capital of {{country}}?\n',
     'prompts: Return [safe] output for {{user}}.\n',
     'prompts: Which option (A or B)? Explain briefly.\n',

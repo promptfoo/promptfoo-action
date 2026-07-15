@@ -252,7 +252,7 @@ export function extractFileDependencies(
           isExecutable ||
           isFileUrl ||
           isEnvironmentTemplate ||
-          reference.includes('*') ||
+          (reference.includes('*') && !/\s/.test(reference)) ||
           /[\\/]/.test(reference) ||
           /\.(?:cjs|csv|cts|exe|js|json|jsonl|j2|md|mjs|mts|py|ts|txt|yml|yaml|sh|bash|bat|cmd|ps1|rb|pl)(?::[^\\/]+)?$/i.test(
             reference,
