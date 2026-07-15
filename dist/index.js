@@ -36341,8 +36341,15 @@ function extractFileDependencies(configPath) {
       if (!absolutePath) {
         return;
       }
-      if (le(filePath)) {
-        const matches = Ui(absolutePath, { nodir: true });
+      const globOptions = {
+        windowsPathsNoEscape: true,
+        magicalBraces: true
+      };
+      if (le(filePath, globOptions)) {
+        const matches = Ui(absolutePath, {
+          nodir: true,
+          windowsPathsNoEscape: true
+        });
         for (const match of matches) {
           const absoluteMatch = path5.resolve(match);
           if (isPathInside(dependencyRoot, absoluteMatch)) {
@@ -36357,17 +36364,24 @@ function extractFileDependencies(configPath) {
         const pathParts = filePath.slice(pathRoot.length).split(/[\\/]/);
         let basePath = pathRoot;
         for (const part of pathParts) {
-          if (le(part)) {
+          if (le(part, globOptions)) {
             break;
           }
           basePath = basePath ? path5.join(basePath, part) : part;
         }
         if (basePath) {
           const absoluteBasePath = path5.resolve(configDir, basePath);
-          dependencies.add(
-            matches.length === 0 ? `${absoluteBasePath}${path5.sep}` : absoluteBasePath
-          );
-        } else if (matches.length === 0) {
+          if (isPathInside(dependencyRoot, absoluteBasePath)) {
+            dependencies.add(
+              matches.length === 0 ? `${absoluteBasePath}${path5.sep}` : absoluteBasePath
+            );
+          } else {
+            warning(
+              "Ignoring unsafe config dependency glob base: config file dependency glob base must stay within the repository workspace"
+            );
+            dependencies.add(`${configDir}${path5.sep}`);
+          }
+        } else {
           dependencies.add(`${configDir}${path5.sep}`);
         }
       } else if (isDirectory2(absolutePath)) {
@@ -36402,11 +36416,21 @@ function extractFileDependencies(configPath) {
       }
     }
     const extractVarFiles = (vars) => {
-      if (typeof vars === "string" && vars.startsWith("file://")) {
-        processFileUrl(vars);
+      if (typeof vars === "string") {
+        processFileUrl(vars.startsWith("file://") ? vars : `file://${vars}`);
         return;
       }
-      if (!vars || typeof vars !== "object" || Array.isArray(vars)) return;
+      if (Array.isArray(vars)) {
+        for (const value of vars) {
+          if (typeof value === "string") {
+            processFileUrl(
+              value.startsWith("file://") ? value : `file://${value}`
+            );
+          }
+        }
+        return;
+      }
+      if (!vars || typeof vars !== "object") return;
       for (const value of Object.values(vars)) {
         if (typeof value === "string" && value.startsWith("file://")) {
           processFileUrl(value);
@@ -36425,7 +36449,9 @@ function extractFileDependencies(configPath) {
     const visitedAssertValues = /* @__PURE__ */ new WeakSet();
     const extractAssertValueFiles = (value) => {
       if (typeof value === "string" && value.startsWith("file://")) {
-        processFileUrl(value.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, "$1"));
+        processFileUrl(
+          value.replace(/(\.(?:[cm]?[jt]s|py|rb)):[^/\\:]+$/i, "$1")
+        );
       } else if (Array.isArray(value)) {
         if (visitedAssertValues.has(value)) return;
         visitedAssertValues.add(value);
@@ -36440,6 +36466,8 @@ function extractFileDependencies(configPath) {
         if (absolutePath) {
           dependencies.add(absolutePath);
         }
+      } else if (typeof value === "object" && value !== null && "id" in value && typeof value.id === "string" && value.id.startsWith("file://")) {
+        processFileUrl(value.id);
       }
     };
     const extractAssertFiles = (asserts) => {
@@ -36448,6 +36476,10 @@ function extractFileDependencies(configPath) {
       for (const assert of asserts) {
         if (!assert || typeof assert !== "object") continue;
         extractAssertValueFiles(assert.value);
+        extractAssertValueFiles(assert.provider);
+        extractAssertValueFiles(assert.rubricPrompt);
+        extractAssertValueFiles(assert.transform);
+        extractAssertValueFiles(assert.contextTransform);
         extractAssertFiles(assert.assert);
       }
     };
@@ -36485,7 +36517,12 @@ function extractFileDependencies(configPath) {
                   extractVarFiles(defaultTest.vars);
                   extractAssertFiles(defaultTest.assert);
                   extractAssertValueFiles(defaultTest.assertScoringFunction);
+                  extractAssertValueFiles(defaultTest.provider);
+                  extractAssertValueFiles(defaultTest.options?.provider);
+                  extractAssertValueFiles(defaultTest.options?.rubricPrompt);
+                  extractAssertValueFiles(defaultTest.options?.postprocess);
                   extractAssertValueFiles(defaultTest.options?.transform);
+                  extractAssertValueFiles(defaultTest.options?.transformVars);
                 }
               }
             } catch {
@@ -36499,7 +36536,12 @@ function extractFileDependencies(configPath) {
         extractVarFiles(config2.defaultTest.vars);
         extractAssertFiles(config2.defaultTest.assert);
         extractAssertValueFiles(config2.defaultTest.assertScoringFunction);
+        extractAssertValueFiles(config2.defaultTest.provider);
+        extractAssertValueFiles(config2.defaultTest.options?.provider);
+        extractAssertValueFiles(config2.defaultTest.options?.rubricPrompt);
+        extractAssertValueFiles(config2.defaultTest.options?.postprocess);
         extractAssertValueFiles(config2.defaultTest.options?.transform);
+        extractAssertValueFiles(config2.defaultTest.options?.transformVars);
       }
     }
     if (config2.tests) {
@@ -36512,7 +36554,7 @@ function extractFileDependencies(configPath) {
       const relativePath = path5.relative(cwd, dep);
       const repositoryPath = relativePath.split(path5.sep).join("/");
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
-        return `${repositoryPath}/`;
+        return repositoryPath ? `${repositoryPath}/` : "./";
       }
       return repositoryPath;
     });
@@ -37203,7 +37245,7 @@ async function run() {
           if (changedFilesList.includes(dep)) {
             return true;
           }
-          if (dep === "/") {
+          if (dep === "./") {
             return true;
           }
           if (dep.endsWith("/") || isDirectory2(dep)) {

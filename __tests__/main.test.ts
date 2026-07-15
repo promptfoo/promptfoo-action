@@ -937,7 +937,7 @@ describe('GitHub Action Main', () => {
     test('should run when a repository-root dependency sentinel is present', async () => {
       mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
       mockGlob.sync.mockReturnValue([]);
-      mockConfig.extractFileDependencies.mockReturnValue(['/']);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
 
       await run();
 

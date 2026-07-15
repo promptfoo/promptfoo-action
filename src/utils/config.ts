@@ -18,13 +18,24 @@ interface PromptfooAssertion {
   type?: string;
   value?: unknown;
   assert?: PromptfooAssertion[];
+  provider?: unknown;
+  rubricPrompt?: unknown;
+  transform?: unknown;
+  contextTransform?: unknown;
 }
 
 interface PromptfooTestConfig {
-  vars?: string | { [key: string]: string | { file?: string } };
+  vars?: unknown;
   assert?: PromptfooAssertion[];
   assertScoringFunction?: unknown;
-  options?: { transform?: unknown };
+  provider?: unknown;
+  options?: {
+    provider?: unknown;
+    rubricPrompt?: unknown;
+    postprocess?: unknown;
+    transform?: unknown;
+    transformVars?: unknown;
+  };
   [key: string]: unknown;
 }
 
@@ -116,9 +127,16 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       // Check if the path contains glob patterns
-      if (glob.hasMagic(filePath)) {
+      const globOptions = {
+        windowsPathsNoEscape: true,
+        magicalBraces: true,
+      };
+      if (glob.hasMagic(filePath, globOptions)) {
         // It's a glob pattern, expand it
-        const matches = glob.sync(absolutePath, { nodir: true });
+        const matches = glob.sync(absolutePath, {
+          nodir: true,
+          windowsPathsNoEscape: true,
+        });
         for (const match of matches) {
           const absoluteMatch = path.resolve(match);
           if (isPathInside(dependencyRoot, absoluteMatch)) {
@@ -136,19 +154,26 @@ export function extractFileDependencies(configPath: string): string[] {
         const pathParts = filePath.slice(pathRoot.length).split(/[\\/]/);
         let basePath = pathRoot;
         for (const part of pathParts) {
-          if (glob.hasMagic(part)) {
+          if (glob.hasMagic(part, globOptions)) {
             break;
           }
           basePath = basePath ? path.join(basePath, part) : part;
         }
         if (basePath) {
           const absoluteBasePath = path.resolve(configDir, basePath);
-          dependencies.add(
-            matches.length === 0
-              ? `${absoluteBasePath}${path.sep}`
-              : absoluteBasePath,
-          );
-        } else if (matches.length === 0) {
+          if (isPathInside(dependencyRoot, absoluteBasePath)) {
+            dependencies.add(
+              matches.length === 0
+                ? `${absoluteBasePath}${path.sep}`
+                : absoluteBasePath,
+            );
+          } else {
+            core.warning(
+              'Ignoring unsafe config dependency glob base: config file dependency glob base must stay within the repository workspace',
+            );
+            dependencies.add(`${configDir}${path.sep}`);
+          }
+        } else {
           dependencies.add(`${configDir}${path.sep}`);
         }
       } else if (isDirectory(absolutePath)) {
@@ -195,14 +220,22 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     // Extract test variable files
-    const extractVarFiles = (
-      vars?: string | { [key: string]: unknown },
-    ): void => {
-      if (typeof vars === 'string' && vars.startsWith('file://')) {
-        processFileUrl(vars);
+    const extractVarFiles = (vars?: unknown): void => {
+      if (typeof vars === 'string') {
+        processFileUrl(vars.startsWith('file://') ? vars : `file://${vars}`);
         return;
       }
-      if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return;
+      if (Array.isArray(vars)) {
+        for (const value of vars) {
+          if (typeof value === 'string') {
+            processFileUrl(
+              value.startsWith('file://') ? value : `file://${value}`,
+            );
+          }
+        }
+        return;
+      }
+      if (!vars || typeof vars !== 'object') return;
       for (const value of Object.values(vars)) {
         if (typeof value === 'string' && value.startsWith('file://')) {
           processFileUrl(value);
@@ -228,7 +261,9 @@ export function extractFileDependencies(configPath: string): string[] {
     const visitedAssertValues = new WeakSet<object>();
     const extractAssertValueFiles = (value: unknown): void => {
       if (typeof value === 'string' && value.startsWith('file://')) {
-        processFileUrl(value.replace(/(\.(?:[cm]?[jt]s|py)):[^/\\:]+$/i, '$1'));
+        processFileUrl(
+          value.replace(/(\.(?:[cm]?[jt]s|py|rb)):[^/\\:]+$/i, '$1'),
+        );
       } else if (Array.isArray(value)) {
         if (visitedAssertValues.has(value)) return;
         visitedAssertValues.add(value);
@@ -248,6 +283,14 @@ export function extractFileDependencies(configPath: string): string[] {
         if (absolutePath) {
           dependencies.add(absolutePath);
         }
+      } else if (
+        typeof value === 'object' &&
+        value !== null &&
+        'id' in value &&
+        typeof value.id === 'string' &&
+        value.id.startsWith('file://')
+      ) {
+        processFileUrl(value.id);
       }
     };
     const extractAssertFiles = (asserts?: PromptfooAssertion[]): void => {
@@ -256,6 +299,10 @@ export function extractFileDependencies(configPath: string): string[] {
       for (const assert of asserts) {
         if (!assert || typeof assert !== 'object') continue;
         extractAssertValueFiles(assert.value);
+        extractAssertValueFiles(assert.provider);
+        extractAssertValueFiles(assert.rubricPrompt);
+        extractAssertValueFiles(assert.transform);
+        extractAssertValueFiles(assert.contextTransform);
         extractAssertFiles(assert.assert);
       }
     };
@@ -302,7 +349,12 @@ export function extractFileDependencies(configPath: string): string[] {
                   extractVarFiles(defaultTest.vars);
                   extractAssertFiles(defaultTest.assert);
                   extractAssertValueFiles(defaultTest.assertScoringFunction);
+                  extractAssertValueFiles(defaultTest.provider);
+                  extractAssertValueFiles(defaultTest.options?.provider);
+                  extractAssertValueFiles(defaultTest.options?.rubricPrompt);
+                  extractAssertValueFiles(defaultTest.options?.postprocess);
                   extractAssertValueFiles(defaultTest.options?.transform);
+                  extractAssertValueFiles(defaultTest.options?.transformVars);
                 }
               }
             } catch {
@@ -319,7 +371,12 @@ export function extractFileDependencies(configPath: string): string[] {
         extractVarFiles(config.defaultTest.vars);
         extractAssertFiles(config.defaultTest.assert);
         extractAssertValueFiles(config.defaultTest.assertScoringFunction);
+        extractAssertValueFiles(config.defaultTest.provider);
+        extractAssertValueFiles(config.defaultTest.options?.provider);
+        extractAssertValueFiles(config.defaultTest.options?.rubricPrompt);
+        extractAssertValueFiles(config.defaultTest.options?.postprocess);
         extractAssertValueFiles(config.defaultTest.options?.transform);
+        extractAssertValueFiles(config.defaultTest.options?.transformVars);
       }
     }
 
@@ -337,7 +394,7 @@ export function extractFileDependencies(configPath: string): string[] {
       const repositoryPath = relativePath.split(path.sep).join('/');
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
-        return `${repositoryPath}/`;
+        return repositoryPath ? `${repositoryPath}/` : './';
       }
       return repositoryPath;
     });

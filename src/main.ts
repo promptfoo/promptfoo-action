@@ -502,7 +502,7 @@ export async function run(): Promise<void> {
             return true;
           }
 
-          if (dep === '/') {
+          if (dep === './') {
             return true;
           }
 
