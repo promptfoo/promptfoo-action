@@ -779,6 +779,7 @@ export function extractFileDependencies(configPath: string): string[] {
       reference: string,
       selector: 'auth' | 'literal' = 'literal',
     ): void => {
+      if (/^https?:\/\//i.test(reference)) return;
       inspectTransitiveReference(reference);
       if (reference.startsWith('file://')) {
         processFileUrl(reference, selector);

@@ -1545,6 +1545,31 @@ scenarios:
     ).toEqual(['scenarios/shared.yaml']);
   });
 
+  it.each([
+    'tests: https://example.test/cases.yaml',
+    'tests:\n  - path: http://example.test/cases.json',
+    'scenarios: https://example.test/scenarios.yaml',
+    'scenarios:\n  - tests: http://example.test/cases.csv',
+  ])('should ignore remote test and scenario references without local filesystem access', (config) => {
+    mockFs.readFileSync.mockReturnValue(config);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      if (filePath.toString().includes('example.test')) {
+        throw new Error('remote URL must not be realpathed');
+      }
+      return filePath.toString();
+    });
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(
+      mockFs.realpathSync.mock.calls.some(([filePath]) =>
+        filePath.toString().includes('example.test'),
+      ),
+    ).toBe(false);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it('should conservatively evaluate when a test generator contains nested config', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
