@@ -5,6 +5,8 @@ import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
+const MAX_GLOB_PATTERN_LENGTH = 64 * 1024;
+
 export interface PromptfooConfig {
   extensions?: unknown;
   commandLineOptions?: unknown;
@@ -111,6 +113,17 @@ export function extractFileDependencies(configPath: string): string[] {
         'config file dependency',
       );
       if (!absolutePath) {
+        return;
+      }
+
+      if (
+        filePath.length > MAX_GLOB_PATTERN_LENGTH ||
+        absolutePath.length > MAX_GLOB_PATTERN_LENGTH
+      ) {
+        dependencies.add(cwd);
+        core.warning(
+          'Unable to statically resolve an oversized config file dependency pattern. Watching the repository workspace for changes.',
+        );
         return;
       }
 

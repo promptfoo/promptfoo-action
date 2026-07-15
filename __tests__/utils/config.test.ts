@@ -164,6 +164,54 @@ commandLineOptions:
     expect(deps).toEqual(['hooks/policy.js', 'hooks/result.py']);
   });
 
+  it('should preserve sibling dependencies when an extension glob is too long', async () => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.py
+extensions:
+  - file://${'a'.repeat(65_536)}*
+  - file://hooks/valid.js:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toContain('providers/custom.py');
+    expect(deps).toContain('hooks/valid.js');
+    expect(deps).toContain('./');
+    expect(deps).toHaveLength(3);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
+  it('should preserve sibling dependencies when a resolved file glob is too long', async () => {
+    const realGlob = await vi.importActual<typeof import('glob')>('glob');
+    mockGlob.hasMagic.mockImplementation(realGlob.hasMagic);
+    mockGlob.sync.mockImplementation((pattern: string) =>
+      realGlob.sync(pattern, { nodir: true }),
+    );
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/custom.py
+  - file://${'a'.repeat(65_525)}*
+extensions:
+  - file://hooks/valid.js:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/working/promptfooconfig.yaml');
+
+    expect(deps).toContain('providers/custom.py');
+    expect(deps).toContain('hooks/valid.js');
+    expect(deps).toContain('./');
+    expect(deps).toHaveLength(3);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Watching the repository workspace'),
+    );
+  });
+
   it('should extract absolute extension hooks and preserve path colons', () => {
     mockFs.readFileSync.mockReturnValue(`
 extensions:
