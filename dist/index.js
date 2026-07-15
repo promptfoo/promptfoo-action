@@ -39994,12 +39994,25 @@ function extractFileDependencies(configPath, refResolutionRoot = process.cwd()) 
         const safeMatches = [];
         for (const match2 of matches) {
           const absoluteMatch = path6.resolve(match2);
-          if (isSafeDependency(absoluteMatch)) {
+          let realDependencyRoot;
+          let realCwd;
+          let realMatch;
+          try {
+            realDependencyRoot = fs6.realpathSync(dependencyRoot);
+            realCwd = fs6.realpathSync(cwd);
+            realMatch = fs6.realpathSync(absoluteMatch);
+          } catch {
+            warning(
+              "Ignoring unsafe config dependency glob match: resolved path cannot be verified"
+            );
+            continue;
+          }
+          if (isSafeDependency(absoluteMatch) && (isPathInside(realDependencyRoot, realMatch) || isPathInside(realCwd, realMatch))) {
             dependencies.add(absoluteMatch);
             safeMatches.push(absoluteMatch);
           } else {
             warning(
-              `Ignoring unsafe config dependency match "${match2}": ${source} glob match must stay within the repository workspace`
+              "Ignoring unsafe config dependency glob match: config file dependency glob match must stay within the repository workspace"
             );
           }
         }
