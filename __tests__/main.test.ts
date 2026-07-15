@@ -1194,6 +1194,38 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
+    test('should resolve prompt-containment roots once for a large prompt match set', async () => {
+      withInputs({
+        'working-directory': 'evals',
+        prompts: 'prompts/*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/prompts/prompt-0.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(
+        Array.from(
+          { length: 512 },
+          (_, index) => `prompts/prompt-${index}.txt`,
+        ),
+      );
+
+      await run();
+
+      const workspaceRoot = process.cwd();
+      const workingDirectory = path.join(workspaceRoot, 'evals');
+      const realpathCalls = mockFs.realpathSync.mock.calls.map(([value]) =>
+        String(value),
+      );
+      expect(
+        realpathCalls.filter((value) => value === workspaceRoot),
+      ).toHaveLength(2);
+      expect(
+        realpathCalls.filter((value) => value === workingDirectory),
+      ).toHaveLength(1);
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
     test('should evaluate every action prompt when only an HTTP status validator changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'evals/validators/status.js' },

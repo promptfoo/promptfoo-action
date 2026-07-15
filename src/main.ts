@@ -528,6 +528,8 @@ export async function run(): Promise<void> {
       }
     };
     const changedFilesList = changedFiles.split('\0').filter((file) => file);
+    let realPromptWorkspaceRoot: string | undefined;
+    let realPromptWorkingDirectory: string | undefined;
 
     for (const globPattern of promptFilesGlobs) {
       if (
@@ -590,19 +592,17 @@ export async function run(): Promise<void> {
             'Prompt file paths must stay within the repository working directory',
           );
         }
-        let realWorkspaceRoot: string;
-        let realWorkingDirectory: string;
         let realFile: string;
         try {
-          realWorkspaceRoot = fs.realpathSync(workspaceRoot);
-          realWorkingDirectory = fs.realpathSync(workingDirectory);
+          realPromptWorkspaceRoot ??= fs.realpathSync(workspaceRoot);
+          realPromptWorkingDirectory ??= fs.realpathSync(workingDirectory);
           realFile = fs.realpathSync(absoluteFile);
         } catch {
           throw new Error('Prompt file path cannot be verified safely');
         }
         if (
-          !isPathInside(realWorkingDirectory, realFile) ||
-          !isPathInside(realWorkspaceRoot, realFile)
+          !isPathInside(realPromptWorkingDirectory, realFile) ||
+          !isPathInside(realPromptWorkspaceRoot, realFile)
         ) {
           throw new Error(
             'Prompt file resolves outside the repository working directory',
