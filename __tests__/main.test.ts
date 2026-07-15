@@ -922,6 +922,86 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
+    test.each([
+      { kind: 'direct', suffix: '' },
+      { kind: 'directory', suffix: '/nested.py' },
+    ])('should preserve $kind matching for an oversized config dependency', async ({
+      suffix,
+    }) => {
+      const dependency = `providers/${'a'.repeat(65537)}`;
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: `${dependency}${suffix}` },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) => {
+        if (value === dependency) {
+          throw new TypeError('pattern is too long');
+        }
+        return false;
+      });
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      { kind: 'direct', suffix: '' },
+      { kind: 'directory', suffix: '/nested.py' },
+    ])('should preserve $kind matching when config dependency glob inspection throws', async ({
+      suffix,
+    }) => {
+      const dependency = 'providers/custom';
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: `${dependency}${suffix}` },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+      mockGlob.hasMagic.mockImplementation((value: string) => {
+        if (value === dependency) {
+          throw new TypeError('invalid pattern: SENSITIVE-REVIEW-TOKEN');
+        }
+        return false;
+      });
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        'Unable to match a config dependency glob; falling back to direct and directory matching',
+      );
+      expect(mockCore.debug).not.toHaveBeenCalledWith(
+        expect.stringContaining('SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should not emit a workflow command from config dependency debug output', async () => {
+      const dependency =
+        'providers/custom.py\r\n::warning::SENSITIVE-REVIEW-TOKEN';
+      mockOctokit.paginate.mockResolvedValue([{ filename: dependency }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockCore.debug).not.toHaveBeenCalledWith(
+        expect.stringContaining('\n::warning::SENSITIVE-REVIEW-TOKEN'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should not narrow the evaluation when a prompt and config dependency both change', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'prompts/changed.txt' },

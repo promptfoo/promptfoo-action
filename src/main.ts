@@ -32,6 +32,7 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
+const MAX_DEPENDENCY_GLOB_LENGTH = 65536;
 const DEPENDENCY_GLOB_MAGIC_OPTIONS = {
   magicalBraces: true,
   nonegate: true,
@@ -525,9 +526,7 @@ export async function run(): Promise<void> {
         workingDirectory,
       ).map(toRepositoryPath);
       if (dependencies.length > 0) {
-        core.debug(
-          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
-        );
+        core.debug(`Found ${dependencies.length} file dependencies in config`);
 
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
@@ -535,13 +534,21 @@ export async function run(): Promise<void> {
             return true;
           }
 
-          if (
-            glob.hasMagic(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS) &&
-            changedFilesList.some((changedFile) =>
-              path.matchesGlob(changedFile, dep),
-            )
-          ) {
-            return true;
+          if (dep.length <= MAX_DEPENDENCY_GLOB_LENGTH) {
+            try {
+              if (
+                glob.hasMagic(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS) &&
+                changedFilesList.some((changedFile) =>
+                  path.matchesGlob(changedFile, dep),
+                )
+              ) {
+                return true;
+              }
+            } catch {
+              core.debug(
+                'Unable to match a config dependency glob; falling back to direct and directory matching',
+              );
+            }
           }
 
           // Direct file match
