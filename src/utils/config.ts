@@ -847,11 +847,11 @@ export function extractFileDependencies(configPath: string): string[] {
     const visitedAssertions = new WeakSet<object>();
     const extractAssertFiles = (asserts?: unknown, depth = 0): void => {
       if (!asserts) return;
-      if (
-        !Array.isArray(asserts) ||
-        depth > MAX_ASSERTION_DEPTH ||
-        visitedAssertions.has(asserts)
-      ) {
+      if (!Array.isArray(asserts) || depth > MAX_ASSERTION_DEPTH) {
+        markUnsafeDependency();
+        return;
+      }
+      if (visitedAssertions.has(asserts)) {
         markUnsafeDependency();
         return;
       }

@@ -4,6 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
+import { braceExpand } from 'minimatch';
 import {
   afterEach,
   beforeEach,
@@ -465,6 +466,29 @@ describe('GitHub Action Main', () => {
         { filename: 'promptfooconfig.yaml' },
       ]);
       mockGlob.sync.mockReturnValue(['prompts/{literal}-{-1.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should permit a numeric-looking literal alternative alongside nested braces', async () => {
+      const globPattern = 'prompts/{1..5000000,{a,b}}.txt';
+      expect(braceExpand(globPattern)).toEqual([
+        'prompts/1..5000000.txt',
+        'prompts/a.txt',
+        'prompts/b.txt',
+      ]);
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/a.txt']);
 
       await run();
 

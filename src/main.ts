@@ -78,6 +78,8 @@ function validatePromptGlob(pattern: string): void {
     if (character !== '}') continue;
     const brace = braces.pop();
     if (!brace) throw invalidPromptGlobError();
+    // A numeric-looking alternative beside a nested brace is a literal;
+    // brace expansion only expands an entirely numeric brace body.
     if (brace.nested) continue;
 
     const body = pattern.slice(brace.start, index);
