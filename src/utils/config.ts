@@ -460,6 +460,7 @@ export function extractFileDependencies(configPath: string): string[] {
           continue;
         }
         if (typeof current !== 'object' || current === null) continue;
+        if (ArrayBuffer.isView(current)) continue;
         if (visited.has(current)) return true;
         visited.add(current);
         pending.push(...Object.values(current));

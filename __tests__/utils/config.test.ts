@@ -1,6 +1,7 @@
 import * as core from '@actions/core';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { binaryTag, CORE_SCHEMA, mergeTag } from 'js-yaml';
 import { Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { Mock } from 'vitest';
@@ -2110,11 +2111,15 @@ scenarios:
               auth:
                 type: file
                 path: 'file://auth\\tokens\\{one,two}.py:get_auth'
+              body:
+                document:
+                  path: 'file://fixtures\\payload\\{literal}.json'
 `);
 
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual([
+      'evals/fixtures/payload/',
       'evals/validators\\numeric\\{1..1000000000}.JS:validate',
       'evals/validators\\numeric\\{1..1000000000}.JS',
       'evals/hooks\\request\\{one,two}.TS:transform',
@@ -2126,6 +2131,53 @@ scenarios:
       'evals/auth\\tokens\\{one,two}.py',
     ]);
     expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should skip inline binary views while extracting scenario, test, and provider file references', () => {
+    const binarySchema = CORE_SCHEMA.withTags(mergeTag, binaryTag);
+    const schemaSpy = vi
+      .spyOn(CORE_SCHEMA, 'withTags')
+      .mockReturnValue(binarySchema);
+    const objectValues = Object.values;
+    const valuesSpy = vi
+      .spyOn(Object, 'values')
+      .mockImplementation((value: object) => {
+        if (ArrayBuffer.isView(value)) {
+          throw new Error('binary view must not be enumerated');
+        }
+        return objectValues(value);
+      });
+    const binary = Buffer.alloc(128 * 1024).toString('base64');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: openai:gpt-4.1
+    config:
+      payload: !!binary ${binary}
+      schema: file://schemas/provider.json
+tests:
+  - options:
+      payload: !!binary ${binary}
+      response_format: file://schemas/test.json
+scenarios:
+  - config:
+      - options:
+          payload: !!binary ${binary}
+          response_format: file://schemas/scenario.json
+`);
+
+    try {
+      expect(
+        extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+      ).toEqual([
+        'evals/schemas/provider.json',
+        'evals/schemas/test.json',
+        'evals/schemas/scenario.json',
+      ]);
+      expect(valuesSpy).not.toHaveBeenCalledWith(expect.any(Uint8Array));
+    } finally {
+      valuesSpy.mockRestore();
+      schemaSpy.mockRestore();
+    }
   });
 
   it('should extract executed provider, test, assertion, and extension hooks', () => {
