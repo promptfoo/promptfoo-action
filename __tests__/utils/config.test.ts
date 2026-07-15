@@ -1510,6 +1510,37 @@ providers:
     ]);
   });
 
+  it('tracks executable providers nested in tests, assertions, and default options', () => {
+    mockConfigFiles({
+      '/test/working/promptfooconfig.yaml': [
+        'defaultTest:',
+        '  provider: providers/default.js',
+        '  options:',
+        '    provider:',
+        '      id: providers/default-options.ts',
+        'tests:',
+        '  - provider: providers/test.js',
+        '    options:',
+        '      provider: providers/test-options.mjs',
+        '    assert:',
+        '      - type: javascript',
+        '        provider: providers/assert.cjs',
+      ].join('\n'),
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(
+      expect.arrayContaining([
+        'providers/default.js',
+        'providers/default-options.ts',
+        'providers/test.js',
+        'providers/test-options.mjs',
+        'providers/assert.cjs',
+      ]),
+    );
+  });
+
   it('tracks python, golang, and ruby provider prefixes across strings, ids, maps, and targets', () => {
     mockConfigFiles({
       '/test/working/promptfooconfig.yaml': [

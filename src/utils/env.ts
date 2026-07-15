@@ -931,6 +931,10 @@ export function loadConfigEnvironmentFiles(
   };
 
   const lastEnvFilePath = envFilePaths[envFilePaths.length - 1];
+  for (const envFilePath of envFilePaths) {
+    validateEnvFile(envFilePath);
+  }
+
   const vaultPath =
     process.env.DOTENV_KEY && lastEnvFilePath
       ? lastEnvFilePath.endsWith('.vault')
@@ -939,10 +943,6 @@ export function loadConfigEnvironmentFiles(
       : undefined;
   if (vaultPath && fs.existsSync(vaultPath)) {
     validateEnvFile(vaultPath);
-  } else {
-    for (const envFilePath of envFilePaths) {
-      validateEnvFile(envFilePath);
-    }
   }
 
   if (envFilePaths.length > 0) {

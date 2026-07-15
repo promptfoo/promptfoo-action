@@ -1802,8 +1802,7 @@ describe('loadConfigEnvironmentFiles', () => {
     expect(target.CUSTOM_PROVIDER_SETTING).toBe('explicit-vault');
   });
 
-  test('loads a config envPath vault companion when plaintext is absent', () => {
-    const target: NodeJS.ProcessEnv = {};
+  test('rejects a missing config envPath even when its vault companion exists', () => {
     const configPath = writeFile(
       'promptfooconfig.yaml',
       'commandLineOptions:\n  envPath: .env.production\n',
@@ -1813,9 +1812,40 @@ describe('loadConfigEnvironmentFiles', () => {
       'CUSTOM_PROVIDER_SETTING=vault-only\n',
     );
 
-    loadConfigEnvironmentFiles(configPath, tmpDir, target);
+    expect(() => loadConfigEnvironmentFiles(configPath, tmpDir, {})).toThrow(
+      /Config environment file.*\.env\.production not found/,
+    );
+  });
 
-    expect(target.CUSTOM_PROVIDER_SETTING).toBe('vault-only');
+  test('rejects a missing final envPath before dotenv can select an earlier vault', () => {
+    const outsideDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'promptfoo-earlier-vault-outside-'),
+    );
+    const target: NodeJS.ProcessEnv = {};
+    const configPath = writeFile(
+      'promptfooconfig.yaml',
+      'commandLineOptions:\n  envPath: [.env.first, .env.second]\n',
+    );
+    writeFile('.env.first', 'CUSTOM_PROVIDER_SETTING=plaintext\n');
+    const outsideVault = path.join(outsideDir, '.env.first.vault');
+    writeVault(
+      path.relative(tmpDir, outsideVault),
+      'OPENAI_API_KEY=outside-secret\n',
+    );
+    fs.symlinkSync(outsideVault, path.join(tmpDir, '.env.first.vault'));
+    process.env.DOTENV_KEY = writeVault(
+      '.env.second.vault',
+      'CUSTOM_PROVIDER_SETTING=unused\n',
+    );
+
+    try {
+      expect(() =>
+        loadConfigEnvironmentFiles(configPath, tmpDir, target),
+      ).toThrow(/Config environment file.*\.env\.second not found/);
+      expect(target.OPENAI_API_KEY).toBeUndefined();
+    } finally {
+      fs.rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 
   test('falls back to all plaintext env paths when the last vault is absent', () => {

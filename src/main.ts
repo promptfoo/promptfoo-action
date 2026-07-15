@@ -92,11 +92,16 @@ function validatePromptGlob(pattern: string): void {
       }
       throw invalidPromptGlobError();
     }
-    // A numeric-looking alternative beside a nested brace is a literal;
-    // brace expansion only expands an entirely numeric brace body.
-    if (brace.nested) continue;
-
     const body = pattern.slice(brace.start, index);
+    // Nested comma groups still multiply the expansion count. Numeric-looking
+    // alternatives beside a nested brace stay literal.
+    if (brace.nested) {
+      braceExpansions *= BigInt(body.split(',').length);
+      if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
+        throw invalidPromptGlobError();
+      }
+      continue;
+    }
     if (!body.includes('..')) {
       braceExpansions *= BigInt(body.split(',').length);
       if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {

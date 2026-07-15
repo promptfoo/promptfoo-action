@@ -630,6 +630,7 @@ describe('GitHub Action Main', () => {
       ['zero numeric step', 'prompts/{1..4..0}.txt'],
       ['malformed numeric range', 'prompts/{1..many}.txt'],
       ['oversized brace product', `prompts/${'{a,b}'.repeat(11)}.txt`],
+      ['nested brace product', `prompts/${'{a,b,{c}}'.repeat(7)}.txt`],
       [
         'combined numeric and comma brace product',
         `prompts/${'{a,b}'.repeat(10)}{1..1024}.txt`,

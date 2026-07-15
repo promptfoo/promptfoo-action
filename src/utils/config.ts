@@ -1296,8 +1296,7 @@ export function extractFileDependencies(
       }
     };
 
-    // Extract provider files
-    for (const providers of [config.providers, config.targets]) {
+    const processProviderFiles = (providers: unknown): void => {
       for (const provider of normalizeProviderEntries(providers)) {
         if (
           typeof provider !== 'string' &&
@@ -1325,6 +1324,11 @@ export function extractFileDependencies(
           }
         }
       }
+    };
+
+    // Extract provider files
+    for (const providers of [config.providers, config.targets]) {
+      processProviderFiles(providers);
     }
 
     const processConfigReference = (reference: string): void => {
@@ -1386,6 +1390,11 @@ export function extractFileDependencies(
             );
       if (typeof mapped !== 'object' || mapped === null) return;
       processHookReference((mapped as Record<string, unknown>).transform);
+    };
+
+    const processNestedProvider = (provider: unknown): void => {
+      processProviderFiles(provider);
+      processProviderHooks(provider);
     };
 
     for (const providers of [config.providers, config.targets]) {
@@ -1566,7 +1575,9 @@ export function extractFileDependencies(
           processHookReference((assertion as Record<string, unknown>)[field]);
         }
         if ('provider' in assertion) {
-          processProviderHooks((assertion as Record<string, unknown>).provider);
+          processNestedProvider(
+            (assertion as Record<string, unknown>).provider,
+          );
         }
         if ('rubricPrompt' in assertion) {
           processNestedHookReferences(
@@ -1584,13 +1595,13 @@ export function extractFileDependencies(
       extractAssertFiles(config.defaultTest.assert);
       const defaultTest = config.defaultTest as Record<string, unknown>;
       processHookReference(defaultTest.assertScoringFunction);
-      processProviderHooks(defaultTest.provider);
+      processNestedProvider(defaultTest.provider);
       if (typeof defaultTest.options === 'object' && defaultTest.options) {
         const options = defaultTest.options as Record<string, unknown>;
         for (const field of ['postprocess', 'transform', 'transformVars']) {
           processHookReference(options[field]);
         }
-        processProviderHooks(options.provider);
+        processNestedProvider(options.provider);
         processNestedHookReferences(options.rubricPrompt);
       }
     }
@@ -1627,14 +1638,14 @@ export function extractFileDependencies(
           testRecord.assert as PromptfooAssertion[] | undefined,
         );
         processHookReference(testRecord.assertScoringFunction);
-        processProviderHooks(testRecord.provider);
+        processNestedProvider(testRecord.provider);
         processNestedHookReferences(testRecord.config);
         if (typeof testRecord.options === 'object' && testRecord.options) {
           const options = testRecord.options as Record<string, unknown>;
           for (const field of ['postprocess', 'transform', 'transformVars']) {
             processHookReference(options[field]);
           }
-          processProviderHooks(options.provider);
+          processNestedProvider(options.provider);
           processNestedHookReferences(options.rubricPrompt);
         }
       }
