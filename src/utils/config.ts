@@ -280,7 +280,7 @@ export function extractFileDependencies(configPath: string): string[] {
       dependencies.add(`${directoryPath.replace(/[\\/]+$/, '')}${path.sep}`);
     };
 
-    const processFilePath = (filePath: string): void => {
+    const processFilePath = (filePath: string, globBacked = true): void => {
       if (
         !filePath ||
         filePath.length > MAX_DEPENDENCY_PATH_LENGTH ||
@@ -292,9 +292,11 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
-      const runtimeFilePath = filePath.replace(/\\/g, '/');
+      const runtimeFilePath = globBacked
+        ? filePath.replace(/\\/g, '/')
+        : filePath;
 
-      if (hasGlobMagic(runtimeFilePath)) {
+      if (globBacked && hasGlobMagic(runtimeFilePath)) {
         const pathParts =
           path.sep === '/'
             ? runtimeFilePath.split('/')
@@ -487,7 +489,7 @@ export function extractFileDependencies(configPath: string): string[] {
       }
       const processRawReference = (reference: unknown): void => {
         if (typeof reference !== 'string') return;
-        processFilePath(reference);
+        processFilePath(reference, false);
       };
 
       if (
@@ -593,7 +595,7 @@ export function extractFileDependencies(configPath: string): string[] {
                 typeof sourcePath === 'string' &&
                 sourcePath.startsWith('file://')
               ) {
-                processFileUrl(sourcePath);
+                processRawReference(sourcePath.slice('file://'.length));
               } else {
                 processRawReference(sourcePath);
               }
@@ -664,6 +666,7 @@ export function extractFileDependencies(configPath: string): string[] {
           'auth',
           'tls',
           'signatureAuth',
+          'multipart',
           'body',
         ]);
         for (const [field, value] of Object.entries(config)) {
@@ -739,6 +742,7 @@ export function extractFileDependencies(configPath: string): string[] {
         }
         return;
       }
+      inspectTransitiveReference(reference);
       processFileUrl(
         reference.startsWith('file://') ? reference : `file://${reference}`,
         'provider',

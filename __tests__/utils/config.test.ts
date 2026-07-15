@@ -1608,6 +1608,60 @@ providers:
     ).toEqual(['fixtures/sample-report45.pdf']);
   });
 
+  it('should preserve literal POSIX backslashes and glob characters in direct HTTP file paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https
+    config:
+      tls:
+        caPath: 'tls/ca\\bundle*.pem'
+      signatureAuth:
+        privateKeyPath: 'signature/key\\{literal}.pem'
+      multipart:
+        parts:
+          - kind: file
+            source:
+              type: path
+              path: 'payloads/raw\\*.bin'
+          - kind: file
+            source:
+              type: path
+              path: 'file://payloads/url\\{literal}.bin'
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'tls/ca\\bundle*.pem',
+      'signature/key\\{literal}.pem',
+      'payloads/raw\\*.bin',
+      'payloads/url\\{literal}.bin',
+    ]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
+  it('should conservatively track a templated multipart file path', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: https
+    config:
+      multipart:
+        parts:
+          - kind: file
+            source:
+              type: path
+              path: 'file://{{documentPath}}'
+tests:
+  - vars:
+      documentPath: payloads/sample.bin
+`);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+  });
+
   it('should extract HTTP validator, file auth, TLS, and signature paths from a provider map', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
@@ -1963,6 +2017,24 @@ tests:
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['./']);
+  });
+
+  it('should conservatively track nested file references in a YAML prompt', () => {
+    const configPath = '/test/working/evals/promptfooconfig.yaml';
+    const promptPath = '/test/working/evals/prompts/chat.yaml';
+    mockFs.readFileSync.mockImplementation((filePath: fs.PathLike) => {
+      const candidate = filePath.toString();
+      if (candidate === configPath) {
+        return `prompts:\n  - file://prompts/chat.yaml`;
+      }
+      if (candidate === promptPath) {
+        return `- role: user\n  content: file://data/context.txt`;
+      }
+      throw new Error('unexpected prompt dependency');
+    });
+
+    expect(extractFileDependencies(configPath)).toEqual(['./']);
+    expect(mockFs.readFileSync).toHaveBeenCalledWith(promptPath, 'utf8');
   });
 
   it('should inspect the runtime-normalized transitive config instead of a backslash-named decoy', () => {
