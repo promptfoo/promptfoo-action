@@ -35,7 +35,8 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const MAX_GLOB_PATTERN_LENGTH = 65_536;
-const MAX_GLOB_BRACE_EXPANSIONS = 1025;
+const MAX_GLOB_BRACE_EXPANSIONS = 1024;
+const GLOB_BRACE_EXPANSION_SENTINEL = MAX_GLOB_BRACE_EXPANSIONS + 1;
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
@@ -650,10 +651,10 @@ export async function run(): Promise<void> {
                 dot: true,
                 windowsPathsNoEscape: true,
                 magicalBraces: true,
-                braceExpandMax: MAX_GLOB_BRACE_EXPANSIONS,
+                braceExpandMax: GLOB_BRACE_EXPANSION_SENTINEL,
                 platform: 'linux',
               });
-              if (matcher.set.length >= MAX_GLOB_BRACE_EXPANSIONS) {
+              if (matcher.set.length > MAX_GLOB_BRACE_EXPANSIONS) {
                 core.warning(
                   'Skipping config dependency glob matching because the pattern exceeds the maximum expansion size',
                 );

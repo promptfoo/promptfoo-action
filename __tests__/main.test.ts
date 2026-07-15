@@ -556,7 +556,7 @@ describe('GitHub Action Main', () => {
         expect.objectContaining({
           cwd: process.cwd(),
           nodir: true,
-          braceExpandMax: 1025,
+          braceExpandMax: 1024,
         }),
       );
       expect(mockCore.setFailed).not.toHaveBeenCalled();
@@ -586,6 +586,7 @@ describe('GitHub Action Main', () => {
     });
 
     test.each([
+      ['a 1025-item numeric range', 'prompts/{1..1025}.txt'],
       ['a huge numeric range', 'prompts/{1..1000000000}.txt'],
       [
         'a numeric range inside a character class',
@@ -630,7 +631,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGlob.sync).toHaveBeenCalledWith(
         'prompts/{1..3}.txt',
-        expect.objectContaining({ braceExpandMax: 1025 }),
+        expect.objectContaining({ braceExpandMax: 1024 }),
       );
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
@@ -647,7 +648,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGlob.sync).toHaveBeenCalledWith(
         pattern,
-        expect.objectContaining({ braceExpandMax: 1025 }),
+        expect.objectContaining({ braceExpandMax: 1024 }),
       );
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
