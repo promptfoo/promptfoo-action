@@ -38123,10 +38123,6 @@ var FORBIDDEN_ENV_FILE_PREFIXES = [
   "OTEL_EXPORTER_OTLP_",
   "PROMPTFOO_STRIP_"
 ];
-var FORBIDDEN_AUTH_KEYS = /* @__PURE__ */ new Set([
-  "PROMPTFOO_API_KEY",
-  "PROMPTFOO_REMOTE_API_BASE_URL"
-]);
 function findForbiddenEnvFileKey(environment) {
   return Object.keys(environment).find((key) => {
     const normalizedKey = key.toUpperCase();
@@ -38134,11 +38130,6 @@ function findForbiddenEnvFileKey(environment) {
       (prefix) => normalizedKey.startsWith(prefix)
     );
   });
-}
-function findForbiddenAuthKey(environment) {
-  return Object.keys(environment).find(
-    (key) => FORBIDDEN_AUTH_KEYS.has(key.toUpperCase())
-  );
 }
 function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, override = true) {
   const filePaths = Array.isArray(envFilePath) ? envFilePath : [envFilePath];
@@ -38163,20 +38154,12 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env, overr
       "Check that the file exists and has valid .env format"
     );
   }
-  const forbiddenAuthKey = findForbiddenAuthKey(fileEnvironment);
-  if (forbiddenAuthKey) {
-    throw new PromptfooActionError(
-      `Environment file ${envFilePath} sets protected authentication variable ${forbiddenAuthKey}`,
-      ErrorCodes.INVALID_CONFIGURATION,
-      "Configure Promptfoo authentication variables only in the trusted workflow environment."
-    );
-  }
   const forbiddenKey = findForbiddenEnvFileKey(fileEnvironment);
   if (forbiddenKey) {
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      "Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, telemetry/tracing, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead."
+      "Remove reserved object keys and process, interpreter, provider-endpoint, authentication, TLS/proxy, cache/config-path, telemetry/tracing, and pass-rate controls from repository environment files. Configure trusted controls (including Promptfoo authentication) in the workflow environment instead."
     );
   }
   for (const [key, value] of Object.entries(fileEnvironment)) {

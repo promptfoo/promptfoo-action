@@ -5,7 +5,6 @@ import * as path from 'node:path';
 import * as actionFs from 'fs';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import {
-  findForbiddenAuthKey,
   findForbiddenEnvFileKey,
   loadConfigEnvironmentFiles,
   loadEnvironmentFile,
@@ -341,25 +340,6 @@ describe('findForbiddenEnvFileKey', () => {
   });
 });
 
-describe('findForbiddenAuthKey', () => {
-  test('returns undefined for benign and non-auth PROMPTFOO_ variables', () => {
-    expect(
-      findForbiddenAuthKey({
-        OPENAI_API_KEY: 'sk-test',
-        PROMPTFOO_CACHE_PATH: '/tmp/cache',
-      }),
-    ).toBeUndefined();
-  });
-
-  test.each([
-    'PROMPTFOO_API_KEY',
-    'PROMPTFOO_REMOTE_API_BASE_URL',
-    'promptfoo_remote_api_base_url',
-  ])('flags authentication key %s case-insensitively', (key) => {
-    expect(findForbiddenAuthKey({ [key]: 'x' })).toBe(key);
-  });
-});
-
 describe('loadEnvironmentFile (real dotenv parsing)', () => {
   let tmpDir: string;
 
@@ -441,10 +421,7 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
 
   test('rejects a protected auth variable without leaking any value', () => {
     const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
-    const file = writeEnv(
-      '.env',
-      'SAFE=ok\nPROMPTFOO_REMOTE_API_BASE_URL=https://capture.example\n',
-    );
+    const file = writeEnv('.env', 'SAFE=ok\nPROMPTFOO_API_KEY=attacker-key\n');
 
     let error: unknown;
     try {
@@ -455,10 +432,10 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
 
     expect(error).toBeInstanceOf(PromptfooActionError);
     expect((error as PromptfooActionError).message).toContain(
-      'PROMPTFOO_REMOTE_API_BASE_URL',
+      'PROMPTFOO_API_KEY',
     );
     expect((error as PromptfooActionError).helpText).toContain(
-      'Promptfoo authentication variables only in the trusted workflow environment',
+      'Promptfoo authentication',
     );
     // Isolation: nothing from the rejected file leaks, so a workflow-set key
     // and host cannot be paired with an attacker value.

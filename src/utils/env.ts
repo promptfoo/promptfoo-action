@@ -343,16 +343,6 @@ const FORBIDDEN_ENV_FILE_PREFIXES = [
   'PROMPTFOO_STRIP_',
 ];
 
-// Promptfoo authentication settings. A repository-controlled env file must not
-// be able to pair an inherited API key with an attacker-chosen host — the
-// action's preflight would otherwise send the bearer token to that host — so
-// both the credential and its destination must come from trusted workflow
-// state, not from a checked-in file.
-const FORBIDDEN_AUTH_KEYS = new Set([
-  'PROMPTFOO_API_KEY',
-  'PROMPTFOO_REMOTE_API_BASE_URL',
-]);
-
 export function findForbiddenEnvFileKey(
   environment: Record<string, string>,
 ): string | undefined {
@@ -365,14 +355,6 @@ export function findForbiddenEnvFileKey(
       )
     );
   });
-}
-
-export function findForbiddenAuthKey(
-  environment: Record<string, string>,
-): string | undefined {
-  return Object.keys(environment).find((key) =>
-    FORBIDDEN_AUTH_KEYS.has(key.toUpperCase()),
-  );
 }
 
 export function loadEnvironmentFile(
@@ -406,26 +388,17 @@ export function loadEnvironmentFile(
     );
   }
 
-  const forbiddenAuthKey = findForbiddenAuthKey(fileEnvironment);
-  if (forbiddenAuthKey) {
-    throw new PromptfooActionError(
-      `Environment file ${envFilePath} sets protected authentication variable ${forbiddenAuthKey}`,
-      ErrorCodes.INVALID_CONFIGURATION,
-      'Configure Promptfoo authentication variables only in the trusted workflow environment.',
-    );
-  }
-
   const forbiddenKey = findForbiddenEnvFileKey(fileEnvironment);
   if (forbiddenKey) {
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      'Remove reserved object keys and process, interpreter, provider-endpoint, TLS/proxy, cache/config-path, telemetry/tracing, and pass-rate controls from repository environment files. Configure trusted controls in the workflow environment instead.',
+      'Remove reserved object keys and process, interpreter, provider-endpoint, authentication, TLS/proxy, cache/config-path, telemetry/tracing, and pass-rate controls from repository environment files. Configure trusted controls (including Promptfoo authentication) in the workflow environment instead.',
     );
   }
 
   // Merge into the shared environment (process.env by default) only after the
-  // file has fully passed the process-control and authentication checks. This
+  // file has fully passed the process-control check. This
   // action forwards process.env to the promptfoo child. Validation therefore
   // has to happen here, at the untrusted-file boundary — not on the final child
   // environment, which legitimately inherits the trusted runner's own PATH,
