@@ -38597,6 +38597,7 @@ var PROMPT_FILE_EXTENSIONS = /* @__PURE__ */ new Set([
   "csv",
   "cts",
   "exe",
+  "flac",
   "js",
   "json",
   "jsonl",
@@ -38604,9 +38605,11 @@ var PROMPT_FILE_EXTENSIONS = /* @__PURE__ */ new Set([
   "md",
   "mjs",
   "mts",
+  "opus",
   "py",
   "ts",
   "txt",
+  "webm",
   "yml",
   "yaml",
   "sh",
@@ -39232,6 +39235,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd(), globT
       }
       if (hasTemplate) {
         dependencies.add(`${absolutePath.replace(/[\\/]+$/, "")}${path7.sep}`);
+        dependencies.add(`${cwd.replace(/[\\/]+$/, "")}${path7.sep}`);
         watchCheckoutForExternalTemplate();
         return;
       }
@@ -39426,9 +39430,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd(), globT
         const isExecutable = reference.startsWith("exec:");
         const isFileUrl = reference.startsWith("file://");
         const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
-        const isEnvironmentTemplate = /^\s*\{\{-?\s*(?:\(\s*env\s*\)|env)(?:\.|\s*\[)[^}]*-?\}\}\s*$/.test(
-          reference
-        );
+        const isEnvironmentTemplate = /^\s*\{\{-?/.test(reference) && /-?\}\}\s*$/.test(reference) && /\benv\b/.test(reference) && reference.indexOf("{{", reference.indexOf("{{") + 2) < 0 && reference.indexOf("}}") === reference.lastIndexOf("}}");
         if (!declaredFile && !isExecutable && !isFileUrl && !isTemplated && /\s/.test(reference) && reference.includes("file://")) {
           return;
         }
@@ -40301,11 +40303,6 @@ var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 var MAX_DEPENDENCY_GLOB_LENGTH = 65536;
 var MAX_PROMPT_BRACE_EXPANSIONS = 1024;
-var DEPENDENCY_GLOB_MAGIC_OPTIONS = {
-  magicalBraces: true,
-  nonegate: true,
-  braceExpandMax: 1025
-};
 function toRepositoryPath(filePath) {
   return filePath.split(path8.sep).join("/");
 }
@@ -40551,7 +40548,7 @@ async function run() {
       )
     );
     const configGlobMatcher = /[*?[\]{}()]/.test(configPattern) ? new Minimatch(configPattern, {
-      ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+      ...GLOB_MAGIC_OPTIONS,
       braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
       platform: "linux",
       windowsPathsNoEscape: true
@@ -40868,7 +40865,7 @@ async function run() {
             return pattern.slice(0, prefixEnd);
           });
           const promptMatcher = new Minimatch(globPattern, {
-            ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+            ...GLOB_MAGIC_OPTIONS,
             platform: "linux",
             windowsPathsNoEscape
           });
@@ -40952,7 +40949,18 @@ async function run() {
         appendUnique(promptFiles, seenPromptFiles, allMatches);
       }
     }
+    const actionEnvPaths = new Set(
+      envFiles.split(",").map((envFile) => envFile.trim()).filter(Boolean).map(
+        (envFile) => toRepositoryPath(
+          path8.relative(
+            workspaceRoot,
+            path8.resolve(workingDirectory, envFile)
+          )
+        )
+      )
+    );
     const configChanged = changedFilesList.length > 0 && changedFilesList.some((changedFile) => {
+      if (actionEnvPaths.has(changedFile)) return true;
       if (configRepositoryPaths.has(changedFile)) return true;
       if (!configGlobMatcher) return false;
       const absoluteChangedFile = path8.resolve(workspaceRoot, changedFile);
@@ -40990,9 +40998,9 @@ async function run() {
               );
               return true;
             }
-            if (le(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS)) {
+            if (le(dep, GLOB_MAGIC_OPTIONS)) {
               const matcher = new Minimatch(dep, {
-                ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+                ...GLOB_MAGIC_OPTIONS,
                 braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
                 platform: "linux"
               });

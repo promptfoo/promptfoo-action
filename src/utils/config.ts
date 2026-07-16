@@ -197,7 +197,7 @@ const PROMPT_FILE_EXTENSIONS = new Set([
 ]);
 const EXEC_PROVIDER_INTERPRETER_PATTERN =
   /^(?:env|python(?:\d+(?:\.\d+)*)?|pypy(?:\d+(?:\.\d+)*)?|node|deno|bun|tsx|ts-node|ruby|bash|sh|zsh|pwsh|powershell|cmd)(?:\.exe)?$/i;
-const GLOB_MAGIC_OPTIONS = {
+export const GLOB_MAGIC_OPTIONS = {
   magicalBraces: true,
   nonegate: true,
   braceExpandMax: MAX_BRACE_EXPANSIONS + 1,

@@ -15,7 +15,7 @@ import {
   logCacheMetrics,
   setupCacheEnvironment,
 } from './utils/cache';
-import { extractFileDependencies } from './utils/config';
+import { extractFileDependencies, GLOB_MAGIC_OPTIONS } from './utils/config';
 import {
   ErrorCodes,
   formatErrorMessage,
@@ -42,12 +42,6 @@ const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 const MAX_DEPENDENCY_GLOB_LENGTH = 65536;
 const MAX_PROMPT_BRACE_EXPANSIONS = 1024;
-const DEPENDENCY_GLOB_MAGIC_OPTIONS = {
-  magicalBraces: true,
-  nonegate: true,
-  braceExpandMax: 1025,
-};
-
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
@@ -371,7 +365,7 @@ export async function run(): Promise<void> {
     );
     const configGlobMatcher = /[*?[\]{}()]/.test(configPattern)
       ? new Minimatch(configPattern, {
-          ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+          ...GLOB_MAGIC_OPTIONS,
           braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
           platform: 'linux',
           windowsPathsNoEscape: true,
@@ -762,7 +756,7 @@ export async function run(): Promise<void> {
             return pattern.slice(0, prefixEnd);
           });
           const promptMatcher = new Minimatch(globPattern, {
-            ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+            ...GLOB_MAGIC_OPTIONS,
             platform: 'linux',
             windowsPathsNoEscape,
           });
@@ -929,9 +923,9 @@ export async function run(): Promise<void> {
               );
               return true;
             }
-            if (glob.hasMagic(dep, DEPENDENCY_GLOB_MAGIC_OPTIONS)) {
+            if (glob.hasMagic(dep, GLOB_MAGIC_OPTIONS)) {
               const matcher = new Minimatch(dep, {
-                ...DEPENDENCY_GLOB_MAGIC_OPTIONS,
+                ...GLOB_MAGIC_OPTIONS,
                 braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS,
                 platform: 'linux',
               });
