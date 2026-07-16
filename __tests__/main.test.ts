@@ -4,6 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
+import { braceExpand, Minimatch } from 'minimatch';
 import {
   afterEach,
   beforeEach,
@@ -66,6 +67,7 @@ import { handleError, run } from '../src/main';
 import * as auth from '../src/utils/auth';
 import * as cache from '../src/utils/cache';
 import * as config from '../src/utils/config';
+import { ErrorCodes, PromptfooActionError } from '../src/utils/errors';
 import * as fsUtils from '../src/utils/fs';
 
 const mockAuth = auth as {
@@ -94,6 +96,7 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn((filePath: fs.PathLike) => filePath.toString()),
     unlinkSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -129,6 +132,7 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
@@ -170,6 +174,9 @@ function setupCommonMocks(): MockOctokit {
   mockCache.logCacheMetrics.mockResolvedValue();
   mockConfig.extractFileDependencies.mockReturnValue([]);
   mockFsUtils.isDirectory.mockReturnValue(false);
+  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+    filePath.toString(),
+  );
 
   // Setup octokit mock
   const mockOctokit: MockOctokit = {
@@ -302,8 +309,1531 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
+    });
+
+    test('should report config-defined prompts in a PR when use-config-prompts is enabled', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(args).not.toContain('--prompts');
+      expect(comment.body).toContain('Evaluated config-defined prompts');
+      expect(comment.body).not.toContain('prompts/prompt1.txt');
+    });
+
+    test.each([
+      '\r',
+      '\n',
+    ])('should ignore an unused matched prompt containing %j when use-config-prompts is enabled', async (lineBreak) => {
+      const unusedPrompt = `prompts/unused${lineBreak}::error::forged.txt`;
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([{ filename: unusedPrompt }]);
+      mockGlob.sync.mockReturnValue([unusedPrompt]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().includes('unused')) {
+          throw Object.assign(new Error('not found'), { code: 'ENOENT' });
+        }
+        return filePath.toString();
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(
+        mockFs.realpathSync.mock.calls.some(([filePath]) =>
+          filePath.toString().includes('unused'),
+        ),
+      ).toBe(false);
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.not.arrayContaining(['--prompts']),
+        expect.any(Object),
+      );
+    });
+
+    test('should not log an unused prompt path when use-config-prompts has no changed-file list', async () => {
+      const unusedPrompt = 'prompts/unused\n::error::forged.txt';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockRejectedValueOnce(new Error('no diff'));
+      mockGlob.sync.mockReturnValue([unusedPrompt]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().includes('unused')) {
+          throw new Error('unused prompt must not be resolved');
+        }
+        return filePath.toString();
+      });
+
+      await run();
+
+      const output = [
+        ...mockCore.info.mock.calls,
+        ...mockCore.warning.mock.calls,
+        ...mockCore.setFailed.mock.calls,
+      ]
+        .flat()
+        .join('\n');
+      expect(output).not.toContain('::error::forged');
+      expect(
+        mockFs.realpathSync.mock.calls.some(([filePath]) =>
+          filePath.toString().includes('unused'),
+        ),
+      ).toBe(false);
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.not.arrayContaining(['--prompts']),
+        expect.any(Object),
+      );
+    });
+
+    test.each([
+      {
+        reason: 'lexically escapes the workspace',
+        input: '../outside',
+        physicalPath: undefined,
+      },
+      {
+        reason: 'is a symlink that escapes the workspace',
+        input: 'linked-evals',
+        physicalPath: path.resolve(process.cwd(), '..', 'outside'),
+      },
+    ])('should reject a working-directory that $reason before config-prompt evaluation', async ({
+      input,
+      physicalPath,
+    }) => {
+      const workingDirectory = path.resolve(process.cwd(), input);
+      withInputs({ 'working-directory': input });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts' || name === 'force-run',
+      );
+      if (physicalPath) {
+        mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+          filePath.toString() === workingDirectory
+            ? physicalPath
+            : filePath.toString(),
+        );
+      }
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid working directory: the working directory must stay within the workspace.\n\nHelp: Use a readable working directory contained within the workspace.',
+      );
+      expect(mockConfig.extractFileDependencies).not.toHaveBeenCalled();
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockFs.existsSync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      {
+        reason: 'config',
+        changedFile: 'promptfooconfig.yaml',
+        dependencies: [],
+      },
+      {
+        reason: 'dependency',
+        changedFile: 'data/context.json',
+        dependencies: ['data/context.json'],
+      },
+    ])('should evaluate and report all prompts when a $reason changes', async ({
+      changedFile,
+      dependencies,
+    }) => {
+      const allPrompts = ['prompts/first.txt', 'prompts/second.txt'];
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockReturnValue(allPrompts);
+      mockConfig.extractFileDependencies.mockReturnValue(dependencies);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 3)).toEqual(
+        allPrompts,
+      );
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain(
+        `Evaluated prompt files: ${allPrompts.join(', ')}`,
+      );
+      expect(comment.body).not.toContain('LLM prompt was modified');
+    });
+
+    test('should evaluate only the changed prompt for a prompt-only change', async () => {
+      const allPrompts = ['prompts/first.txt', 'prompts/second.txt'];
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/first.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue(allPrompts);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 2)).toEqual([
+        'prompts/first.txt',
+      ]);
+      expect(args).not.toContain('prompts/second.txt');
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain('prompts/first.txt');
+      expect(comment.body).not.toContain('prompts/second.txt');
+      expect(comment.body).toContain('LLM prompt was modified');
+    });
+
+    test.each([
+      [
+        'config',
+        'promptfooconfig.yaml',
+        ['prompts/second.txt', 'prompts/first.txt'],
+      ],
+      ['prompt', 'prompts/first.txt', ['prompts/first.txt']],
+    ])('should deduplicate overlapping prompt globs for a %s change while preserving order', async (_reason, changedFile, expectedPrompts) => {
+      withInputs({
+        prompts: 'prompts/**/*.txt\nprompts/first*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'prompts/**/*.txt'
+          ? ['prompts/second.txt', 'prompts/first.txt']
+          : ['prompts/first.txt'],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(
+        args.slice(promptsIndex + 1, promptsIndex + 1 + expectedPrompts.length),
+      ).toEqual(expectedPrompts);
+      expect(
+        args.filter((value) => value === 'prompts/first.txt'),
+      ).toHaveLength(1);
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body.match(/prompts\/first\.txt/g) || []).toHaveLength(1);
+    });
+
+    test('should bound action prompt-glob brace expansion before evaluation', async () => {
+      const globPattern = 'prompts/{1..1024}.txt';
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation(
+        (_pattern: string, options?: { braceExpandMax?: number }) => {
+          if (!options?.braceExpandMax || options.braceExpandMax > 1024) {
+            throw new Error('unbounded brace expansion');
+          }
+          return ['prompts/1.txt'];
+        },
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should normalize a Windows prompt glob before bounded brace preflight', async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      withInputs({ prompts: 'prompts\\{1..1024}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/1.txt']);
+
+      try {
+        await run();
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: originalPlatform,
+          configurable: true,
+        });
+      }
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'prompts/{1..1024}.txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test('should reject an oversized Windows prompt glob before expansion', async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, 'platform', {
+        value: 'win32',
+        configurable: true,
+      });
+      withInputs({ prompts: 'prompts\\{1..1025}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      try {
+        await run();
+      } finally {
+        Object.defineProperty(process, 'platform', {
+          value: originalPlatform,
+          configurable: true,
+        });
+      }
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/{1..1025}.txt',
+      'prompts/{1..1000000000}.txt',
+      'prompts/[{1..1000000000}].txt',
+      'prompts/\\\\{1..1000000000}.txt',
+      `prompts/{${'0'.repeat(8192)}1..1024}.txt`,
+      'prompts/{1..10..0}.txt',
+      'prompts/{1..2..3..4}.txt',
+      'prompts/{1..bad}.txt',
+      'prompts/{9007199254740992..9007199254740993}.txt',
+      'prompts/{unbalanced.txt',
+      'prompts/unbalanced}.txt',
+      'prompts/[unbalanced.txt',
+      'prompts/bad\0::error::forged.txt',
+      'prompts/bad\r::error::forged.txt',
+      `prompts/${'a'.repeat(65537)}.txt`,
+    ])('should reject an unsafe prompt glob before expansion', async (globPattern) => {
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+        '::error::forged',
+      );
+    });
+
+    test('should reject a prompt glob with excessive comma-brace expansion before enumeration', async () => {
+      const alternatives = Array.from(
+        { length: 1025 },
+        (_, index) => `prompt-${index}`,
+      ).join(',');
+      withInputs({ prompts: `prompts/{${alternatives}}.txt` });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test.each([
+      {
+        target: 'config',
+        reason: '15000 sequential extglobs',
+        pattern: `evals/${'@(x)'.repeat(15000)}.yaml`,
+      },
+      {
+        target: 'prompts',
+        reason: '15000 sequential extglobs',
+        pattern: `evals/${'@(x)'.repeat(15000)}.txt`,
+      },
+      {
+        target: 'config',
+        reason: '65 nested extglobs',
+        pattern: `evals/${'@('.repeat(65)}x${')'.repeat(65)}.yaml`,
+      },
+      {
+        target: 'prompts',
+        reason: '65 nested extglobs',
+        pattern: `evals/${'@('.repeat(65)}x${')'.repeat(65)}.txt`,
+      },
+    ])('should reject a $target glob with $reason before Minimatch parsing', async ({
+      target,
+      pattern,
+    }) => {
+      const parseSpy = vi.spyOn(Minimatch.prototype, 'parse');
+      withInputs({ [target]: pattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      try {
+        await run();
+
+        expect(parseSpy).not.toHaveBeenCalled();
+        expect(mockGlob.sync).not.toHaveBeenCalled();
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+        );
+        expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+          'Invalid regular expression',
+        );
+      } finally {
+        parseSpy.mockRestore();
+      }
+    });
+
+    test.each([
+      `prompts/${'\\@(x)'.repeat(1025)}.txt`,
+      `prompts/${'[@](x)'.repeat(1025)}.txt`,
+    ])('should ignore escaped and character-class extglob-like tokens while preflighting a prompt glob', async (prompts) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        prompts,
+        expect.objectContaining({ cwd: process.cwd() }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'evals/**/../../outside/*.yaml',
+      'evals/**/[.][.]/[.][.]/outside/*.yaml',
+      'evals/**/\\.\\./\\.\\./outside/*.yaml',
+      'evals/**/\\../.\\./outside/*.yaml',
+      'evals/**/{.,.}{.,.}/{.,.}{.,.}/outside/*.yaml',
+      'evals/**/@(.)@(.)/@(.)@(.)/outside/*.yaml',
+      'evals/**/!(safe)/!(safe)/outside/*.yaml',
+      'evals/{safe,../../outside}/*.yaml',
+      'evals/@(safe|../outside)/*.yaml',
+      'evals/@(safe|../../outside)/*.yaml',
+    ])('should reject post-magic traversal in a primary-config glob %s before enumeration', async (config) => {
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test('should permit escaped braces and braces inside a character class', async () => {
+      const globPattern = 'prompts/\\{literal\\}-[{}]-{1..3}.txt';
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/{literal}-{-1.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should permit a numeric-looking literal alternative alongside nested braces', async () => {
+      const globPattern = 'prompts/{1..5000000,{a,b}}.txt';
+      expect(braceExpand(globPattern)).toEqual([
+        'prompts/1..5000000.txt',
+        'prompts/a.txt',
+        'prompts/b.txt',
+      ]);
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/a.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/[[:alpha:]]*.txt',
+      'prompts/[[:digit:]]*.txt',
+      'prompts/[]]*.txt',
+      'prompts/[{].txt',
+      'prompts/[}].txt',
+    ])('should permit valid prompt-glob character class %s', async (globPattern) => {
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each([
+      'prompts/{foo,{bar,baz}}.txt',
+      'prompts/{foo..bar}.txt',
+      'prompts/{3..1..-1}.txt',
+      'prompts/{0001..0010}.txt',
+      'prompts/\\{1..1000000000\\}.txt',
+    ])('should permit valid prompt-glob brace syntax %s', async (globPattern) => {
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject a malformed prompt glob with a constant sanitized error', async () => {
+      withInputs({ prompts: 'prompts/{bad,pattern}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation(() => {
+        throw new Error('invalid glob\n::error::forged');
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      const output = [
+        ...mockCore.info.mock.calls,
+        ...mockCore.warning.mock.calls,
+        ...mockCore.setFailed.mock.calls,
+      ]
+        .flat()
+        .join('\n');
+      expect(output).not.toContain('::error::forged');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should deduplicate relative and absolute matches for the same prompt', async () => {
+      const absolutePrompt = path.resolve(__dirname, '..', 'prompts/first.txt');
+      withInputs({ prompts: 'prompts/*.txt\nprompts/first*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/first.txt' },
+      ]);
+      mockGlob.sync
+        .mockReturnValueOnce(['prompts/first.txt'])
+        .mockReturnValueOnce([absolutePrompt]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 2)).toEqual([
+        'prompts/first.txt',
+      ]);
+      expect(args).not.toContain(absolutePrompt);
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body.match(/prompts\/first\.txt/g) || []).toHaveLength(1);
+    });
+
+    test('should exclude the config file when a prompt glob also matches it', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'promptfooconfig.yaml',
+        'prompts/first.txt',
+      ]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 2)).toEqual([
+        'prompts/first.txt',
+      ]);
+      expect(args.slice(promptsIndex + 1)).not.toContain(
+        'promptfooconfig.yaml',
+      );
+    });
+
+    test('should pass every expanded primary-config glob match to Promptfoo', async () => {
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) => {
+        if (pattern === 'evals/*.yaml') {
+          return ['evals/first.yaml', 'evals/second.yaml'];
+        }
+        return ['prompts/changed.txt'];
+      });
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const configIndex = args.indexOf('-c');
+      expect(args.slice(configIndex + 1, configIndex + 3)).toEqual([
+        'evals/first.yaml',
+        'evals/second.yaml',
+      ]);
+      expect(args).not.toContain('evals/*.yaml');
+    });
+
+    test.each([
+      {
+        config: 'evals/*.yaml',
+        deleted: 'evals/deleted.yaml',
+        surviving: 'evals/surviving.yaml',
+      },
+      {
+        config: '*.yaml',
+        deleted: 'deleted.yaml',
+        surviving: 'surviving.yaml',
+      },
+    ])('should evaluate surviving primary-config glob matches when another match is deleted', async ({
+      config,
+      deleted,
+      surviving,
+    }) => {
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: deleted, status: 'removed' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === config ? [surviving] : ['prompts/unchanged.txt'],
+      );
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const configIndex = args.indexOf('-c');
+      expect(args[configIndex + 1]).toBe(surviving);
+      expect(args).not.toContain(deleted);
+    });
+
+    test.each([
+      'evals/@(first|second).yaml',
+      'evals/+(first|second).yaml',
+      'evals/!(draft).yaml',
+    ])('should expand an extglob-only primary-config pattern %s', async (config) => {
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/second.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === config
+          ? ['evals/first.yaml', 'evals/second.yaml']
+          : ['prompts/unchanged.txt'],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const configIndex = args.indexOf('-c');
+      expect(args.slice(configIndex + 1, configIndex + 3)).toEqual([
+        'evals/first.yaml',
+        'evals/second.yaml',
+      ]);
+      expect(args).not.toContain(config);
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.resolve(process.cwd(), 'evals/first.yaml'),
+      );
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.resolve(process.cwd(), 'evals/second.yaml'),
+      );
+    });
+
+    test.each([
+      {
+        reason: 'second config changes',
+        changedFile: 'evals/second.yaml',
+        dependency: undefined,
+      },
+      {
+        reason: 'second config dependency changes',
+        changedFile: 'data/context.json',
+        dependency: 'data/context.json',
+      },
+    ])('should evaluate when an expanded primary-config $reason', async ({
+      changedFile,
+      dependency,
+    }) => {
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'evals/*.yaml'
+          ? ['evals/first.yaml', 'evals/second.yaml']
+          : ['prompts/unchanged.txt'],
+      );
+      mockConfig.extractFileDependencies.mockImplementation((configPath) =>
+        dependency && configPath.endsWith('evals/second.yaml')
+          ? [dependency]
+          : [],
+      );
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+      expect(mockConfig.extractFileDependencies).toHaveBeenCalledWith(
+        path.resolve(process.cwd(), 'evals/second.yaml'),
+      );
+    });
+
+    test('should reject an expanded primary-config symlink that escapes the workspace', async () => {
+      const linkedConfig = path.resolve(process.cwd(), 'evals/linked.yaml');
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'evals/*.yaml'
+          ? ['evals/linked.yaml']
+          : ['prompts/changed.txt'],
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString() === linkedConfig
+          ? '/private/tmp/outside/config.yaml'
+          : filePath.toString(),
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid config file path: config files must stay within the working directory.\n\nHelp: Use readable config files contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an expanded primary-config path that lexically escapes the workspace', async () => {
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === 'evals/*.yaml'
+          ? ['../outside/config.yaml']
+          : ['prompts/changed.txt'],
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid config file path: config files must stay within the working directory.\n\nHelp: Use readable config files contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      {
+        reason: 'lexical parent traversal',
+        config: '../outside/**/*.yaml',
+        linkedRoot: undefined,
+      },
+      {
+        reason: 'escaping static-prefix symlink',
+        config: 'evals-link/**/../outside/*.yaml',
+        linkedRoot: 'evals-link',
+      },
+    ])('should reject a primary-config glob with $reason before enumeration', async ({
+      config,
+      linkedRoot,
+    }) => {
+      withInputs({ config, prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      if (linkedRoot) {
+        const linkedPath = path.resolve(process.cwd(), linkedRoot);
+        mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+          filePath.toString() === linkedPath
+            ? '/private/tmp/outside/evals'
+            : filePath.toString(),
+        );
+      }
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test('should sanitize a primary-config glob expansion failure', async () => {
+      withInputs({ config: 'evals/*.yaml', prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) => {
+        if (pattern === 'evals/*.yaml') {
+          throw new Error('invalid config glob\n::error::forged');
+        }
+        return ['prompts/changed.txt'];
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      expect(mockCore.setFailed.mock.calls.flat().join('\n')).not.toContain(
+        '::error::forged',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      ['config', 'evals/promptfooconfig.yaml'],
+      ['prompt', 'evals/prompts/first.txt'],
+    ])('should normalize an absolute prompt-glob match for a %s change', async (_reason, changedFile) => {
+      const absolutePrompt = path.join(
+        process.cwd(),
+        'evals',
+        'prompts',
+        'first.txt',
+      );
+      withInputs({
+        config: 'promptfooconfig.yaml',
+        prompts: path.join(process.cwd(), 'evals', 'prompts', '*.txt'),
+        'working-directory': 'evals',
+      });
+      mockOctokit.paginate.mockResolvedValue([{ filename: changedFile }]);
+      mockGlob.sync.mockReturnValue([absolutePrompt]);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).toContain('prompts/first.txt');
+      expect(args).not.toContain(absolutePrompt);
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain('prompts/first.txt');
+      expect(comment.body).not.toContain(absolutePrompt);
+    });
+
+    test('should reject a full-evaluation prompt glob that lexically escapes the workspace', async () => {
+      withInputs({ prompts: '../secrets/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../secrets/private.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should reject a parent-traversing prompt glob before enumeration', async () => {
+      withInputs({ prompts: '../outside/**' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an escaping prompt-prefix symlink before enumeration', async () => {
+      const linkedRoot = path.resolve(process.cwd(), 'prompts-link');
+      withInputs({ prompts: 'prompts-link/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString() === linkedRoot
+          ? '/private/tmp/outside/prompts'
+          : filePath.toString(),
+      );
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'evals/**/../../outside/*.txt',
+      'evals/**/[.][.]/[.][.]/outside/*.txt',
+      'evals/**/\\.\\./\\.\\./outside/*.txt',
+      'evals/**/\\../.\\./outside/*.txt',
+      'evals/**/{.,.}{.,.}/{.,.}{.,.}/outside/*.txt',
+      'evals/**/@(.)@(.)/@(.)@(.)/outside/*.txt',
+      'evals/**/!(safe)/!(safe)/outside/*.txt',
+      'evals/{safe,../../outside}/*.txt',
+      'evals/@(safe|../outside)/*.txt',
+      'evals/@(safe|../../outside)/*.txt',
+    ])('should reject post-magic traversal in a prompt glob %s before enumeration', async (prompts) => {
+      withInputs({ prompts });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test('should reject traversal before enumerating a normalized POSIX prompt-glob fallback', async () => {
+      const configured = './evals\\**\\..\\..\\outside/*.txt';
+      const normalized = './evals/**/../../outside/*.txt';
+      withInputs({ prompts: configured });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) => {
+        if (pattern === configured) return [];
+        throw new Error('unsafe fallback reached glob.sync');
+      });
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        configured,
+        expect.objectContaining({ cwd: process.cwd() }),
+      );
+      expect(mockGlob.sync).not.toHaveBeenCalledWith(
+        normalized,
+        expect.anything(),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test('should safely preflight a missing prompt-prefix before enumeration', async () => {
+      const missingRoot = path.resolve(process.cwd(), 'missing');
+      withInputs({ prompts: 'missing/nested/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().startsWith(missingRoot)) {
+          throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+        }
+        return filePath.toString();
+      });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        'missing/nested/**/*.txt',
+        expect.objectContaining({ cwd: process.cwd() }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      { code: 'ENOTDIR', shouldExpand: true },
+      { code: 'EACCES', shouldExpand: false },
+    ])('should handle a $code prompt-prefix preflight failure safely', async ({
+      code,
+      shouldExpand,
+    }) => {
+      const prefix = path.resolve(process.cwd(), 'unavailable');
+      withInputs({ prompts: 'unavailable/nested/**/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (filePath.toString().startsWith(prefix)) {
+          throw Object.assign(new Error('unavailable'), { code });
+        }
+        return filePath.toString();
+      });
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      if (shouldExpand) {
+        expect(mockGlob.sync).toHaveBeenCalled();
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+      } else {
+        expect(mockGlob.sync).not.toHaveBeenCalled();
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+        );
+      }
+    });
+
+    test('should reject an escaping expanded prompt match after a safe-prefix preflight', async () => {
+      withInputs({ prompts: 'prompts/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['../outside/private.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: prompt files must stay within the working directory.\n\nHelp: Use readable prompt files and glob patterns contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject an absolute prompt-glob prefix outside the workspace before enumeration', async () => {
+      withInputs({ prompts: '/private/tmp/outside/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+
+      await run();
+
+      expect(mockGlob.sync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+    });
+
+    test('should resolve canonical prompt roots only once for a large prompt set', async () => {
+      const prompts = Array.from(
+        { length: 500 },
+        (_, index) => `prompts/prompt-${index}.txt`,
+      );
+      const workspaceRoot = process.cwd();
+      const workingDirectory = path.resolve(workspaceRoot, 'evals');
+      withInputs({ 'working-directory': 'evals' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'evals/promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(prompts);
+
+      await run();
+
+      const realpathInputs = mockFs.realpathSync.mock.calls.map(([filePath]) =>
+        filePath.toString(),
+      );
+      expect(
+        realpathInputs.filter((filePath) => filePath === workspaceRoot),
+      ).toHaveLength(1);
+      expect(
+        realpathInputs.filter((filePath) => filePath === workingDirectory),
+      ).toHaveLength(1);
+      expect(
+        realpathInputs.filter(
+          (filePath) =>
+            filePath === path.resolve(workingDirectory, 'promptfooconfig.yaml'),
+        ),
+      ).toHaveLength(1);
+      expect(realpathInputs).toHaveLength(prompts.length + 4);
+      expect(
+        realpathInputs.filter(
+          (filePath) => filePath === path.resolve(workingDirectory, 'prompts'),
+        ),
+      ).toHaveLength(1);
+      for (const prompt of prompts) {
+        expect(
+          realpathInputs.filter(
+            (filePath) => filePath === path.resolve(workingDirectory, prompt),
+          ),
+        ).toHaveLength(1);
+      }
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject a full-evaluation prompt symlink that physically escapes the workspace', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/linked.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return value.endsWith(`${path.sep}prompts${path.sep}linked.txt`)
+          ? '/private/tmp/outside/secret.txt'
+          : value;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: prompt files must stay within the working directory.\n\nHelp: Use readable prompt files and glob patterns contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should reject an unreadable matched prompt before evaluation', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/unreadable.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        if (
+          filePath
+            .toString()
+            .endsWith(`${path.sep}prompts${path.sep}unreadable.txt`)
+        ) {
+          throw Object.assign(new Error('denied'), { code: 'EACCES' });
+        }
+        return filePath.toString();
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: prompt files must stay within the working directory.\n\nHelp: Use readable prompt files and glob patterns contained within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should cleanly skip an unchanged prompt with line breaks on an unrelated change', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/unchanged\\n::error::forged.txt'.replace('\\n', '\n'),
+      ]);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject a changed PR prompt whose filename contains LF before evaluation', async () => {
+      const unsafePrompt = 'prompts/changed\n::error::forged.txt';
+      mockOctokit.paginate.mockResolvedValue([{ filename: unsafePrompt }]);
+      mockGlob.sync.mockReturnValue([unsafePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: line breaks are not allowed.\n\nHelp: Rename the prompt file so its path does not contain CR or LF characters.',
+      );
+      expect(mockCore.info.mock.calls.flat().join('\n')).not.toContain(
+        '::error::forged',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      {
+        field: 'filename',
+        file: { filename: 'prompts/changed\0::error::forged.txt' },
+      },
+      {
+        field: 'previous_filename',
+        file: {
+          filename: 'prompts/changed.txt',
+          previous_filename: 'prompts/old\0::error::forged.txt',
+        },
+      },
+    ])('should reject a PR $field containing a null byte before evaluation', async ({
+      file,
+    }) => {
+      mockOctokit.paginate.mockResolvedValue([file]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid pull request file list: null bytes are not allowed.\n\nHelp: Remove null bytes from the pull request file list.',
+      );
+      const output = [
+        ...mockCore.info.mock.calls,
+        ...mockCore.warning.mock.calls,
+        ...mockCore.setFailed.mock.calls,
+      ]
+        .flat()
+        .join('\n');
+      expect(output).not.toContain('::error::forged');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should conservatively reject an LF prompt represented by a quoted git diff path', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      mockGitInterface.diff.mockResolvedValueOnce(
+        '"prompts/changed\\n::error::forged.txt"',
+      );
+      mockGlob.sync.mockReturnValue(['prompts/changed\n::error::forged.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: line breaks are not allowed.\n\nHelp: Rename the prompt file so its path does not contain CR or LF characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should cleanly skip an unchanged escaping prompt symlink on an unrelated change', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/unchanged-link.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return value.endsWith(`${path.sep}prompts${path.sep}unchanged-link.txt`)
+          ? '/private/tmp/outside/secret.txt'
+          : value;
+      });
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should match CRLF-separated prompt glob inputs without retaining carriage returns', async () => {
+      withInputs({ prompts: 'prompts/first.txt\r\nprompts/second.txt' });
+      const allPrompts = ['prompts/first.txt', 'prompts/second.txt'];
+      mockOctokit.paginate.mockResolvedValue(
+        allPrompts.map((filename) => ({ filename })),
+      );
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        allPrompts.includes(pattern) ? [pattern] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenNthCalledWith(
+        1,
+        'prompts/first.txt',
+        expect.any(Object),
+      );
+      expect(mockGlob.sync).toHaveBeenNthCalledWith(
+        2,
+        'prompts/second.txt',
+        expect.any(Object),
+      );
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 3)).toEqual(
+        allPrompts,
+      );
+    });
+
+    test('should preserve leading and trailing whitespace in prompt glob inputs', async () => {
+      const prompt = ' prompts/intentional-space.txt ';
+      mockCore.getInput.mockImplementation(
+        (name: string, options?: { trimWhitespace?: boolean }) => {
+          const value =
+            name === 'prompts' ? prompt : DEFAULT_INPUTS[name] || '';
+          return options?.trimWhitespace === false ? value : value.trim();
+        },
+      );
+      mockOctokit.paginate.mockResolvedValue([{ filename: prompt }]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === prompt ? [prompt] : [],
+      );
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('prompts', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockGlob.sync).toHaveBeenCalledWith(prompt, expect.any(Object));
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should report all evaluated prompts in a push summary after a config change', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'push',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { before: 'a'.repeat(40), after: 'b'.repeat(40) },
+        configurable: true,
+      });
+      const allPrompts = ['prompts/first.txt', 'prompts/second.txt'];
+      mockGitInterface.diff.mockResolvedValueOnce('promptfooconfig.yaml');
+      mockGlob.sync.mockReturnValue(allPrompts);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 3)).toEqual(
+        allPrompts,
+      );
+      expect(mockCore.summary.addList).toHaveBeenCalledWith(allPrompts);
+    });
+
+    test('should evaluate conservatively when config dependency extraction is uncertain', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain(
+        'Evaluated prompt files: prompts/first.txt',
+      );
+      expect(comment.body).not.toContain('LLM prompt was modified');
+    });
+
+    test('should not interpolate a config dependency containing control characters', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+      mockConfig.extractFileDependencies.mockReturnValue([
+        'data/context\n::error::forged.json',
+      ]);
+
+      await run();
+
+      expect(mockCore.debug).toHaveBeenCalledWith(
+        'Found 1 file dependencies in config',
+      );
+      const messages = mockCore.debug.mock.calls.map(([message]) => message);
+      expect(messages.join('\n')).not.toContain('::error::forged');
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should fail before evaluation when the config file escapes the working directory', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockConfig.extractFileDependencies.mockImplementation(() => {
+        throw new PromptfooActionError(
+          'Invalid config directory: the config must stay within the working directory.',
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Use a readable config file and directory within the working directory.',
+        );
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid config directory: the config must stay within the working directory.\n\nHelp: Use a readable config file and directory within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      'capped',
+      'empty',
+    ])('should validate the config before a full evaluation with a %s changed-file list', async (mode) => {
+      mockOctokit.paginate.mockResolvedValue(
+        mode === 'capped'
+          ? Array.from({ length: 3000 }, (_, index) => ({
+              filename: `docs/${index}.md`,
+            }))
+          : [],
+      );
+      mockConfig.extractFileDependencies.mockImplementation(() => {
+        throw new PromptfooActionError(
+          'Invalid config directory: the config must stay within the working directory.',
+          ErrorCodes.INVALID_CONFIGURATION,
+          'Use a readable config file and directory within the working directory.',
+        );
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid config directory: the config must stay within the working directory.\n\nHelp: Use a readable config file and directory within the working directory.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
+    });
+
+    test('should evaluate and report all prompts on a forced unrelated change', async () => {
+      const allPrompts = ['prompts/first.txt', 'prompts/second.txt'];
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(allPrompts);
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'force-run',
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 3)).toEqual(
+        allPrompts,
+      );
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain(allPrompts.join(', '));
+    });
+
+    test('should evaluate and report all prompts when the PR file list is capped', async () => {
+      const allPrompts = ['prompts/first.txt', 'prompts/second.txt'];
+      mockOctokit.paginate.mockResolvedValue(
+        Array.from({ length: 3000 }, (_, index) => ({
+          filename: `docs/${index}.md`,
+        })),
+      );
+      mockGlob.sync.mockReturnValue(allPrompts);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      const promptsIndex = args.indexOf('--prompts');
+      expect(args.slice(promptsIndex + 1, promptsIndex + 3)).toEqual(
+        allPrompts,
+      );
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain(allPrompts.join(', '));
+    });
+
+    test('should not log workflow file-list control characters', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: {
+          inputs: { files: 'prompts/first.txt\r\n::error::forged' },
+        },
+        configurable: true,
+      });
+      mockGlob.sync.mockReturnValue(['prompts/first.txt']);
+
+      await run();
+
+      const infoMessages = mockCore.info.mock.calls.map(([message]) => message);
+      expect(infoMessages).toContain('Using 2 manually specified files');
+      expect(infoMessages.join('\n')).not.toContain('::error::forged');
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve leading and trailing whitespace in workflow-files inputs', async () => {
+      const prompt = ' prompts/intentional-space.txt ';
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: {} },
+        configurable: true,
+      });
+      mockCore.getInput.mockImplementation(
+        (name: string, options?: { trimWhitespace?: boolean }) => {
+          const value =
+            name === 'workflow-files' ? prompt : DEFAULT_INPUTS[name] || '';
+          return options?.trimWhitespace === false ? value : value.trim();
+        },
+      );
+      mockGlob.sync.mockReturnValue([prompt]);
+
+      await run();
+
+      expect(mockCore.getInput).toHaveBeenCalledWith('workflow-files', {
+        required: false,
+        trimWhitespace: false,
+      });
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject a workflow file list containing a null byte without logging it', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'prompts/first\0::error::forged.txt' } },
+        configurable: true,
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid workflow file list: null bytes are not allowed.\n\nHelp: Remove null bytes from the workflow file list.',
+      );
+      expect(mockCore.info).not.toHaveBeenCalledWith(
+        expect.stringContaining('::error::forged'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      '\n',
+      '\r',
+    ])('should reject a matched prompt path containing %j before any output sink', async (lineBreak) => {
+      const unsafePrompt = `prompts/policy${lineBreak}::error::forged.txt`;
+      mockOctokit.paginate.mockResolvedValue(
+        lineBreak === '\r' ? [{ filename: unsafePrompt }] : [],
+      );
+      mockGlob.sync.mockReturnValue([unsafePrompt]);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt file path: line breaks are not allowed.\n\nHelp: Rename the prompt file so its path does not contain CR or LF characters.',
+      );
+      expect(mockCore.info).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+      expect(mockOctokit.rest.issues.createComment).not.toHaveBeenCalled();
     });
 
     test('should skip evaluation when no relevant files change', async () => {
@@ -323,6 +1853,144 @@ describe('GitHub Action Main', () => {
         expect.any(Array),
         expect.any(Object),
       );
+    });
+
+    test('should mask trusted provider keys before skipping unrelated changes', async () => {
+      withInputs({ 'openai-api-key': 'trusted-openai-input' });
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'trusted-anthropic-env';
+
+      try {
+        await run();
+
+        expect(mockCore.setSecret).toHaveBeenCalledWith('trusted-openai-input');
+        expect(mockCore.setSecret).toHaveBeenCalledWith(
+          'trusted-anthropic-env',
+        );
+        expect(mockCore.info).toHaveBeenCalledWith(
+          'No LLM prompt, config files, or dependencies were modified.',
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        if (originalAnthropicKey === undefined) {
+          delete process.env.ANTHROPIC_API_KEY;
+        } else {
+          process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+        }
+      }
+    });
+
+    test('should match a mixed-separator relative prompt glob on POSIX', async () => {
+      withInputs({ prompts: './prompts\\*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === './prompts/*.txt' ? ['prompts/changed.txt'] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync.mock.calls.map(([pattern]) => pattern)).toEqual([
+        './prompts\\*.txt',
+        './prompts/*.txt',
+      ]);
+      expect(mockGlob.sync.mock.calls).toEqual(
+        expect.arrayContaining([
+          [
+            './prompts/*.txt',
+            expect.objectContaining({ braceExpandMax: 1024 }),
+          ],
+        ]),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+        expect.any(Object),
+      );
+    });
+
+    test('should preserve an escaped-brace relative prompt glob on POSIX', async () => {
+      const globPattern = './prompts/\\{literal\\}.txt';
+      withInputs({ prompts: globPattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/{literal}.txt' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern: string) =>
+        pattern === globPattern ? ['prompts/{literal}.txt'] : [],
+      );
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        globPattern,
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining(['--prompts', 'prompts/{literal}.txt']),
+        expect.any(Object),
+      );
+    });
+
+    test('should validate a normalized POSIX fallback before expanding it', async () => {
+      withInputs({ prompts: './prompts/\\{1..1025\\}.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/changed.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([]);
+
+      await run();
+
+      expect(mockGlob.sync).toHaveBeenCalledTimes(1);
+      expect(mockGlob.sync).toHaveBeenCalledWith(
+        './prompts/\\{1..1025\\}.txt',
+        expect.objectContaining({ braceExpandMax: 1024 }),
+      );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid prompt glob: the pattern could not be expanded safely.\n\nHelp: Use valid prompt glob patterns with bounded brace expansion.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should skip unrelated changes before validating an implicit .env', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env`),
+      );
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { OPENAI_BASE_URL: 'http://attacker.invalid/v1' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(dotenv.config).not.toHaveBeenCalled();
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should isolate npx from a repository-controlled project .npmrc', async () => {
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledTimes(1);
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.slice(0, 2)).toEqual([
+        '--prefix',
+        path.resolve(__dirname, '..'),
+      ]);
     });
 
     test('should process all matching prompts when PR file list hits GitHub cap', async () => {
@@ -560,6 +2228,1145 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      'NODE_OPTIONS',
+      'nOdE_oPtIoNs',
+      'PATH',
+      'Node_Path',
+      'NPM_CONFIG_USERCONFIG',
+      'npm_config_script_shell',
+      'DOTENV_KEY',
+      'dotenv_config_path',
+      'DOTENV_CONFIG_OVERRIDE',
+      'GITHUB_STEP_SUMMARY',
+      'GITHUB_OUTPUT',
+      'GITHUB_ENV',
+      'GITHUB_PATH',
+      'GITHUB_STATE',
+      'LD_PRELOAD',
+      'LD_AUDIT',
+      'ld_debug_output',
+      'DYLD_INSERT_LIBRARIES',
+      'dyld_image_suffix',
+      'HTTPS_PROXY',
+      'HOME',
+      'USERPROFILE',
+      'XDG_CONFIG_HOME',
+      'APPDATA',
+      'LOCALAPPDATA',
+      'GIT_SSH_COMMAND',
+      'git_external_diff',
+      'GIT_CONFIG_COUNT',
+      'RUBYOPT',
+      'PYTHONHOME',
+      'PYTHON',
+      'PYTHONPATH',
+      'PYTHONWARNINGS',
+      '_PYTHON_SYSCONFIGDATA_NAME',
+      'pythonuserbase',
+      'PERL5LIB',
+      'RUBYLIB',
+      'RUBYGEMS_GEMDEPS',
+      'bundle_gemfile',
+      'BUNDLE_APP_CONFIG',
+      'BUNDLE_PATH',
+      'GEM_HOME',
+      'GEM_PATH',
+      'GEM_SPEC_CACHE',
+      'PROMPTFOO_PYTHON',
+      'NODE_GYP_FORCE_PYTHON',
+      'MAKE',
+      'MAKEFLAGS',
+      'MAKEFILES',
+      'CFLAGS',
+      'CXXFLAGS',
+      'CPPFLAGS',
+      'LDFLAGS',
+      'CFLAGS_host',
+      'CXXFLAGS_host',
+      'CPPFLAGS_host',
+      'LDFLAGS_host',
+      'GYP_DEFINES',
+      'CC_TARGET',
+      'CXX_TARGET',
+      'AR_TARGET',
+      'LINK_TARGET',
+      'CC_HOST',
+      'CXX_HOST',
+      'AR_HOST',
+      'LINK_HOST',
+      'GYP_CONFIG_DIR',
+      'GYP_GENERATORS',
+      'GYP_GENERATOR_OUTPUT',
+      'GYP_MSVS_OVERRIDE_PATH',
+      'NODEJS_ORG_MIRROR',
+      'PROMPTFOO_RUBY',
+      'playwright_browsers_path',
+      'PLAYWRIGHT_DOWNLOAD_HOST',
+      'PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST',
+      'PLAYWRIGHT_FIREFOX_DOWNLOAD_HOST',
+      'PLAYWRIGHT_WEBKIT_DOWNLOAD_HOST',
+      'PUPPETEER_EXECUTABLE_PATH',
+      'PUPPETEER_CACHE_DIR',
+      'PUPPETEER_DOWNLOAD_HOST',
+      'PUPPETEER_DOWNLOAD_BASE_URL',
+      'PUPPETEER_CHROME_DOWNLOAD_BASE_URL',
+      'OPENSSL_CONF',
+      'OPENSSL_CONF_INCLUDE',
+      'oPeNsSl_MoDuLeS',
+      'OPENSSL_ENGINES',
+      'OPENSSL_TRACE',
+      'OPENSSL_MALLOC_FAILURES',
+      'OPENSSL_FUTURE_CONTROL',
+      'NODE_TLS_REJECT_UNAUTHORIZED',
+      'NODE_DEBUG',
+      'node_debug_native',
+      'GOFLAGS',
+      'goenv',
+      'GOAUTH',
+      'GOBIN',
+      'GOTOOLCHAIN',
+      'GOPROXY',
+      'GOSUMDB',
+      'GOINSECURE',
+      'GONOSUMDB',
+      'GONOPROXY',
+      'GOPRIVATE',
+      'GOMODCACHE',
+      'GOCACHE',
+      'GOCACHEPROG',
+      'GOCOVERDIR',
+      'GODEBUG',
+      'GOPATH',
+      'GOROOT',
+      'GOTELEMETRYDIR',
+      'GOTMPDIR',
+      'GOTOOLDIR',
+      'GOVCS',
+      'GOWORK',
+      'CC',
+      'AR',
+      'CXX',
+      'FC',
+      'GCCGO',
+      'GCCGOTOOLDIR',
+      'GCC_EXEC_PREFIX',
+      'COMPILER_PATH',
+      'LIBRARY_PATH',
+      'CPATH',
+      'C_INCLUDE_PATH',
+      'CPLUS_INCLUDE_PATH',
+      'OBJC_INCLUDE_PATH',
+      'CGO_CFLAGS',
+      'CGO_CPPFLAGS',
+      'CGO_CXXFLAGS',
+      'CGO_LDFLAGS',
+      'cgo_fflags',
+      'CGO_CFLAGS_ALLOW',
+      'CGO_LDFLAGS_DISALLOW',
+      'CGO_ENABLED',
+      'PKG_CONFIG',
+      'PKG_CONFIG_PATH',
+      'PKG_CONFIG_LIBDIR',
+      'PKG_CONFIG_SYSROOT_DIR',
+      'AWS_CA_BUNDLE',
+      'AWS_BEARER_TOKEN_BEDROCK',
+      'CURL_CA_BUNDLE',
+      'requests_ca_bundle',
+      'OPENAI_BASE_URL',
+      'openai_api_base_url',
+      'OPENAI_API_HOST',
+      'OPENAI_ORGANIZATION',
+      'OPENAI_ORG_ID',
+      'OPENAI_PROJECT_ID',
+      'OPENAI_CUSTOM_HEADERS',
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_AUTH_TOKEN',
+      'ANTHROPIC_CONFIG_DIR',
+      'ANTHROPIC_CUSTOM_HEADERS',
+      'ANTHROPIC_FEDERATION_RULE_ID',
+      'ANTHROPIC_IDENTITY_TOKEN',
+      'ANTHROPIC_IDENTITY_TOKEN_FILE',
+      'ANTHROPIC_ORGANIZATION_ID',
+      'ANTHROPIC_PROFILE',
+      'ANTHROPIC_SERVICE_ACCOUNT_ID',
+      'ANTHROPIC_WORKSPACE_ID',
+      'ANTHROPIC_SCOPE',
+      'ANTHROPIC_ENVIRONMENT_ID',
+      'ANTHROPIC_ENVIRONMENT_KEY',
+      'aPi_HoSt',
+      'AWS_ENDPOINT_URL',
+      'AWS_BEDROCK_BASE_URL',
+      'AWS_PROFILE',
+      'AWS_BEDROCK_REGION',
+      'AWS_REGION',
+      'AWS_DEFAULT_REGION',
+      'aws_default_profile',
+      'AWS_WEB_IDENTITY_TOKEN_FILE',
+      'AWS_ROLE_ARN',
+      'AWS_ROLE_SESSION_NAME',
+      'AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE',
+      'AWS_CONTAINER_CREDENTIALS_FULL_URI',
+      'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
+      'AWS_EC2_METADATA_SERVICE_ENDPOINT',
+      'AWS_EC2_METADATA_SERVICE_ENDPOINT_MODE',
+      'AWS_LOGIN_CACHE_DIRECTORY',
+      'aws_config_file',
+      'AWS_SHARED_CREDENTIALS_FILE',
+      'aws_endpoint_url_bedrock_runtime',
+      'AWS_ENDPOINT_URL_SAGEMAKER_RUNTIME',
+      'AZURE_OPENAI_API_HOST',
+      'AZURE_OPENAI_ENDPOINT',
+      'AZURE_POD_IDENTITY_AUTHORITY_HOST',
+      'AZURE_STORAGE_CONNECTION_STRING',
+      'AZURE_TOKEN_CREDENTIALS',
+      'AZURE_ADDITIONALLY_ALLOWED_TENANTS',
+      'AZURE_TENANT_ID',
+      'AZURE_TOKEN_SCOPE',
+      'AZURE_REGIONAL_AUTHORITY_NAME',
+      'IDENTITY_ENDPOINT',
+      'IDENTITY_HEADER',
+      'IDENTITY_SERVER_THUMBPRINT',
+      'IMDS_ENDPOINT',
+      'MSI_ENDPOINT',
+      'MSI_SECRET',
+      'AZURE_FEDERATED_TOKEN_FILE',
+      'AZURE_CLIENT_CERTIFICATE_PATH',
+      'AZURE_CLIENT_ID',
+      'GOOGLE_APPLICATION_CREDENTIALS',
+      'GENAI_ENDPOINT',
+      'GOOGLE_GENAI_USE_VERTEXAI',
+      'GOOGLE_CLOUD_PROJECT',
+      'GOOGLE_CLOUD_QUOTA_PROJECT',
+      'GOOGLE_PROJECT_ID',
+      'GOOGLE_API_CERTIFICATE_CONFIG',
+      'google_external_account_allow_executables',
+      'GOOGLE_GHA_CREDS_PATH',
+      'GOOGLE_LOCATION',
+      'GOOGLE_CLOUD_LOCATION',
+      'GCE_METADATA_HOST',
+      'gce_metadata_ip',
+      'METADATA_SERVER_DETECTION',
+      'VERTEX_REGION',
+      'VERTEX_PROJECT_ID',
+      'WATSONX_AI_PROJECT_ID',
+      'WATSONX_AI_AUTH_TYPE',
+      'WATSONX_AI_BEARER_TOKEN',
+      'CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE',
+      'GCLOUD_PROJECT',
+      'cloudsdk_config',
+      'CLOUDSDK_PYTHON',
+      'AZURE_AI_PROJECT_URL',
+      'CLOUDFLARE_ACCOUNT_ID',
+      'CLAUDE_CONFIG_DIR',
+      'CLAUDE_CODE_USE_BEDROCK',
+      'CLAUDE_CODE_USE_VERTEX',
+      'CODEX_HOME',
+      'CLOUDFLARE_GATEWAY_ID',
+      'SNOWFLAKE_ACCOUNT_IDENTIFIER',
+      'OPENCLAW_CONFIG_PATH',
+      'OPENCLAW_GATEWAY_PORT',
+      'opencode_config',
+      'OPENCODE_CONFIG_CONTENT',
+      'OPENCODE_CONFIG_DIR',
+      'OPENCODE_GIT_BASH_PATH',
+      'SHAREPOINT_CERT_PATH',
+      'PROMPTFOO_CLOUD_API_URL',
+      'promptfoo_remote_api_base_url',
+      'PROMPTFOO_REMOTE_GENERATION_URL',
+      'PROMPTFOO_UNALIGNED_INFERENCE_ENDPOINT',
+      'PROMPTFOO_OTEL_ENDPOINT',
+      'otel_exporter_otlp_endpoint',
+      'OTEL_EXPORTER_OTLP_TRACES_ENDPOINT',
+      'OTEL_EXPORTER_OTLP_TRACES_HEADERS',
+      'OTEL_EXPORTER_OTLP_LOGS_ENDPOINT',
+      'OTEL_EXPORTER_OTLP_METRICS_ENDPOINT',
+      'OTEL_EXPORTER_OTLP_METRICS_HEADERS',
+      'PROMPTFOO_REMOTE_APP_BASE_URL',
+      'PROMPTFOO_SHARING_APP_BASE_URL',
+      'PROMPTFOO_CACHE_PATH',
+      'PROMPTFOO_CACHE_MAX_SIZE',
+      'PROMPTFOO_CACHE_MAX_FILE_COUNT',
+      'PROMPTFOO_CONFIG_DIR',
+      'PROMPTFOO_PASS_RATE_THRESHOLD',
+      'PROMPTFOO_API_KEY',
+      'PROMPTFOO_CACHE_TTL',
+      'PROMPTFOO_AUTHOR',
+      'CI',
+      'PROMPTFOO_DISABLE_SHARING',
+      'PROMPTFOO_DISABLE_TELEMETRY',
+      'PROMPTFOO_DISABLE_REMOTE_GENERATION',
+      'PROMPTFOO_DISABLE_REDTEAM_MODERATION',
+      'PROMPTFOO_DISABLE_REDTEAM_REMOTE_GENERATION',
+      'PROMPTFOO_DISABLE_ERROR_LOG',
+      'PROMPTFOO_DISABLE_DEBUG_LOG',
+      'PROMPTFOO_STRIP_GRADING_RESULT',
+      'PROMPTFOO_STRIP_RESPONSE_OUTPUT',
+      'PROMPTFOO_STRIP_PROMPT_TEXT',
+      'PROMPTFOO_STRIP_TEST_VARS',
+      'PROMPTFOO_STRIP_METADATA',
+      'PROMPTFOO_DISABLE_VAR_EXPANSION',
+      'PROMPTFOO_DISABLE_REF_PARSER',
+      'PROMPTFOO_DISABLE_TEMPLATE_ENV_VARS',
+      'PROMPTFOO_DISABLE_CONVERSATION_VAR',
+      'PROMPTFOO_DISABLE_OBJECT_STRINGIFY',
+      'PROMPTFOO_SELF_HOSTED',
+      'PROMPTFOO_DISABLE_TEMPLATING',
+      'PROMPTFOO_STRICT_FILES',
+      'CDP_DOMAIN',
+      'PROMPTFOO_FAILED_TEST_EXIT_CODE',
+      'PROMPTFOO_LOG_DIR',
+      'PROMPTFOO_MEDIA_PATH',
+      'SHAREPOINT_BASE_URL',
+      'SHAREPOINT_CERT_PATH',
+      'SHAREPOINT_CLIENT_ID',
+      'SHAREPOINT_TENANT_ID',
+    ])('should reject process startup variable %s from environment files', async (variableName) => {
+      withInputs({ 'env-files': '.env' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      const originalValue = process.env[variableName];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { [variableName]: 'attacker-controlled' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining(variableName),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env[variableName]).toBe(originalValue);
+      } finally {
+        if (originalValue === undefined) {
+          delete process.env[variableName];
+        } else {
+          process.env[variableName] = originalValue;
+        }
+      }
+    });
+
+    test('should preserve later-file-wins behavior for application variables', async () => {
+      withInputs({ 'env-files': '.env,.env.local' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { CUSTOM_PROVIDER_SETTING: 'second', NODE_ENV: 'test' }
+            : { CUSTOM_PROVIDER_SETTING: 'first' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({
+            CUSTOM_PROVIDER_SETTING: 'second',
+            NODE_ENV: 'test',
+          }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        delete process.env.NODE_ENV;
+      }
+    });
+
+    test.each([
+      'OPENAI_BASE_URL',
+      'OPENSSL_CONF',
+      'oPeNsSl_MoDuLeS',
+    ])('should reject %s from the implicit working-directory .env file', async (variableName) => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalValue = process.env[variableName];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = {
+            [variableName]: 'attacker-controlled',
+            CUSTOM_PROVIDER_SETTING: 'must-not-merge',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining(variableName),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env[variableName]).toBe(originalValue);
+        expect(process.env.CUSTOM_PROVIDER_SETTING).toBeUndefined();
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalValue === undefined) {
+          delete process.env[variableName];
+        } else {
+          process.env[variableName] = originalValue;
+        }
+      }
+    });
+
+    test('should load the implicit .env before selected environment files', async () => {
+      withInputs({ 'env-files': '.env.local' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return (
+          value.endsWith(`${path.sep}.env`) || value.endsWith('.env.local')
+        );
+      });
+
+      const dotenv = await import('dotenv');
+      const loadedPaths: string[] = [];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          loadedPaths.push(options?.path ?? '');
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { CUSTOM_PROVIDER_SETTING: 'selected' }
+            : { CUSTOM_PROVIDER_SETTING: 'implicit' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(loadedPaths).toHaveLength(2);
+        expect(loadedPaths[0]).toMatch(/(?:^|[/\\])\.env$/);
+        expect(loadedPaths[1]).toMatch(/(?:^|[/\\])\.env\.local$/);
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({ CUSTOM_PROVIDER_SETTING: 'selected' }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+      }
+    });
+
+    test.each([
+      { implicitFile: '.env', dotenvKey: undefined },
+      { implicitFile: '.env.vault', dotenvKey: 'trusted-dotenv-key' },
+    ])('should preserve explicit order when $implicitFile is selected', async ({
+      implicitFile,
+      dotenvKey,
+    }) => {
+      withInputs({ 'env-files': `.env.local,./${implicitFile}` });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return (
+          value.endsWith(`${path.sep}${implicitFile}`) ||
+          value.endsWith(`${path.sep}.env.local`)
+        );
+      });
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      if (dotenvKey === undefined) {
+        delete process.env.DOTENV_KEY;
+      } else {
+        process.env.DOTENV_KEY = dotenvKey;
+      }
+      const loadedPaths: string[] = [];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          loadedPaths.push(options?.path ?? '');
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { CUSTOM_PROVIDER_SETTING: 'selected' }
+            : { CUSTOM_PROVIDER_SETTING: 'implicit' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(loadedPaths).toEqual([
+          path.join(process.cwd(), '.env.local'),
+          path.join(process.cwd(), implicitFile),
+        ]);
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({ CUSTOM_PROVIDER_SETTING: 'implicit' }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
+    });
+
+    test('should preserve explicit order when .env aliases a vault-only implicit file', async () => {
+      withInputs({ 'env-files': '.env.local,.env' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return (
+          value.endsWith(`${path.sep}.env.vault`) ||
+          value.endsWith(`${path.sep}.env.local`)
+        );
+      });
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      const loadedPaths: string[] = [];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const requestedPath = options?.path ?? '';
+          const effectivePath = requestedPath.endsWith('.env')
+            ? `${requestedPath}.vault`
+            : requestedPath;
+          loadedPaths.push(effectivePath);
+          const parsed = effectivePath.endsWith('.env.local')
+            ? { CUSTOM_PROVIDER_SETTING: 'selected' }
+            : { CUSTOM_PROVIDER_SETTING: 'implicit' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(loadedPaths).toEqual([
+          path.join(process.cwd(), '.env.local'),
+          path.join(process.cwd(), '.env.vault'),
+        ]);
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({ CUSTOM_PROVIDER_SETTING: 'implicit' }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
+    });
+
+    test('should keep an absolute-looking env file path under the working directory', async () => {
+      const absoluteInput = path.join(path.sep, 'tmp', 'outside.env');
+      const expectedPath = path.resolve(
+        path.join(process.cwd(), absoluteInput),
+      );
+      withInputs({ 'env-files': absoluteInput });
+      mockFs.existsSync.mockImplementation(
+        (filePath: fs.PathLike) => filePath.toString() === expectedPath,
+      );
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockReturnValue({ error: null });
+
+      await run();
+
+      expect(dotenv.config).toHaveBeenCalledWith(
+        expect.objectContaining({ path: expectedPath }),
+      );
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should reject an env file that lexically escapes the working directory', async () => {
+      withInputs({ 'env-files': '../outside.env' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockReturnValue({ error: null });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('must stay within the working directory'),
+      );
+      expect(dotenv.config).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      '\0',
+      '\r',
+      '\n',
+    ])('should reject an environment-file path containing %j before any output sink', async (control) => {
+      withInputs({
+        'env-files': `.env${control}::error::forged`,
+      });
+      mockFs.existsSync.mockReturnValue(true);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid environment file path: control characters are not allowed.\n\nHelp: Choose an environment file path without NUL, CR, or LF characters.',
+      );
+      const output = [
+        ...mockCore.info.mock.calls,
+        ...mockCore.warning.mock.calls,
+        ...mockCore.setFailed.mock.calls,
+      ]
+        .flat()
+        .join('\n');
+      expect(output).not.toContain('::error::forged');
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      '\r',
+      '\n',
+    ])('should preserve and reject a trailing %j in the environment-file input', async (control) => {
+      const unsafePath = `.env${control}`;
+      mockCore.getInput.mockImplementation(
+        (name: string, options?: { trimWhitespace?: boolean }) => {
+          const value =
+            name === 'env-files' ? unsafePath : DEFAULT_INPUTS[name] || '';
+          return options?.trimWhitespace === false ? value : value.trim();
+        },
+      );
+      mockFs.existsSync.mockReturnValue(true);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        'Error: Invalid environment file path: control characters are not allowed.\n\nHelp: Choose an environment file path without NUL, CR, or LF characters.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      { envFiles: '', file: '.env', dotenvKey: undefined },
+      {
+        envFiles: '',
+        file: '.env.vault',
+        dotenvKey: 'trusted-dotenv-key',
+      },
+      { envFiles: '.env.local', file: '.env.local', dotenvKey: undefined },
+    ])('should reject an escaping $file symlink before loading it', async ({
+      envFiles,
+      file,
+      dotenvKey,
+    }) => {
+      withInputs({ 'env-files': envFiles });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}${file}`),
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return value.endsWith(`${path.sep}${file}`)
+          ? path.join(path.dirname(process.cwd()), 'outside.env')
+          : value;
+      });
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockReturnValue({ error: null });
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      if (dotenvKey === undefined) {
+        delete process.env.DOTENV_KEY;
+      } else {
+        process.env.DOTENV_KEY = dotenvKey;
+      }
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('must stay within the working directory'),
+        );
+        expect(dotenv.config).not.toHaveBeenCalled();
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
+    });
+
+    test('should preserve vault semantics for a contained .env.vault symlink', async () => {
+      withInputs({ 'env-files': '' });
+      const logicalPath = path.join(process.cwd(), '.env.vault');
+      const physicalPath = path.join(process.cwd(), 'configs', 'prod-secret');
+      mockFs.existsSync.mockImplementation(
+        (filePath: fs.PathLike) => filePath.toString() === logicalPath,
+      );
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString() === logicalPath
+          ? physicalPath
+          : filePath.toString(),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      (dotenv.config as Mock).mockReturnValue({ error: null });
+
+      try {
+        await run();
+
+        expect(dotenv.config).toHaveBeenCalledWith(
+          expect.objectContaining({ path: logicalPath }),
+        );
+        expect(dotenv.config).not.toHaveBeenCalledWith(
+          expect.objectContaining({ path: physicalPath }),
+        );
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+      } finally {
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
+    });
+
+    test('should not select a physical vault for a contained .env.local symlink', async () => {
+      withInputs({ 'env-files': '.env.local' });
+      const logicalPath = path.join(process.cwd(), '.env.local');
+      const physicalPath = path.join(process.cwd(), 'configs', 'dev.env');
+      const physicalVaultPath = `${physicalPath}.vault`;
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return value === logicalPath || value === physicalVaultPath;
+      });
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString() === logicalPath
+          ? physicalPath
+          : filePath.toString(),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      const loadedPaths: string[] = [];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string }) => {
+          const requestedPath = options?.path ?? '';
+          loadedPaths.push(
+            requestedPath === physicalPath ? physicalVaultPath : requestedPath,
+          );
+          return { error: null };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(loadedPaths).toEqual([logicalPath]);
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+      } finally {
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+      }
+    });
+
+    test('should preserve trusted workflow credentials when loading the implicit .env', async () => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalAnthropicKey = process.env.ANTHROPIC_API_KEY;
+      const originalOpenaiKey = process.env.OPENAI_API_KEY;
+      process.env.ANTHROPIC_API_KEY = 'trusted-anthropic-key';
+      process.env.OPENAI_API_KEY = 'trusted-openai-key';
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = {
+            ANTHROPIC_API_KEY: 'attacker-key',
+            OPENAI_API_KEY: 'attacker-key',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({
+            ANTHROPIC_API_KEY: 'trusted-anthropic-key',
+            OPENAI_API_KEY: 'trusted-openai-key',
+          }),
+        );
+      } finally {
+        if (originalAnthropicKey === undefined) {
+          delete process.env.ANTHROPIC_API_KEY;
+        } else {
+          process.env.ANTHROPIC_API_KEY = originalAnthropicKey;
+        }
+        if (originalOpenaiKey === undefined) {
+          delete process.env.OPENAI_API_KEY;
+        } else {
+          process.env.OPENAI_API_KEY = originalOpenaiKey;
+        }
+      }
+    });
+
+    test('should reject an implicit .env.vault when the plaintext .env is absent', async () => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env.vault`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      const originalBaseUrl = process.env.OPENAI_BASE_URL;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { OPENAI_BASE_URL: 'http://attacker.invalid/v1' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('OPENAI_BASE_URL'),
+        );
+        expect(dotenv.config).toHaveBeenCalledWith(
+          expect.objectContaining({
+            path: expect.stringMatching(/(?:^|[/\\])\.env\.vault$/),
+          }),
+        );
+        expect(mockCore.info).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /Loading environment variables from .*\.env\.vault$/,
+          ),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.OPENAI_BASE_URL).toBe(originalBaseUrl);
+      } finally {
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+        if (originalBaseUrl === undefined) {
+          delete process.env.OPENAI_BASE_URL;
+        } else {
+          process.env.OPENAI_BASE_URL = originalBaseUrl;
+        }
+      }
+    });
+
+    test('should validate the implicit .env.vault when DOTENV_KEY and plaintext .env both exist', async () => {
+      withInputs({ 'env-files': '' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
+        const value = filePath.toString();
+        return (
+          value.endsWith(`${path.sep}.env`) ||
+          value.endsWith(`${path.sep}.env.vault`)
+        );
+      });
+
+      const dotenv = await import('dotenv');
+      const originalDotenvKey = process.env.DOTENV_KEY;
+      const originalBaseUrl = process.env.OPENAI_BASE_URL;
+      process.env.DOTENV_KEY = 'trusted-dotenv-key';
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.vault')
+            ? { OPENAI_BASE_URL: 'http://attacker.invalid/v1' }
+            : { CUSTOM_PROVIDER_SETTING: 'plaintext' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('OPENAI_BASE_URL'),
+        );
+        expect(dotenv.config).toHaveBeenCalledWith(
+          expect.objectContaining({
+            path: expect.stringMatching(/(?:^|[\\/])\.env\.vault$/),
+          }),
+        );
+        expect(mockCore.info).toHaveBeenCalledWith(
+          expect.stringMatching(
+            /Loading environment variables from .*\.env\.vault$/,
+          ),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.OPENAI_BASE_URL).toBe(originalBaseUrl);
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalDotenvKey === undefined) {
+          delete process.env.DOTENV_KEY;
+        } else {
+          process.env.DOTENV_KEY = originalDotenvKey;
+        }
+        if (originalBaseUrl === undefined) {
+          delete process.env.OPENAI_BASE_URL;
+        } else {
+          process.env.OPENAI_BASE_URL = originalBaseUrl;
+        }
+      }
+    });
+
+    test('should mask every supported provider fallback loaded from an environment file', async () => {
+      withInputs({ 'env-files': '.env.local' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith('.env.local'),
+      );
+
+      const providerKeys = {
+        OPENAI_API_KEY: 'env-openai-key',
+        AZURE_OPENAI_API_KEY: 'env-azure-key',
+        ANTHROPIC_API_KEY: 'env-anthropic-key',
+        HF_API_TOKEN: 'env-huggingface-key',
+        HF_TOKEN: 'env-hf-token',
+        HUGGING_FACE_HUB_TOKEN: 'env-hugging-face-hub-token',
+        GOOGLE_API_KEY: 'env-google-api-key',
+        GEMINI_API_KEY: 'env-gemini-api-key',
+        GOOGLE_GENERATIVE_AI_API_KEY: 'env-google-generative-ai-key',
+        REPLICATE_API_TOKEN: 'env-replicate-api-token',
+        AZURE_API_KEY: 'env-azure-api-key',
+        AZURE_CLIENT_SECRET: 'env-azure-client-secret',
+        CF_AIG_TOKEN: 'env-cf-aig-token',
+        DATABRICKS_TOKEN: 'env-databricks-token',
+        FAL_KEY: 'env-fal-key',
+        ABLIT_KEY: 'env-ablit-key',
+        LANGFUSE_SECRET_KEY: 'env-langfuse-secret-key',
+        WATSONX_AI_APIKEY: 'env-watsonx-api-key',
+        COMETAPI_KEY: 'env-comet-api-key',
+        mIxEd_CuStOm_aPi_KeY: 'env-mixed-case-api-key',
+        AWS_ACCESS_KEY_ID: 'env-aws-access-key-id',
+        AWS_SECRET_ACCESS_KEY: 'env-aws-secret-access-key',
+        REPLICATE_API_KEY: 'env-replicate-key',
+        PALM_API_KEY: 'env-palm-key',
+        VERTEX_API_KEY: 'env-vertex-key',
+        COHERE_API_KEY: 'env-cohere-key',
+        MISTRAL_API_KEY: 'env-mistral-key',
+        GROQ_API_KEY: 'env-groq-key',
+      };
+      const originals = Object.fromEntries(
+        Object.keys(providerKeys).map((key) => [key, process.env[key]]),
+      );
+      for (const key of Object.keys(providerKeys)) {
+        delete process.env[key];
+      }
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = {
+            ...providerKeys,
+            AWS_SAGEMAKER_MAX_TOKENS: 'do-not-mask-max-tokens',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        for (const value of Object.values(providerKeys)) {
+          expect(mockCore.setSecret).toHaveBeenCalledWith(value);
+        }
+        expect(mockCore.setSecret).not.toHaveBeenCalledWith(
+          'do-not-mask-max-tokens',
+        );
+      } finally {
+        for (const key of Object.keys(providerKeys)) {
+          const value = originals[key];
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+        delete process.env.AWS_SAGEMAKER_MAX_TOKENS;
+      }
+    });
+
+    test('should mask trusted provider aliases before skipping unrelated changes', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/prompt1.txt']);
+      const providerValues = {
+        HF_TOKEN: 'trusted-hf-token',
+        GOOGLE_API_KEY: 'trusted-google-api-key',
+        GEMINI_API_KEY: 'trusted-gemini-api-key',
+        AWS_BEARER_TOKEN_BEDROCK: 'trusted-bedrock-token',
+        WATSONX_AI_BEARER_TOKEN: 'trusted-watsonx-token',
+        mIxEd_CuStOm_aPi_KeY: 'trusted-mixed-case-api-key',
+        AWS_SAGEMAKER_MAX_TOKENS: 'do-not-mask-max-tokens',
+        AZURE_TOKEN_SCOPE: 'do-not-mask-token-scope',
+      };
+      const originals = Object.fromEntries(
+        Object.keys(providerValues).map((key) => [key, process.env[key]]),
+      );
+      Object.assign(process.env, providerValues);
+
+      try {
+        await run();
+
+        for (const [key, value] of Object.entries(providerValues)) {
+          if (key.endsWith('_MAX_TOKENS') || key.endsWith('_TOKEN_SCOPE')) {
+            expect(mockCore.setSecret).not.toHaveBeenCalledWith(value);
+          } else {
+            expect(mockCore.setSecret).toHaveBeenCalledWith(value);
+          }
+        }
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        for (const key of Object.keys(providerValues)) {
+          const value = originals[key];
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+      }
+    });
+
+    test.each([
+      { envFiles: '.missing', loadedFile: '.env' },
+      { envFiles: '.env.local,.missing', loadedFile: '.env.local' },
+    ])('should mask a provider key loaded from $loadedFile before a later error', async ({
+      envFiles,
+      loadedFile,
+    }) => {
+      withInputs({ 'env-files': envFiles });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}${loadedFile}`),
+      );
+
+      const dotenv = await import('dotenv');
+      const originalOpenaiKey = process.env.OPENAI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { OPENAI_API_KEY: 'loaded-openai-key' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setSecret).toHaveBeenCalledWith('loaded-openai-key');
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('.missing'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        if (originalOpenaiKey === undefined) {
+          delete process.env.OPENAI_API_KEY;
+        } else {
+          process.env.OPENAI_API_KEY = originalOpenaiKey;
+        }
+      }
+    });
+
+    test('should reject an own __proto__ key before merging an environment file', async () => {
+      withInputs({ 'env-files': '.env.local' });
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith('.env.local'),
+      );
+
+      const dotenv = await import('dotenv');
+      let parseTargetPrototype: object | null | undefined;
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parseTarget = options?.processEnv ?? process.env;
+          parseTargetPrototype = Object.getPrototypeOf(parseTarget);
+          Object.defineProperty(parseTarget, '__proto__', {
+            configurable: true,
+            enumerable: true,
+            value: { polluted: true },
+            writable: true,
+          });
+          parseTarget.CUSTOM_PROVIDER_SETTING = 'value';
+          return { parsed: parseTarget };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(parseTargetPrototype).toBeNull();
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('__proto__'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.CUSTOM_PROVIDER_SETTING).toBeUndefined();
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        Reflect.deleteProperty(process.env, '__proto__');
+      }
+    });
+
+    test('should reject a forbidden variable introduced by a later env file', async () => {
+      withInputs({ 'env-files': '.env,.env.local' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      const originalNodeOptions = process.env.NODE_OPTIONS;
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { NODE_OPTIONS: '--require /tmp/evil.js' }
+            : { CUSTOM_PROVIDER_SETTING: 'first' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('NODE_OPTIONS'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.NODE_OPTIONS).toBe(originalNodeOptions);
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalNodeOptions === undefined) {
+          delete process.env.NODE_OPTIONS;
+        } else {
+          process.env.NODE_OPTIONS = originalNodeOptions;
+        }
+      }
+    });
+
     test('should fail when an environment file cannot be loaded', async () => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
@@ -638,12 +3445,17 @@ describe('GitHub Action Main', () => {
         },
         configurable: true,
       });
-      mockGitInterface.diff.mockRejectedValueOnce(new Error('shallow clone'));
+      mockGitInterface.diff.mockRejectedValueOnce(
+        new Error('shallow clone\r\n::error::forged'),
+      );
 
       await run();
 
       expect(mockCore.warning).toHaveBeenCalledWith(
         expect.stringContaining('Could not compare commits'),
+      );
+      expect(mockCore.warning.mock.calls.flat().join('\n')).not.toContain(
+        '::error::forged',
       );
       expect(mockExec.exec).toHaveBeenCalled();
     });
@@ -738,7 +3550,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: prompts/file1.txt\nprompts/file2.txt',
+        'Using 2 manually specified files',
       );
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
     });
@@ -833,7 +3645,7 @@ describe('GitHub Action Main', () => {
       await run();
 
       expect(mockCore.info).toHaveBeenCalledWith(
-        'Using manually specified files: action-input-file.txt',
+        'Using 1 manually specified files',
       );
       // Since we're providing files directly, diff shouldn't be called
       expect(mockGitInterface.diff).not.toHaveBeenCalled();
@@ -910,6 +3722,23 @@ describe('GitHub Action Main', () => {
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data/context.json']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'Detected changes in config file dependencies',
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+      const comment = mockOctokit.rest.issues.createComment.mock.calls[0][0];
+      expect(comment.body).toContain('Evaluated config-defined prompts');
+      expect(comment.body).not.toContain('LLM prompt was modified');
+    });
+
+    test('should run when a literal-backslash config dependency changes on POSIX', async () => {
+      const dependency = 'data/context\\literal.json';
+      mockOctokit.paginate.mockResolvedValue([{ filename: dependency }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue([dependency]);
 
       await run();
 
@@ -1091,7 +3920,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('Evaluated prompt files'),
       });
 
       // Should still fail the action after posting the comment
@@ -1385,23 +4214,32 @@ describe('GitHub Action Main', () => {
 
     test('should omit evaluated files when a non-PR run uses config prompts', async () => {
       Object.defineProperty(mockGithub.context, 'eventName', {
-        value: 'workflow_dispatch',
+        value: 'push',
         configurable: true,
       });
       Object.defineProperty(mockGithub.context, 'payload', {
         value: {
-          inputs: {},
+          before: 'a'.repeat(40),
+          after: 'b'.repeat(40),
         },
         configurable: true,
       });
-      withInputs({ prompts: '' });
+      mockCore.getBooleanInput.mockImplementation(
+        (name: string) => name === 'use-config-prompts',
+      );
+      mockGitInterface.diff.mockResolvedValueOnce('promptfooconfig.yaml');
 
       await run();
 
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
       expect(mockCore.summary.addHeading).not.toHaveBeenCalledWith(
         'Evaluated Files',
         3,
       );
+      expect(mockCore.summary.addList).not.toHaveBeenCalledWith([
+        'prompts/prompt1.txt',
+      ]);
       expect(mockCore.summary.write).toHaveBeenCalled();
     });
 
