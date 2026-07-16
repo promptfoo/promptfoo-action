@@ -170,10 +170,7 @@ function providerFilePath(fileUrl: string, allowJavascript = false): string {
       ? /\.(?:js|cjs|mjs|ts|cts|mts)$/i.test(scriptPath)
       : /\.(?:go|rb)$/i.test(scriptPath));
   const isValidFunctionName =
-    functionName.length === 0 ||
-    (/\.go$/i.test(scriptPath)
-      ? /^(?:call_api|CallApi)$/.test(functionName)
-      : /^[^\\/:\0]+$/u.test(functionName));
+    functionName.length === 0 || /^[^\\/:\0]+$/u.test(functionName);
   if (functionSeparator > 1 && isSupportedScript && isValidFunctionName) {
     return scriptPath;
   }

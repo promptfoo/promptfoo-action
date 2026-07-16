@@ -1897,7 +1897,7 @@ providers:
     vi.unstubAllEnvs();
   });
 
-  it('should extract a callable Unicode Python selector and preserve an unsupported Go selector', () => {
+  it('should extract callable Unicode Python and Go selectors down to the underlying file', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:
   - file://providers/provider.py:café
@@ -1906,9 +1906,11 @@ providers:
 
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
+    // promptfoo's GolangProvider strips any :function selector for a .go file
+    // (not just call_api/CallApi), so the tracked dependency is the .go file.
     expect(deps).toEqual([
       '../config/providers/provider.py',
-      '../config/providers/provider.go:调用',
+      '../config/providers/provider.go',
     ]);
   });
 
