@@ -38562,6 +38562,32 @@ function extractFileDependencies(configPath) {
       dependencies.add(`${root}${path6.sep}`);
     }
   };
+  const canReadStructuredFile = (filePath) => {
+    try {
+      const fileStats = fs6.statSync(filePath);
+      if (!fileStats.isFile()) {
+        addDependencyRootWatchers();
+        warning(
+          "Skipping non-regular structured config dependency; conservatively watching the dependency root"
+        );
+        return false;
+      }
+      if (fileStats.size > MAX_STRUCTURED_FILE_SIZE) {
+        addDependencyRootWatchers();
+        warning(
+          "Skipping oversized structured config dependency; conservatively watching the dependency root"
+        );
+        return false;
+      }
+    } catch {
+      addDependencyRootWatchers();
+      warning(
+        "Skipping structured config dependency whose size cannot be verified; conservatively watching the dependency root"
+      );
+      return false;
+    }
+    return true;
+  };
   let parsedConfig = false;
   let dependencyBaseDir = configDir;
   try {
@@ -38584,6 +38610,7 @@ function extractFileDependencies(configPath) {
         return [];
       }
     }
+    if (!canReadStructuredFile(configPath)) return ["./"];
     const configContent = fs6.readFileSync(configPath, "utf8");
     if (!configContent.trim()) {
       debug("Config file is empty or invalid");
@@ -38604,24 +38631,6 @@ function extractFileDependencies(configPath) {
         return [];
       }
     });
-    const canReadStructuredFile = (filePath) => {
-      try {
-        if (fs6.statSync(filePath).size > MAX_STRUCTURED_FILE_SIZE) {
-          addDependencyRootWatchers();
-          warning(
-            "Skipping oversized structured config dependency; conservatively watching the dependency root"
-          );
-          return false;
-        }
-      } catch {
-        addDependencyRootWatchers();
-        warning(
-          "Skipping structured config dependency whose size cannot be verified; conservatively watching the dependency root"
-        );
-        return false;
-      }
-      return true;
-    };
     let warnedForeignWindowsPath = false;
     const resolveConfigDependency = (filePath, source) => {
       try {
@@ -39096,6 +39105,7 @@ function extractFileDependencies(configPath) {
     if (config2.prompts) {
       const configuredPrompts = typeof config2.prompts === "string" ? [config2.prompts] : Array.isArray(config2.prompts) ? config2.prompts : Object.keys(config2.prompts);
       for (const configuredPrompt of configuredPrompts) {
+        if (configuredPrompt == null) continue;
         const prompt = typeof configuredPrompt === "object" && (configuredPrompt.raw || configuredPrompt.id) ? configuredPrompt.raw || configuredPrompt.id : configuredPrompt;
         if (typeof prompt === "string" && prompt.startsWith("file://")) {
           for (const fileUrl of getFileReferenceCandidates(prompt, "generic")) {
@@ -40049,9 +40059,15 @@ async function run() {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
         );
       } else {
-        changedFiles = pullRequestFiles.flatMap(
+        const pullRequestFilePaths = pullRequestFiles.flatMap(
           (file) => file.previous_filename ? [file.filename, file.previous_filename] : [file.filename]
-        ).join("\0").concat("\0");
+        );
+        if (pullRequestFilePaths.some((filePath) => filePath.includes("\0"))) {
+          throw new Error(
+            "Pull request file paths must not contain null bytes"
+          );
+        }
+        changedFiles = pullRequestFilePaths.join("\0").concat("\0");
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");

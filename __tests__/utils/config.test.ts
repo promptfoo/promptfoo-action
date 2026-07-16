@@ -1629,12 +1629,13 @@ tests:
     expect(core.warning).not.toHaveBeenCalled();
   });
 
-  it('should extract prompt files', () => {
+  it('should extract prompt files and ignore a null prompt entry', () => {
     const configContent = `
 prompts:
   - file://prompts/prompt1.txt
   - file: prompts/prompt2.txt
   - "This is an inline prompt"
+  - null
 `;
     mockFs.readFileSync.mockReturnValue(configContent);
 

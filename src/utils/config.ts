@@ -1138,6 +1138,7 @@ export function extractFileDependencies(configPath: string): string[] {
             ? config.prompts
             : Object.keys(config.prompts);
       for (const configuredPrompt of configuredPrompts) {
+        if (configuredPrompt == null) continue;
         const prompt =
           typeof configuredPrompt === 'object' &&
           (configuredPrompt.raw || configuredPrompt.id)
