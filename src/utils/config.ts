@@ -625,7 +625,6 @@ export function extractFileDependencies(configPath: string): string[] {
     const visitedProviderConfigs = new Set<string>();
     const activeProviderConfigs = new Set<string>();
     const visitedProviderValues = new WeakMap<object, Set<string>>();
-    const activeProviderValues = new WeakSet<object>();
     const activeProviderValueEnvs = new WeakMap<object, string>();
     let providerTraversalCount = 0;
     let providerTraversalStopped = false;
@@ -951,7 +950,7 @@ export function extractFileDependencies(configPath: string): string[] {
       if (visitedContexts?.has(providerValueContextKey)) {
         return;
       }
-      if (activeProviderValues.has(value)) {
+      if (activeProviderValueEnvs.has(value)) {
         if (activeProviderValueEnvs.get(value) === envContextKey) {
           return;
         }
@@ -964,7 +963,6 @@ export function extractFileDependencies(configPath: string): string[] {
         visitedProviderValues.set(value, new Set([providerValueContextKey]));
       }
 
-      activeProviderValues.add(value);
       activeProviderValueEnvs.set(value, envContextKey);
 
       try {
@@ -1157,7 +1155,6 @@ export function extractFileDependencies(configPath: string): string[] {
           );
         }
       } finally {
-        activeProviderValues.delete(value);
         activeProviderValueEnvs.delete(value);
       }
     };
