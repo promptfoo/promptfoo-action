@@ -501,7 +501,11 @@ export async function run(): Promise<void> {
       ];
       for (const [name, value] of Object.entries(process.env)) {
         if (
+          // Only mask secret-shaped values long enough to be a real credential.
+          // A repository-controlled env file could otherwise set a secret-named
+          // variable to a 1-2 char value and turn it into a global log mask.
           value &&
+          value.length >= 8 &&
           (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
             name,
           ) ||
@@ -774,20 +778,18 @@ export async function run(): Promise<void> {
       }
 
       // Load explicitly selected .env files after the implicit default.
-      if (explicitEnvFiles.length > 0) {
-        for (const envFilePath of explicitEnvFiles) {
-          if (fs.existsSync(envFilePath)) {
-            core.info(`Loading environment variables from ${envFilePath}`);
-            loadEnvironmentFile(resolveContainedEnvFile(envFilePath));
-            maskApiKeys();
-            core.info(`Successfully loaded ${envFilePath}`);
-          } else {
-            throw new PromptfooActionError(
-              `Environment file ${envFilePath} not found`,
-              ErrorCodes.ENV_FILE_NOT_FOUND,
-              `Make sure the environment file exists within ${workingDirectory}`,
-            );
-          }
+      for (const envFilePath of explicitEnvFiles) {
+        if (fs.existsSync(envFilePath)) {
+          core.info(`Loading environment variables from ${envFilePath}`);
+          loadEnvironmentFile(resolveContainedEnvFile(envFilePath));
+          maskApiKeys();
+          core.info(`Successfully loaded ${envFilePath}`);
+        } else {
+          throw new PromptfooActionError(
+            `Environment file ${envFilePath} not found`,
+            ErrorCodes.ENV_FILE_NOT_FOUND,
+            `Make sure the environment file exists within ${workingDirectory}`,
+          );
         }
       }
     };

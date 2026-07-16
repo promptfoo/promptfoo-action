@@ -39342,10 +39342,6 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "CC",
   "CC_HOST",
   "CC_TARGET",
-  "CGO_CFLAGS",
-  "CGO_CPPFLAGS",
-  "CGO_CXXFLAGS",
-  "CGO_LDFLAGS",
   "CI",
   "CFLAGS",
   "CFLAGS_HOST",
@@ -39479,7 +39475,6 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "OPENCODE_CONFIG_CONTENT",
   "OPENCODE_CONFIG_DIR",
   "OPENCODE_GIT_BASH_PATH",
-  "OTEL_EXPORTER_OTLP_ENDPOINT",
   "PALM_API_HOST",
   "PATH",
   "PATHEXT",
@@ -40299,9 +40294,14 @@ async function run() {
         groqApiKey
       ];
       for (const [name, value] of Object.entries(process.env)) {
-        if (value && (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
-          name
-        ) || /(?:^|_)BEARER_TOKEN(?:_|$)/i.test(name) || name.toUpperCase() === "FAL_KEY" || name.toUpperCase() === "ABLIT_KEY")) {
+        if (
+          // Only mask secret-shaped values long enough to be a real credential.
+          // A repository-controlled env file could otherwise set a secret-named
+          // variable to a 1-2 char value and turn it into a global log mask.
+          value && value.length >= 8 && (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
+            name
+          ) || /(?:^|_)BEARER_TOKEN(?:_|$)/i.test(name) || name.toUpperCase() === "FAL_KEY" || name.toUpperCase() === "ABLIT_KEY")
+        ) {
           apiKeys.push(value);
         }
       }
@@ -40522,20 +40522,18 @@ async function run() {
         maskApiKeys();
         info(`Successfully loaded ${implicitFilePath}`);
       }
-      if (explicitEnvFiles.length > 0) {
-        for (const envFilePath of explicitEnvFiles) {
-          if (fs7.existsSync(envFilePath)) {
-            info(`Loading environment variables from ${envFilePath}`);
-            loadEnvironmentFile(resolveContainedEnvFile(envFilePath));
-            maskApiKeys();
-            info(`Successfully loaded ${envFilePath}`);
-          } else {
-            throw new PromptfooActionError(
-              `Environment file ${envFilePath} not found`,
-              ErrorCodes.ENV_FILE_NOT_FOUND,
-              `Make sure the environment file exists within ${workingDirectory}`
-            );
-          }
+      for (const envFilePath of explicitEnvFiles) {
+        if (fs7.existsSync(envFilePath)) {
+          info(`Loading environment variables from ${envFilePath}`);
+          loadEnvironmentFile(resolveContainedEnvFile(envFilePath));
+          maskApiKeys();
+          info(`Successfully loaded ${envFilePath}`);
+        } else {
+          throw new PromptfooActionError(
+            `Environment file ${envFilePath} not found`,
+            ErrorCodes.ENV_FILE_NOT_FOUND,
+            `Make sure the environment file exists within ${workingDirectory}`
+          );
         }
       }
     };
