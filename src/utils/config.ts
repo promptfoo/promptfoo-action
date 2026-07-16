@@ -1321,6 +1321,11 @@ export function extractFileDependencies(
           /\benv\b/.test(reference) &&
           reference.indexOf('{{', reference.indexOf('{{') + 2) < 0 &&
           reference.indexOf('}}') === reference.lastIndexOf('}}');
+        // A whitespace-bearing reference is only a file path when it also has a
+        // path separator or is a template; otherwise it is inline prose that
+        // merely ends in a filename-like token (e.g. "Explain utils.py").
+        const referenceCouldBePath =
+          !/\s/.test(reference) || /[\\/]/.test(reference) || isTemplated;
         if (
           !declaredFile &&
           !isExecutable &&
@@ -1384,13 +1389,14 @@ export function extractFileDependencies(
               (!/\s/.test(reference) && /\*\([^/]*\)/.test(reference)))) ||
           referenceHasMagic ||
           (/[\\/]/.test(reference) && !/\s/.test(reference)) ||
-          hasPromptFileExtension(reference);
+          (hasPromptFileExtension(reference) && referenceCouldBePath);
 
         if (!looksLikePath) {
           const candidatePath = resolvePromptProbe(reference);
           const hasShortExtension =
-            reference.charAt(reference.length - 3) === '.' ||
-            reference.charAt(reference.length - 4) === '.';
+            referenceCouldBePath &&
+            (reference.charAt(reference.length - 3) === '.' ||
+              reference.charAt(reference.length - 4) === '.');
           if (!candidatePath) {
             return;
           }

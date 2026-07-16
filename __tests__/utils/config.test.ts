@@ -3040,6 +3040,8 @@ tests:
     'prompts: What is the capital of {{country}}?\n',
     'prompts: Return [safe] output for {{user}}.\n',
     'prompts: Which option (A or B)? Explain briefly.\n',
+    'prompts: "Explain the code in utils.py"\n',
+    'prompts: "Find the bug in server.js"\n',
     'prompts: portkey://workspace/*\n',
     'prompts: langfuse://workspace/*\n',
     'prompts: helicone://workspace/*\n',

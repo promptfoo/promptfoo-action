@@ -39431,6 +39431,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd(), globT
         const isFileUrl = reference.startsWith("file://");
         const isTemplated = !isExecutable && /\{[{%#]/.test(reference);
         const isEnvironmentTemplate = /^\s*\{\{-?/.test(reference) && /-?\}\}\s*$/.test(reference) && /\benv\b/.test(reference) && reference.indexOf("{{", reference.indexOf("{{") + 2) < 0 && reference.indexOf("}}") === reference.lastIndexOf("}}");
+        const referenceCouldBePath = !/\s/.test(reference) || /[\\/]/.test(reference) || isTemplated;
         if (!declaredFile && !isExecutable && !isFileUrl && !isTemplated && /\s/.test(reference) && reference.includes("file://")) {
           return;
         }
@@ -39455,10 +39456,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd(), globT
           });
           referenceHasMagic = referencePreflight === "too-many-braces" || referencePreflight === "safe" && hasGlobMagic(reference, GLOB_MAGIC_OPTIONS);
         }
-        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) || /^[^*]*\*+$/.test(reference) || !/\s/.test(reference) && /\*\([^/]*\)/.test(reference)) || referenceHasMagic || /[\\/]/.test(reference) && !/\s/.test(reference) || hasPromptFileExtension(reference);
+        const looksLikePath = declaredFile || isExecutable || isFileUrl || isEnvironmentTemplate || reference.includes("*") && (/\*+\.(?:[A-Za-z0-9_-]|\{|@\()/.test(reference) || /^[^*]*\*+$/.test(reference) || !/\s/.test(reference) && /\*\([^/]*\)/.test(reference)) || referenceHasMagic || /[\\/]/.test(reference) && !/\s/.test(reference) || hasPromptFileExtension(reference) && referenceCouldBePath;
         if (!looksLikePath) {
           const candidatePath = resolvePromptProbe(reference);
-          const hasShortExtension = reference.charAt(reference.length - 3) === "." || reference.charAt(reference.length - 4) === ".";
+          const hasShortExtension = referenceCouldBePath && (reference.charAt(reference.length - 3) === "." || reference.charAt(reference.length - 4) === ".");
           if (!candidatePath) {
             return;
           }
