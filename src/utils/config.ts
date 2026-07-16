@@ -993,9 +993,13 @@ export function extractFileDependencies(
             continue;
           }
           processFileUrl(
-            `file://${renderedPath}`,
+            renderedPath.startsWith('file://')
+              ? renderedPath
+              : `file://${renderedPath}`,
             false,
-            `file://${credentialPath}`,
+            credentialPath.startsWith('file://')
+              ? credentialPath
+              : `file://${credentialPath}`,
             true,
           );
         }

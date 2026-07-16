@@ -2303,7 +2303,7 @@ config:
     type: file
     path: "{{ env.TOKEN_PATH }}"
   tls:
-    keyPath: ./credentials/provider.key
+    keyPath: file://credentials/provider.key
 `;
       }
       if (candidate.endsWith('/providers/target.json')) {

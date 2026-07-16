@@ -5712,7 +5712,7 @@ var require_client_h1 = __commonJS({
       kResume,
       kHTTPContext
     } = require_symbols();
-    var constants3 = require_constants2();
+    var constants4 = require_constants2();
     var EMPTY_BUF = Buffer.alloc(0);
     var FastBuffer = Buffer[Symbol.species];
     var addListener = util.addListener;
@@ -5787,7 +5787,7 @@ var require_client_h1 = __commonJS({
       constructor(client, socket, { exports: exports3 }) {
         assert(Number.isFinite(client[kMaxHeadersSize]) && client[kMaxHeadersSize] > 0);
         this.llhttp = exports3;
-        this.ptr = this.llhttp.llhttp_alloc(constants3.TYPE.RESPONSE);
+        this.ptr = this.llhttp.llhttp_alloc(constants4.TYPE.RESPONSE);
         this.client = client;
         this.socket = socket;
         this.timeout = null;
@@ -5882,11 +5882,11 @@ var require_client_h1 = __commonJS({
             currentBufferRef = null;
           }
           const offset = llhttp.llhttp_get_error_pos(this.ptr) - currentBufferPtr;
-          if (ret !== constants3.ERROR.OK) {
+          if (ret !== constants4.ERROR.OK) {
             const body = data.subarray(offset);
-            if (ret === constants3.ERROR.PAUSED_UPGRADE) {
+            if (ret === constants4.ERROR.PAUSED_UPGRADE) {
               this.onUpgrade(body);
-            } else if (ret === constants3.ERROR.PAUSED) {
+            } else if (ret === constants4.ERROR.PAUSED) {
               this.paused = true;
               socket.unshift(body);
             } else {
@@ -5909,10 +5909,10 @@ var require_client_h1 = __commonJS({
         } finally {
           currentParser = null;
         }
-        if (ret === constants3.ERROR.OK) {
+        if (ret === constants4.ERROR.OK) {
           return null;
         }
-        if (ret === constants3.ERROR.PAUSED || ret === constants3.ERROR.PAUSED_UPGRADE) {
+        if (ret === constants4.ERROR.PAUSED || ret === constants4.ERROR.PAUSED_UPGRADE) {
           this.paused = true;
           return null;
         }
@@ -5929,7 +5929,7 @@ var require_client_h1 = __commonJS({
           const len = new Uint8Array(llhttp.memory.buffer, ptr).indexOf(0);
           message = "Response does not match the HTTP/1.1 protocol (" + Buffer.from(llhttp.memory.buffer, ptr, len).toString() + ")";
         }
-        return new HTTPParserError(message, constants3.ERROR[ret], data);
+        return new HTTPParserError(message, constants4.ERROR[ret], data);
       }
       destroy() {
         assert(this.ptr != null);
@@ -6108,7 +6108,7 @@ var require_client_h1 = __commonJS({
           socket[kBlocking] = false;
           client[kResume]();
         }
-        return pause ? constants3.ERROR.PAUSED : 0;
+        return pause ? constants4.ERROR.PAUSED : 0;
       }
       onBody(buf) {
         const { client, socket, statusCode, maxResponseSize } = this;
@@ -6130,7 +6130,7 @@ var require_client_h1 = __commonJS({
         }
         this.bytesRead += buf.length;
         if (request2.onData(buf) === false) {
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         }
       }
       onMessageComplete() {
@@ -6166,13 +6166,13 @@ var require_client_h1 = __commonJS({
         if (socket[kWriting]) {
           assert(client[kRunning] === 0);
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (!shouldKeepAlive) {
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (socket[kReset] && client[kRunning] === 0) {
           util.destroy(socket, new InformationalError("reset"));
-          return constants3.ERROR.PAUSED;
+          return constants4.ERROR.PAUSED;
         } else if (client[kPipelining] == null || client[kPipelining] === 1) {
           setImmediate(() => client[kResume]());
         } else {
@@ -38405,6 +38405,74 @@ function hasBalancedGlobDelimiters(globPattern, platform2 = process.platform) {
 var MAX_BRACE_EXPANSIONS = 1024;
 var MAX_GLOB_PATTERN_LENGTH = 65536;
 var MAX_STRUCTURED_PROMPT_BYTES = 10485760;
+function readRegularFileSafely(filePath, isPhysicalPathAllowed) {
+  let inspectedStat;
+  let physicalPath;
+  try {
+    inspectedStat = fs6.statSync(filePath);
+    physicalPath = fs6.realpathSync(filePath);
+    if (!isPhysicalPathAllowed(physicalPath)) {
+      return { ok: false, reason: "inspection" };
+    }
+  } catch {
+    return { ok: false, reason: "inspection" };
+  }
+  if (!inspectedStat.isFile()) return { ok: false, reason: "non-regular" };
+  if (inspectedStat.size > MAX_STRUCTURED_PROMPT_BYTES) {
+    return { ok: false, reason: "too-large" };
+  }
+  let descriptor;
+  try {
+    descriptor = fs6.openSync(
+      physicalPath,
+      fs6.constants.O_RDONLY | fs6.constants.O_NONBLOCK | fs6.constants.O_NOFOLLOW
+    );
+  } catch {
+    return { ok: false, reason: "inspection" };
+  }
+  try {
+    let fileStat;
+    try {
+      fileStat = fs6.fstatSync(descriptor);
+    } catch {
+      return { ok: false, reason: "inspection" };
+    }
+    if (fileStat.dev !== inspectedStat.dev || fileStat.ino !== inspectedStat.ino) {
+      return { ok: false, reason: "inspection" };
+    }
+    if (!fileStat.isFile()) return { ok: false, reason: "non-regular" };
+    if (fileStat.size > MAX_STRUCTURED_PROMPT_BYTES) {
+      return { ok: false, reason: "too-large" };
+    }
+    try {
+      const chunks = [];
+      let totalBytes = 0;
+      while (totalBytes <= MAX_STRUCTURED_PROMPT_BYTES) {
+        const chunk = Buffer.allocUnsafe(
+          Math.min(65536, MAX_STRUCTURED_PROMPT_BYTES + 1 - totalBytes)
+        );
+        const bytesRead = fs6.readSync(descriptor, chunk, 0, chunk.length, null);
+        if (bytesRead === 0) break;
+        chunks.push(chunk.subarray(0, bytesRead));
+        totalBytes += bytesRead;
+      }
+      if (totalBytes > MAX_STRUCTURED_PROMPT_BYTES) {
+        return { ok: false, reason: "too-large" };
+      }
+      return {
+        content: Buffer.concat(chunks, totalBytes).toString("utf8"),
+        ok: true
+      };
+    } catch {
+      return { ok: false, reason: "read" };
+    }
+  } finally {
+    try {
+      fs6.closeSync(descriptor);
+    } catch {
+    }
+  }
+}
 var JAVASCRIPT_EXTENSIONS = /* @__PURE__ */ new Set(["cjs", "cts", "js", "mjs", "mts", "ts"]);
 var SCRIPT_EXTENSIONS = /* @__PURE__ */ new Set(["py", "go", "rb"]);
 var PROMPT_FILE_EXTENSIONS = /* @__PURE__ */ new Set([
@@ -38442,6 +38510,19 @@ var HTTP_CREDENTIAL_PATH_KEYS = [
   "caPath",
   "jksPath"
 ];
+var HTTP_FUNCTION_PATH_KEYS = /* @__PURE__ */ new Set([
+  "validateStatus",
+  "transformRequest",
+  "transformResponse",
+  "responseParser",
+  "sessionParser"
+]);
+var HTTP_DIRECT_CONTAINER_KEYS = /* @__PURE__ */ new Set([
+  "auth",
+  "signatureAuth",
+  "tls",
+  "multipart"
+]);
 var legacySetTag = defineMappingTag(
   "tag:yaml.org,2002:set",
   {
@@ -38673,7 +38754,16 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       );
       return ["."];
     }
-    const configContent = fs6.readFileSync(configPath, "utf8");
+    const configRead = readRegularFileSafely(
+      configPath,
+      (targetPath) => isPathInside(configDir, targetPath) || isPhysicalDependencyPathInside(targetPath)
+    );
+    if (!configRead.ok) {
+      const warning2 = configRead.reason === "non-regular" ? "Config file is not a regular file; watching all repository changes" : configRead.reason === "too-large" ? "Config file is too large to scan safely; watching all repository changes" : "Config file could not be inspected safely; watching all repository changes";
+      warning(warning2);
+      return ["./"];
+    }
+    const configContent = configRead.content;
     if (!configContent.trim()) {
       debug("Config file is empty or invalid");
       return [];
@@ -38789,6 +38879,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       magicalBraces: true,
       braceExpandMax: MAX_BRACE_EXPANSIONS
     };
+    const hasGlobCharacterClass = (globPath) => {
+      const classStart = globPath.indexOf("[");
+      return classStart !== -1 && globPath.indexOf("]", classStart + 1) !== -1;
+    };
     const tryHasGlobMagic = (globPath, source) => {
       if (globPath.length > MAX_GLOB_PATTERN_LENGTH) {
         warnUnsafeDependency(
@@ -38807,7 +38901,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         return void 0;
       }
       try {
-        return le(globPath, globOptions);
+        return le(globPath, globOptions) || hasGlobCharacterClass(globPath);
       } catch {
         warning(`Ignoring ${source}: pattern is invalid`);
         return void 0;
@@ -38868,8 +38962,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
       const filePath = normalizeConfigFilePath(
         selector?.pathWithoutSelector ?? rawFilePath
       );
-      const globPath = normalizeGlobPattern(filePath, "win32");
-      const hasGlobMagic = tryHasGlobMagic(globPath, "config dependency");
+      const preserveLiteralBackslashes = redactDisplayPath && process.platform !== "win32" && filePath.includes("\\");
+      const globPath = preserveLiteralBackslashes ? filePath : normalizeGlobPattern(filePath, "win32");
+      const hasGlobMagic = preserveLiteralBackslashes ? false : tryHasGlobMagic(globPath, "config dependency");
       if (hasGlobMagic === void 0) return;
       if (hasGlobMagic) {
         const safePatterns = expandSafeGlobPatterns(
@@ -38930,7 +39025,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           const pathParts = safePattern.slice(root.length).split(/[\\/]/).filter(Boolean);
           let basePath = root;
           for (const part of pathParts) {
-            if (le(part, globOptions)) {
+            if (le(part, globOptions) || hasGlobCharacterClass(part)) {
               break;
             }
             basePath = path6.join(basePath, part);
@@ -39028,9 +39123,9 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             continue;
           }
           processFileUrl(
-            `file://${renderedPath}`,
+            renderedPath.startsWith("file://") ? renderedPath : `file://${renderedPath}`,
             false,
-            `file://${credentialPath}`,
+            credentialPath.startsWith("file://") ? credentialPath : `file://${credentialPath}`,
             true
           );
         }
@@ -39062,6 +39157,22 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           sourcePath.startsWith("file://") ? sourcePath : `file://${sourcePath}`,
           true
         );
+      }
+      const session = typeof record.session === "object" && record.session !== null ? record.session : void 0;
+      const functionPaths = [
+        ...Array.from(HTTP_FUNCTION_PATH_KEYS, (key) => record[key]),
+        session?.responseParser
+      ];
+      for (const functionPath of functionPaths) {
+        if (typeof functionPath !== "string" || !functionPath.startsWith("file://")) {
+          continue;
+        }
+        const renderedPath = renderEnvironmentTemplates(functionPath, env);
+        if (hasNunjucksTemplate(renderedPath)) {
+          hasDynamicPromptDependencies = true;
+          continue;
+        }
+        processFileUrl(renderedPath, true, functionPath, true);
       }
     };
     const visitedStructuredFiles = /* @__PURE__ */ new Set();
@@ -39101,6 +39212,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         }
       }
       const visited = /* @__PURE__ */ new WeakMap();
+      const handledHttpConfigs = /* @__PURE__ */ new WeakSet();
+      const handledHttpSessions = /* @__PURE__ */ new WeakSet();
       const walk = (root, sourcePath) => {
         const pending = [
           {
@@ -39175,8 +39288,15 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
             const httpConfig = knownHttpProvider && value === root ? record : typeof record.config === "object" && record.config !== null ? record.config : void 0;
             if (providerContext && httpConfig && (knownHttpProvider || typeof record.id === "string" && isHttpProviderId(record.id))) {
               extractHttpFileDependencies(httpConfig, nestedEnv);
+              handledHttpConfigs.add(httpConfig);
+              if (typeof httpConfig.session === "object" && httpConfig.session !== null) {
+                handledHttpSessions.add(httpConfig.session);
+              }
             }
             for (const [key, entry] of Object.entries(value).reverse()) {
+              if (handledHttpConfigs.has(record) && (HTTP_DIRECT_CONTAINER_KEYS.has(key) || HTTP_FUNCTION_PATH_KEYS.has(key)) || handledHttpSessions.has(record) && key === "responseParser") {
+                continue;
+              }
               pending.push({
                 value: entry,
                 env: nestedEnv,
@@ -39221,26 +39341,29 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         try {
           if (visitedStructuredFiles.has(physicalPromptFile)) continue;
           visitedStructuredFiles.add(physicalPromptFile);
-          let promptSize;
-          try {
-            promptSize = fs6.statSync(physicalPromptFile).size;
-          } catch {
+          const promptRead = readRegularFileSafely(
+            physicalPromptFile,
+            isPhysicalDependencyPathInside
+          );
+          if (!promptRead.ok) {
             hasDynamicPromptDependencies = true;
-            warnUnsafeDependency(
-              "structured prompt dependency inspection",
-              "Structured prompt file could not be inspected safely; watching all repository changes"
-            );
-            continue;
-          }
-          if (promptSize > MAX_STRUCTURED_PROMPT_BYTES) {
-            hasDynamicPromptDependencies = true;
-            warnUnsafeDependency(
+            const warning2 = promptRead.reason === "non-regular" ? [
+              "structured prompt dependency type",
+              "Structured prompt file is not a regular file; watching all repository changes"
+            ] : promptRead.reason === "too-large" ? [
               "structured prompt dependency size",
               "Structured prompt file is too large to scan safely; watching all repository changes"
-            );
+            ] : promptRead.reason === "read" ? [
+              "structured prompt dependency parsing",
+              "Structured dependency file could not be parsed safely; watching all repository changes"
+            ] : [
+              "structured prompt dependency inspection",
+              "Structured prompt file could not be inspected safely; watching all repository changes"
+            ];
+            warnUnsafeDependency(warning2[0], warning2[1]);
             continue;
           }
-          const promptContent = fs6.readFileSync(physicalPromptFile, "utf8");
+          const promptContent = promptRead.content;
           const structuredExtension = path6.extname(absolutePromptFile).toLowerCase();
           const parsed = structuredExtension === ".jsonl" ? promptContent.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line)) : structuredExtension === ".json" ? JSON.parse(promptContent) : load(promptContent, {
             schema: YAML_LOAD_SCHEMA
@@ -39257,6 +39380,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
     };
     const extractNestedConfigDependencies = (root, env = templateEnv, scanProviderPaths = false) => {
       const visited = /* @__PURE__ */ new WeakSet();
+      const httpSession = scanProviderPaths && typeof root === "object" && root !== null && typeof root.session === "object" && root.session !== null ? root.session : void 0;
       const pending = [root];
       while (pending.length > 0) {
         const value = pending.pop();
@@ -39281,7 +39405,10 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         if (scanProviderPaths && value === root) {
           extractHttpFileDependencies(value, env);
         }
-        for (const [, entry] of Object.entries(value).reverse()) {
+        for (const [key, entry] of Object.entries(value).reverse()) {
+          if (scanProviderPaths && (value === root && (HTTP_DIRECT_CONTAINER_KEYS.has(key) || HTTP_FUNCTION_PATH_KEYS.has(key)) || value === httpSession && key === "responseParser")) {
+            continue;
+          }
           pending.push(entry);
         }
       }
@@ -39411,8 +39538,8 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
         extractProviderDependencies(provider);
       }
     }
-    extractNestedConfigDependencies(config2.scenarios);
     const pendingScenarios = [config2.scenarios];
+    const scenarioProviders = [];
     const visitedScenarios = /* @__PURE__ */ new WeakSet();
     while (pendingScenarios.length > 0) {
       const scenario = pendingScenarios.pop();
@@ -39425,6 +39552,7 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           hasDynamicPromptDependencies = true;
           continue;
         }
+        processFileUrl(renderedScenario, true, scenario);
         extractNestedPromptFileUrls(
           renderedScenario,
           scenario,
@@ -39434,13 +39562,24 @@ function extractFileDependencies(configPath, executionCwd = process.cwd()) {
           templateEnv,
           true
         );
+      } else if (typeof scenario === "string" && scenario.includes("file://") && hasNunjucksTemplate(scenario)) {
+        hasDynamicPromptDependencies = true;
       } else if (typeof scenario === "object" && scenario !== null) {
-        if (visitedScenarios.has(scenario)) continue;
+        if (ArrayBuffer.isView(scenario) || visitedScenarios.has(scenario)) {
+          continue;
+        }
         visitedScenarios.add(scenario);
-        for (const entry of Object.values(scenario).reverse()) {
+        for (const [key, entry] of Object.entries(scenario).reverse()) {
+          if (key === "provider") {
+            scenarioProviders.push(entry);
+            continue;
+          }
           pendingScenarios.push(entry);
         }
       }
+    }
+    for (const provider of scenarioProviders.reverse()) {
+      extractProviderDependencies(provider);
     }
     if (config2.nunjucksFilters) {
       for (const filterPath of Object.values(config2.nunjucksFilters)) {
@@ -40430,6 +40569,11 @@ async function run() {
         "Could not resolve the repository workspace or working directory safely"
       );
     }
+    if (!isPathInside2(workspaceRoot, workingDirectory) || !isPathInside2(physicalWorkspaceRoot, physicalWorkingDirectory)) {
+      throw new Error(
+        "Working directory must stay within the repository workspace"
+      );
+    }
     for (const globPattern of promptFilesGlobs) {
       if (globPattern.length > MAX_DEPENDENCY_GLOB_PATTERN_LENGTH || globPattern.includes("\0") || !hasBalancedGlobDelimiters(globPattern)) {
         throw new Error("Prompt glob pattern is invalid or too large");
@@ -40468,7 +40612,7 @@ async function run() {
         nodir: true,
         braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS
       });
-      const allMatches = matches.filter((file) => {
+      const allMatches = useConfigPrompts ? matches : matches.filter((file) => {
         const absoluteFile = path7.resolve(workingDirectory, file);
         if (!isPathInside2(workspaceRoot, absoluteFile) || !isPathInside2(workingDirectory, absoluteFile)) {
           warning(
@@ -40596,12 +40740,12 @@ async function run() {
       return;
     }
     const selectedPromptFiles = configChanged || dependencyChanged ? allPromptFiles : promptFiles;
-    if (selectedPromptFiles.some((file) => /[\r\n]/.test(file))) {
+    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
+    if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
       throw new Error(
         "Prompt file paths containing CR or LF characters are not supported."
       );
     }
-    const evaluatedPromptFiles = useConfigPrompts ? [] : selectedPromptFiles;
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
     }
