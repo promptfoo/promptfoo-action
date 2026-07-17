@@ -2098,6 +2098,19 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalledTimes(shouldRun ? 1 : 0);
     });
 
+    test('should match a bracket-class dependency glob that glob.hasMagic misses', async () => {
+      // glob.hasMagic reports no magic for a single-char bracket class, but
+      // config.ts still emits file[1].txt as a glob (via hasGlobCharacterClass),
+      // so main.ts must match it against the changed file file1.txt too.
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'file1.txt' }]);
+      mockGlob.sync.mockReturnValue([]);
+      mockConfig.extractFileDependencies.mockReturnValue(['file[1].txt']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test('should compile a POSIX matcher once for repository dependency globs', async () => {
       const posixMatcher = vi.spyOn(path.posix, 'matchesGlob');
       mockOctokit.paginate.mockResolvedValue([
@@ -2159,17 +2172,18 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
-    test('should detect dependency directories without a trailing slash', async () => {
+    test('should detect a changed file inside a directory dependency even when the directory was deleted', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data']);
-      mockFsUtils.isDirectory.mockReturnValue(true);
+      // The directory dependency was deleted in the PR, so isDirectory can no
+      // longer confirm it; the changed child file must still trigger the eval.
+      mockFsUtils.isDirectory.mockReturnValue(false);
 
       await run();
 
-      expect(mockFsUtils.isDirectory).toHaveBeenCalledWith('data');
       expect(mockExec.exec).toHaveBeenCalled();
     });
 

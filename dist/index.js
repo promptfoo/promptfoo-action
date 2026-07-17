@@ -40686,11 +40686,12 @@ async function run() {
           }
           if (dep.length <= MAX_DEPENDENCY_GLOB_PATTERN_LENGTH) {
             try {
+              const classStart = dep.indexOf("[");
               if (le(dep, {
                 windowsPathsNoEscape: true,
                 magicalBraces: true,
                 braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1
-              })) {
+              }) || classStart !== -1 && dep.indexOf("]", classStart + 1) !== -1) {
                 const matcher = new Minimatch(dep, {
                   platform: "linux",
                   windowsPathsNoEscape: true,
@@ -40722,13 +40723,10 @@ async function run() {
           if (changedFilesList.includes(dep)) {
             return true;
           }
-          if (dep.endsWith("/") || isDirectory2(dep)) {
-            const depDir = dep.endsWith("/") ? dep : `${dep}/`;
-            return changedFilesList.some(
-              (changedFile) => changedFile.startsWith(depDir)
-            );
-          }
-          return false;
+          const depDir = dep.endsWith("/") ? dep : `${dep}/`;
+          return changedFilesList.some(
+            (changedFile) => changedFile.startsWith(depDir)
+          );
         });
         if (dependencyChanged) {
           info("Detected changes in config file dependencies");

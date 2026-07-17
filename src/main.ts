@@ -21,7 +21,6 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
-import { isDirectory } from './utils/fs';
 import {
   getGlobRangeError,
   hasBalancedGlobDelimiters,
@@ -675,12 +674,18 @@ export async function run(): Promise<void> {
 
           if (dep.length <= MAX_DEPENDENCY_GLOB_PATTERN_LENGTH) {
             try {
+              // Mirror config.ts's glob classification: it treats a bracket
+              // character class (e.g. file[1].txt) as a glob via
+              // hasGlobCharacterClass even though glob.hasMagic does not, so a
+              // dependency it emitted as a raw glob must be matched as one here.
+              const classStart = dep.indexOf('[');
               if (
                 glob.hasMagic(dep, {
                   windowsPathsNoEscape: true,
                   magicalBraces: true,
                   braceExpandMax: MAX_PROMPT_BRACE_EXPANSIONS + 1,
-                })
+                }) ||
+                (classStart !== -1 && dep.indexOf(']', classStart + 1) !== -1)
               ) {
                 const matcher = new Minimatch(dep, {
                   platform: 'linux',
@@ -718,15 +723,14 @@ export async function run(): Promise<void> {
             return true;
           }
 
-          // Check if the dependency is a directory and any changed file is within it
-          if (dep.endsWith('/') || isDirectory(dep)) {
-            const depDir = dep.endsWith('/') ? dep : `${dep}/`;
-            return changedFilesList.some((changedFile) =>
-              changedFile.startsWith(depDir),
-            );
-          }
-
-          return false;
+          // A changed file inside a directory dependency matches, even when the
+          // directory was deleted in the PR (so isDirectory can no longer
+          // confirm it). A file dependency has no children, so this never
+          // false-matches.
+          const depDir = dep.endsWith('/') ? dep : `${dep}/`;
+          return changedFilesList.some((changedFile) =>
+            changedFile.startsWith(depDir),
+          );
         });
 
         if (dependencyChanged) {
