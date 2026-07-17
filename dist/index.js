@@ -40472,13 +40472,10 @@ async function run() {
             if (changedFilesList.includes(dep)) {
               return true;
             }
-            if (dep.endsWith("/") || isDirectory2(dep)) {
-              const depDir = dep.endsWith("/") ? dep : `${dep}/`;
-              return changedFilesList.some(
-                (changedFile) => changedFile.startsWith(depDir)
-              );
-            }
-            return false;
+            const depDir = dep.endsWith("/") ? dep : `${dep}/`;
+            return changedFilesList.some(
+              (changedFile) => changedFile.startsWith(depDir)
+            );
           });
         } catch {
           dependencyChanged = true;
