@@ -21,7 +21,6 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
-import { isDirectory } from './utils/fs';
 import { MAX_GLOB_BRACE_EXPANSIONS, validateGlobPattern } from './utils/glob';
 import {
   parseOptionalPercentage,
@@ -827,15 +826,14 @@ export async function run(): Promise<void> {
             return true;
           }
 
-          // Check if the dependency is a directory and any changed file is within it
-          if (dep.endsWith('/') || isDirectory(dep)) {
-            const depDir = dep.endsWith('/') ? dep : `${dep}/`;
-            return changedFilesList.some((changedFile) =>
-              changedFile.startsWith(depDir),
-            );
-          }
-
-          return false;
+          // A changed file inside a directory dependency matches, even when the
+          // directory was deleted in the PR (so isDirectory can no longer
+          // confirm it). A file dependency has no children, so this never
+          // false-matches.
+          const depDir = dep.endsWith('/') ? dep : `${dep}/`;
+          return changedFilesList.some((changedFile) =>
+            changedFile.startsWith(depDir),
+          );
         });
 
         if (dependencyChanged) {
