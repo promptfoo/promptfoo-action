@@ -34,8 +34,10 @@
     "@actions/exec": "^3.0.0",
     "@actions/github": "^9.0.0",
     "@actions/io": "^3.0.2",
+    "csv-parse": "^6.2.0",
     "dotenv": "^17.3.1",
     "glob": "^13.0.6",
+    "minimatch": "^10.2.2",
     "simple-git": "^3.32.1"
   },
   "overrides": {
