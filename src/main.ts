@@ -4,6 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { braceExpand, Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -20,7 +21,14 @@ import {
   formatErrorMessage,
   PromptfooActionError,
 } from './utils/errors';
-import { isDirectory } from './utils/fs';
+import {
+  hasBalancedGlobDelimiters,
+  hasGlobCharacterClass,
+  hasUnsafeNumericGlobRange,
+  MAX_BRACE_EXPANSIONS,
+  MAX_GLOB_PATTERN_LENGTH,
+  normalizeRuntimeGlobPattern,
+} from './utils/glob';
 import {
   parseOptionalPercentage,
   parseOptionalPositiveInt,
@@ -186,9 +194,12 @@ export async function run(): Promise<void> {
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
-    const promptsInput = core.getInput('prompts', { required: false });
+    const promptsInput = core.getInput('prompts', {
+      required: false,
+      trimWhitespace: false,
+    });
     const promptFilesGlobs: string[] = promptsInput
-      ? promptsInput.split('\n').filter((line) => line.trim())
+      ? promptsInput.split(/\r?\n/).filter((line) => line.trim())
       : [];
     const configPath: string = core.getInput('config', {
       required: true,
@@ -204,10 +215,62 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    try {
+      const lexicalWorkingDirectory = path.relative(
+        workspaceRoot,
+        workingDirectory,
+      );
+      const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+      const realWorkingDirectory = path.relative(
+        realWorkspaceRoot,
+        fs.realpathSync(workingDirectory),
+      );
+      if (
+        [lexicalWorkingDirectory, realWorkingDirectory].some(
+          (relativePath) =>
+            relativePath === '..' ||
+            relativePath.startsWith(`..${path.sep}`) ||
+            path.isAbsolute(relativePath),
+        )
+      ) {
+        throw new Error('working directory escaped workspace');
+      }
+    } catch {
+      throw new PromptfooActionError(
+        'Working directory resolves outside the repository workspace; refusing to evaluate unsafe working directory',
+        ErrorCodes.INVALID_CONFIGURATION,
+      );
+    }
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
     );
+    const configIsInWorkspace =
+      configRepositoryPath !== '..' &&
+      !configRepositoryPath.startsWith('../') &&
+      !path.isAbsolute(configRepositoryPath);
+    if (configIsInWorkspace) {
+      try {
+        const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+        const realConfigPath = fs.realpathSync(configAbsolutePath);
+        const realConfigRelative = path.relative(
+          realWorkspaceRoot,
+          realConfigPath,
+        );
+        if (
+          realConfigRelative === '..' ||
+          realConfigRelative.startsWith(`..${path.sep}`) ||
+          path.isAbsolute(realConfigRelative)
+        ) {
+          throw new Error('config escaped workspace');
+        }
+      } catch {
+        throw new PromptfooActionError(
+          'Config path resolves outside the repository workspace; refusing to evaluate unsafe config',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+    }
     const noShare: boolean = core.getBooleanInput('no-share', {
       required: false,
     });
@@ -238,6 +301,7 @@ export async function run(): Promise<void> {
     });
     const workflowFiles: string = core.getInput('workflow-files', {
       required: false,
+      trimWhitespace: false,
     });
     const workflowBase: string = core.getInput('workflow-base', {
       required: false,
@@ -339,6 +403,21 @@ export async function run(): Promise<void> {
 
     const event = github.context.eventName;
     let changedFiles = '';
+    const encodeChangedFiles = (files: string[]): string => {
+      if (files.some((file) => file.includes('\0'))) {
+        throw new PromptfooActionError(
+          'Changed file path contains a null byte; refusing to process unsafe file list',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+      return files.length > 0 ? `${files.join('\0')}\0` : '';
+    };
+    const formatChangedFilesForLog = (files: string): string =>
+      files
+        .split('\0')
+        .filter(Boolean)
+        .map((file) => JSON.stringify(file))
+        .join(', ');
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -364,7 +443,17 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
+        changedFiles = encodeChangedFiles(
+          Array.from(
+            new Set(
+              pullRequestFiles.flatMap((file) =>
+                file.previous_filename
+                  ? [file.filename, file.previous_filename]
+                  : [file.filename],
+              ),
+            ),
+          ),
+        );
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -381,20 +470,26 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
-        core.info(`Using manually specified files: ${changedFiles}`);
+        changedFiles = encodeChangedFiles(
+          filesInput.split(/\r?\n/).filter((file: string) => file.trim()),
+        );
+        core.info(
+          `Using manually specified files: ${formatChangedFilesForLog(changedFiles)}`,
+        );
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
+            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -421,12 +516,14 @@ export async function run(): Promise<void> {
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
+            '--no-renames',
+            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
           );
         } catch (error) {
           core.warning(
@@ -449,34 +546,60 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split('\n').filter((f) => f);
+    const allPromptFiles: string[] = [];
+    const changedFilesList = changedFiles.split('\0').filter(Boolean);
 
     for (const globPattern of promptFilesGlobs) {
+      if (
+        globPattern.length > MAX_GLOB_PATTERN_LENGTH ||
+        globPattern.includes('\0')
+      ) {
+        throw new PromptfooActionError(
+          'Action prompt glob is too long or contains a null byte; refusing to enumerate unsafe pattern',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+      if (!hasBalancedGlobDelimiters(globPattern)) {
+        throw new PromptfooActionError(
+          'Action prompt glob contains malformed delimiters; refusing to enumerate unsafe pattern',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+      if (
+        hasUnsafeNumericGlobRange(globPattern) ||
+        braceExpand(globPattern, {
+          braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+        }).length > MAX_BRACE_EXPANSIONS
+      ) {
+        throw new PromptfooActionError(
+          'Action prompt glob expands to more than 1024 alternatives; refusing to enumerate unsafe pattern',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,
+        braceExpandMax: MAX_BRACE_EXPANSIONS,
       });
+      const allMatches = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...allMatches);
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = allMatches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
-          return (
-            repositoryFile !== configRepositoryPath &&
-            changedFilesList.includes(repositoryFile)
-          );
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
         promptFiles.push(...allMatches);
       }
     }
@@ -491,27 +614,74 @@ export async function run(): Promise<void> {
       const dependencies =
         extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
       if (dependencies.length > 0) {
-        core.debug(
-          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
-        );
+        core.debug(`Found ${dependencies.length} file dependencies in config`);
 
         // Check if any changed file matches the dependencies
-        dependencyChanged = dependencies.some((dep) => {
-          // Direct file match
-          if (changedFilesList.includes(dep)) {
-            return true;
-          }
+        try {
+          dependencyChanged = dependencies.some((dep) => {
+            if (dep === '' || dep === './') {
+              return true;
+            }
 
-          // Check if the dependency is a directory and any changed file is within it
-          if (dep.endsWith('/') || isDirectory(dep)) {
+            const runtimeDep = normalizeRuntimeGlobPattern(dep);
+
+            if (
+              runtimeDep.length > MAX_GLOB_PATTERN_LENGTH ||
+              runtimeDep.includes('\0') ||
+              !hasBalancedGlobDelimiters(runtimeDep) ||
+              hasUnsafeNumericGlobRange(runtimeDep) ||
+              braceExpand(runtimeDep, {
+                braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+              }).length > MAX_BRACE_EXPANSIONS
+            ) {
+              core.warning(
+                'Failed to validate config dependency glob; conservatively running evaluation',
+              );
+              return true;
+            }
+
+            if (
+              glob.hasMagic(runtimeDep, {
+                magicalBraces: true,
+                braceExpandMax: MAX_BRACE_EXPANSIONS + 1,
+                windowsPathsNoEscape: true,
+              }) ||
+              hasGlobCharacterClass(runtimeDep)
+            ) {
+              const matcher = new Minimatch(runtimeDep, {
+                platform: 'linux',
+                braceExpandMax: MAX_BRACE_EXPANSIONS,
+                windowsPathsNoEscape: true,
+              });
+              if (
+                changedFilesList.some((changedFile) =>
+                  matcher.match(changedFile),
+                )
+              ) {
+                return true;
+              }
+            }
+
+            // Direct file match
+            if (changedFilesList.includes(dep)) {
+              return true;
+            }
+
+            // A changed file inside a directory dependency matches, even when
+            // the directory was deleted in the PR (so isDirectory can no longer
+            // confirm it). A file dependency has no children, so this never
+            // false-matches.
             const depDir = dep.endsWith('/') ? dep : `${dep}/`;
             return changedFilesList.some((changedFile) =>
               changedFile.startsWith(depDir),
             );
-          }
-
-          return false;
-        });
+          });
+        } catch {
+          dependencyChanged = true;
+          core.warning(
+            'Failed to validate config dependency glob; conservatively running evaluation',
+          );
+        }
 
         if (dependencyChanged) {
           core.info('Detected changes in config file dependencies');
@@ -533,13 +703,85 @@ export async function run(): Promise<void> {
       return;
     }
 
+    const selectedPromptFiles = useConfigPrompts
+      ? []
+      : configChanged || dependencyChanged
+        ? allPromptFiles
+        : promptFiles;
+    const seenPromptFiles = new Set<string>();
+    const promptsToEvaluate: string[] = [];
+    for (const promptFile of selectedPromptFiles) {
+      const absolutePrompt = path.resolve(workingDirectory, promptFile);
+      if (seenPromptFiles.has(absolutePrompt)) continue;
+      seenPromptFiles.add(absolutePrompt);
+      promptsToEvaluate.push(path.relative(workingDirectory, absolutePrompt));
+    }
+    const evaluatedPromptFiles = promptsToEvaluate;
+    if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
+      throw new PromptfooActionError(
+        'Matched prompt file path contains a newline; refusing to evaluate unsafe path',
+        ErrorCodes.INVALID_CONFIGURATION,
+      );
+    }
+    if (evaluatedPromptFiles.length > 0) {
+      try {
+        const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+        const realWorkingDirectory = fs.realpathSync(workingDirectory);
+        for (const promptFile of evaluatedPromptFiles) {
+          const absolutePrompt = path.resolve(workingDirectory, promptFile);
+          const workspaceRelative = path.relative(
+            workspaceRoot,
+            absolutePrompt,
+          );
+          const workingDirectoryRelative = path.relative(
+            workingDirectory,
+            absolutePrompt,
+          );
+          if (
+            [workspaceRelative, workingDirectoryRelative].some(
+              (relativePath) =>
+                relativePath === '..' ||
+                relativePath.startsWith(`..${path.sep}`) ||
+                path.isAbsolute(relativePath),
+            )
+          ) {
+            throw new Error('prompt escaped workspace');
+          }
+          const realPrompt = fs.realpathSync(absolutePrompt);
+          const realWorkspaceRelative = path.relative(
+            realWorkspaceRoot,
+            realPrompt,
+          );
+          const realWorkingDirectoryRelative = path.relative(
+            realWorkingDirectory,
+            realPrompt,
+          );
+          if (
+            [realWorkspaceRelative, realWorkingDirectoryRelative].some(
+              (relativePath) =>
+                relativePath === '..' ||
+                relativePath.startsWith(`..${path.sep}`) ||
+                path.isAbsolute(relativePath),
+            )
+          ) {
+            throw new Error('prompt escaped workspace');
+          }
+        }
+      } catch {
+        throw new PromptfooActionError(
+          'Matched prompt file path resolves outside the repository workspace or working directory; refusing to evaluate unsafe path',
+          ErrorCodes.INVALID_CONFIGURATION,
+        );
+      }
+    }
+
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');
     }
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
+        `Processing all matching prompt files: ${evaluatedPromptFiles.join(', ')}`,
       );
     }
 
@@ -578,8 +820,8 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (!useConfigPrompts && promptFiles.length > 0) {
-      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
+    if (!useConfigPrompts && promptsToEvaluate.length > 0) {
+      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptsToEvaluate]);
     }
     // Check if sharing is enabled and validate authentication upfront
     if (noShare) {
@@ -809,8 +1051,11 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
-      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+      const evaluatedFiles =
+        evaluatedPromptFiles.length === 0
+          ? 'Prompts evaluated from config'
+          : `Evaluated prompt files: ${evaluatedPromptFiles.join(', ')}`;
+      let body = `⚠️ ${evaluatedFiles}
 
 | Success | Failure |
 |---------|---------|
@@ -845,9 +1090,9 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (promptFiles.length > 0) {
+      if (evaluatedPromptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
-        summary.addList(promptFiles);
+        summary.addList(evaluatedPromptFiles);
       }
 
       if (repeatCheckResult) {
