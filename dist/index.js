@@ -40276,13 +40276,10 @@ async function run() {
           } catch {
             warning("Skipping invalid config dependency glob pattern");
           }
-          if (dep.endsWith("/") || isDirectory2(dep)) {
-            const depDir = dep.endsWith("/") ? dep : `${dep}/`;
-            return changedFilesList.some(
-              (changedFile) => changedFile.startsWith(depDir)
-            );
-          }
-          return false;
+          const depDir = dep.endsWith("/") ? dep : `${dep}/`;
+          return changedFilesList.some(
+            (changedFile) => changedFile.startsWith(depDir)
+          );
         });
         if (dependencyChanged) {
           info("Detected changes in config file dependencies");

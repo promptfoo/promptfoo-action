@@ -1956,17 +1956,18 @@ describe('GitHub Action Main', () => {
       expect(mockCore.setFailed).not.toHaveBeenCalled();
     });
 
-    test('should detect dependency directories without a trailing slash', async () => {
+    test('should detect a changed file inside a directory dependency even when the directory was deleted', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/context.json' },
       ]);
       mockGlob.sync.mockReturnValue([]);
       mockConfig.extractFileDependencies.mockReturnValue(['data']);
-      mockFsUtils.isDirectory.mockReturnValue(true);
+      // The directory dependency was deleted in the PR, so isDirectory can no
+      // longer confirm it; the changed child file must still trigger the eval.
+      mockFsUtils.isDirectory.mockReturnValue(false);
 
       await run();
 
-      expect(mockFsUtils.isDirectory).toHaveBeenCalledWith('data');
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
