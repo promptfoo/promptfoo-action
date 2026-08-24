@@ -36821,6 +36821,42 @@ function extractFileDependencies(configPath) {
         dependencies.add(absolutePath);
       }
     };
+    const inspectedStructuredPrompts = /* @__PURE__ */ new Set();
+    const processPromptFile = (fileUrl) => {
+      processFileUrl(fileUrl);
+      const filePath = fileUrl.slice("file://".length);
+      if (!/\.(?:json|ya?ml)$/i.test(filePath)) {
+        return;
+      }
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        "structured prompt dependency"
+      );
+      if (!absolutePath || inspectedStructuredPrompts.has(absolutePath) || !fs6.existsSync(absolutePath)) {
+        return;
+      }
+      inspectedStructuredPrompts.add(absolutePath);
+      try {
+        const values = [
+          load(fs6.readFileSync(absolutePath, "utf8"), {
+            schema: CORE_SCHEMA.withTags(mergeTag)
+          })
+        ];
+        const inspectedValues = /* @__PURE__ */ new Set();
+        for (const value of values) {
+          if (typeof value === "string" && value.startsWith("file://")) {
+            processPromptFile(value);
+          } else if (value && typeof value === "object" && !inspectedValues.has(value)) {
+            inspectedValues.add(value);
+            values.push(...Object.values(value));
+          }
+        }
+      } catch (error2) {
+        warning(
+          `Failed to inspect structured prompt "${filePath}": ${String(error2)}`
+        );
+      }
+    };
     if (config2.providers) {
       for (const provider of config2.providers) {
         if (typeof provider === "string" && provider.startsWith("file://")) {
@@ -36836,11 +36872,14 @@ function extractFileDependencies(configPath) {
           const promptPath = prompt.slice("file://".length);
           const selector = promptPath.lastIndexOf(":");
           const filePath = selector > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(promptPath.slice(0, selector)) ? promptPath.slice(0, selector) : promptPath;
-          processFileUrl(`file://${filePath}`);
+          processPromptFile(`file://${filePath}`);
         } else if (prompt.startsWith("exec:")) {
-          processFileUrl(`file://${prompt.slice("exec:".length)}`);
+          const executable = prompt.slice("exec:".length).trimStart().match(/^(['"])(.*?)\1|^(\S+)/);
+          if (executable) {
+            processPromptFile(`file://${executable[2] ?? executable[3]}`);
+          }
         } else if ((!/\s/.test(prompt) || /[\\/]/.test(prompt)) && /\.(?:txt|md|json|ya?ml|py|[cm]?[jt]s|njk)$/i.test(prompt)) {
-          processFileUrl(`file://${prompt}`);
+          processPromptFile(`file://${prompt}`);
         }
       } else if (typeof prompt.file === "string") {
         const absolutePath = resolveConfigDependency(
