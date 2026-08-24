@@ -36766,7 +36766,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = path5.isAbsolute(filePath) ? path5.normalize(filePath) : path5.resolve(path5.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
