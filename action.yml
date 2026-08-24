@@ -86,7 +86,7 @@ inputs:
     required: false
     default: 'false'
   env-files:
-    description: 'Comma-separated list of .env files to load (e.g. ".env,.env.test.local")'
+    description: 'Comma-separated application .env files to load; process-control variables are rejected'
     required: false
     default: ''
   fail-on-threshold:

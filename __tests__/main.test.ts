@@ -560,6 +560,161 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each([
+      'NODE_OPTIONS',
+      'PATH',
+      'NPM_CONFIG_USERCONFIG',
+      'npm_config_script_shell',
+      'LD_PRELOAD',
+      'DYLD_INSERT_LIBRARIES',
+      'HTTPS_PROXY',
+      'HOME',
+      'USERPROFILE',
+      'XDG_CONFIG_HOME',
+      'APPDATA',
+      'LOCALAPPDATA',
+      'GIT_SSH_COMMAND',
+      'GIT_CONFIG_COUNT',
+      'RUBYOPT',
+      'PYTHONHOME',
+      'AWS_CONFIG_FILE',
+      'AWS_SHARED_CREDENTIALS_FILE',
+      'PROMPTFOO_CACHE_PATH',
+      'PROMPTFOO_CLOUD_API_URL',
+      'PROMPTFOO_FAILED_TEST_EXIT_CODE',
+      'PROMPTFOO_PASS_RATE_THRESHOLD',
+      'PROMPTFOO_REMOTE_API_BASE_URL',
+    ])('should reject process startup variable %s from environment files', async (variableName) => {
+      withInputs({ 'env-files': '.env' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      const originalValue = process.env[variableName];
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = { [variableName]: 'attacker-controlled' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining(variableName),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env[variableName]).toBe(originalValue);
+      } finally {
+        if (originalValue === undefined) {
+          delete process.env[variableName];
+        } else {
+          process.env[variableName] = originalValue;
+        }
+      }
+    });
+
+    test('should reject repository auth routing before validating trusted credentials', async () => {
+      withInputs({ 'env-files': '.env' });
+      mockFs.existsSync.mockReturnValue(true);
+      process.env.PROMPTFOO_API_KEY = 'trusted-workflow-key';
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = {
+            PROMPTFOO_REMOTE_API_BASE_URL: 'https://capture.example',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('PROMPTFOO_REMOTE_API_BASE_URL'),
+      );
+      expect(mockAuth.validatePromptfooApiKey).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should resolve npm configuration from the trusted action directory', async () => {
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.slice(0, 2)).toEqual([
+        '--prefix',
+        path.resolve(__dirname, '..'),
+      ]);
+    });
+
+    test('should preserve later-file-wins behavior for application variables', async () => {
+      withInputs({ 'env-files': '.env,.env.local' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { CUSTOM_PROVIDER_SETTING: 'second', NODE_ENV: 'test' }
+            : { CUSTOM_PROVIDER_SETTING: 'first' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        const execOptions = mockExec.exec.mock.calls[0][2];
+        expect(execOptions?.env).toEqual(
+          expect.objectContaining({
+            CUSTOM_PROVIDER_SETTING: 'second',
+            NODE_ENV: 'test',
+          }),
+        );
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        delete process.env.NODE_ENV;
+      }
+    });
+
+    test('should reject a forbidden variable introduced by a later env file', async () => {
+      withInputs({ 'env-files': '.env,.env.local' });
+      mockFs.existsSync.mockReturnValue(true);
+
+      const dotenv = await import('dotenv');
+      const originalNodeOptions = process.env.NODE_OPTIONS;
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { path?: string; processEnv?: Record<string, string> }) => {
+          const parsed = options?.path?.endsWith('.env.local')
+            ? { NODE_OPTIONS: '--require /tmp/evil.js' }
+            : { CUSTOM_PROVIDER_SETTING: 'first' };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('NODE_OPTIONS'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+        expect(process.env.NODE_OPTIONS).toBe(originalNodeOptions);
+      } finally {
+        delete process.env.CUSTOM_PROVIDER_SETTING;
+        if (originalNodeOptions === undefined) {
+          delete process.env.NODE_OPTIONS;
+        } else {
+          process.env.NODE_OPTIONS = originalNodeOptions;
+        }
+      }
+    });
+
     test('should fail when an environment file cannot be loaded', async () => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
