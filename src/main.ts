@@ -14,7 +14,10 @@ import {
   setupCacheEnvironment,
 } from './utils/cache';
 import { extractFileDependencies } from './utils/config';
-import { loadEnvironmentFile } from './utils/env';
+import {
+  loadEnvironmentFile,
+  preflightPromptfooEnvironmentFiles,
+} from './utils/env';
 import {
   ErrorCodes,
   formatErrorMessage,
@@ -519,6 +522,8 @@ export async function run(): Promise<void> {
       core.info('No LLM prompt, config files, or dependencies were modified.');
       return;
     }
+
+    preflightPromptfooEnvironmentFiles(configAbsolutePath, workingDirectory);
 
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');

@@ -6,6 +6,7 @@ import {
   findForbiddenAuthKey,
   findForbiddenEnvFileKey,
   loadEnvironmentFile,
+  preflightPromptfooEnvironmentFiles,
 } from '../src/utils/env';
 import { ErrorCodes, PromptfooActionError } from '../src/utils/errors';
 
@@ -194,5 +195,56 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     expect((error as PromptfooActionError).code).toBe(
       ErrorCodes.ENV_FILE_LOAD_ERROR,
     );
+  });
+
+  test('rejects protected routing values from Promptfoo implicit env files', () => {
+    writeEnv('.env', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
+
+    expect(() =>
+      preflightPromptfooEnvironmentFiles(
+        path.join(tmpDir, 'missing.yaml'),
+        tmpDir,
+      ),
+    ).toThrow(/PROMPTFOO_CLOUD_API_URL/);
+  });
+
+  test('resolves config-selected env files from the runtime working directory', () => {
+    const configDirectory = path.join(tmpDir, 'configs');
+    fs.mkdirSync(configDirectory);
+    const configPath = path.join(configDirectory, 'promptfooconfig.yaml');
+    fs.writeFileSync(
+      configPath,
+      'commandLineOptions:\n  envPath: .env.override\n',
+    );
+    writeEnv('.env.override', 'PROMPTFOO_REMOTE_API_BASE_URL=https://evil\n');
+
+    expect(() =>
+      preflightPromptfooEnvironmentFiles(configPath, tmpDir),
+    ).toThrow(/PROMPTFOO_REMOTE_API_BASE_URL/);
+  });
+
+  test('preflights arrays and comma-separated env files without leaking values', () => {
+    const configPath = path.join(tmpDir, 'promptfooconfig.json');
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        commandLineOptions: { envPath: ['.env.first, , .env.second'] },
+      }),
+    );
+    writeEnv('.env.first', 'AUDIT_PROVIDER_SETTING=first\n');
+    writeEnv('.env.second', 'AUDIT_PROVIDER_SETTING=second\n');
+
+    preflightPromptfooEnvironmentFiles(configPath, tmpDir);
+
+    expect(process.env.AUDIT_PROVIDER_SETTING).toBeUndefined();
+  });
+
+  test('preserves executable config compatibility during env preflight', () => {
+    const configPath = path.join(tmpDir, 'promptfooconfig.js');
+    fs.writeFileSync(configPath, 'export default { providers: ["echo"] };');
+
+    expect(() =>
+      preflightPromptfooEnvironmentFiles(configPath, tmpDir),
+    ).not.toThrow();
   });
 });

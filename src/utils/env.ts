@@ -1,4 +1,7 @@
 import * as dotenv from 'dotenv';
+import * as fs from 'fs';
+import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
+import * as path from 'path';
 import { ErrorCodes, PromptfooActionError } from './errors';
 
 // Process-control variables that let a repository-controlled env file run code
@@ -134,5 +137,41 @@ export function loadEnvironmentFile(
   // and workflow-set PROMPTFOO_API_KEY. Preserves later-file-wins ordering.
   for (const [key, value] of Object.entries(fileEnvironment)) {
     targetEnvironment[key] = value;
+  }
+}
+
+export function preflightPromptfooEnvironmentFiles(
+  configPath: string,
+  workingDirectory: string,
+): void {
+  const environmentPaths = new Set([path.join(workingDirectory, '.env')]);
+
+  if (/\.(?:json|ya?ml)$/i.test(configPath) && fs.existsSync(configPath)) {
+    const config = loadYaml(fs.readFileSync(configPath, 'utf8'), {
+      schema: CORE_SCHEMA.withTags(mergeTag),
+    }) as {
+      commandLineOptions?: { envPath?: string | string[] };
+    } | null;
+    const selectedPaths = config?.commandLineOptions?.envPath;
+    const paths = Array.isArray(selectedPaths)
+      ? selectedPaths
+      : selectedPaths
+        ? [selectedPaths]
+        : [];
+
+    for (const configuredPath of paths) {
+      for (const selectedPath of configuredPath.split(',')) {
+        const trimmedPath = selectedPath.trim();
+        if (trimmedPath) {
+          environmentPaths.add(path.resolve(workingDirectory, trimmedPath));
+        }
+      }
+    }
+  }
+
+  for (const environmentPath of environmentPaths) {
+    if (fs.existsSync(environmentPath)) {
+      loadEnvironmentFile(environmentPath, {});
+    }
   }
 }

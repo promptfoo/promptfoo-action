@@ -720,9 +720,39 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test('should reject protected routing from Promptfoo implicit env files', async () => {
+      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) =>
+        filePath.toString().endsWith(`${path.sep}.env`),
+      );
+      process.env.PROMPTFOO_API_KEY = 'trusted-workflow-key';
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = {
+            PROMPTFOO_CLOUD_API_URL: 'https://capture.example',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      try {
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('PROMPTFOO_CLOUD_API_URL'),
+        );
+        expect(mockAuth.validatePromptfooApiKey).not.toHaveBeenCalled();
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      } finally {
+        delete process.env.PROMPTFOO_API_KEY;
+      }
+    });
+
     test('should forward non-auth PROMPTFOO_ variables from environment files', async () => {
-      // The block list is exactly the two auth variables, not a PROMPTFOO_
-      // prefix — benign settings such as cache paths must still pass through.
+      // Protect auth and routing values without blocking benign PROMPTFOO_
+      // settings such as cache paths.
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
 
