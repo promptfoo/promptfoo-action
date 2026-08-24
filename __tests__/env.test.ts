@@ -303,4 +303,14 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
       preflightPromptfooEnvironmentFiles(configPath, tmpDir, true),
     ).toThrow(/executable Promptfoo configuration/);
   });
+
+  test('rejects config globs when authenticated sharing requires inspection', () => {
+    expect(() =>
+      preflightPromptfooEnvironmentFiles(
+        path.join(tmpDir, 'configs', '*.yaml'),
+        tmpDir,
+        true,
+      ),
+    ).toThrow(/globbed Promptfoo configuration/);
+  });
 });

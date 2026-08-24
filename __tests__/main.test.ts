@@ -104,6 +104,7 @@ vi.mock('fs', async () => {
 });
 vi.mock('glob', () => ({
   sync: vi.fn(),
+  hasMagic: vi.fn((pattern: string) => /[*?[\]{}]/.test(pattern)),
 }));
 vi.mock('dotenv');
 
@@ -797,6 +798,19 @@ describe('GitHub Action Main', () => {
 
       expect(mockCore.setFailed).toHaveBeenCalledWith(
         expect.stringContaining('executable Promptfoo configuration'),
+      );
+      expect(mockAuth.validatePromptfooApiKey).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should reject authenticated sharing with configuration globs', async () => {
+      withInputs({ config: 'configs/*.yaml' });
+      process.env.PROMPTFOO_API_KEY = 'trusted-workflow-key';
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('globbed Promptfoo configuration'),
       );
       expect(mockAuth.validatePromptfooApiKey).not.toHaveBeenCalled();
       expect(mockExec.exec).not.toHaveBeenCalled();

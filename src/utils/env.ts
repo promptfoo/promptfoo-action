@@ -1,5 +1,6 @@
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
+import { hasMagic } from 'glob';
 import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import * as path from 'path';
 import { ErrorCodes, PromptfooActionError } from './errors';
@@ -165,11 +166,12 @@ export function preflightPromptfooEnvironmentFiles(
   const environmentPaths = new Set([path.join(workingDirectory, '.env')]);
   const isStaticConfig = /\.(?:json|ya?ml)$/i.test(configPath);
 
-  if (requiresInspectableConfig && !isStaticConfig) {
+  if (requiresInspectableConfig && (!isStaticConfig || hasMagic(configPath))) {
+    const configType = isStaticConfig ? 'globbed' : 'executable';
     throw new PromptfooActionError(
-      'Cannot inspect environment files selected by an executable Promptfoo configuration while sharing authenticated results',
+      `Cannot inspect environment files selected by a ${configType} Promptfoo configuration while sharing authenticated results`,
       ErrorCodes.INVALID_CONFIGURATION,
-      'Use a static YAML or JSON configuration, or set no-share: true.',
+      'Use a single static YAML or JSON configuration, or set no-share: true.',
     );
   }
 
