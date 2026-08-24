@@ -38,15 +38,6 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
-function isPathInside(basePath: string, candidatePath: string): boolean {
-  const relativePath = path.relative(basePath, candidatePath);
-  return (
-    relativePath !== '..' &&
-    !relativePath.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relativePath)
-  );
-}
-
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -458,7 +449,6 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const allPromptFiles = new Set<string>();
     const changedFilesList = changedFiles.split('\n').filter((f) => f);
 
     for (const globPattern of promptFilesGlobs) {
@@ -466,31 +456,28 @@ export async function run(): Promise<void> {
         cwd: workingDirectory,
         nodir: true,
       });
-      const matchingPrompts = matches.filter((file) => {
-        const absolutePromptPath = path.resolve(workingDirectory, file);
-        const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, absolutePromptPath),
-        );
-        return (
-          repositoryFile !== configRepositoryPath && !allPromptFiles.has(file)
-        );
-      });
-      for (const file of matchingPrompts) {
-        allPromptFiles.add(file);
-      }
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matchingPrompts.filter((file) => {
+        const changedMatches = matches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
-          return changedFilesList.includes(repositoryFile);
+          return (
+            repositoryFile !== configRepositoryPath &&
+            changedFilesList.includes(repositoryFile)
+          );
         });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        promptFiles.push(...matchingPrompts);
+        const allMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          );
+          return repositoryFile !== configRepositoryPath;
+        });
+        promptFiles.push(...allMatches);
       }
     }
 
@@ -532,10 +519,6 @@ export async function run(): Promise<void> {
       }
     }
 
-    if (configChanged || dependencyChanged) {
-      promptFiles.splice(0, promptFiles.length, ...allPromptFiles);
-    }
-
     if (
       !forceRun &&
       promptFiles.length < 1 &&
@@ -548,23 +531,6 @@ export async function run(): Promise<void> {
       // Only skip if prompts were actually specified
       core.info('No LLM prompt, config files, or dependencies were modified.');
       return;
-    }
-
-    if (!useConfigPrompts && promptFiles.length > 0) {
-      const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
-      for (const file of promptFiles) {
-        const absolutePromptPath = path.resolve(workingDirectory, file);
-        if (
-          !isPathInside(workspaceRoot, absolutePromptPath) ||
-          !isPathInside(realWorkspaceRoot, fs.realpathSync(absolutePromptPath))
-        ) {
-          throw new PromptfooActionError(
-            `Prompt file "${file}" must stay within the repository workspace`,
-            ErrorCodes.INVALID_CONFIGURATION,
-            'Configure prompt globs and symlinks that resolve inside the checkout.',
-          );
-        }
-      }
     }
 
     if (forceRun) {
@@ -843,20 +809,8 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const displayedPromptFiles = promptFiles.slice(0, 10);
-      const remainingPromptFiles =
-        promptFiles.length - displayedPromptFiles.length;
-      const reportedFiles = useConfigPrompts
-        ? configPath
-        : `${displayedPromptFiles.join(', ')}${
-            remainingPromptFiles > 0 ? `, and ${remainingPromptFiles} more` : ''
-          }`;
-      const promptDescription = useConfigPrompts
-        ? 'Configured LLM prompts were evaluated'
-        : configChanged || dependencyChanged
-          ? 'LLM prompts were evaluated'
-          : 'LLM prompt was modified';
-      let body = `⚠️ ${promptDescription} in these files: ${reportedFiles}
+      const modifiedFiles = promptFiles.join(', ');
+      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
@@ -891,10 +845,9 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      const evaluatedFiles = useConfigPrompts ? [configPath] : promptFiles;
-      if (evaluatedFiles.length > 0) {
+      if (promptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
-        summary.addList(evaluatedFiles);
+        summary.addList(promptFiles);
       }
 
       if (repeatCheckResult) {

@@ -12,18 +12,10 @@ interface PromptfooTestConfig {
   [key: string]: unknown;
 }
 
-type PromptfooTests =
-  | string
-  | PromptfooTestConfig
-  | Array<string | PromptfooTestConfig>;
-
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
-  tests?: PromptfooTests;
-  scenarios?: Array<
-    string | { config?: PromptfooTestConfig; tests?: PromptfooTests }
-  >;
+  tests?: string | PromptfooTestConfig | Array<string | PromptfooTestConfig>;
   defaultTest?: {
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -98,23 +90,35 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
-    // Helper function to process local paths with glob support
-    const processFilePath = (
-      filePath: string,
-      source = 'config file dependency',
-    ): void => {
-      const absolutePath = resolveConfigDependency(filePath, source);
+    // Helper function to process file:// paths with glob support
+    const processFileUrl = (fileUrl: string): void => {
+      const filePath = fileUrl.replace('file://', '');
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        'config file dependency',
+      );
       if (!absolutePath) {
         return;
       }
 
       // Check if the path contains glob patterns
       if (glob.hasMagic(filePath)) {
-        const absoluteGlob = path.isAbsolute(filePath);
-        const relativeGlobPath = absoluteGlob
-          ? path.relative(dependencyRoot, filePath)
-          : filePath;
-        const pathParts = relativeGlobPath.split(path.sep);
+        // It's a glob pattern, expand it
+        const matches = glob.sync(absolutePath, { nodir: true });
+        for (const match of matches) {
+          const absoluteMatch = path.resolve(match);
+          if (isPathInside(dependencyRoot, absoluteMatch)) {
+            dependencies.add(absoluteMatch);
+          } else {
+            core.warning(
+              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`,
+            );
+          }
+        }
+
+        // Also add the base directory for watching
+        // Extract the non-glob part of the path
+        const pathParts = filePath.split('/');
         let basePath = '';
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
@@ -122,64 +126,12 @@ export function extractFileDependencies(configPath: string): string[] {
           }
           basePath = basePath ? path.join(basePath, part) : part;
         }
-
-        const globRoot = absoluteGlob ? dependencyRoot : configDir;
-        const absoluteBasePath = path.resolve(globRoot, basePath);
-        let physicalDependencyRoot: string;
-        let physicalBasePath: string;
-        try {
-          physicalDependencyRoot = fs.realpathSync(dependencyRoot);
-          physicalBasePath = fs.realpathSync(absoluteBasePath);
-        } catch {
-          core.warning(
-            `Ignoring unsafe config dependency "${filePath}": ${source} glob root could not be resolved safely`,
-          );
-          return;
-        }
-
-        if (!isPathInside(physicalDependencyRoot, physicalBasePath)) {
-          core.warning(
-            `Ignoring unsafe config dependency "${filePath}": ${source} glob root must stay within the repository workspace`,
-          );
-          return;
-        }
-
-        const matches = glob.sync(absolutePath, { nodir: true });
-        for (const match of matches) {
-          const absoluteMatch = path.resolve(match);
-          if (!isPathInside(dependencyRoot, absoluteMatch)) {
-            core.warning(
-              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`,
-            );
-            continue;
-          }
-
-          let physicalMatch: string;
-          try {
-            physicalMatch = fs.realpathSync(absoluteMatch);
-          } catch {
-            core.warning(
-              `Ignoring unsafe config dependency match "${match}": ${source} glob match could not be resolved safely`,
-            );
-            continue;
-          }
-
-          if (!isPathInside(physicalDependencyRoot, physicalMatch)) {
-            core.warning(
-              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`,
-            );
-            continue;
-          }
-
-          dependencies.add(absoluteMatch);
-        }
-
         if (basePath) {
-          dependencies.add(absoluteBasePath);
+          dependencies.add(path.resolve(path.join(configDir, basePath)));
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
-        const directoryPath = filePath.endsWith('/')
+        const directoryPath = fileUrl.endsWith('/')
           ? `${absolutePath.replace(/[\\/]+$/, '')}${path.sep}`
           : absolutePath;
         dependencies.add(directoryPath);
@@ -187,31 +139,6 @@ export function extractFileDependencies(configPath: string): string[] {
         // It's a regular file path
         dependencies.add(absolutePath);
       }
-    };
-
-    const processFileUrl = (fileUrl: string): void => {
-      processFilePath(fileUrl.replace(/^file:\/\//, ''));
-    };
-
-    const processTestFile = (testSource: string): void => {
-      let filePath = testSource;
-      if (filePath.startsWith('file://')) {
-        filePath = filePath.slice('file://'.length);
-      } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
-        return;
-      }
-
-      filePath = filePath.replace(/(\.xlsx?)#[^/\\]*$/i, '$1');
-
-      const functionIndex = filePath.lastIndexOf(':');
-      if (
-        functionIndex > 1 &&
-        /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex))
-      ) {
-        filePath = filePath.slice(0, functionIndex);
-      }
-
-      processFilePath(filePath, 'test file dependency');
     };
 
     // Extract provider files
@@ -302,35 +229,38 @@ export function extractFileDependencies(configPath: string): string[] {
       extractAssertFiles(config.defaultTest.assert);
     }
 
-    const extractTests = (configuredTests?: PromptfooTests): void => {
-      if (!configuredTests) {
+    const processTestFile = (source: string): void => {
+      if (
+        /^[a-z][a-z\d+.-]*:\/\//i.test(source) &&
+        !source.startsWith('file://')
+      ) {
         return;
       }
-      const tests = Array.isArray(configuredTests)
-        ? configuredTests
-        : [configuredTests];
+
+      let filePath = source
+        .replace(/^file:\/\//, '')
+        .replace(/(\.xlsx?)#[^/\\]*$/i, '$1');
+      const selector = filePath.lastIndexOf(':');
+      if (
+        selector > 1 &&
+        /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, selector))
+      ) {
+        filePath = filePath.slice(0, selector);
+      }
+      processFileUrl(`file://${filePath}`);
+    };
+
+    if (config.tests) {
+      const tests = Array.isArray(config.tests) ? config.tests : [config.tests];
       for (const test of tests) {
         if (typeof test === 'string') {
           processTestFile(test);
-          continue;
-        }
-        if (test.path) {
+        } else if (test.path) {
           processTestFile(test.path);
-          continue;
+        } else {
+          extractVarFiles(test.vars);
+          extractAssertFiles(test.assert);
         }
-        extractVarFiles(test.vars);
-        extractAssertFiles(test.assert);
-      }
-    };
-
-    extractTests(config.tests);
-    for (const scenario of config.scenarios ?? []) {
-      if (typeof scenario === 'string') {
-        processTestFile(scenario);
-      } else {
-        extractVarFiles(scenario.config?.vars);
-        extractAssertFiles(scenario.config?.assert);
-        extractTests(scenario.tests);
       }
     }
 

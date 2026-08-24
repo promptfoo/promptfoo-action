@@ -11,7 +11,6 @@ vi.mock('fs', async () => {
     ...realFs,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
-    realpathSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -26,7 +25,6 @@ describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
     existsSync: Mock;
-    realpathSync: Mock;
     statSync: Mock;
   };
   const mockGlob = glob as unknown as {
@@ -41,9 +39,6 @@ describe('extractFileDependencies', () => {
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
-    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
-      filePath.toString(),
-    );
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
 
@@ -99,268 +94,54 @@ tests:
     expect(deps).toContain('../config/data/examples.json');
   });
 
-  it('should extract scalar file-backed tests', () => {
-    mockFs.readFileSync.mockReturnValue(`
-tests: file://tests.yaml
-`);
-
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toEqual(['../config/tests.yaml']);
-  });
-
-  it('should extract bare file-backed tests', () => {
-    mockFs.readFileSync.mockReturnValue(`
-tests: tests.jsonl
-`);
-
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toEqual(['../config/tests.jsonl']);
-  });
-
-  it('should preserve absolute file-backed test paths', () => {
-    mockFs.readFileSync.mockReturnValue(
-      'tests: file:///test/config/cases.yaml\n',
-    );
+  it.each([
+    ['file://tests/cases.yaml', '../config/tests/cases.yaml'],
+    ['tests/cases.jsonl', '../config/tests/cases.jsonl'],
+    ['file:///test/config/tests/cases.yaml', '../config/tests/cases.yaml'],
+    ['file://tests/cases.xlsx#Safety', '../config/tests/cases.xlsx'],
+    ['file://tests/generate.py:make_tests', '../config/tests/generate.py'],
+  ])('should track directly configured test source %s', (source, expected) => {
+    mockFs.readFileSync.mockReturnValue(`tests: ${source}\n`);
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/cases.yaml']);
+    ).toEqual([expected]);
   });
 
-  it('should preserve literal hashes in non-spreadsheet test paths', () => {
-    mockFs.readFileSync.mockReturnValue(
-      "tests: 'file://tests/cases#production.yaml'\n",
-    );
-
-    expect(
-      extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/tests/cases#production.yaml']);
-  });
-
-  it('should preserve literal colons in non-generator test paths', () => {
-    mockFs.readFileSync.mockReturnValue(
-      "tests: 'file://tests/cases:production.yaml'\n",
-    );
-
-    expect(
-      extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual(['../config/tests/cases:production.yaml']);
-  });
-
-  it('should extract array file-backed tests and inline dependencies', () => {
+  it('should track test arrays without replacing Promptfoo test loading', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
-  - file://cases/*.yaml
+  - file://tests/cases.yaml
   - vars:
       context: file://data/context.txt
 `);
-    mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
-    );
-    mockGlob.sync.mockReturnValue([
-      '/test/config/cases/safety.yaml',
-      '/test/config/cases/quality.yaml',
-    ]);
 
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toContain('../config/cases/safety.yaml');
-    expect(deps).toContain('../config/cases/quality.yaml');
-    expect(deps).toContain('../config/cases');
-    expect(deps).toContain('../config/data/context.txt');
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.yaml', '../config/data/context.txt']);
   });
 
-  it('should extract object-form file-backed tests', () => {
+  it('should track object-form test generators', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:
-  path: file://generators/tests.js:generate_tests
+  path: file://tests/generate.js:make_tests
   config:
-    dataset: safety
-`);
-
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toEqual(['../config/generators/tests.js']);
-  });
-
-  it('should extract file-backed tests nested inside scenarios', () => {
-    mockFs.readFileSync.mockReturnValue(`
-scenarios:
-  - scenarios/shared.yaml
-  - tests: scenarios/cases.yaml
-  - tests:
-      - path: file://scenarios/generated.py:create_tests
-      - vars:
-          context: file://scenarios/context.txt
-  - name: no tests
+    limit: 3
 `);
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual([
-      '../config/scenarios/shared.yaml',
-      '../config/scenarios/cases.yaml',
-      '../config/scenarios/generated.py',
-      '../config/scenarios/context.txt',
-    ]);
+    ).toEqual(['../config/tests/generate.js']);
   });
 
-  it('should extract dependencies from shared scenario configs', () => {
-    mockFs.readFileSync.mockReturnValue(`
-scenarios:
-  - config:
-      vars:
-        context: file://data/context.json
-      assert:
-        - type: javascript
-          value:
-            file: validators/scenario.js
-    tests: scenarios/cases.yaml
-`);
+  it('should leave remote test sources to Promptfoo', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: https://docs.google.com/spreadsheets/d/example\n',
+    );
 
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
-    ).toEqual([
-      '../config/data/context.json',
-      '../config/validators/scenario.js',
-      '../config/scenarios/cases.yaml',
-    ]);
-  });
-
-  it('should not expand test globs through symlinks outside the workspace', () => {
-    mockFs.readFileSync.mockReturnValue(
-      'tests: file://tests/external/*.yaml\n',
-    );
-    mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
-    );
-    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
-      const candidate = filePath.toString();
-      return candidate.endsWith('/tests/external')
-        ? '/private/secrets'
-        : candidate;
-    });
-
-    expect(
-      extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual([]);
-    expect(mockGlob.sync).not.toHaveBeenCalled();
-    expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('must stay within the repository workspace'),
-    );
-  });
-
-  it('should reject glob matches resolving outside the workspace', () => {
-    mockFs.readFileSync.mockReturnValue('tests: file://tests/*.yaml\n');
-    mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
-    );
-    mockGlob.sync.mockReturnValue([
-      '/test/working/tests/safe.yaml',
-      '/test/working/tests/linked.yaml',
-    ]);
-    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
-      const candidate = filePath.toString();
-      return candidate.endsWith('/linked.yaml')
-        ? '/private/secrets/leaked.yaml'
-        : candidate;
-    });
-
-    expect(
-      extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toEqual(['tests/safe.yaml', 'tests']);
-    expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('must stay within the repository workspace'),
-    );
-  });
-
-  it('should reject glob roots and matches that cannot be resolved', () => {
-    mockFs.readFileSync.mockReturnValue('tests: file://tests/*.yaml\n');
-    mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
-    );
-    mockFs.realpathSync.mockImplementation(() => {
-      throw new Error('permission denied');
-    });
-
-    expect(
-      extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toEqual([]);
-    expect(mockGlob.sync).not.toHaveBeenCalled();
-    expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('could not be resolved safely'),
-    );
-  });
-
-  it('should skip individual glob matches that cannot be resolved', () => {
-    mockFs.readFileSync.mockReturnValue('tests: file://tests/*.yaml\n');
-    mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
-    );
-    mockGlob.sync.mockReturnValue(['/test/working/tests/deleted.yaml']);
-    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
-      const candidate = filePath.toString();
-      if (candidate.endsWith('/deleted.yaml')) {
-        throw new Error('file was removed');
-      }
-      return candidate;
-    });
-
-    expect(
-      extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toEqual(['tests']);
-    expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('glob match could not be resolved safely'),
-    );
-  });
-
-  it('should preserve watchers for absolute test globs', () => {
-    mockFs.readFileSync.mockReturnValue(
-      'tests: file:///test/working/tests/*.yaml\n',
-    );
-    mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
-    );
-    mockGlob.sync.mockReturnValue(['/test/working/tests/cases.yaml']);
-
-    expect(
-      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
-    ).toEqual(['tests/cases.yaml', 'tests']);
-  });
-
-  it('should extract sheet-qualified file-backed tests', () => {
-    mockFs.readFileSync.mockReturnValue(`
-tests: file://cases.xlsx#Safety
-`);
-
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toEqual(['../config/cases.xlsx']);
-  });
-
-  it('should ignore remote file-backed tests', () => {
-    mockFs.readFileSync.mockReturnValue(`
-tests: https://docs.google.com/spreadsheets/d/example
-`);
-
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toEqual([]);
-  });
-
-  it('should reject file-backed tests outside the repository', () => {
-    mockFs.readFileSync.mockReturnValue(`
-tests:
-  - ../secrets/tests.yaml
-  - file://../../outside/tests.json
-`);
-
-    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
-
-    expect(deps).toEqual([]);
-    expect(core.warning).toHaveBeenCalledTimes(2);
   });
 
   it('should extract assert files', () => {

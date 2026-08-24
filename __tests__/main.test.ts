@@ -94,7 +94,6 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
-    realpathSync: vi.fn((filePath: fs.PathLike) => filePath.toString()),
     unlinkSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -130,7 +129,6 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
-  realpathSync: MockedFunction<typeof fs.realpathSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
@@ -247,9 +245,6 @@ function setupCommonMocks(): MockOctokit {
     }),
   );
   mockFs.existsSync.mockReturnValue(false);
-  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
-    filePath.toString(),
-  );
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -307,7 +302,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompts were evaluated'),
+        body: expect.stringContaining('LLM prompt was modified'),
       });
     });
 
@@ -924,143 +919,6 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
-    test('should evaluate every prompt when a shared test dependency changes', async () => {
-      mockOctokit.paginate.mockResolvedValue([
-        { filename: 'prompts/prompt1.txt' },
-        { filename: 'tests/cases.yaml' },
-      ]);
-      mockGlob.sync.mockReturnValue([
-        'prompts/prompt1.txt',
-        'prompts/prompt2.txt',
-      ]);
-      mockConfig.extractFileDependencies.mockReturnValue(['tests/cases.yaml']);
-
-      await run();
-
-      expect(mockExec.exec).toHaveBeenCalledWith(
-        'npx',
-        expect.arrayContaining([
-          '--prompts',
-          'prompts/prompt1.txt',
-          'prompts/prompt2.txt',
-        ]),
-        expect.anything(),
-      );
-      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
-        expect.objectContaining({
-          body: expect.stringContaining('LLM prompts were evaluated'),
-        }),
-      );
-    });
-
-    test('should summarize large evaluated-prompt lists in PR comments', async () => {
-      mockOctokit.paginate.mockResolvedValue([
-        { filename: 'tests/cases.yaml' },
-      ]);
-      mockGlob.sync.mockReturnValue(
-        Array.from({ length: 12 }, (_, index) => `prompts/prompt-${index}.txt`),
-      );
-      mockConfig.extractFileDependencies.mockReturnValue(['tests/cases.yaml']);
-
-      await run();
-
-      const commentBody = mockOctokit.rest.issues.createComment.mock.calls[0][0]
-        .body as string;
-      expect(commentBody).toContain('prompts/prompt-9.txt');
-      expect(commentBody).not.toContain('prompts/prompt-10.txt');
-      expect(commentBody).toContain('and 2 more');
-    });
-
-    test('should deduplicate prompt matches across overlapping globs', async () => {
-      withInputs({ prompts: 'prompts/*.txt\nprompts/shared.*' });
-      mockOctokit.paginate.mockResolvedValue([
-        { filename: 'promptfooconfig.yaml' },
-      ]);
-      mockGlob.sync.mockImplementation((pattern) =>
-        pattern === 'prompts/*.txt'
-          ? ['prompts/shared.txt', 'prompts/other.txt']
-          : ['prompts/shared.txt'],
-      );
-
-      await run();
-
-      const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args.filter((arg) => arg === 'prompts/shared.txt')).toHaveLength(1);
-    });
-
-    test.each(['../private/secret.txt', '/private/secret.txt'])(
-      'should reject prompt match outside the workspace: %s',
-      async (promptPath) => {
-        mockOctokit.paginate.mockResolvedValue([
-          { filename: 'promptfooconfig.yaml' },
-        ]);
-        mockGlob.sync.mockReturnValue([promptPath]);
-
-        await run();
-
-        expect(mockCore.setFailed).toHaveBeenCalledWith(
-          expect.stringContaining('must stay within the repository workspace'),
-        );
-        expect(mockExec.exec).not.toHaveBeenCalled();
-      },
-    );
-
-    test('should reject prompt symlinks that resolve outside the workspace', async () => {
-      mockGlob.sync.mockReturnValue(['prompts/linked.txt']);
-      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
-        const candidate = filePath.toString();
-        return candidate.endsWith(`${path.sep}linked.txt`)
-          ? path.resolve(process.cwd(), '..', 'private', 'secret.txt')
-          : candidate;
-      });
-
-      await run();
-
-      expect(mockCore.setFailed).toHaveBeenCalledWith(
-        expect.stringContaining('must stay within the repository workspace'),
-      );
-      expect(mockExec.exec).not.toHaveBeenCalled();
-    });
-
-    test('should not validate unchanged prompt symlinks for an unrelated PR', async () => {
-      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
-      mockGlob.sync.mockReturnValue(['prompts/linked.txt']);
-      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
-        const candidate = filePath.toString();
-        return candidate.endsWith(`${path.sep}linked.txt`)
-          ? path.resolve(process.cwd(), '..', 'private', 'secret.txt')
-          : candidate;
-      });
-
-      await run();
-
-      expect(mockCore.setFailed).not.toHaveBeenCalled();
-      expect(mockFs.realpathSync).not.toHaveBeenCalled();
-      expect(mockExec.exec).not.toHaveBeenCalled();
-    });
-
-    test('should report configured prompts when prompt overrides are disabled', async () => {
-      mockCore.getBooleanInput.mockImplementation(
-        (name) => name === 'use-config-prompts',
-      );
-      mockOctokit.paginate.mockResolvedValue([
-        { filename: 'promptfooconfig.yaml' },
-      ]);
-      mockGlob.sync.mockReturnValue(['prompts/action-override.txt']);
-
-      await run();
-
-      const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args).not.toContain('--prompts');
-      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
-        expect.objectContaining({
-          body: expect.stringContaining(
-            'Configured LLM prompts were evaluated in these files: promptfooconfig.yaml',
-          ),
-        }),
-      );
-    });
-
     test('should run when a file inside a dependency directory changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },
@@ -1233,7 +1091,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompts were evaluated'),
+        body: expect.stringContaining('LLM prompt was modified'),
       });
 
       // Should still fail the action after posting the comment
@@ -1545,30 +1403,6 @@ describe('GitHub Action Main', () => {
         3,
       );
       expect(mockCore.summary.write).toHaveBeenCalled();
-    });
-
-    test('should report configured prompts in non-PR workflow summaries', async () => {
-      Object.defineProperty(mockGithub.context, 'eventName', {
-        value: 'workflow_dispatch',
-        configurable: true,
-      });
-      Object.defineProperty(mockGithub.context, 'payload', {
-        value: { inputs: { files: 'promptfooconfig.yaml' } },
-        configurable: true,
-      });
-      mockCore.getBooleanInput.mockImplementation(
-        (name) => name === 'use-config-prompts',
-      );
-
-      await run();
-
-      expect(mockCore.summary.addHeading).toHaveBeenCalledWith(
-        'Evaluated Files',
-        3,
-      );
-      expect(mockCore.summary.addList).toHaveBeenCalledWith([
-        'promptfooconfig.yaml',
-      ]);
     });
 
     test('should handle non-Error failures', async () => {
