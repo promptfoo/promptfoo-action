@@ -157,6 +157,16 @@ defaultTest: file://default.yaml
     expect(deps).toEqual(['../config/default.yaml']);
   });
 
+  it('should preserve absolute file-backed defaultTest paths', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'defaultTest: file:///test/config/defaults/default.yaml\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/defaults/default.yaml']);
+  });
+
   it('should reject a file-backed defaultTest outside the repository', () => {
     mockFs.readFileSync.mockReturnValue(`
 defaultTest: file://../secrets/default.yaml
