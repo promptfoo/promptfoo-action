@@ -36803,22 +36803,16 @@ function extractFileDependencies(configPath) {
             );
           }
         }
-        const isAbsoluteGlob = path5.isAbsolute(filePath);
-        const globPath = isAbsoluteGlob ? path5.relative(dependencyRoot, filePath) : filePath;
-        const pathParts = path5.normalize(globPath).split(path5.sep);
+        const pathParts = filePath.split("/");
         let basePath = "";
         for (const part of pathParts) {
           if (le(part)) {
             break;
           }
-          const literalPart = W(part, {
-            windowsPathsNoEscape: process.platform === "win32"
-          });
-          basePath = basePath ? path5.join(basePath, literalPart) : literalPart;
+          basePath = basePath ? path5.join(basePath, part) : part;
         }
         if (basePath) {
-          const globRoot = isAbsoluteGlob ? dependencyRoot : configDir;
-          dependencies.add(path5.resolve(path5.join(globRoot, basePath)));
+          dependencies.add(path5.resolve(path5.join(configDir, basePath)));
         }
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
@@ -36885,12 +36879,8 @@ function extractFileDependencies(configPath) {
     };
     if (config2.defaultTest) {
       if (typeof config2.defaultTest === "string") {
-        if (config2.defaultTest.startsWith("file://")) {
-          if (/\{[{%#]/.test(config2.defaultTest)) {
-            dependencies.add(`${dependencyRoot}${path5.sep}`);
-          } else {
-            processFileUrl(config2.defaultTest);
-          }
+        if (config2.defaultTest.startsWith("file://") && !/\{[{%#]/.test(config2.defaultTest)) {
+          processFileUrl(config2.defaultTest);
         }
       } else {
         extractVarFiles(config2.defaultTest.vars);
@@ -36905,7 +36895,7 @@ function extractFileDependencies(configPath) {
     }
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path5.sep).join("/") || ".";
+      const repositoryPath = relativePath.split(path5.sep).join("/");
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
         return `${repositoryPath}/`;
       }
@@ -37595,7 +37585,7 @@ async function run() {
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
         );
         dependencyChanged = dependencies.some((dep) => {
-          if (dep === "./" || changedFilesList.includes(dep)) {
+          if (changedFilesList.includes(dep)) {
             return true;
           }
           if (dep.endsWith("/") || isDirectory2(dep)) {
