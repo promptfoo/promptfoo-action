@@ -36907,6 +36907,8 @@ var dotenv = __toESM(require_main());
 var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "ALL_PROXY",
   "APPDATA",
+  "AWS_CONFIG_FILE",
+  "AWS_SHARED_CREDENTIALS_FILE",
   "BASH_ENV",
   "COMSPEC",
   "DYLD_FRAMEWORK_PATH",
@@ -36926,6 +36928,7 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PATH",
   "PATHEXT",
   "PERL5OPT",
+  "PROMPTFOO_CACHE_PATH",
   "PYTHONEXECUTABLE",
   "PYTHONHOME",
   "PYTHONSTARTUP",
@@ -37764,7 +37767,12 @@ async function run() {
     };
     const exitCode = await exec(
       "npx",
-      [`promptfoo@${version}`, ...promptfooArgs],
+      [
+        "--prefix",
+        path6.resolve(__dirname, ".."),
+        `promptfoo@${version}`,
+        ...promptfooArgs
+      ],
       { env, cwd: workingDirectory, ignoreReturnCode: true }
     );
     const isTestFailureExit = exitCode === failedTestExitCode;
