@@ -417,7 +417,8 @@ describe('GitHub Action Main', () => {
         withInputs({ prompts: 'prompts/**/../*.txt' });
         mockOctokit.paginate.mockResolvedValue([
           {
-            filename: 'archive/old.txt',
+            filename:
+              status === 'removed' ? 'prompts/old.txt' : 'archive/old.txt',
             previous_filename: 'prompts/old.txt',
             status,
           },
@@ -432,6 +433,53 @@ describe('GitHub Action Main', () => {
         expect(mockExec.exec).toHaveBeenCalled();
       },
     );
+
+    test('should skip unrelated deletions when prompt globs include traversal', async () => {
+      withInputs({ prompts: 'prompts/**/../*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'docs/unrelated.md', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.info).toHaveBeenCalledWith(
+        'No LLM prompt, config files, or dependencies were modified.',
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should detect deleted prompts in a sibling working-directory path', async () => {
+      withInputs({
+        'working-directory': 'packages/app',
+        prompts: '../shared/prompts/*.txt',
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        {
+          filename: 'packages/shared/prompts/old.txt',
+          status: 'removed',
+        },
+      ]);
+      mockGlob.sync.mockReturnValue(['../shared/prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should ignore deletion metadata that escapes the repository', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: '../private/secret.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
 
     test('should process all remaining prompts when a prompt is renamed out of scope', async () => {
       mockOctokit.paginate.mockResolvedValue([

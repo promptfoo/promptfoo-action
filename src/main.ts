@@ -191,17 +191,21 @@ export async function run(): Promise<void> {
     const promptFilesGlobs: string[] = promptsInput
       ? promptsInput.split('\n').filter((line) => line.trim())
       : [];
-    const promptGlobMatchers = promptFilesGlobs.map(
-      (pattern) =>
-        new Minimatch(pattern, {
-          nocase: ['darwin', 'win32'].includes(process.platform),
-          nocomment: true,
-          nonegate: true,
-        }),
-    );
-    const hasParentTraversalPromptGlob = promptFilesGlobs.some((pattern) =>
-      /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(pattern),
-    );
+    const promptGlobMatchers = promptFilesGlobs.flatMap((pattern) => {
+      const normalizedPattern = path.posix.normalize(pattern);
+      const patterns =
+        normalizedPattern === pattern
+          ? [pattern]
+          : [pattern, normalizedPattern];
+      return patterns.map(
+        (candidate) =>
+          new Minimatch(candidate, {
+            nocase: ['darwin', 'win32'].includes(process.platform),
+            nocomment: true,
+            nonegate: true,
+          }),
+      );
+    });
     const configPath: string = core.getInput('config', {
       required: true,
     });
@@ -221,14 +225,17 @@ export async function run(): Promise<void> {
         return false;
       }
 
-      const relativePath = path.relative(
-        workingDirectory,
-        path.resolve(workspaceRoot, repositoryFile),
-      );
-      if (relativePath.split(path.sep)[0] === '..') {
+      const absoluteFile = path.resolve(workspaceRoot, repositoryFile);
+      const repositoryPath = path.relative(workspaceRoot, absoluteFile);
+      if (
+        repositoryPath === '..' ||
+        repositoryPath.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(repositoryPath)
+      ) {
         return false;
       }
 
+      const relativePath = path.relative(workingDirectory, absoluteFile);
       const workingDirectoryPath = toRepositoryPath(relativePath);
       return promptGlobMatchers.some((matcher) =>
         matcher.match(workingDirectoryPath),
@@ -397,13 +404,10 @@ export async function run(): Promise<void> {
       } else {
         const monitoredPromptRemovedOrRenamedOut = pullRequestFiles.some(
           (file) =>
-            (file.status === 'removed' &&
-              (hasParentTraversalPromptGlob ||
-                matchesPromptGlob(file.filename))) ||
+            (file.status === 'removed' && matchesPromptGlob(file.filename)) ||
             (file.status === 'renamed' &&
-              (hasParentTraversalPromptGlob ||
-                (matchesPromptGlob(file.previous_filename) &&
-                  !matchesPromptGlob(file.filename)))),
+              matchesPromptGlob(file.previous_filename) &&
+              !matchesPromptGlob(file.filename)),
         );
         if (monitoredPromptRemovedOrRenamedOut) {
           evaluatedAfterPromptRemoval = true;
