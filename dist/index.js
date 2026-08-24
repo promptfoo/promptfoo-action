@@ -39178,16 +39178,17 @@ async function run() {
     });
     const promptsInput = getInput("prompts", { required: false });
     const promptFilesGlobs = promptsInput ? promptsInput.split("\n").filter((line) => line.trim()) : [];
-    const promptGlobMatchers = promptFilesGlobs.map(
-      (pattern) => new Minimatch(pattern, {
-        nocase: ["darwin", "win32"].includes(process.platform),
-        nocomment: true,
-        nonegate: true
-      })
-    );
-    const hasParentTraversalPromptGlob = promptFilesGlobs.some(
-      (pattern) => /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(pattern)
-    );
+    const promptGlobMatchers = promptFilesGlobs.flatMap((pattern) => {
+      const normalizedPattern = path7.posix.normalize(pattern);
+      const patterns = normalizedPattern === pattern ? [pattern] : [pattern, normalizedPattern];
+      return patterns.map(
+        (candidate) => new Minimatch(candidate, {
+          nocase: ["darwin", "win32"].includes(process.platform),
+          nocomment: true,
+          nonegate: true
+        })
+      );
+    });
     const configPath = getInput("config", {
       required: true
     });
@@ -39205,13 +39206,12 @@ async function run() {
       if (!repositoryFile) {
         return false;
       }
-      const relativePath = path7.relative(
-        workingDirectory,
-        path7.resolve(workspaceRoot, repositoryFile)
-      );
-      if (relativePath.split(path7.sep)[0] === "..") {
+      const absoluteFile = path7.resolve(workspaceRoot, repositoryFile);
+      const repositoryPath = path7.relative(workspaceRoot, absoluteFile);
+      if (repositoryPath === ".." || repositoryPath.startsWith(`..${path7.sep}`) || path7.isAbsolute(repositoryPath)) {
         return false;
       }
+      const relativePath = path7.relative(workingDirectory, absoluteFile);
       const workingDirectoryPath = toRepositoryPath(relativePath);
       return promptGlobMatchers.some(
         (matcher) => matcher.match(workingDirectoryPath)
@@ -39366,7 +39366,7 @@ async function run() {
         );
       } else {
         const monitoredPromptRemovedOrRenamedOut = pullRequestFiles.some(
-          (file) => file.status === "removed" && (hasParentTraversalPromptGlob || matchesPromptGlob(file.filename)) || file.status === "renamed" && (hasParentTraversalPromptGlob || matchesPromptGlob(file.previous_filename) && !matchesPromptGlob(file.filename))
+          (file) => file.status === "removed" && matchesPromptGlob(file.filename) || file.status === "renamed" && matchesPromptGlob(file.previous_filename) && !matchesPromptGlob(file.filename)
         );
         if (monitoredPromptRemovedOrRenamedOut) {
           evaluatedAfterPromptRemoval = true;
