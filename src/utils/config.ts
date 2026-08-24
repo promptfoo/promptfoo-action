@@ -231,7 +231,7 @@ export function extractFileDependencies(configPath: string): string[] {
     if (config.defaultTest) {
       if (typeof config.defaultTest === 'string') {
         if (config.defaultTest.startsWith('file://')) {
-          if (config.defaultTest.includes('{{')) {
+          if (/\{[{%]/.test(config.defaultTest)) {
             dependencies.add(`${dependencyRoot}${path.sep}`);
           } else {
             processFileUrl(config.defaultTest);

@@ -192,6 +192,16 @@ defaultTest:
     ).toEqual(['./']);
   });
 
+  it('should watch the repository root for defaultTest template blocks', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "defaultTest: 'file://{% if env.CI %}defaults/ci.yaml{% else %}defaults/dev.yaml{% endif %}'\n",
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['./']);
+  });
+
   it('should reject a file-backed defaultTest outside the repository', () => {
     mockFs.readFileSync.mockReturnValue(`
 defaultTest: file://../secrets/default.yaml
