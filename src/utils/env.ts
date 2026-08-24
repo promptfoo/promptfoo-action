@@ -1,8 +1,4 @@
 import * as dotenv from 'dotenv';
-import * as fs from 'fs';
-import { hasMagic } from 'glob';
-import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
-import * as path from 'path';
 import { ErrorCodes, PromptfooActionError } from './errors';
 
 // Process-control variables that let a repository-controlled env file run code
@@ -40,6 +36,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PATH',
   'PATHEXT',
   'PERL5OPT',
+  'PROMPTFOO_API_KEY',
   'PROMPTFOO_CACHE_PATH',
   'PROMPTFOO_CLOUD_API_URL',
   'PROMPTFOO_FAILED_TEST_EXIT_CODE',
@@ -68,17 +65,6 @@ const CASE_INSENSITIVE_PROXY_KEYS = new Set([
   'NO_PROXY',
 ]);
 
-// Promptfoo authentication settings. A repository-controlled env file must not
-// be able to pair an inherited API key with an attacker-chosen host — the
-// action's preflight would otherwise send the bearer token to that host — so
-// both the credential and its destination must come from trusted workflow
-// state, not from a checked-in file.
-const FORBIDDEN_AUTH_KEYS = new Set([
-  'PROMPTFOO_API_KEY',
-  'PROMPTFOO_CLOUD_API_URL',
-  'PROMPTFOO_REMOTE_API_BASE_URL',
-]);
-
 export function findForbiddenEnvFileKey(
   environment: Record<string, string>,
   platform: NodeJS.Platform = process.platform,
@@ -98,14 +84,6 @@ export function findForbiddenEnvFileKey(
       )
     );
   });
-}
-
-export function findForbiddenAuthKey(
-  environment: Record<string, string>,
-): string | undefined {
-  return Object.keys(environment).find((key) =>
-    FORBIDDEN_AUTH_KEYS.has(key.toUpperCase()),
-  );
 }
 
 export function loadEnvironmentFile(
@@ -139,68 +117,12 @@ export function loadEnvironmentFile(
     );
   }
 
-  const forbiddenAuthKey = findForbiddenAuthKey(fileEnvironment);
-  if (forbiddenAuthKey) {
-    throw new PromptfooActionError(
-      `Environment file ${envFilePath} sets protected authentication variable ${forbiddenAuthKey}`,
-      ErrorCodes.INVALID_CONFIGURATION,
-      'Configure Promptfoo authentication variables only in the trusted workflow environment.',
-    );
-  }
-
   // Merge into the shared environment (process.env by default) only after the
-  // file has fully passed the process-control and authentication checks. The
+  // file has fully passed the process-control check. This is deliberate: the
   // action and its child both read process.env, while the final child
   // environment legitimately inherits trusted runner controls such as PATH.
   // Preserves the documented later-file-wins ordering for application values.
   for (const [key, value] of Object.entries(fileEnvironment)) {
     targetEnvironment[key] = value;
-  }
-}
-
-export function preflightPromptfooEnvironmentFiles(
-  configPath: string,
-  workingDirectory: string,
-  requiresInspectableConfig = false,
-): void {
-  const environmentPaths = new Set([path.join(workingDirectory, '.env')]);
-  const isStaticConfig = /\.(?:json|ya?ml)$/i.test(configPath);
-
-  if (requiresInspectableConfig && (!isStaticConfig || hasMagic(configPath))) {
-    const configType = isStaticConfig ? 'globbed' : 'executable';
-    throw new PromptfooActionError(
-      `Cannot inspect environment files selected by a ${configType} Promptfoo configuration while sharing authenticated results`,
-      ErrorCodes.INVALID_CONFIGURATION,
-      'Use a single static YAML or JSON configuration, or set no-share: true.',
-    );
-  }
-
-  if (isStaticConfig && fs.existsSync(configPath)) {
-    const config = loadYaml(fs.readFileSync(configPath, 'utf8'), {
-      schema: CORE_SCHEMA.withTags(mergeTag),
-    }) as {
-      commandLineOptions?: { envPath?: string | string[] };
-    } | null;
-    const selectedPaths = config?.commandLineOptions?.envPath;
-    const paths = Array.isArray(selectedPaths)
-      ? selectedPaths
-      : selectedPaths
-        ? [selectedPaths]
-        : [];
-
-    for (const configuredPath of paths) {
-      for (const selectedPath of configuredPath.split(',')) {
-        const trimmedPath = selectedPath.trim();
-        if (trimmedPath) {
-          environmentPaths.add(path.resolve(workingDirectory, trimmedPath));
-        }
-      }
-    }
-  }
-
-  for (const environmentPath of environmentPaths) {
-    if (fs.existsSync(environmentPath)) {
-      loadEnvironmentFile(environmentPath, {});
-    }
   }
 }

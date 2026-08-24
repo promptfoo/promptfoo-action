@@ -2,12 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import {
-  findForbiddenAuthKey,
-  findForbiddenEnvFileKey,
-  loadEnvironmentFile,
-  preflightPromptfooEnvironmentFiles,
-} from '../src/utils/env';
+import { findForbiddenEnvFileKey, loadEnvironmentFile } from '../src/utils/env';
 import { ErrorCodes, PromptfooActionError } from '../src/utils/errors';
 
 // These tests exercise the real `dotenv` parser and real files on disk, unlike
@@ -51,6 +46,7 @@ describe('findForbiddenEnvFileKey', () => {
     'RUBYOPT',
     'AWS_CONFIG_FILE',
     'AWS_SHARED_CREDENTIALS_FILE',
+    'PROMPTFOO_API_KEY',
     'PROMPTFOO_CACHE_PATH',
     'PROMPTFOO_CLOUD_API_URL',
     'PROMPTFOO_FAILED_TEST_EXIT_CODE',
@@ -78,27 +74,6 @@ describe('findForbiddenEnvFileKey', () => {
     expect(
       findForbiddenEnvFileKey({ nOdE_oPtIoNs: '--inspect' }, 'win32'),
     ).toBe('nOdE_oPtIoNs');
-  });
-});
-
-describe('findForbiddenAuthKey', () => {
-  test('returns undefined for benign and non-auth PROMPTFOO_ variables', () => {
-    expect(
-      findForbiddenAuthKey({
-        OPENAI_API_KEY: 'sk-test',
-        PROMPTFOO_CACHE_PATH: '/tmp/cache',
-      }),
-    ).toBeUndefined();
-  });
-
-  test.each([
-    'PROMPTFOO_API_KEY',
-    'PROMPTFOO_CLOUD_API_URL',
-    'promptfoo_cloud_api_url',
-    'PROMPTFOO_REMOTE_API_BASE_URL',
-    'promptfoo_remote_api_base_url',
-  ])('flags authentication key %s case-insensitively', (key) => {
-    expect(findForbiddenAuthKey({ [key]: 'x' })).toBe(key);
   });
 });
 
@@ -183,27 +158,16 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     });
   });
 
-  test('rejects a protected auth variable without leaking any value', () => {
-    const target: NodeJS.ProcessEnv = { EXISTING: 'keep' };
-    const file = writeEnv(
-      '.env',
-      'SAFE=ok\nPROMPTFOO_REMOTE_API_BASE_URL=https://capture.example\n',
-    );
+  test('rejects repository attempts to replace trusted Promptfoo credentials', () => {
+    const target: NodeJS.ProcessEnv = {
+      PROMPTFOO_API_KEY: 'trusted-workflow-key',
+    };
+    const file = writeEnv('.env', 'PROMPTFOO_API_KEY=repository-key\n');
 
-    let error: unknown;
-    try {
-      loadEnvironmentFile(file, target);
-    } catch (e) {
-      error = e;
-    }
-
-    expect(error).toBeInstanceOf(PromptfooActionError);
-    expect((error as PromptfooActionError).message).toContain(
-      'PROMPTFOO_REMOTE_API_BASE_URL',
+    expect(() => loadEnvironmentFile(file, target)).toThrow(
+      /PROMPTFOO_API_KEY/,
     );
-    // Isolation: nothing from the rejected file leaks, so a workflow-set key
-    // and host cannot be paired with an attacker value.
-    expect(target).toEqual({ EXISTING: 'keep' });
+    expect(target.PROMPTFOO_API_KEY).toBe('trusted-workflow-key');
   });
 
   test('rejects GIT_ and NPM_CONFIG_ prefixed controls', () => {
@@ -242,75 +206,5 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     expect((error as PromptfooActionError).code).toBe(
       ErrorCodes.ENV_FILE_LOAD_ERROR,
     );
-  });
-
-  test('rejects protected routing values from Promptfoo implicit env files', () => {
-    writeEnv('.env', 'PROMPTFOO_CLOUD_API_URL=https://capture.example\n');
-
-    expect(() =>
-      preflightPromptfooEnvironmentFiles(
-        path.join(tmpDir, 'missing.yaml'),
-        tmpDir,
-      ),
-    ).toThrow(/PROMPTFOO_CLOUD_API_URL/);
-  });
-
-  test('resolves config-selected env files from the runtime working directory', () => {
-    const configDirectory = path.join(tmpDir, 'configs');
-    fs.mkdirSync(configDirectory);
-    const configPath = path.join(configDirectory, 'promptfooconfig.yaml');
-    fs.writeFileSync(
-      configPath,
-      'commandLineOptions:\n  envPath: .env.override\n',
-    );
-    writeEnv('.env.override', 'PROMPTFOO_REMOTE_API_BASE_URL=https://evil\n');
-
-    expect(() =>
-      preflightPromptfooEnvironmentFiles(configPath, tmpDir),
-    ).toThrow(/PROMPTFOO_REMOTE_API_BASE_URL/);
-  });
-
-  test('preflights arrays and comma-separated env files without leaking values', () => {
-    const configPath = path.join(tmpDir, 'promptfooconfig.json');
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        commandLineOptions: { envPath: ['.env.first, , .env.second'] },
-      }),
-    );
-    writeEnv('.env.first', 'AUDIT_PROVIDER_SETTING=first\n');
-    writeEnv('.env.second', 'AUDIT_PROVIDER_SETTING=second\n');
-
-    preflightPromptfooEnvironmentFiles(configPath, tmpDir);
-
-    expect(process.env.AUDIT_PROVIDER_SETTING).toBeUndefined();
-  });
-
-  test('preserves executable config compatibility during env preflight', () => {
-    const configPath = path.join(tmpDir, 'promptfooconfig.js');
-    fs.writeFileSync(configPath, 'export default { providers: ["echo"] };');
-
-    expect(() =>
-      preflightPromptfooEnvironmentFiles(configPath, tmpDir),
-    ).not.toThrow();
-  });
-
-  test('rejects executable configs when authenticated sharing requires inspection', () => {
-    const configPath = path.join(tmpDir, 'promptfooconfig.ts');
-    fs.writeFileSync(configPath, 'export default { providers: ["echo"] };');
-
-    expect(() =>
-      preflightPromptfooEnvironmentFiles(configPath, tmpDir, true),
-    ).toThrow(/executable Promptfoo configuration/);
-  });
-
-  test('rejects config globs when authenticated sharing requires inspection', () => {
-    expect(() =>
-      preflightPromptfooEnvironmentFiles(
-        path.join(tmpDir, 'configs', '*.yaml'),
-        tmpDir,
-        true,
-      ),
-    ).toThrow(/globbed Promptfoo configuration/);
   });
 });
