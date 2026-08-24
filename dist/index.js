@@ -36892,22 +36892,18 @@ function extractFileDependencies(configPath) {
         continue;
       }
       const hookSeparator = extension.lastIndexOf(":");
-      if (hookSeparator <= "file://".length) {
-        continue;
-      }
+      const extensionFile = hookSeparator > "file://".length ? extension.slice("file://".length, hookSeparator) : extension.slice("file://".length);
       const extensionPath = resolveConfigDependency(
-        extension.slice("file://".length, hookSeparator),
+        extensionFile,
         "extension hook dependency"
       );
       if (extensionPath) {
         dependencies.add(extensionPath);
-        const watchRoot = isPathInside(cwd, extensionPath) ? cwd : dependencyRoot;
-        dependencies.add(`${watchRoot}${path5.sep}`);
       }
     }
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path5.sep).join("/") || ".";
+      const repositoryPath = relativePath.split(path5.sep).join("/");
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
         return `${repositoryPath}/`;
       }
@@ -37235,10 +37231,6 @@ var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 function toRepositoryPath(filePath) {
   return filePath.split(path6.sep).join("/");
-}
-function isPathInside2(basePath, candidatePath) {
-  const relativePath = path6.relative(basePath, candidatePath);
-  return relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
 }
 function validateGitRevision(ref) {
   const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
@@ -37568,33 +37560,14 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const allPromptFiles = /* @__PURE__ */ new Set();
     const changedFilesList = changedFiles.split("\n").filter((f) => f);
-    const realWorkspaceRoot = fs7.realpathSync(workspaceRoot);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
         nodir: true
       });
-      const matchingPrompts = matches.filter((file) => {
-        const absolutePromptPath = path6.resolve(workingDirectory, file);
-        if (!isPathInside2(workspaceRoot, absolutePromptPath) || !isPathInside2(realWorkspaceRoot, fs7.realpathSync(absolutePromptPath))) {
-          throw new PromptfooActionError(
-            `Prompt file "${file}" must stay within the repository workspace`,
-            ErrorCodes.INVALID_CONFIGURATION,
-            "Configure prompt globs and symlinks that resolve inside the checkout."
-          );
-        }
-        const repositoryFile = toRepositoryPath(
-          path6.relative(workspaceRoot, absolutePromptPath)
-        );
-        return repositoryFile !== configRepositoryPath && !allPromptFiles.has(file);
-      });
-      for (const file of matchingPrompts) {
-        allPromptFiles.add(file);
-      }
       if (changedFilesList.length > 0) {
-        const changedMatches = matchingPrompts.filter((file) => {
+        const changedMatches = matches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
           );
@@ -37602,7 +37575,13 @@ async function run() {
         });
         promptFiles.push(...changedMatches);
       } else {
-        promptFiles.push(...matchingPrompts);
+        const allMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
+          );
+          return repositoryFile !== configRepositoryPath;
+        });
+        promptFiles.push(...allMatches);
       }
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
@@ -37614,7 +37593,7 @@ async function run() {
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
         );
         dependencyChanged = dependencies.some((dep) => {
-          if (dep === "./" || changedFilesList.includes(dep)) {
+          if (changedFilesList.includes(dep)) {
             return true;
           }
           if (dep.endsWith("/") || isDirectory2(dep)) {
@@ -37629,9 +37608,6 @@ async function run() {
           info("Detected changes in config file dependencies");
         }
       }
-    }
-    if (dependencyChanged) {
-      promptFiles.splice(0, promptFiles.length, ...allPromptFiles);
     }
     if (!forceRun && promptFiles.length < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
       info("No LLM prompt, config files, or dependencies were modified.");
@@ -37836,9 +37812,8 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const reportedFiles = promptFiles.join(", ");
-      const promptDescription = dependencyChanged ? "LLM prompts were evaluated" : "LLM prompt was modified";
-      let body = `\u26A0\uFE0F ${promptDescription} in these files: ${reportedFiles}
+      const modifiedFiles = promptFiles.join(", ");
+      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
