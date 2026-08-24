@@ -84,6 +84,24 @@ prompts:
     expect(deps).toEqual(['../config/prompts/main.txt']);
   });
 
+  it('should extract a scalar prompt without a file URL prefix', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: prompts/main.txt\n');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompts/main.txt']);
+  });
+
+  it('should strip supported function selectors from scalar prompt paths', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: file://prompts/build.py:create_prompt\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompts/build.py']);
+  });
+
   it('should expand a scalar file prompt glob', () => {
     mockFs.readFileSync.mockReturnValue('prompts: file://prompts/*.txt\n');
     mockGlob.hasMagic.mockImplementation((value: string) =>
@@ -103,6 +121,14 @@ prompts:
     const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
 
     expect(deps).toEqual([]);
+  });
+
+  it('should ignore prompt objects without backing files', () => {
+    mockFs.readFileSync.mockReturnValue('prompts:\n  - label: inline\n');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
   });
 
   it('should extract test variable files', () => {
