@@ -36822,11 +36822,27 @@ function extractFileDependencies(configPath) {
       }
     };
     const inspectedPromptFiles = /* @__PURE__ */ new Set();
-    const processPromptFile = (fileUrl) => {
-      processFileUrl(fileUrl);
-      const filePath = fileUrl.slice("file://".length);
+    const inspectTemplateImports = (contents) => {
+      for (const match of contents.matchAll(
+        /\{%-?\s*(?:include|extends|import|from)\s+([\s\S]+?)-?%\}/g
+      )) {
+        const selectedTemplate = match[1].trim().match(/^(['"])(.*?)\1/);
+        if (selectedTemplate) {
+          processPromptFile(`file://${selectedTemplate[2]}`, true);
+        } else {
+          dependencies.add(`${dependencyRoot}${path5.sep}`);
+        }
+      }
+    };
+    const processPromptFile = (fileUrl, importedTemplate = false) => {
+      let filePath = fileUrl.slice("file://".length);
+      const selector = filePath.lastIndexOf(":");
+      if (selector > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, selector))) {
+        filePath = filePath.slice(0, selector);
+      }
+      processFileUrl(`file://${filePath}`);
       const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(filePath);
-      const isTextTemplate = /\.(?:txt|md|j2|njk)$/i.test(filePath);
+      const isTextTemplate = importedTemplate || /\.(?:txt|md|j2|njk)$/i.test(filePath);
       if (!isStructuredPrompt && !isTextTemplate) {
         return;
       }
@@ -36841,7 +36857,7 @@ function extractFileDependencies(configPath) {
         for (const match of Ui(absolutePath, { nodir: true })) {
           const matchedPath = path5.resolve(match);
           if (isPathInside(dependencyRoot, matchedPath)) {
-            processPromptFile(`file://${matchedPath}`);
+            processPromptFile(`file://${matchedPath}`, importedTemplate);
           }
         }
         return;
@@ -36861,11 +36877,7 @@ function extractFileDependencies(configPath) {
         inspectedPromptFiles.add(absolutePath);
         const contents = fs6.readFileSync(physicalPath, "utf8");
         if (isTextTemplate) {
-          for (const match of contents.matchAll(
-            /\{%-?\s*(?:include|extends|import|from)\s+(['"])(.*?)\1/g
-          )) {
-            processPromptFile(`file://${match[2]}`);
-          }
+          inspectTemplateImports(contents);
           return;
         }
         const values = [
@@ -36875,8 +36887,12 @@ function extractFileDependencies(configPath) {
         ];
         const inspectedValues = /* @__PURE__ */ new Set();
         for (const value of values) {
-          if (typeof value === "string" && value.startsWith("file://")) {
-            processPromptFile(value);
+          if (typeof value === "string") {
+            if (value.startsWith("file://")) {
+              processPromptFile(value);
+            } else {
+              inspectTemplateImports(value);
+            }
           } else if (value && typeof value === "object" && !inspectedValues.has(value)) {
             inspectedValues.add(value);
             values.push(...Object.values(value));
@@ -36967,7 +36983,7 @@ function extractFileDependencies(configPath) {
     }
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path5.sep).join("/");
+      const repositoryPath = relativePath.split(path5.sep).join("/") || ".";
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
         return `${repositoryPath}/`;
       }
@@ -37295,6 +37311,10 @@ var gitInterface = simpleGit();
 var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 function toRepositoryPath(filePath) {
   return filePath.split(path6.sep).join("/");
+}
+function isPathInside2(basePath, candidatePath) {
+  const relativePath = path6.relative(basePath, candidatePath);
+  return relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
 }
 function validateGitRevision(ref) {
   const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
@@ -37624,28 +37644,32 @@ async function run() {
       );
     }
     const promptFiles = [];
+    const allPromptFiles = /* @__PURE__ */ new Set();
     const changedFilesList = changedFiles.split("\n").filter((f) => f);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
         nodir: true
       });
+      const matchingPrompts = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
+        );
+        return repositoryFile !== configRepositoryPath && !allPromptFiles.has(file);
+      });
+      for (const file of matchingPrompts) {
+        allPromptFiles.add(file);
+      }
       if (changedFilesList.length > 0) {
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = matchingPrompts.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
           );
-          return repositoryFile !== configRepositoryPath && changedFilesList.includes(repositoryFile);
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
-        promptFiles.push(...allMatches);
+        promptFiles.push(...matchingPrompts);
       }
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
@@ -37657,7 +37681,7 @@ async function run() {
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
         );
         dependencyChanged = dependencies.some((dep) => {
-          if (changedFilesList.includes(dep)) {
+          if (dep === "./" || changedFilesList.includes(dep)) {
             return true;
           }
           if (dep.endsWith("/") || isDirectory2(dep)) {
@@ -37673,9 +37697,25 @@ async function run() {
         }
       }
     }
+    if (dependencyChanged) {
+      promptFiles.splice(0, promptFiles.length, ...allPromptFiles);
+    }
     if (!forceRun && promptFiles.length < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
+    }
+    if (!useConfigPrompts && promptFiles.length > 0) {
+      const realWorkspaceRoot = fs7.realpathSync(workspaceRoot);
+      for (const file of promptFiles) {
+        const absolutePromptPath = path6.resolve(workingDirectory, file);
+        if (!isPathInside2(workspaceRoot, absolutePromptPath) || !isPathInside2(realWorkspaceRoot, fs7.realpathSync(absolutePromptPath))) {
+          throw new PromptfooActionError(
+            `Prompt file "${file}" must stay within the repository workspace`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            "Configure prompt globs and symlinks that resolve inside the checkout."
+          );
+        }
+      }
     }
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
@@ -37876,8 +37916,9 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(", ");
-      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
+      const reportedFiles = promptFiles.join(", ");
+      const promptDescription = dependencyChanged ? "LLM prompts were evaluated" : "LLM prompt was modified";
+      let body = `\u26A0\uFE0F ${promptDescription} in these files: ${reportedFiles}
 
 | Success | Failure |
 |---------|---------|
