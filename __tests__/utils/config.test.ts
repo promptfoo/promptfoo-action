@@ -126,6 +126,22 @@ prompts:
     expect(mockFs.readFileSync).toHaveBeenCalledOnce();
   });
 
+  it('should normalize Windows drive-letter prompt file URLs', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      mockFs.readFileSync.mockReturnValue(
+        "prompts:\n  'file:///C:/repository/prompts/mapped.txt': label\n",
+      );
+
+      expect(
+        extractFileDependencies('/test/config/promptfooconfig.yaml'),
+      ).toEqual(['../config/C:/repository/prompts/mapped.txt']);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
   it('should leave empty executable prompt commands to Promptfoo validation', () => {
     mockFs.readFileSync.mockReturnValue("prompts: 'exec:   '\n");
 

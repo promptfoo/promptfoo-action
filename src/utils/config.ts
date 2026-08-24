@@ -192,6 +192,12 @@ export function extractFileDependencies(configPath: string): string[] {
           ) {
             filePath = filePath.slice(0, selector);
           }
+          if (
+            process.platform === 'win32' &&
+            /^\/[A-Za-z]:[\\/]/.test(filePath)
+          ) {
+            filePath = filePath.slice(1);
+          }
           processFileUrl(`file://${filePath}`);
         } else if (prompt.file) {
           const absolutePath = resolveConfigDependency(
