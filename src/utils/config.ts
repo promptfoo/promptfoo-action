@@ -121,13 +121,16 @@ export function extractFileDependencies(configPath: string): string[] {
         const globPath = isAbsoluteGlob
           ? path.relative(dependencyRoot, filePath)
           : filePath;
-        const pathParts = globPath.split(/[\\/]/);
+        const pathParts = path.normalize(globPath).split(path.sep);
         let basePath = '';
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
             break;
           }
-          basePath = basePath ? path.join(basePath, part) : part;
+          const literalPart = glob.unescape(part, {
+            windowsPathsNoEscape: process.platform === 'win32',
+          });
+          basePath = basePath ? path.join(basePath, literalPart) : literalPart;
         }
         if (basePath) {
           const globRoot = isAbsoluteGlob ? dependencyRoot : configDir;
@@ -231,7 +234,7 @@ export function extractFileDependencies(configPath: string): string[] {
     if (config.defaultTest) {
       if (typeof config.defaultTest === 'string') {
         if (config.defaultTest.startsWith('file://')) {
-          if (/\{[{%]/.test(config.defaultTest)) {
+          if (/\{[{%#]/.test(config.defaultTest)) {
             dependencies.add(`${dependencyRoot}${path.sep}`);
           } else {
             processFileUrl(config.defaultTest);
