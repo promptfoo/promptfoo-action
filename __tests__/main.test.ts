@@ -678,6 +678,7 @@ describe('GitHub Action Main', () => {
 
     test.each([
       'PROMPTFOO_API_KEY',
+      'PROMPTFOO_CLOUD_API_URL',
       'PROMPTFOO_REMOTE_API_BASE_URL',
       'promptfoo_remote_api_base_url',
     ])('should reject authentication variable %s from environment files', async (variableName) => {

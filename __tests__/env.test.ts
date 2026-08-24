@@ -71,6 +71,8 @@ describe('findForbiddenAuthKey', () => {
 
   test.each([
     'PROMPTFOO_API_KEY',
+    'PROMPTFOO_CLOUD_API_URL',
+    'promptfoo_cloud_api_url',
     'PROMPTFOO_REMOTE_API_BASE_URL',
     'promptfoo_remote_api_base_url',
   ])('flags authentication key %s case-insensitively', (key) => {

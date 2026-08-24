@@ -58,6 +58,7 @@ const FORBIDDEN_ENV_FILE_PREFIXES = ['GIT_', 'NPM_CONFIG_'];
 // state, not from a checked-in file.
 const FORBIDDEN_AUTH_KEYS = new Set([
   'PROMPTFOO_API_KEY',
+  'PROMPTFOO_CLOUD_API_URL',
   'PROMPTFOO_REMOTE_API_BASE_URL',
 ]);
 
