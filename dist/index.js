@@ -36831,7 +36831,8 @@ function extractFileDependencies(configPath) {
       }
     }
     if (config2.prompts) {
-      for (const prompt of config2.prompts) {
+      const prompts = typeof config2.prompts === "string" ? [config2.prompts] : config2.prompts;
+      for (const prompt of prompts) {
         if (typeof prompt === "string" && prompt.startsWith("file://")) {
           processFileUrl(prompt);
         } else if (typeof prompt === "object" && prompt.file) {
