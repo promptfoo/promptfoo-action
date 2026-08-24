@@ -16,10 +16,7 @@ export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: string | PromptfooTestConfig | Array<string | PromptfooTestConfig>;
-  defaultTest?: {
-    vars?: { [key: string]: string | { file?: string } };
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
-  };
+  defaultTest?: string | PromptfooTestConfig;
 }
 
 function isPathInside(baseDir: string, targetPath: string): boolean {
@@ -225,8 +222,17 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Process defaultTest
     if (config.defaultTest) {
-      extractVarFiles(config.defaultTest.vars);
-      extractAssertFiles(config.defaultTest.assert);
+      if (typeof config.defaultTest === 'string') {
+        if (
+          config.defaultTest.startsWith('file://') &&
+          !/\{[{%#]/.test(config.defaultTest)
+        ) {
+          processFileUrl(config.defaultTest);
+        }
+      } else {
+        extractVarFiles(config.defaultTest.vars);
+        extractAssertFiles(config.defaultTest.assert);
+      }
     }
 
     const processTestFile = (source: string): void => {

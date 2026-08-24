@@ -181,6 +181,35 @@ defaultTest:
     expect(deps).toContain('../config/expected/default.txt');
   });
 
+  it.each([
+    ['file://defaults/test.yaml', '../config/defaults/test.yaml'],
+    ['file:///test/config/defaults/test.yaml', '../config/defaults/test.yaml'],
+  ])('should track directly configured default test %s', (source, expected) => {
+    mockFs.readFileSync.mockReturnValue(`defaultTest: ${source}\n`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([expected]);
+  });
+
+  it('should leave templated default-test loading to Promptfoo', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'defaultTest: file://{{ env.DEFAULT_TEST_PATH }}\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should ignore unsupported default-test strings', () => {
+    mockFs.readFileSync.mockReturnValue('defaultTest: defaults/test.yaml\n');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
   it('should extract dependencies inherited through YAML merge keys', () => {
     const configContent = `
 shared: &shared
