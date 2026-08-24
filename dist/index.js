@@ -36803,7 +36803,9 @@ function extractFileDependencies(configPath) {
             );
           }
         }
-        const pathParts = filePath.split("/");
+        const isAbsoluteGlob = path5.isAbsolute(filePath);
+        const globPath = isAbsoluteGlob ? path5.relative(dependencyRoot, filePath) : filePath;
+        const pathParts = globPath.split(/[\\/]/);
         let basePath = "";
         for (const part of pathParts) {
           if (le(part)) {
@@ -36812,7 +36814,8 @@ function extractFileDependencies(configPath) {
           basePath = basePath ? path5.join(basePath, part) : part;
         }
         if (basePath) {
-          dependencies.add(path5.resolve(path5.join(configDir, basePath)));
+          const globRoot = isAbsoluteGlob ? dependencyRoot : configDir;
+          dependencies.add(path5.resolve(path5.join(globRoot, basePath)));
         }
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
