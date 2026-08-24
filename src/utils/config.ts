@@ -5,18 +5,18 @@ import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
+interface PromptfooTestConfig {
+  path?: string;
+  vars?: { [key: string]: string | { file?: string } };
+  assert?: Array<{ type?: string; value?: string | { file?: string } }>;
+  [key: string]: unknown;
+}
+
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
-  tests?: Array<{
-    vars?: { [key: string]: string | { file?: string } };
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
-    [key: string]: unknown;
-  }>;
-  defaultTest?: {
-    vars?: { [key: string]: string | { file?: string } };
-    assert?: Array<{ type?: string; value?: string | { file?: string } }>;
-  };
+  tests?: string | PromptfooTestConfig | Array<string | PromptfooTestConfig>;
+  defaultTest?: string | PromptfooTestConfig;
 }
 
 function isPathInside(baseDir: string, targetPath: string): boolean {
@@ -67,7 +67,9 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.isAbsolute(filePath)
+          ? path.normalize(filePath)
+          : path.resolve(path.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -220,15 +222,51 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Process defaultTest
     if (config.defaultTest) {
-      extractVarFiles(config.defaultTest.vars);
-      extractAssertFiles(config.defaultTest.assert);
+      if (typeof config.defaultTest === 'string') {
+        if (
+          config.defaultTest.startsWith('file://') &&
+          !/\{[{%#]/.test(config.defaultTest)
+        ) {
+          processFileUrl(config.defaultTest);
+        }
+      } else {
+        extractVarFiles(config.defaultTest.vars);
+        extractAssertFiles(config.defaultTest.assert);
+      }
     }
 
-    // Process tests
+    const processTestFile = (source: string): void => {
+      if (
+        /^[a-z][a-z\d+.-]*:\/\//i.test(source) &&
+        !source.startsWith('file://')
+      ) {
+        return;
+      }
+
+      let filePath = source
+        .replace(/^file:\/\//, '')
+        .replace(/(\.xlsx?)#[^/\\]*$/i, '$1');
+      const selector = filePath.lastIndexOf(':');
+      if (
+        selector > 1 &&
+        /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, selector))
+      ) {
+        filePath = filePath.slice(0, selector);
+      }
+      processFileUrl(`file://${filePath}`);
+    };
+
     if (config.tests) {
-      for (const test of config.tests) {
-        extractVarFiles(test.vars);
-        extractAssertFiles(test.assert);
+      const tests = Array.isArray(config.tests) ? config.tests : [config.tests];
+      for (const test of tests) {
+        if (typeof test === 'string') {
+          processTestFile(test);
+        } else if (test.path) {
+          processTestFile(test.path);
+        } else {
+          extractVarFiles(test.vars);
+          extractAssertFiles(test.assert);
+        }
       }
     }
 

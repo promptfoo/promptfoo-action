@@ -94,6 +94,56 @@ tests:
     expect(deps).toContain('../config/data/examples.json');
   });
 
+  it.each([
+    ['file://tests/cases.yaml', '../config/tests/cases.yaml'],
+    ['tests/cases.jsonl', '../config/tests/cases.jsonl'],
+    ['file:///test/config/tests/cases.yaml', '../config/tests/cases.yaml'],
+    ['file://tests/cases.xlsx#Safety', '../config/tests/cases.xlsx'],
+    ['file://tests/generate.py:make_tests', '../config/tests/generate.py'],
+  ])('should track directly configured test source %s', (source, expected) => {
+    mockFs.readFileSync.mockReturnValue(`tests: ${source}\n`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([expected]);
+  });
+
+  it('should track test arrays without replacing Promptfoo test loading', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  - file://tests/cases.yaml
+  - vars:
+      context: file://data/context.txt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases.yaml', '../config/data/context.txt']);
+  });
+
+  it('should track object-form test generators', () => {
+    mockFs.readFileSync.mockReturnValue(`
+tests:
+  path: file://tests/generate.js:make_tests
+  config:
+    limit: 3
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/generate.js']);
+  });
+
+  it('should leave remote test sources to Promptfoo', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: https://docs.google.com/spreadsheets/d/example\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
   it('should extract assert files', () => {
     const configContent = `
 tests:
@@ -129,6 +179,35 @@ defaultTest:
     expect(deps).toHaveLength(2);
     expect(deps).toContain('../config/templates/default.txt');
     expect(deps).toContain('../config/expected/default.txt');
+  });
+
+  it.each([
+    ['file://defaults/test.yaml', '../config/defaults/test.yaml'],
+    ['file:///test/config/defaults/test.yaml', '../config/defaults/test.yaml'],
+  ])('should track directly configured default test %s', (source, expected) => {
+    mockFs.readFileSync.mockReturnValue(`defaultTest: ${source}\n`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([expected]);
+  });
+
+  it('should leave templated default-test loading to Promptfoo', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'defaultTest: file://{{ env.DEFAULT_TEST_PATH }}\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should ignore unsupported default-test strings', () => {
+    mockFs.readFileSync.mockReturnValue('defaultTest: defaults/test.yaml\n');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
   });
 
   it('should extract dependencies inherited through YAML merge keys', () => {
