@@ -5,7 +5,7 @@
   "author": "Ian Webster",
   "license": "MIT",
   "main": "lib/main.js",
-  "packageManager": "npm@11.19.0",
+  "packageManager": "npm@12.0.2",
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
@@ -55,6 +55,6 @@
   },
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
-    "npm": ">=11.4.0"
+    "npm": ">=12.0.0"
   }
 }
