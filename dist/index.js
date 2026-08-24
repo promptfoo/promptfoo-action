@@ -37568,7 +37568,7 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const allPromptFiles = [];
+    const allPromptFiles = /* @__PURE__ */ new Set();
     const changedFilesList = changedFiles.split("\n").filter((f) => f);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
@@ -37579,9 +37579,11 @@ async function run() {
         const repositoryFile = toRepositoryPath(
           path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
         );
-        return repositoryFile !== configRepositoryPath;
+        return repositoryFile !== configRepositoryPath && !allPromptFiles.has(file);
       });
-      allPromptFiles.push(...matchingPrompts);
+      for (const file of matchingPrompts) {
+        allPromptFiles.add(file);
+      }
       if (changedFilesList.length > 0) {
         const changedMatches = matchingPrompts.filter((file) => {
           const repositoryFile = toRepositoryPath(
@@ -37825,8 +37827,9 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(", ");
-      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
+      const reportedFiles = promptFiles.join(", ");
+      const promptDescription = configChanged || dependencyChanged ? "LLM prompts were evaluated" : "LLM prompt was modified";
+      let body = `\u26A0\uFE0F ${promptDescription} in these files: ${reportedFiles}
 
 | Success | Failure |
 |---------|---------|
