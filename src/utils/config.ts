@@ -68,13 +68,8 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.isAbsolute(filePath)
-          ? path.normalize(filePath)
-          : path.resolve(path.join(configDir, filePath));
-        if (
-          !isPathInside(dependencyRoot, absolutePath) &&
-          !isPathInside(cwd, absolutePath)
-        ) {
+        const absolutePath = path.resolve(path.join(configDir, filePath));
+        if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
           );
@@ -249,8 +244,11 @@ export function extractFileDependencies(configPath: string): string[] {
         hookSeparator > 'file://'.length
           ? extension.slice('file://'.length, hookSeparator)
           : extension.slice('file://'.length);
+      const localExtensionFile = path.isAbsolute(extensionFile)
+        ? path.relative(configDir, extensionFile)
+        : extensionFile;
       const extensionPath = resolveConfigDependency(
-        extensionFile,
+        localExtensionFile,
         'extension hook dependency',
       );
       if (extensionPath) {

@@ -187,13 +187,13 @@ extensions:
     ).toEqual(['evals/hooks/policy.js']);
   });
 
-  it('should preserve checkout extensions referenced by external configurations', () => {
+  it('should preserve absolute extension paths inside the checkout', () => {
     mockFs.readFileSync.mockReturnValue(
       'extensions:\n  - file:///test/working/hooks/policy.js:beforeAll\n',
     );
 
     expect(
-      extractFileDependencies('/test/external/promptfooconfig.yaml'),
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
     ).toEqual(['hooks/policy.js']);
   });
 
