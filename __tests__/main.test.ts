@@ -1004,6 +1004,45 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
+    test('should not validate unchanged prompt symlinks for an unrelated PR', async () => {
+      mockOctokit.paginate.mockResolvedValue([{ filename: 'README.md' }]);
+      mockGlob.sync.mockReturnValue(['prompts/linked.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const candidate = filePath.toString();
+        return candidate.endsWith(`${path.sep}linked.txt`)
+          ? path.resolve(process.cwd(), '..', 'private', 'secret.txt')
+          : candidate;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockFs.realpathSync).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should report configured prompts when prompt overrides are disabled', async () => {
+      mockCore.getBooleanInput.mockImplementation(
+        (name) => name === 'use-config-prompts',
+      );
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/action-override.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args).not.toContain('--prompts');
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'Configured LLM prompts were evaluated in these files: promptfooconfig.yaml',
+          ),
+        }),
+      );
+    });
+
     test('should run when a file inside a dependency directory changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },
@@ -1488,6 +1527,30 @@ describe('GitHub Action Main', () => {
         3,
       );
       expect(mockCore.summary.write).toHaveBeenCalled();
+    });
+
+    test('should report configured prompts in non-PR workflow summaries', async () => {
+      Object.defineProperty(mockGithub.context, 'eventName', {
+        value: 'workflow_dispatch',
+        configurable: true,
+      });
+      Object.defineProperty(mockGithub.context, 'payload', {
+        value: { inputs: { files: 'promptfooconfig.yaml' } },
+        configurable: true,
+      });
+      mockCore.getBooleanInput.mockImplementation(
+        (name) => name === 'use-config-prompts',
+      );
+
+      await run();
+
+      expect(mockCore.summary.addHeading).toHaveBeenCalledWith(
+        'Evaluated Files',
+        3,
+      );
+      expect(mockCore.summary.addList).toHaveBeenCalledWith([
+        'promptfooconfig.yaml',
+      ]);
     });
 
     test('should handle non-Error failures', async () => {

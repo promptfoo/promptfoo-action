@@ -21,7 +21,7 @@ export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: PromptfooTests;
-  scenarios?: Array<{ tests?: PromptfooTests }>;
+  scenarios?: Array<string | { tests?: PromptfooTests }>;
   defaultTest?: {
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -282,7 +282,11 @@ export function extractFileDependencies(configPath: string): string[] {
 
     extractTests(config.tests);
     for (const scenario of config.scenarios ?? []) {
-      extractTests(scenario.tests);
+      if (typeof scenario === 'string') {
+        processTestFile(scenario);
+      } else {
+        extractTests(scenario.tests);
+      }
     }
 
     // Convert absolute paths back to relative paths from working directory

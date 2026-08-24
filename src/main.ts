@@ -460,7 +460,6 @@ export async function run(): Promise<void> {
     const promptFiles: string[] = [];
     const allPromptFiles = new Set<string>();
     const changedFilesList = changedFiles.split('\n').filter((f) => f);
-    const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -469,16 +468,6 @@ export async function run(): Promise<void> {
       });
       const matchingPrompts = matches.filter((file) => {
         const absolutePromptPath = path.resolve(workingDirectory, file);
-        if (
-          !isPathInside(workspaceRoot, absolutePromptPath) ||
-          !isPathInside(realWorkspaceRoot, fs.realpathSync(absolutePromptPath))
-        ) {
-          throw new PromptfooActionError(
-            `Prompt file "${file}" must stay within the repository workspace`,
-            ErrorCodes.INVALID_CONFIGURATION,
-            'Configure prompt globs and symlinks that resolve inside the checkout.',
-          );
-        }
         const repositoryFile = toRepositoryPath(
           path.relative(workspaceRoot, absolutePromptPath),
         );
@@ -559,6 +548,23 @@ export async function run(): Promise<void> {
       // Only skip if prompts were actually specified
       core.info('No LLM prompt, config files, or dependencies were modified.');
       return;
+    }
+
+    if (!useConfigPrompts && promptFiles.length > 0) {
+      const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
+      for (const file of promptFiles) {
+        const absolutePromptPath = path.resolve(workingDirectory, file);
+        if (
+          !isPathInside(workspaceRoot, absolutePromptPath) ||
+          !isPathInside(realWorkspaceRoot, fs.realpathSync(absolutePromptPath))
+        ) {
+          throw new PromptfooActionError(
+            `Prompt file "${file}" must stay within the repository workspace`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            'Configure prompt globs and symlinks that resolve inside the checkout.',
+          );
+        }
+      }
     }
 
     if (forceRun) {
@@ -837,9 +843,12 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const reportedFiles = promptFiles.join(', ');
-      const promptDescription =
-        configChanged || dependencyChanged
+      const reportedFiles = useConfigPrompts
+        ? configPath
+        : promptFiles.join(', ');
+      const promptDescription = useConfigPrompts
+        ? 'Configured LLM prompts were evaluated'
+        : configChanged || dependencyChanged
           ? 'LLM prompts were evaluated'
           : 'LLM prompt was modified';
       let body = `⚠️ ${promptDescription} in these files: ${reportedFiles}
@@ -877,9 +886,10 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (promptFiles.length > 0) {
+      const evaluatedFiles = useConfigPrompts ? [configPath] : promptFiles;
+      if (evaluatedFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
-        summary.addList(promptFiles);
+        summary.addList(evaluatedFiles);
       }
 
       if (repeatCheckResult) {

@@ -183,6 +183,7 @@ tests:
   it('should extract file-backed tests nested inside scenarios', () => {
     mockFs.readFileSync.mockReturnValue(`
 scenarios:
+  - scenarios/shared.yaml
   - tests: scenarios/cases.yaml
   - tests:
       - path: file://scenarios/generated.py:create_tests
@@ -194,6 +195,7 @@ scenarios:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual([
+      '../config/scenarios/shared.yaml',
       '../config/scenarios/cases.yaml',
       '../config/scenarios/generated.py',
       '../config/scenarios/context.txt',
