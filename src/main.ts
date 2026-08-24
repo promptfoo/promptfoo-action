@@ -14,7 +14,7 @@ import {
   setupCacheEnvironment,
 } from './utils/cache';
 import { extractFileDependencies } from './utils/config';
-import { loadConfigEnvironmentFiles, loadEnvironmentFile } from './utils/env';
+import { loadEnvironmentFile } from './utils/env';
 import {
   ErrorCodes,
   formatErrorMessage,
@@ -33,173 +33,9 @@ import {
 
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
-const PROMPT_GLOB_BRACE_EXPANSION_LIMIT = 1024;
-const MAX_PROMPT_GLOB_LENGTH = 64 * 1024;
-
-function invalidPromptGlobError(): PromptfooActionError {
-  return new PromptfooActionError(
-    'Invalid prompt glob: the pattern could not be expanded safely.',
-    ErrorCodes.INVALID_CONFIGURATION,
-    'Use valid prompt glob patterns with bounded brace expansion.',
-  );
-}
-
-function validatePromptGlob(pattern: string): void {
-  const hasControlCharacter = [...pattern].some((character) => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127;
-  });
-  if (pattern.length > MAX_PROMPT_GLOB_LENGTH || hasControlCharacter) {
-    throw invalidPromptGlobError();
-  }
-
-  const braces: Array<{ start: number; nested: boolean }> = [];
-  let escapedBraceClosers = 0;
-  let braceExpansions = BigInt(1);
-  let escaped = false;
-  let inCharacterClass = false;
-  for (let index = 0; index < pattern.length; index++) {
-    const character = pattern[index];
-    if (escaped) {
-      if (character === '{') escapedBraceClosers++;
-      if (character === '}' && escapedBraceClosers > 0) escapedBraceClosers--;
-      escaped = false;
-      continue;
-    }
-    if (character === '\\') {
-      escaped = true;
-      continue;
-    }
-    if (character === '[') {
-      inCharacterClass = true;
-      continue;
-    }
-    if (character === ']') {
-      inCharacterClass = false;
-      continue;
-    }
-    if (character === '{') {
-      if (braces.length > 0) braces[braces.length - 1].nested = true;
-      braces.push({ start: index + 1, nested: false });
-      continue;
-    }
-    if (character !== '}') continue;
-    const brace = braces.pop();
-    if (!brace) {
-      if (escapedBraceClosers > 0) {
-        escapedBraceClosers--;
-        continue;
-      }
-      throw invalidPromptGlobError();
-    }
-    const body = pattern.slice(brace.start, index);
-    // Nested comma groups still multiply the expansion count. Numeric-looking
-    // alternatives beside a nested brace stay literal.
-    if (brace.nested) {
-      braceExpansions *= BigInt(body.split(',').length);
-      if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
-        throw invalidPromptGlobError();
-      }
-      continue;
-    }
-    if (!body.includes('..')) {
-      braceExpansions *= BigInt(body.split(',').length);
-      if (braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT)) {
-        throw invalidPromptGlobError();
-      }
-      continue;
-    }
-    const parts = body.split('..');
-    const numeric = parts.every((part) => /^-?\d+$/.test(part));
-    const numericLike = parts.some((part) => /^-?\d/.test(part));
-    if (!numeric) {
-      if (numericLike) throw invalidPromptGlobError();
-      continue;
-    }
-    if (parts.length !== 2 && parts.length !== 3) {
-      throw invalidPromptGlobError();
-    }
-    const values = parts.map((part) => Number(part));
-    if (values.some((value) => !Number.isSafeInteger(value))) {
-      throw invalidPromptGlobError();
-    }
-    const start = BigInt(parts[0]);
-    const end = BigInt(parts[1]);
-    const step = parts.length === 3 ? BigInt(parts[2]) : BigInt(1);
-    if (step === BigInt(0)) throw invalidPromptGlobError();
-    const distance = end >= start ? end - start : start - end;
-    const increment = step > BigInt(0) ? step : -step;
-    const count = distance / increment + BigInt(1);
-    braceExpansions *= count;
-    const paddedWidth = Math.max(parts[0].length, parts[1].length);
-    if (
-      braceExpansions > BigInt(PROMPT_GLOB_BRACE_EXPANSION_LIMIT) ||
-      count * BigInt(paddedWidth) > BigInt(MAX_PROMPT_GLOB_LENGTH)
-    ) {
-      throw invalidPromptGlobError();
-    }
-  }
-  if (escaped || inCharacterClass || braces.length > 0) {
-    throw invalidPromptGlobError();
-  }
-}
 
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
-}
-
-function isPathInside(baseDir: string, targetPath: string): boolean {
-  const relativePath = path.relative(baseDir, targetPath);
-  return (
-    relativePath === '' ||
-    (relativePath !== '..' &&
-      !relativePath.startsWith(`..${path.sep}`) &&
-      !path.isAbsolute(relativePath))
-  );
-}
-
-function validatePromptPath(
-  workspaceRoot: string,
-  workingDirectory: string,
-  filePath: string,
-): string {
-  const resolvedPath = path.resolve(workingDirectory, filePath);
-  try {
-    if (
-      !isPathInside(workspaceRoot, resolvedPath) ||
-      !isPathInside(workingDirectory, resolvedPath)
-    ) {
-      throw new Error('Prompt path escapes the workspace');
-    }
-    const realWorkspaceRoot = path.resolve(
-      fs.realpathSync(workspaceRoot).toString(),
-    );
-    const realWorkingDirectory = path.resolve(
-      fs.realpathSync(workingDirectory).toString(),
-    );
-    const realPath = path.resolve(fs.realpathSync(resolvedPath).toString());
-    if (
-      !isPathInside(realWorkspaceRoot, realPath) ||
-      !isPathInside(realWorkingDirectory, realPath)
-    ) {
-      throw new Error('Prompt path escapes the workspace');
-    }
-    return resolvedPath;
-  } catch {
-    throw new PromptfooActionError(
-      'Invalid prompt file path: prompt files must stay within the working directory.',
-      ErrorCodes.INVALID_CONFIGURATION,
-      'Use readable prompt files and glob patterns contained within the working directory.',
-    );
-  }
-}
-
-function formatChangedFilesForLog(changedFiles: string): string {
-  return JSON.stringify(
-    changedFiles
-      .split(changedFiles.includes('\0') ? '\0' : '\n')
-      .filter(Boolean),
-  );
 }
 
 /**
@@ -347,53 +183,12 @@ export async function run(): Promise<void> {
     const groqApiKey: string = core.getInput('groq-api-key', {
       required: false,
     });
-    const maskApiKeys = (
-      environment: NodeJS.ProcessEnv = process.env,
-    ): void => {
-      const apiKeys = [
-        openaiApiKey,
-        azureApiKey,
-        anthropicApiKey,
-        huggingfaceApiKey,
-        awsAccessKeyId,
-        awsSecretAccessKey,
-        replicateApiKey,
-        palmApiKey,
-        vertexApiKey,
-        cohereApiKey,
-        mistralApiKey,
-        groqApiKey,
-      ];
-      for (const [name, value] of Object.entries(environment)) {
-        if (
-          value &&
-          (/(?:API_?KEY|API_TOKEN|_(?:TOKEN|SECRET|PASSWORD|(?:PUBLIC|SECRET|PRIVATE)_KEY|ACCESS_KEY(?:_ID)?|SECRET_ACCESS_KEY))$/i.test(
-            name,
-          ) ||
-            /(?:^|_)BEARER_TOKEN(?:_|$)/i.test(name) ||
-            name.toUpperCase() === 'FAL_KEY' ||
-            name.toUpperCase() === 'ABLIT_KEY')
-        ) {
-          apiKeys.push(value);
-        }
-      }
-      for (const key of apiKeys) {
-        if (key) {
-          core.setSecret(key);
-        }
-      }
-    };
-    maskApiKeys();
-
     const githubToken: string = core.getInput('github-token', {
       required: true,
     });
-    const promptsInput = core.getInput('prompts', {
-      required: false,
-      trimWhitespace: false,
-    });
+    const promptsInput = core.getInput('prompts', { required: false });
     const promptFilesGlobs: string[] = promptsInput
-      ? promptsInput.split(/\r?\n/).filter((line) => line.trim())
+      ? promptsInput.split('\n').filter((line) => line.trim())
       : [];
     const configPath: string = core.getInput('config', {
       required: true,
@@ -420,10 +215,7 @@ export async function run(): Promise<void> {
       'use-config-prompts',
       { required: false },
     );
-    const envFiles: string = core.getInput('env-files', {
-      required: false,
-      trimWhitespace: false,
-    });
+    const envFiles: string = core.getInput('env-files', { required: false });
     const failOnThreshold = parseOptionalPercentage(
       core.getInput('fail-on-threshold', { required: false }),
       'fail-on-threshold',
@@ -446,7 +238,6 @@ export async function run(): Promise<void> {
     });
     const workflowFiles: string = core.getInput('workflow-files', {
       required: false,
-      trimWhitespace: false,
     });
     const workflowBase: string = core.getInput('workflow-base', {
       required: false,
@@ -488,123 +279,48 @@ export async function run(): Promise<void> {
       }
     }
 
-    const loadEnvironmentFiles = (): void => {
-      const validateEnvFilePath = (envFilePath: string): void => {
-        if (/[\0\r\n]/.test(envFilePath)) {
-          throw new PromptfooActionError(
-            'Invalid environment file path: control characters are not allowed.',
-            ErrorCodes.INVALID_CONFIGURATION,
-            'Choose an environment file path without NUL, CR, or LF characters.',
-          );
-        }
-      };
-      const resolveContainedEnvFile = (envFilePath: string): string => {
-        validateEnvFilePath(envFilePath);
-        const resolvedPath = path.resolve(envFilePath);
-        const relativePath = path.relative(workingDirectory, resolvedPath);
-        if (
-          relativePath === '..' ||
-          relativePath.startsWith(`..${path.sep}`) ||
-          path.isAbsolute(relativePath)
-        ) {
-          throw new PromptfooActionError(
-            `Environment file ${envFilePath} must stay within the working directory`,
-            ErrorCodes.INVALID_CONFIGURATION,
-            `Choose an environment file within ${workingDirectory}`,
-          );
-        }
-
-        if (!fs.existsSync(resolvedPath)) {
-          return resolvedPath;
-        }
-
-        const realWorkingDirectory = path.resolve(
-          fs.realpathSync(workingDirectory).toString(),
-        );
-        const realPath = path.resolve(fs.realpathSync(resolvedPath).toString());
-        const realRelativePath = path.relative(realWorkingDirectory, realPath);
-        if (
-          realRelativePath === '..' ||
-          realRelativePath.startsWith(`..${path.sep}`) ||
-          path.isAbsolute(realRelativePath)
-        ) {
-          throw new PromptfooActionError(
-            `Environment file ${envFilePath} must stay within the working directory`,
-            ErrorCodes.INVALID_CONFIGURATION,
-            `Choose an environment file within ${workingDirectory}`,
-          );
-        }
-
-        return resolvedPath;
-      };
-
-      // Promptfoo also loads workingDirectory/.env implicitly during startup.
-      // Validate it first so selected env-files can still override application
-      // values while no repository-controlled process setting reaches the child.
-      const implicitEnvFilePath = path.join(workingDirectory, '.env');
-      const implicitVaultFilePath = `${implicitEnvFilePath}.vault`;
-      const implicitEnvExists = fs.existsSync(implicitEnvFilePath);
-      const implicitVaultExists =
-        process.env.DOTENV_KEY && fs.existsSync(implicitVaultFilePath);
-      const implicitFilePath = resolveContainedEnvFile(
-        implicitVaultExists ? implicitVaultFilePath : implicitEnvFilePath,
-      );
-      const explicitEnvFiles = envFiles
+    // Load .env files if specified
+    if (envFiles) {
+      const envFileList = envFiles
         .split(',')
-        .map((envFile) => {
-          validateEnvFilePath(envFile);
-          return envFile.trim();
-        })
-        .filter(Boolean)
-        .map((envFile) =>
-          resolveContainedEnvFile(path.join(workingDirectory, envFile)),
-        )
-        .map((envFilePath) => {
-          resolveContainedEnvFile(envFilePath);
-          const vaultPath = envFilePath.endsWith('.vault')
-            ? envFilePath
-            : `${envFilePath}.vault`;
-          const effectivePath =
-            process.env.DOTENV_KEY && fs.existsSync(vaultPath)
-              ? vaultPath
-              : envFilePath;
-          return resolveContainedEnvFile(effectivePath);
-        });
-      const implicitFileIsExplicit =
-        explicitEnvFiles.includes(implicitFilePath);
-      if (
-        (implicitEnvExists || implicitVaultExists) &&
-        !implicitFileIsExplicit
-      ) {
-        core.info(`Loading environment variables from ${implicitFilePath}`);
-        loadEnvironmentFile(
-          resolveContainedEnvFile(implicitFilePath),
-          process.env,
-          false,
-        );
-        maskApiKeys();
-        core.info(`Successfully loaded ${implicitFilePath}`);
-      }
-
-      // Load explicitly selected .env files after the implicit default.
-      if (explicitEnvFiles.length > 0) {
-        for (const envFilePath of explicitEnvFiles) {
-          if (fs.existsSync(envFilePath)) {
-            core.info(`Loading environment variables from ${envFilePath}`);
-            loadEnvironmentFile(resolveContainedEnvFile(envFilePath));
-            maskApiKeys();
-            core.info(`Successfully loaded ${envFilePath}`);
-          } else {
-            throw new PromptfooActionError(
-              `Environment file ${envFilePath} not found`,
-              ErrorCodes.ENV_FILE_NOT_FOUND,
-              `Make sure the environment file exists within ${workingDirectory}`,
-            );
-          }
+        .map((f) => f.trim())
+        .filter(Boolean);
+      for (const envFile of envFileList) {
+        const envFilePath = path.join(workingDirectory, envFile);
+        if (fs.existsSync(envFilePath)) {
+          core.info(`Loading environment variables from ${envFilePath}`);
+          loadEnvironmentFile(envFilePath);
+          core.info(`Successfully loaded ${envFilePath}`);
+        } else {
+          throw new PromptfooActionError(
+            `Environment file ${envFilePath} not found`,
+            ErrorCodes.ENV_FILE_NOT_FOUND,
+            `Make sure the file path is correct relative to ${workingDirectory}`,
+          );
         }
       }
-    };
+    }
 
+    const apiKeys = [
+      openaiApiKey,
+      azureApiKey,
+      anthropicApiKey,
+      huggingfaceApiKey,
+      awsAccessKeyId,
+      awsSecretAccessKey,
+      replicateApiKey,
+      palmApiKey,
+      vertexApiKey,
+      cohereApiKey,
+      mistralApiKey,
+      groqApiKey,
+      process.env.PROMPTFOO_API_KEY,
+    ];
+    for (const key of apiKeys) {
+      if (key) {
+        core.setSecret(key);
+      }
+    }
     core.setSecret(githubToken);
     const octokit = github.getOctokit(githubToken);
 
@@ -635,14 +351,7 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles
-          .flatMap((file) =>
-            file.previous_filename
-              ? [file.filename, file.previous_filename]
-              : [file.filename],
-          )
-          .join('\0')
-          .concat('\0');
+        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -659,43 +368,20 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        if (filesInput.includes('\0')) {
-          throw new PromptfooActionError(
-            'Invalid workflow file list: null bytes are not allowed.',
-            ErrorCodes.INVALID_CONFIGURATION,
-            'Remove null bytes from the workflow file list.',
-          );
-        }
-        const manualFiles = filesInput
-          .split('\n')
-          .map((file: string) => file.replace(/\r$/, ''));
-        const trimmedFiles = manualFiles
-          .map((file: string) => file.trim())
-          .filter(Boolean);
-        changedFiles = manualFiles
-          .flatMap((file: string) => {
-            const trimmed = file.trim();
-            if (!trimmed) {
-              return [];
-            }
-            return file === trimmed ? [file] : [file, trimmed];
-          })
-          .join('\0');
-        core.info(`Using ${trimmedFiles.length} manually specified files`);
+        changedFiles = filesInput;
+        core.info(`Using manually specified files: ${changedFiles}`);
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
-            '--no-renames',
-            '-z',
             compareBase,
             'HEAD',
             '--',
           ]);
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
+            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
@@ -722,14 +408,12 @@ export async function run(): Promise<void> {
         try {
           changedFiles = await gitInterface.diff([
             '--name-only',
-            '--no-renames',
-            '-z',
             beforeSha,
             afterSha,
             '--',
           ]);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${formatChangedFilesForLog(changedFiles)}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
           );
         } catch (error) {
           core.warning(
@@ -751,51 +435,36 @@ export async function run(): Promise<void> {
     }
 
     // Resolve glob patterns to file paths
-    const allPromptFiles: string[] = [];
-    const changedPromptFiles: string[] = [];
-    const seenPromptFiles = new Set<string>();
-    const containsQuotedControlPath =
-      !changedFiles.includes('\0') &&
-      /(?:^|\n)"[^\n"]*\\(?:[0-7]{3}|[abtnvfr"\\])[^\n"]*"(?=\n|$)/.test(
-        changedFiles,
-      );
-    const changedFilesList = containsQuotedControlPath
-      ? []
-      : changedFiles
-          .split(changedFiles.includes('\0') ? '\0' : '\n')
-          .filter(Boolean);
+    const promptFiles: string[] = [];
+    const changedFilesList = changedFiles.split('\n').filter((f) => f);
 
     for (const globPattern of promptFilesGlobs) {
-      validatePromptGlob(globPattern);
-      let matches: string[];
-      try {
-        matches = glob.sync(globPattern, {
-          cwd: workingDirectory,
-          nodir: true,
-          braceExpandMax: PROMPT_GLOB_BRACE_EXPANSION_LIMIT,
+      const matches = glob.sync(globPattern, {
+        cwd: workingDirectory,
+        nodir: true,
+      });
+
+      if (changedFilesList.length > 0) {
+        // Filter to only changed files
+        const changedMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          );
+          return (
+            repositoryFile !== configRepositoryPath &&
+            changedFilesList.includes(repositoryFile)
+          );
         });
-      } catch {
-        throw invalidPromptGlobError();
-      }
-      for (const file of matches) {
-        const resolvedPromptPath = path.resolve(workingDirectory, file);
-        const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, resolvedPromptPath),
-        );
-        if (repositoryFile === configRepositoryPath) {
-          continue;
-        }
-        if (seenPromptFiles.has(repositoryFile)) {
-          continue;
-        }
-        seenPromptFiles.add(repositoryFile);
-        const promptFile = toRepositoryPath(
-          path.relative(workingDirectory, resolvedPromptPath),
-        );
-        allPromptFiles.push(promptFile);
-        if (changedFilesList.includes(repositoryFile)) {
-          changedPromptFiles.push(promptFile);
-        }
+        promptFiles.push(...changedMatches);
+      } else {
+        // No changed files info available, include all matches
+        const allMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          );
+          return repositoryFile !== configRepositoryPath;
+        });
+        promptFiles.push(...allMatches);
       }
     }
 
@@ -805,20 +474,16 @@ export async function run(): Promise<void> {
 
     // Extract dependencies from config file
     let dependencyChanged = false;
-    const dependencies = extractFileDependencies(
-      configAbsolutePath,
-      process.cwd(),
-      workingDirectory,
-    ).map(toRepositoryPath);
     if (changedFilesList.length > 0) {
+      const dependencies =
+        extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
       if (dependencies.length > 0) {
-        core.debug(`Found ${dependencies.length} file dependencies in config`);
+        core.debug(
+          `Found ${dependencies.length} file dependencies in config: ${dependencies.join(', ')}`,
+        );
 
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
-          if (dep === './' || dep === '.' || /[\r\n\0]/.test(dep)) {
-            return true;
-          }
           // Direct file match
           if (changedFilesList.includes(dep)) {
             return true;
@@ -843,7 +508,7 @@ export async function run(): Promise<void> {
 
     if (
       !forceRun &&
-      changedPromptFiles.length < 1 &&
+      promptFiles.length < 1 &&
       !configChanged &&
       !dependencyChanged &&
       changedFilesList.length > 0 &&
@@ -855,45 +520,15 @@ export async function run(): Promise<void> {
       return;
     }
 
-    const evaluatedPromptFiles = useConfigPrompts
-      ? []
-      : forceRun ||
-          configChanged ||
-          dependencyChanged ||
-          changedFilesList.length === 0
-        ? allPromptFiles
-        : changedPromptFiles;
-    if (evaluatedPromptFiles.some((file) => /[\r\n]/.test(file))) {
-      throw new PromptfooActionError(
-        'Invalid prompt file path: line breaks are not allowed.',
-        ErrorCodes.INVALID_CONFIGURATION,
-        'Rename the prompt file so its path does not contain CR or LF characters.',
-      );
-    }
-    for (const file of evaluatedPromptFiles) {
-      validatePromptPath(workspaceRoot, workingDirectory, file);
-    }
-
-    // Only parse repository environment files once an evaluation is required.
-    loadEnvironmentFiles();
-
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');
     }
 
     if (changedFilesList.length === 0) {
       core.info(
-        `Processing all matching prompt files: ${JSON.stringify(evaluatedPromptFiles)}`,
+        `Processing all matching prompt files: ${promptFiles.join(', ')}`,
       );
     }
-
-    const configEnvironment: NodeJS.ProcessEnv = { ...process.env };
-    loadConfigEnvironmentFiles(
-      configAbsolutePath,
-      workingDirectory,
-      configEnvironment,
-    );
-    maskApiKeys(configEnvironment);
 
     // Set up caching environment for optimal performance
     core.startGroup('Setting up cache');
@@ -930,11 +565,8 @@ export async function run(): Promise<void> {
       `output-${Date.now()}-${globalThis.crypto.randomUUID()}.json`,
     );
     let promptfooArgs = ['eval', '-c', configPath, '-o', outputFile];
-    if (evaluatedPromptFiles.length > 0) {
-      promptfooArgs = promptfooArgs.concat([
-        '--prompts',
-        ...evaluatedPromptFiles,
-      ]);
+    if (!useConfigPrompts && promptFiles.length > 0) {
+      promptfooArgs = promptfooArgs.concat(['--prompts', ...promptFiles]);
     }
     // Check if sharing is enabled and validate authentication upfront
     if (noShare) {
@@ -1032,12 +664,7 @@ export async function run(): Promise<void> {
     // See: https://github.com/promptfoo/promptfoo-action/issues/786
     const exitCode = await exec.exec(
       'npx',
-      [
-        '--prefix',
-        path.resolve(__dirname, '..'),
-        `promptfoo@${version}`,
-        ...promptfooArgs,
-      ],
+      [`promptfoo@${version}`, ...promptfooArgs],
       { env, cwd: workingDirectory, ignoreReturnCode: true },
     );
 
@@ -1169,17 +796,8 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const evaluatedFiles = evaluatedPromptFiles.join(', ');
-      const description =
-        useConfigPrompts || evaluatedPromptFiles.length === 0
-          ? 'Evaluated config-defined prompts'
-          : forceRun ||
-              configChanged ||
-              dependencyChanged ||
-              changedFilesList.length === 0
-            ? `Evaluated prompt files: ${evaluatedFiles}`
-            : `⚠️ LLM prompt was modified in these files: ${evaluatedFiles}`;
-      let body = `${description}
+      const modifiedFiles = promptFiles.join(', ');
+      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
@@ -1214,9 +832,9 @@ export async function run(): Promise<void> {
           ['Failure', output.results.stats.failures.toString()],
         ]);
 
-      if (!useConfigPrompts && evaluatedPromptFiles.length > 0) {
+      if (promptFiles.length > 0) {
         summary.addHeading('Evaluated Files', 3);
-        summary.addList(evaluatedPromptFiles);
+        summary.addList(promptFiles);
       }
 
       if (repeatCheckResult) {
