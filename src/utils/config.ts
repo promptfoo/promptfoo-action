@@ -138,6 +138,54 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
+    const inspectedStructuredPrompts = new Set<string>();
+    const processPromptFile = (fileUrl: string): void => {
+      processFileUrl(fileUrl);
+
+      const filePath = fileUrl.slice('file://'.length);
+      if (!/\.(?:json|ya?ml)$/i.test(filePath)) {
+        return;
+      }
+
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        'structured prompt dependency',
+      );
+      if (
+        !absolutePath ||
+        inspectedStructuredPrompts.has(absolutePath) ||
+        !fs.existsSync(absolutePath)
+      ) {
+        return;
+      }
+      inspectedStructuredPrompts.add(absolutePath);
+
+      try {
+        const values: unknown[] = [
+          loadYaml(fs.readFileSync(absolutePath, 'utf8'), {
+            schema: CORE_SCHEMA.withTags(mergeTag),
+          }),
+        ];
+        const inspectedValues = new Set<object>();
+        for (const value of values) {
+          if (typeof value === 'string' && value.startsWith('file://')) {
+            processPromptFile(value);
+          } else if (
+            value &&
+            typeof value === 'object' &&
+            !inspectedValues.has(value)
+          ) {
+            inspectedValues.add(value);
+            values.push(...Object.values(value));
+          }
+        }
+      } catch (error) {
+        core.warning(
+          `Failed to inspect structured prompt "${filePath}": ${String(error)}`,
+        );
+      }
+    };
+
     // Extract provider files
     if (config.providers) {
       for (const provider of config.providers) {
@@ -166,20 +214,20 @@ export function extractFileDependencies(configPath: string): string[] {
               /\.(?:py|[cm]?[jt]s)$/i.test(promptPath.slice(0, selector))
                 ? promptPath.slice(0, selector)
                 : promptPath;
-            processFileUrl(`file://${filePath}`);
+            processPromptFile(`file://${filePath}`);
           } else if (prompt.startsWith('exec:')) {
             const executable = prompt
               .slice('exec:'.length)
               .trimStart()
               .match(/^(['"])(.*?)\1|^(\S+)/);
             if (executable) {
-              processFileUrl(`file://${executable[2] ?? executable[3]}`);
+              processPromptFile(`file://${executable[2] ?? executable[3]}`);
             }
           } else if (
             !/\s/.test(prompt) &&
             /\.(?:txt|md|json|ya?ml|py|[cm]?[jt]s|njk)$/i.test(prompt)
           ) {
-            processFileUrl(`file://${prompt}`);
+            processPromptFile(`file://${prompt}`);
           }
         } else if (prompt.file) {
           const absolutePath = resolveConfigDependency(

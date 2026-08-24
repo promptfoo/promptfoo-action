@@ -84,6 +84,53 @@ prompts:
     expect(deps).toEqual(['../config/prompts/main.txt']);
   });
 
+  it('should follow nested structured scalar prompt dependencies safely', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'prompts: file://prompts/chat.yaml\n',
+      ],
+      [
+        '/test/working/prompts/chat.yaml',
+        'shared: &message\n  content: file://partials/system.txt\nmessages:\n  - *message\n  - *message\n  - content: file://prompts/nested.json\nmetadata: null\n',
+      ],
+      [
+        '/test/working/prompts/nested.json',
+        '{"content":"file://prompts/chat.yaml"}',
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'prompts/chat.yaml',
+      'partials/system.txt',
+      'prompts/nested.json',
+    ]);
+  });
+
+  it('should preserve scalar prompt dependencies when structured parsing fails', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? 'prompts: file://prompts/chat.yaml\n'
+        : '[invalid',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to inspect structured prompt'),
+    );
+  });
+
   it('should extract a scalar prompt without a file URL prefix', () => {
     mockFs.readFileSync.mockReturnValue('prompts: prompts/main.txt\n');
 
