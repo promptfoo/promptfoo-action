@@ -36931,6 +36931,10 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "PATHEXT",
   "PERL5OPT",
   "PROMPTFOO_CACHE_PATH",
+  "PROMPTFOO_CLOUD_API_URL",
+  "PROMPTFOO_FAILED_TEST_EXIT_CODE",
+  "PROMPTFOO_PASS_RATE_THRESHOLD",
+  "PROMPTFOO_REMOTE_API_BASE_URL",
   "PYTHONEXECUTABLE",
   "PYTHONHOME",
   "PYTHONSTARTUP",
@@ -36942,14 +36946,21 @@ var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
   "XDG_CONFIG_HOME"
 ]);
 var FORBIDDEN_ENV_FILE_PREFIXES = ["GIT_", "NPM_CONFIG_"];
+var CASE_INSENSITIVE_PROXY_KEYS = /* @__PURE__ */ new Set([
+  "ALL_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY"
+]);
 var FORBIDDEN_AUTH_KEYS = /* @__PURE__ */ new Set([
   "PROMPTFOO_API_KEY",
   "PROMPTFOO_CLOUD_API_URL",
   "PROMPTFOO_REMOTE_API_BASE_URL"
 ]);
-function findForbiddenEnvFileKey(environment) {
+function findForbiddenEnvFileKey(environment, platform2 = process.platform) {
   return Object.keys(environment).find((key) => {
-    const normalizedKey = key.toUpperCase();
+    const upperCaseKey = key.toUpperCase();
+    const normalizedKey = platform2 === "win32" || CASE_INSENSITIVE_PROXY_KEYS.has(upperCaseKey) || upperCaseKey.startsWith("NPM_CONFIG_") ? upperCaseKey : key;
     return FORBIDDEN_ENV_FILE_KEYS.has(normalizedKey) || FORBIDDEN_ENV_FILE_PREFIXES.some(
       (prefix) => normalizedKey.startsWith(prefix)
     );
@@ -36980,7 +36991,7 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      "Remove Node, npm, git, executable-resolution, dynamic-loader, and proxy control variables from repository environment files. Configure trusted process controls in the workflow environment instead."
+      "Remove process, authentication-routing, and evaluation-policy control variables from repository environment files. Configure trusted controls in the workflow environment instead."
     );
   }
   const forbiddenAuthKey = findForbiddenAuthKey(fileEnvironment);
