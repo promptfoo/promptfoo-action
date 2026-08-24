@@ -36782,15 +36782,28 @@ function extractFileDependencies(configPath) {
         return void 0;
       }
     };
-    const processFilePath = (filePath, source = "config file dependency") => {
-      const absolutePath = resolveConfigDependency(filePath, source);
+    const processFileUrl = (fileUrl) => {
+      const filePath = fileUrl.replace("file://", "");
+      const absolutePath = resolveConfigDependency(
+        filePath,
+        "config file dependency"
+      );
       if (!absolutePath) {
         return;
       }
       if (le(filePath)) {
-        const absoluteGlob = path5.isAbsolute(filePath);
-        const relativeGlobPath = absoluteGlob ? path5.relative(dependencyRoot, filePath) : filePath;
-        const pathParts = relativeGlobPath.split(path5.sep);
+        const matches = Ui(absolutePath, { nodir: true });
+        for (const match of matches) {
+          const absoluteMatch = path5.resolve(match);
+          if (isPathInside(dependencyRoot, absoluteMatch)) {
+            dependencies.add(absoluteMatch);
+          } else {
+            warning(
+              `Ignoring unsafe config dependency match "${match}": config file dependency glob match must stay within the repository workspace`
+            );
+          }
+        }
+        const pathParts = filePath.split("/");
         let basePath = "";
         for (const part of pathParts) {
           if (le(part)) {
@@ -36798,77 +36811,15 @@ function extractFileDependencies(configPath) {
           }
           basePath = basePath ? path5.join(basePath, part) : part;
         }
-        const globRoot = absoluteGlob ? dependencyRoot : configDir;
-        const absoluteBasePath = path5.resolve(globRoot, basePath);
-        let physicalDependencyRoot;
-        let physicalBasePath;
-        try {
-          physicalDependencyRoot = fs6.realpathSync(dependencyRoot);
-          physicalBasePath = fs6.realpathSync(absoluteBasePath);
-        } catch {
-          warning(
-            `Ignoring unsafe config dependency "${filePath}": ${source} glob root could not be resolved safely`
-          );
-          return;
-        }
-        if (!isPathInside(physicalDependencyRoot, physicalBasePath)) {
-          warning(
-            `Ignoring unsafe config dependency "${filePath}": ${source} glob root must stay within the repository workspace`
-          );
-          return;
-        }
-        const matches = Ui(absolutePath, { nodir: true });
-        for (const match of matches) {
-          const absoluteMatch = path5.resolve(match);
-          if (!isPathInside(dependencyRoot, absoluteMatch)) {
-            warning(
-              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`
-            );
-            continue;
-          }
-          let physicalMatch;
-          try {
-            physicalMatch = fs6.realpathSync(absoluteMatch);
-          } catch {
-            warning(
-              `Ignoring unsafe config dependency match "${match}": ${source} glob match could not be resolved safely`
-            );
-            continue;
-          }
-          if (!isPathInside(physicalDependencyRoot, physicalMatch)) {
-            warning(
-              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`
-            );
-            continue;
-          }
-          dependencies.add(absoluteMatch);
-        }
         if (basePath) {
-          dependencies.add(absoluteBasePath);
+          dependencies.add(path5.resolve(path5.join(configDir, basePath)));
         }
       } else if (isDirectory2(absolutePath)) {
-        const directoryPath = filePath.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
+        const directoryPath = fileUrl.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
         dependencies.add(directoryPath);
       } else {
         dependencies.add(absolutePath);
       }
-    };
-    const processFileUrl = (fileUrl) => {
-      processFilePath(fileUrl.replace(/^file:\/\//, ""));
-    };
-    const processTestFile = (testSource) => {
-      let filePath = testSource;
-      if (filePath.startsWith("file://")) {
-        filePath = filePath.slice("file://".length);
-      } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
-        return;
-      }
-      filePath = filePath.replace(/(\.xlsx?)#[^/\\]*$/i, "$1");
-      const functionIndex = filePath.lastIndexOf(":");
-      if (functionIndex > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex))) {
-        filePath = filePath.slice(0, functionIndex);
-      }
-      processFilePath(filePath, "test file dependency");
     };
     if (config2.providers) {
       for (const provider of config2.providers) {
@@ -36930,32 +36881,28 @@ function extractFileDependencies(configPath) {
       extractVarFiles(config2.defaultTest.vars);
       extractAssertFiles(config2.defaultTest.assert);
     }
-    const extractTests = (configuredTests) => {
-      if (!configuredTests) {
+    const processTestFile = (source) => {
+      if (/^[a-z][a-z\d+.-]*:\/\//i.test(source) && !source.startsWith("file://")) {
         return;
       }
-      const tests = Array.isArray(configuredTests) ? configuredTests : [configuredTests];
+      let filePath = source.replace(/^file:\/\//, "").replace(/(\.xlsx?)#[^/\\]*$/i, "$1");
+      const selector = filePath.lastIndexOf(":");
+      if (selector > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, selector))) {
+        filePath = filePath.slice(0, selector);
+      }
+      processFileUrl(`file://${filePath}`);
+    };
+    if (config2.tests) {
+      const tests = Array.isArray(config2.tests) ? config2.tests : [config2.tests];
       for (const test of tests) {
         if (typeof test === "string") {
           processTestFile(test);
-          continue;
-        }
-        if (test.path) {
+        } else if (test.path) {
           processTestFile(test.path);
-          continue;
+        } else {
+          extractVarFiles(test.vars);
+          extractAssertFiles(test.assert);
         }
-        extractVarFiles(test.vars);
-        extractAssertFiles(test.assert);
-      }
-    };
-    extractTests(config2.tests);
-    for (const scenario of config2.scenarios ?? []) {
-      if (typeof scenario === "string") {
-        processTestFile(scenario);
-      } else {
-        extractVarFiles(scenario.config?.vars);
-        extractAssertFiles(scenario.config?.assert);
-        extractTests(scenario.tests);
       }
     }
     return Array.from(dependencies).map((dep) => {
@@ -37289,10 +37236,6 @@ var GITHUB_PULL_REQUEST_FILES_LIMIT = 3e3;
 function toRepositoryPath(filePath) {
   return filePath.split(path6.sep).join("/");
 }
-function isPathInside2(basePath, candidatePath) {
-  const relativePath = path6.relative(basePath, candidatePath);
-  return relativePath !== ".." && !relativePath.startsWith(`..${path6.sep}`) && !path6.isAbsolute(relativePath);
-}
 function validateGitRevision(ref) {
   const safeBranchOrTag = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,255}$/.test(ref) && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{") && !ref.endsWith("/") && !ref.endsWith(".") && !ref.endsWith(".lock");
   const safeHeadRevision = /^HEAD(?:~[1-9][0-9]*|\^[1-9]?)?$/.test(ref);
@@ -37621,33 +37564,28 @@ async function run() {
       );
     }
     const promptFiles = [];
-    const allPromptFiles = /* @__PURE__ */ new Set();
     const changedFilesList = changedFiles.split("\n").filter((f) => f);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
         nodir: true
       });
-      const matchingPrompts = matches.filter((file) => {
-        const absolutePromptPath = path6.resolve(workingDirectory, file);
-        const repositoryFile = toRepositoryPath(
-          path6.relative(workspaceRoot, absolutePromptPath)
-        );
-        return repositoryFile !== configRepositoryPath && !allPromptFiles.has(file);
-      });
-      for (const file of matchingPrompts) {
-        allPromptFiles.add(file);
-      }
       if (changedFilesList.length > 0) {
-        const changedMatches = matchingPrompts.filter((file) => {
+        const changedMatches = matches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
           );
-          return changedFilesList.includes(repositoryFile);
+          return repositoryFile !== configRepositoryPath && changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
-        promptFiles.push(...matchingPrompts);
+        const allMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
+          );
+          return repositoryFile !== configRepositoryPath;
+        });
+        promptFiles.push(...allMatches);
       }
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
@@ -37675,25 +37613,9 @@ async function run() {
         }
       }
     }
-    if (configChanged || dependencyChanged) {
-      promptFiles.splice(0, promptFiles.length, ...allPromptFiles);
-    }
     if (!forceRun && promptFiles.length < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
-    }
-    if (!useConfigPrompts && promptFiles.length > 0) {
-      const realWorkspaceRoot = fs7.realpathSync(workspaceRoot);
-      for (const file of promptFiles) {
-        const absolutePromptPath = path6.resolve(workingDirectory, file);
-        if (!isPathInside2(workspaceRoot, absolutePromptPath) || !isPathInside2(realWorkspaceRoot, fs7.realpathSync(absolutePromptPath))) {
-          throw new PromptfooActionError(
-            `Prompt file "${file}" must stay within the repository workspace`,
-            ErrorCodes.INVALID_CONFIGURATION,
-            "Configure prompt globs and symlinks that resolve inside the checkout."
-          );
-        }
-      }
     }
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
@@ -37894,11 +37816,8 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const displayedPromptFiles = promptFiles.slice(0, 10);
-      const remainingPromptFiles = promptFiles.length - displayedPromptFiles.length;
-      const reportedFiles = useConfigPrompts ? configPath : `${displayedPromptFiles.join(", ")}${remainingPromptFiles > 0 ? `, and ${remainingPromptFiles} more` : ""}`;
-      const promptDescription = useConfigPrompts ? "Configured LLM prompts were evaluated" : configChanged || dependencyChanged ? "LLM prompts were evaluated" : "LLM prompt was modified";
-      let body = `\u26A0\uFE0F ${promptDescription} in these files: ${reportedFiles}
+      const modifiedFiles = promptFiles.join(", ");
+      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|
@@ -37928,10 +37847,9 @@ async function run() {
         ["Success", output.results.stats.successes.toString()],
         ["Failure", output.results.stats.failures.toString()]
       ]);
-      const evaluatedFiles = useConfigPrompts ? [configPath] : promptFiles;
-      if (evaluatedFiles.length > 0) {
+      if (promptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
-        summary2.addList(evaluatedFiles);
+        summary2.addList(promptFiles);
       }
       if (repeatCheckResult) {
         summary2.addHeading("Repeat Check", 3);
