@@ -36766,7 +36766,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = path5.isAbsolute(filePath) ? path5.normalize(filePath) : path5.resolve(path5.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36827,12 +36827,9 @@ function extractFileDependencies(configPath) {
       } else if (/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)) {
         return;
       }
-      const sheetIndex = filePath.indexOf("#");
-      if (sheetIndex !== -1) {
-        filePath = filePath.slice(0, sheetIndex);
-      }
+      filePath = filePath.replace(/(\.xlsx?)#[^/\\]*$/i, "$1");
       const functionIndex = filePath.lastIndexOf(":");
-      if (functionIndex > 1) {
+      if (functionIndex > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex))) {
         filePath = filePath.slice(0, functionIndex);
       }
       processFilePath(filePath, "test file dependency");
@@ -37571,28 +37568,30 @@ async function run() {
       );
     }
     const promptFiles = [];
+    const allPromptFiles = [];
     const changedFilesList = changedFiles.split("\n").filter((f) => f);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
         nodir: true
       });
+      const matchingPrompts = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...matchingPrompts);
       if (changedFilesList.length > 0) {
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = matchingPrompts.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
           );
-          return repositoryFile !== configRepositoryPath && changedFilesList.includes(repositoryFile);
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path6.relative(workspaceRoot, path6.resolve(workingDirectory, file))
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
-        promptFiles.push(...allMatches);
+        promptFiles.push(...matchingPrompts);
       }
     }
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
@@ -37619,6 +37618,9 @@ async function run() {
           info("Detected changes in config file dependencies");
         }
       }
+    }
+    if (configChanged || dependencyChanged) {
+      promptFiles.splice(0, promptFiles.length, ...allPromptFiles);
     }
     if (!forceRun && promptFiles.length < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
       info("No LLM prompt, config files, or dependencies were modified.");
