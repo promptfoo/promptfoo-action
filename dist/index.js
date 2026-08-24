@@ -36805,13 +36805,16 @@ function extractFileDependencies(configPath) {
         }
         const isAbsoluteGlob = path5.isAbsolute(filePath);
         const globPath = isAbsoluteGlob ? path5.relative(dependencyRoot, filePath) : filePath;
-        const pathParts = globPath.split(/[\\/]/);
+        const pathParts = path5.normalize(globPath).split(path5.sep);
         let basePath = "";
         for (const part of pathParts) {
           if (le(part)) {
             break;
           }
-          basePath = basePath ? path5.join(basePath, part) : part;
+          const literalPart = W(part, {
+            windowsPathsNoEscape: process.platform === "win32"
+          });
+          basePath = basePath ? path5.join(basePath, literalPart) : literalPart;
         }
         if (basePath) {
           const globRoot = isAbsoluteGlob ? dependencyRoot : configDir;
@@ -36883,7 +36886,7 @@ function extractFileDependencies(configPath) {
     if (config2.defaultTest) {
       if (typeof config2.defaultTest === "string") {
         if (config2.defaultTest.startsWith("file://")) {
-          if (/\{[{%]/.test(config2.defaultTest)) {
+          if (/\{[{%#]/.test(config2.defaultTest)) {
             dependencies.add(`${dependencyRoot}${path5.sep}`);
           } else {
             processFileUrl(config2.defaultTest);
