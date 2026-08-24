@@ -223,16 +223,23 @@ export async function run(): Promise<void> {
       const workingDirectoryPath = toRepositoryPath(relativePath);
       return promptFilesGlobs.some((pattern) => {
         const candidate = path.isAbsolute(pattern)
-          ? absoluteFile
+          ? toRepositoryPath(absoluteFile)
           : workingDirectoryPath;
-        const normalizedPattern = path.posix.normalize(pattern);
-        return (
-          path.matchesGlob(candidate, normalizedPattern) ||
+        const portablePattern = toRepositoryPath(pattern).replace(
+          /\\([[\]*?{}])/g,
+          '[$1]',
+        );
+        const matches = (candidatePattern: string): boolean =>
+          path.matchesGlob(candidate, candidatePattern) ||
           (['darwin', 'win32'].includes(process.platform) &&
             path.matchesGlob(
               candidate.toLowerCase(),
-              normalizedPattern.toLowerCase(),
-            ))
+              candidatePattern.toLowerCase(),
+            ));
+
+        return (
+          matches(portablePattern) ||
+          matches(path.posix.normalize(portablePattern))
         );
       });
     };

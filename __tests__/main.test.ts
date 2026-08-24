@@ -413,6 +413,36 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should preserve brace alternatives in deleted-prompt globs', async () => {
+      withInputs({ prompts: 'prompts/{a/../b,c}/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/c/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/c/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve escaped glob metacharacters in deleted prompt paths', async () => {
+      withInputs({ prompts: 'prompts/\\[draft\\]/*.txt' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/[draft]/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/[draft]/remaining.txt']);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
     test.each(['#prompts/*.txt', '!prompts/*.txt'])(
       'should preserve literal glob prefixes for %s',
       async (pattern) => {
