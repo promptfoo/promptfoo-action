@@ -226,7 +226,11 @@ export function extractFileDependencies(configPath: string): string[] {
     if (config.defaultTest) {
       if (typeof config.defaultTest === 'string') {
         if (config.defaultTest.startsWith('file://')) {
-          processFileUrl(config.defaultTest);
+          if (config.defaultTest.includes('{{')) {
+            dependencies.add(`${dependencyRoot}${path.sep}`);
+          } else {
+            processFileUrl(config.defaultTest);
+          }
         }
       } else {
         extractVarFiles(config.defaultTest.vars);
@@ -245,7 +249,7 @@ export function extractFileDependencies(configPath: string): string[] {
     // Convert absolute paths back to relative paths from working directory
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path.sep).join('/');
+      const repositoryPath = relativePath.split(path.sep).join('/') || '.';
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
         return `${repositoryPath}/`;
