@@ -36830,18 +36830,27 @@ function extractFileDependencies(configPath) {
         }
       }
     }
+    const extractPromptFile = (prompt) => {
+      if (typeof prompt === "string" && prompt.startsWith("file://")) {
+        processFileUrl(prompt);
+      } else if (typeof prompt === "object" && typeof prompt.file === "string") {
+        const absolutePath = resolveConfigDependency(
+          prompt.file,
+          "prompt file dependency"
+        );
+        if (absolutePath) {
+          dependencies.add(absolutePath);
+        }
+      }
+    };
     if (config2.prompts) {
-      for (const prompt of config2.prompts) {
-        if (typeof prompt === "string" && prompt.startsWith("file://")) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === "object" && prompt.file) {
-          const absolutePath = resolveConfigDependency(
-            prompt.file,
-            "prompt file dependency"
-          );
-          if (absolutePath) {
-            dependencies.add(absolutePath);
-          }
+      if (Array.isArray(config2.prompts)) {
+        for (const prompt of config2.prompts) {
+          extractPromptFile(prompt);
+        }
+      } else {
+        for (const prompt of Object.keys(config2.prompts)) {
+          extractPromptFile(prompt);
         }
       }
     }
@@ -36896,10 +36905,8 @@ function extractFileDependencies(configPath) {
       return repositoryPath;
     });
   } catch (error2) {
-    warning(
-      `Failed to extract dependencies from config: ${error2 instanceof Error ? error2.message : String(error2)}`
-    );
-    return [];
+    const message = error2 instanceof Error ? error2.message : String(error2);
+    throw new Error(`Failed to extract dependencies from config: ${message}`);
   }
 }
 
