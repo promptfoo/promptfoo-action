@@ -11,6 +11,7 @@ vi.mock('fs', async () => {
     ...realFs,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn(),
     statSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -25,6 +26,7 @@ describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
     existsSync: Mock;
+    realpathSync: Mock;
     statSync: Mock;
   };
   const mockGlob = glob as unknown as {
@@ -39,6 +41,9 @@ describe('extractFileDependencies', () => {
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+      filePath.toString(),
+    );
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
 
@@ -200,6 +205,129 @@ scenarios:
       '../config/scenarios/generated.py',
       '../config/scenarios/context.txt',
     ]);
+  });
+
+  it('should extract dependencies from shared scenario configs', () => {
+    mockFs.readFileSync.mockReturnValue(`
+scenarios:
+  - config:
+      vars:
+        context: file://data/context.json
+      assert:
+        - type: javascript
+          value:
+            file: validators/scenario.js
+    tests: scenarios/cases.yaml
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([
+      '../config/data/context.json',
+      '../config/validators/scenario.js',
+      '../config/scenarios/cases.yaml',
+    ]);
+  });
+
+  it('should not expand test globs through symlinks outside the workspace', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: file://tests/external/*.yaml\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const candidate = filePath.toString();
+      return candidate.endsWith('/tests/external')
+        ? '/private/secrets'
+        : candidate;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
+  it('should reject glob matches resolving outside the workspace', () => {
+    mockFs.readFileSync.mockReturnValue('tests: file://tests/*.yaml\n');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/tests/safe.yaml',
+      '/test/working/tests/linked.yaml',
+    ]);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const candidate = filePath.toString();
+      return candidate.endsWith('/linked.yaml')
+        ? '/private/secrets/leaked.yaml'
+        : candidate;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['tests/safe.yaml', 'tests']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
+  it('should reject glob roots and matches that cannot be resolved', () => {
+    mockFs.readFileSync.mockReturnValue('tests: file://tests/*.yaml\n');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockFs.realpathSync.mockImplementation(() => {
+      throw new Error('permission denied');
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+    expect(mockGlob.sync).not.toHaveBeenCalled();
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('could not be resolved safely'),
+    );
+  });
+
+  it('should skip individual glob matches that cannot be resolved', () => {
+    mockFs.readFileSync.mockReturnValue('tests: file://tests/*.yaml\n');
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/tests/deleted.yaml']);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const candidate = filePath.toString();
+      if (candidate.endsWith('/deleted.yaml')) {
+        throw new Error('file was removed');
+      }
+      return candidate;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['tests']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('glob match could not be resolved safely'),
+    );
+  });
+
+  it('should preserve watchers for absolute test globs', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: file:///test/working/tests/*.yaml\n',
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue(['/test/working/tests/cases.yaml']);
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['tests/cases.yaml', 'tests']);
   });
 
   it('should extract sheet-qualified file-backed tests', () => {

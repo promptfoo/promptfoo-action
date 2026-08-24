@@ -843,9 +843,14 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
+      const displayedPromptFiles = promptFiles.slice(0, 10);
+      const remainingPromptFiles =
+        promptFiles.length - displayedPromptFiles.length;
       const reportedFiles = useConfigPrompts
         ? configPath
-        : promptFiles.join(', ');
+        : `${displayedPromptFiles.join(', ')}${
+            remainingPromptFiles > 0 ? `, and ${remainingPromptFiles} more` : ''
+          }`;
       const promptDescription = useConfigPrompts
         ? 'Configured LLM prompts were evaluated'
         : configChanged || dependencyChanged

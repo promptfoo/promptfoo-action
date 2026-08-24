@@ -953,6 +953,24 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should summarize large evaluated-prompt lists in PR comments', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'tests/cases.yaml' },
+      ]);
+      mockGlob.sync.mockReturnValue(
+        Array.from({ length: 12 }, (_, index) => `prompts/prompt-${index}.txt`),
+      );
+      mockConfig.extractFileDependencies.mockReturnValue(['tests/cases.yaml']);
+
+      await run();
+
+      const commentBody = mockOctokit.rest.issues.createComment.mock.calls[0][0]
+        .body as string;
+      expect(commentBody).toContain('prompts/prompt-9.txt');
+      expect(commentBody).not.toContain('prompts/prompt-10.txt');
+      expect(commentBody).toContain('and 2 more');
+    });
+
     test('should deduplicate prompt matches across overlapping globs', async () => {
       withInputs({ prompts: 'prompts/*.txt\nprompts/shared.*' });
       mockOctokit.paginate.mockResolvedValue([

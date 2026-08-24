@@ -21,7 +21,9 @@ export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: PromptfooTests;
-  scenarios?: Array<string | { tests?: PromptfooTests }>;
+  scenarios?: Array<
+    string | { config?: PromptfooTestConfig; tests?: PromptfooTests }
+  >;
   defaultTest?: {
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -108,22 +110,11 @@ export function extractFileDependencies(configPath: string): string[] {
 
       // Check if the path contains glob patterns
       if (glob.hasMagic(filePath)) {
-        // It's a glob pattern, expand it
-        const matches = glob.sync(absolutePath, { nodir: true });
-        for (const match of matches) {
-          const absoluteMatch = path.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
-            dependencies.add(absoluteMatch);
-          } else {
-            core.warning(
-              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`,
-            );
-          }
-        }
-
-        // Also add the base directory for watching
-        // Extract the non-glob part of the path
-        const pathParts = filePath.split('/');
+        const absoluteGlob = path.isAbsolute(filePath);
+        const relativeGlobPath = absoluteGlob
+          ? path.relative(dependencyRoot, filePath)
+          : filePath;
+        const pathParts = relativeGlobPath.split(path.sep);
         let basePath = '';
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
@@ -131,8 +122,60 @@ export function extractFileDependencies(configPath: string): string[] {
           }
           basePath = basePath ? path.join(basePath, part) : part;
         }
+
+        const globRoot = absoluteGlob ? dependencyRoot : configDir;
+        const absoluteBasePath = path.resolve(globRoot, basePath);
+        let physicalDependencyRoot: string;
+        let physicalBasePath: string;
+        try {
+          physicalDependencyRoot = fs.realpathSync(dependencyRoot);
+          physicalBasePath = fs.realpathSync(absoluteBasePath);
+        } catch {
+          core.warning(
+            `Ignoring unsafe config dependency "${filePath}": ${source} glob root could not be resolved safely`,
+          );
+          return;
+        }
+
+        if (!isPathInside(physicalDependencyRoot, physicalBasePath)) {
+          core.warning(
+            `Ignoring unsafe config dependency "${filePath}": ${source} glob root must stay within the repository workspace`,
+          );
+          return;
+        }
+
+        const matches = glob.sync(absolutePath, { nodir: true });
+        for (const match of matches) {
+          const absoluteMatch = path.resolve(match);
+          if (!isPathInside(dependencyRoot, absoluteMatch)) {
+            core.warning(
+              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`,
+            );
+            continue;
+          }
+
+          let physicalMatch: string;
+          try {
+            physicalMatch = fs.realpathSync(absoluteMatch);
+          } catch {
+            core.warning(
+              `Ignoring unsafe config dependency match "${match}": ${source} glob match could not be resolved safely`,
+            );
+            continue;
+          }
+
+          if (!isPathInside(physicalDependencyRoot, physicalMatch)) {
+            core.warning(
+              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`,
+            );
+            continue;
+          }
+
+          dependencies.add(absoluteMatch);
+        }
+
         if (basePath) {
-          dependencies.add(path.resolve(path.join(configDir, basePath)));
+          dependencies.add(absoluteBasePath);
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
@@ -285,6 +328,8 @@ export function extractFileDependencies(configPath: string): string[] {
       if (typeof scenario === 'string') {
         processTestFile(scenario);
       } else {
+        extractVarFiles(scenario.config?.vars);
+        extractAssertFiles(scenario.config?.assert);
         extractTests(scenario.tests);
       }
     }
