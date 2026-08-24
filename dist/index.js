@@ -36788,18 +36788,9 @@ function extractFileDependencies(configPath) {
         return;
       }
       if (le(filePath)) {
-        const matches = Ui(absolutePath, { nodir: true });
-        for (const match of matches) {
-          const absoluteMatch = path5.resolve(match);
-          if (isPathInside(dependencyRoot, absoluteMatch)) {
-            dependencies.add(absoluteMatch);
-          } else {
-            warning(
-              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`
-            );
-          }
-        }
-        const pathParts = filePath.split("/");
+        const absoluteGlob = path5.isAbsolute(filePath);
+        const relativeGlobPath = absoluteGlob ? path5.relative(dependencyRoot, filePath) : filePath;
+        const pathParts = relativeGlobPath.split(path5.sep);
         let basePath = "";
         for (const part of pathParts) {
           if (le(part)) {
@@ -36807,8 +36798,53 @@ function extractFileDependencies(configPath) {
           }
           basePath = basePath ? path5.join(basePath, part) : part;
         }
+        const globRoot = absoluteGlob ? dependencyRoot : configDir;
+        const absoluteBasePath = path5.resolve(globRoot, basePath);
+        let physicalDependencyRoot;
+        let physicalBasePath;
+        try {
+          physicalDependencyRoot = fs6.realpathSync(dependencyRoot);
+          physicalBasePath = fs6.realpathSync(absoluteBasePath);
+        } catch {
+          warning(
+            `Ignoring unsafe config dependency "${filePath}": ${source} glob root could not be resolved safely`
+          );
+          return;
+        }
+        if (!isPathInside(physicalDependencyRoot, physicalBasePath)) {
+          warning(
+            `Ignoring unsafe config dependency "${filePath}": ${source} glob root must stay within the repository workspace`
+          );
+          return;
+        }
+        const matches = Ui(absolutePath, { nodir: true });
+        for (const match of matches) {
+          const absoluteMatch = path5.resolve(match);
+          if (!isPathInside(dependencyRoot, absoluteMatch)) {
+            warning(
+              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`
+            );
+            continue;
+          }
+          let physicalMatch;
+          try {
+            physicalMatch = fs6.realpathSync(absoluteMatch);
+          } catch {
+            warning(
+              `Ignoring unsafe config dependency match "${match}": ${source} glob match could not be resolved safely`
+            );
+            continue;
+          }
+          if (!isPathInside(physicalDependencyRoot, physicalMatch)) {
+            warning(
+              `Ignoring unsafe config dependency match "${match}": ${source} glob match must stay within the repository workspace`
+            );
+            continue;
+          }
+          dependencies.add(absoluteMatch);
+        }
         if (basePath) {
-          dependencies.add(path5.resolve(path5.join(configDir, basePath)));
+          dependencies.add(absoluteBasePath);
         }
       } else if (isDirectory2(absolutePath)) {
         const directoryPath = filePath.endsWith("/") ? `${absolutePath.replace(/[\\/]+$/, "")}${path5.sep}` : absolutePath;
@@ -36917,6 +36953,8 @@ function extractFileDependencies(configPath) {
       if (typeof scenario === "string") {
         processTestFile(scenario);
       } else {
+        extractVarFiles(scenario.config?.vars);
+        extractAssertFiles(scenario.config?.assert);
         extractTests(scenario.tests);
       }
     }
@@ -37856,7 +37894,9 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const reportedFiles = useConfigPrompts ? configPath : promptFiles.join(", ");
+      const displayedPromptFiles = promptFiles.slice(0, 10);
+      const remainingPromptFiles = promptFiles.length - displayedPromptFiles.length;
+      const reportedFiles = useConfigPrompts ? configPath : `${displayedPromptFiles.join(", ")}${remainingPromptFiles > 0 ? `, and ${remainingPromptFiles} more` : ""}`;
       const promptDescription = useConfigPrompts ? "Configured LLM prompts were evaluated" : configChanged || dependencyChanged ? "LLM prompts were evaluated" : "LLM prompt was modified";
       let body = `\u26A0\uFE0F ${promptDescription} in these files: ${reportedFiles}
 
