@@ -38,15 +38,6 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
-function isPathInside(basePath: string, candidatePath: string): boolean {
-  const relativePath = path.relative(basePath, candidatePath);
-  return (
-    relativePath !== '..' &&
-    !relativePath.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relativePath)
-  );
-}
-
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -458,41 +449,17 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const allPromptFiles = new Set<string>();
     const changedFilesList = changedFiles.split('\n').filter((f) => f);
-    const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
         cwd: workingDirectory,
         nodir: true,
       });
-      const matchingPrompts = matches.filter((file) => {
-        const absolutePromptPath = path.resolve(workingDirectory, file);
-        if (
-          !isPathInside(workspaceRoot, absolutePromptPath) ||
-          !isPathInside(realWorkspaceRoot, fs.realpathSync(absolutePromptPath))
-        ) {
-          throw new PromptfooActionError(
-            `Prompt file "${file}" must stay within the repository workspace`,
-            ErrorCodes.INVALID_CONFIGURATION,
-            'Configure prompt globs and symlinks that resolve inside the checkout.',
-          );
-        }
-        const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, absolutePromptPath),
-        );
-        return (
-          repositoryFile !== configRepositoryPath && !allPromptFiles.has(file)
-        );
-      });
-      for (const file of matchingPrompts) {
-        allPromptFiles.add(file);
-      }
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matchingPrompts.filter((file) => {
+        const changedMatches = matches.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
@@ -503,7 +470,14 @@ export async function run(): Promise<void> {
         });
         promptFiles.push(...changedMatches);
       } else {
-        promptFiles.push(...matchingPrompts);
+        // No changed files info available, include all matches
+        const allMatches = matches.filter((file) => {
+          const repositoryFile = toRepositoryPath(
+            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          );
+          return repositoryFile !== configRepositoryPath;
+        });
+        promptFiles.push(...allMatches);
       }
     }
 
@@ -524,7 +498,7 @@ export async function run(): Promise<void> {
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
           // Direct file match
-          if (dep === './' || changedFilesList.includes(dep)) {
+          if (changedFilesList.includes(dep)) {
             return true;
           }
 
@@ -543,10 +517,6 @@ export async function run(): Promise<void> {
           core.info('Detected changes in config file dependencies');
         }
       }
-    }
-
-    if (dependencyChanged) {
-      promptFiles.splice(0, promptFiles.length, ...allPromptFiles);
     }
 
     if (
@@ -839,11 +809,8 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const reportedFiles = promptFiles.join(', ');
-      const promptDescription = dependencyChanged
-        ? 'LLM prompts were evaluated'
-        : 'LLM prompt was modified';
-      let body = `⚠️ ${promptDescription} in these files: ${reportedFiles}
+      const modifiedFiles = promptFiles.join(', ');
+      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
 | Success | Failure |
 |---------|---------|

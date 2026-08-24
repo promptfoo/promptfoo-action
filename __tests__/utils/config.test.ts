@@ -161,21 +161,30 @@ extensions:
 
     expect(deps).toEqual([
       '../config/hooks/setup.js',
-      '../config/',
       '../config/hooks/case.py',
       '../config/hooks/result.js',
       '../config/hooks/report.py',
     ]);
   });
 
-  it('should watch the repository for executable extension side inputs', () => {
+  it('should watch only directly declared extension files', () => {
     mockFs.readFileSync.mockReturnValue(
       'extensions:\n  - file://hooks/policy.js:beforeAll\n',
     );
 
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
-    ).toEqual(['evals/hooks/policy.js', './']);
+    ).toEqual(['evals/hooks/policy.js']);
+  });
+
+  it('should support Promptfoo extensions without a hook selector', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'extensions:\n  - file://hooks/policy.js\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/hooks/policy.js']);
   });
 
   it('should preserve checkout extensions referenced by external configurations', () => {
@@ -185,14 +194,13 @@ extensions:
 
     expect(
       extractFileDependencies('/test/external/promptfooconfig.yaml'),
-    ).toEqual(['hooks/policy.js', './']);
+    ).toEqual(['hooks/policy.js']);
   });
 
   it('should ignore remote and malformed extension entries', () => {
     mockFs.readFileSync.mockReturnValue(`
 extensions:
   - https://example.com/hook.js:beforeAll
-  - file://hooks/no-hook.js
   - inline-extension
   - 42
 `);

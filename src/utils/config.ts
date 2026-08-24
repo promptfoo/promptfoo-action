@@ -245,27 +245,23 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       const hookSeparator = extension.lastIndexOf(':');
-      if (hookSeparator <= 'file://'.length) {
-        continue;
-      }
-
+      const extensionFile =
+        hookSeparator > 'file://'.length
+          ? extension.slice('file://'.length, hookSeparator)
+          : extension.slice('file://'.length);
       const extensionPath = resolveConfigDependency(
-        extension.slice('file://'.length, hookSeparator),
+        extensionFile,
         'extension hook dependency',
       );
       if (extensionPath) {
         dependencies.add(extensionPath);
-        const watchRoot = isPathInside(cwd, extensionPath)
-          ? cwd
-          : dependencyRoot;
-        dependencies.add(`${watchRoot}${path.sep}`);
       }
     }
 
     // Convert absolute paths back to relative paths from working directory
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path.sep).join('/') || '.';
+      const repositoryPath = relativePath.split(path.sep).join('/');
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
         return `${repositoryPath}/`;
