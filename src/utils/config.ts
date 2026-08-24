@@ -168,7 +168,13 @@ export function extractFileDependencies(configPath: string): string[] {
                 : promptPath;
             processFileUrl(`file://${filePath}`);
           } else if (prompt.startsWith('exec:')) {
-            processFileUrl(`file://${prompt.slice('exec:'.length)}`);
+            const executable = prompt
+              .slice('exec:'.length)
+              .trimStart()
+              .match(/^(['"])(.*?)\1|^(\S+)/);
+            if (executable) {
+              processFileUrl(`file://${executable[2] ?? executable[3]}`);
+            }
           } else if (
             !/\s/.test(prompt) &&
             /\.(?:txt|md|json|ya?ml|py|[cm]?[jt]s|njk)$/i.test(prompt)

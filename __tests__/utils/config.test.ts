@@ -110,6 +110,34 @@ prompts:
     ).toEqual(['../config/prompts/build.sh']);
   });
 
+  it.each([
+    [
+      'exec:./scripts/generate.sh --tone formal',
+      '../config/scripts/generate.sh',
+    ],
+    [
+      'exec:"./prompt assets/generator.py" --tone formal',
+      '../config/prompt assets/generator.py',
+    ],
+  ])(
+    'should extract executable paths from scalar command %s',
+    (command, expected) => {
+      mockFs.readFileSync.mockReturnValue(`prompts: '${command}'\n`);
+
+      expect(
+        extractFileDependencies('/test/config/promptfooconfig.yaml'),
+      ).toEqual([expected]);
+    },
+  );
+
+  it('should ignore empty executable scalar prompts', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: "exec:"\n');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
   it('should expand a scalar file prompt glob', () => {
     mockFs.readFileSync.mockReturnValue('prompts: file://prompts/*.txt\n');
     mockGlob.hasMagic.mockImplementation((value: string) =>
