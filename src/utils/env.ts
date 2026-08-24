@@ -15,6 +15,8 @@ import { ErrorCodes, PromptfooActionError } from './errors';
 const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'ALL_PROXY',
   'APPDATA',
+  'AWS_CONFIG_FILE',
+  'AWS_SHARED_CREDENTIALS_FILE',
   'BASH_ENV',
   'COMSPEC',
   'DYLD_FRAMEWORK_PATH',
@@ -34,6 +36,7 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PATH',
   'PATHEXT',
   'PERL5OPT',
+  'PROMPTFOO_CACHE_PATH',
   'PYTHONEXECUTABLE',
   'PYTHONHOME',
   'PYTHONSTARTUP',

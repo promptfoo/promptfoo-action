@@ -580,6 +580,9 @@ describe('GitHub Action Main', () => {
       'GIT_CONFIG_COUNT',
       'RUBYOPT',
       'PYTHONHOME',
+      'AWS_CONFIG_FILE',
+      'AWS_SHARED_CREDENTIALS_FILE',
+      'PROMPTFOO_CACHE_PATH',
     ])('should reject process startup variable %s from environment files', async (variableName) => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
@@ -609,6 +612,16 @@ describe('GitHub Action Main', () => {
           process.env[variableName] = originalValue;
         }
       }
+    });
+
+    test('should resolve npm configuration from the trusted action directory', async () => {
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.slice(0, 2)).toEqual([
+        '--prefix',
+        path.resolve(__dirname, '..'),
+      ]);
     });
 
     test('should preserve later-file-wins behavior for application variables', async () => {

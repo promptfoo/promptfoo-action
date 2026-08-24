@@ -664,7 +664,12 @@ export async function run(): Promise<void> {
     // See: https://github.com/promptfoo/promptfoo-action/issues/786
     const exitCode = await exec.exec(
       'npx',
-      [`promptfoo@${version}`, ...promptfooArgs],
+      [
+        '--prefix',
+        path.resolve(__dirname, '..'),
+        `promptfoo@${version}`,
+        ...promptfooArgs,
+      ],
       { env, cwd: workingDirectory, ignoreReturnCode: true },
     );
 
