@@ -4,7 +4,6 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
-import { Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -191,21 +190,6 @@ export async function run(): Promise<void> {
     const promptFilesGlobs: string[] = promptsInput
       ? promptsInput.split('\n').filter((line) => line.trim())
       : [];
-    const promptGlobMatchers = promptFilesGlobs.flatMap((pattern) => {
-      const normalizedPattern = path.posix.normalize(pattern);
-      const patterns =
-        normalizedPattern === pattern
-          ? [pattern]
-          : [pattern, normalizedPattern];
-      return patterns.map(
-        (candidate) =>
-          new Minimatch(candidate, {
-            nocase: ['darwin', 'win32'].includes(process.platform),
-            nocomment: true,
-            nonegate: true,
-          }),
-      );
-    });
     const configPath: string = core.getInput('config', {
       required: true,
     });
@@ -237,9 +221,20 @@ export async function run(): Promise<void> {
 
       const relativePath = path.relative(workingDirectory, absoluteFile);
       const workingDirectoryPath = toRepositoryPath(relativePath);
-      return promptGlobMatchers.some((matcher) =>
-        matcher.match(workingDirectoryPath),
-      );
+      return promptFilesGlobs.some((pattern) => {
+        const candidate = path.isAbsolute(pattern)
+          ? absoluteFile
+          : workingDirectoryPath;
+        const normalizedPattern = path.posix.normalize(pattern);
+        return (
+          path.matchesGlob(candidate, normalizedPattern) ||
+          (['darwin', 'win32'].includes(process.platform) &&
+            path.matchesGlob(
+              candidate.toLowerCase(),
+              normalizedPattern.toLowerCase(),
+            ))
+        );
+      });
     };
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
@@ -534,6 +529,8 @@ export async function run(): Promise<void> {
         promptFiles.push(...allMatches);
       }
     }
+
+    promptFiles.splice(0, promptFiles.length, ...new Set(promptFiles));
 
     const configChanged =
       changedFilesList.length > 0 &&

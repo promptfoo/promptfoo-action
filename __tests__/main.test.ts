@@ -377,6 +377,42 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test('should detect removed prompts matched by absolute glob patterns', async () => {
+      const absolutePattern = path.join(process.cwd(), 'prompts', '*.txt');
+      const remainingPrompt = path.join(
+        process.cwd(),
+        'prompts',
+        'remaining.txt',
+      );
+      withInputs({ prompts: absolutePattern });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue([remainingPrompt]);
+
+      await run();
+
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('monitored prompt was removed or moved'),
+      );
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should deduplicate remaining prompts across overlapping globs', async () => {
+      withInputs({ prompts: 'prompts/*.txt\nprompts/**' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'prompts/removed.txt', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.filter((arg) => arg === 'prompts/remaining.txt')).toHaveLength(
+        1,
+      );
+    });
+
     test.each(['#prompts/*.txt', '!prompts/*.txt'])(
       'should preserve literal glob prefixes for %s',
       async (pattern) => {
