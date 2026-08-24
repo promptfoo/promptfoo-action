@@ -60,6 +60,28 @@ providers:
     expect(deps).toContain('../config/another_provider.js');
   });
 
+  it.each([
+    ['file://providers/provider.js', '../config/providers/provider.js'],
+    [
+      'file://providers/provider.py:custom_call',
+      '../config/providers/provider.py',
+    ],
+  ])('should canonicalize scalar provider %s', (provider, expected) => {
+    mockFs.readFileSync.mockReturnValue(`providers: ${provider}\n`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([expected]);
+  });
+
+  it('should leave scalar remote providers to Promptfoo', () => {
+    mockFs.readFileSync.mockReturnValue('providers: openai:gpt-4\n');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
   it('should extract a function-qualified Python provider file', () => {
     mockFs.readFileSync.mockReturnValue(`
 providers:

@@ -6,7 +6,7 @@ import * as path from 'path';
 import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
-  providers?: Array<string | { id?: string; [key: string]: unknown }>;
+  providers?: string | Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
@@ -161,7 +161,11 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Extract provider files
     if (config.providers) {
-      for (const provider of config.providers) {
+      const providers =
+        typeof config.providers === 'string'
+          ? [config.providers]
+          : config.providers;
+      for (const provider of providers) {
         if (typeof provider === 'string' && provider.startsWith('file://')) {
           processFileUrl(provider, true);
         } else if (
