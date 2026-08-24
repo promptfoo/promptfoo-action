@@ -102,6 +102,37 @@ prompts:
     expect(deps).toEqual(['../config/prompts/mapped.txt']);
   });
 
+  it('should extract bare and executable mapped prompt paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  prompts/main.txt: main prompt
+  'exec:./prompts/generate.sh': generated prompt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompts/main.txt', '../config/prompts/generate.sh']);
+  });
+
+  it('should preserve absolute mapped prompt paths', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  'file:///test/config/prompts/main.txt': main prompt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompts/main.txt']);
+  });
+
+  it('should ignore prompt objects without backing files', () => {
+    mockFs.readFileSync.mockReturnValue('prompts:\n  - label: inline\n');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
   it('should extract test variable files', () => {
     const configContent = `
 tests:

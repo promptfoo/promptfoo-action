@@ -69,7 +69,9 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.isAbsolute(filePath)
+          ? path.normalize(filePath)
+          : path.resolve(path.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -153,12 +155,18 @@ export function extractFileDependencies(configPath: string): string[] {
     }
 
     const extractPromptFile = (prompt: PromptEntry): void => {
-      if (typeof prompt === 'string' && prompt.startsWith('file://')) {
-        processFileUrl(prompt);
-      } else if (
-        typeof prompt === 'object' &&
-        typeof prompt.file === 'string'
-      ) {
+      if (typeof prompt === 'string') {
+        if (prompt.startsWith('file://')) {
+          processFileUrl(prompt);
+        } else if (prompt.startsWith('exec:')) {
+          processFileUrl(`file://${prompt.slice('exec:'.length)}`);
+        } else if (
+          !/\s/.test(prompt) &&
+          /\.(?:txt|md|json|ya?ml|py|[cm]?[jt]s|njk)$/i.test(prompt)
+        ) {
+          processFileUrl(`file://${prompt}`);
+        }
+      } else if (typeof prompt.file === 'string') {
         const absolutePath = resolveConfigDependency(
           prompt.file,
           'prompt file dependency',
