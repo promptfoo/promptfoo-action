@@ -368,6 +368,13 @@ describe('GitHub Action Main', () => {
       expect(args).toEqual(
         expect.arrayContaining(['--prompts', 'prompts/remaining.txt']),
       );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining(
+            'LLM prompts were evaluated in these files: prompts/remaining.txt',
+          ),
+        }),
+      );
     });
 
     test('should process all remaining prompts when a prompt is renamed out of scope', async () => {
@@ -484,6 +491,11 @@ describe('GitHub Action Main', () => {
       const promptfooCall = mockExec.exec.mock.calls[0];
       const args = promptfooCall[1] as string[];
       expect(args).not.toContain('--prompts');
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining('(no prompt files remain)'),
+        }),
+      );
     });
 
     test('should skip an unrelated deleted file', async () => {

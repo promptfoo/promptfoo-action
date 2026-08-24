@@ -4,6 +4,7 @@ import * as github from '@actions/github';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
 import * as glob from 'glob';
+import { Minimatch } from 'minimatch';
 import * as path from 'path';
 import type { EvaluateResult, OutputFile } from 'promptfoo';
 import { simpleGit } from 'simple-git';
@@ -190,6 +191,9 @@ export async function run(): Promise<void> {
     const promptFilesGlobs: string[] = promptsInput
       ? promptsInput.split('\n').filter((line) => line.trim())
       : [];
+    const promptGlobMatchers = promptFilesGlobs.map(
+      (pattern) => new Minimatch(pattern),
+    );
     const configPath: string = core.getInput('config', {
       required: true,
     });
@@ -218,8 +222,8 @@ export async function run(): Promise<void> {
       }
 
       const workingDirectoryPath = toRepositoryPath(relativePath);
-      return promptFilesGlobs.some((pattern) =>
-        path.matchesGlob(workingDirectoryPath, pattern),
+      return promptGlobMatchers.some((matcher) =>
+        matcher.match(workingDirectoryPath),
       );
     };
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
@@ -357,6 +361,7 @@ export async function run(): Promise<void> {
 
     const event = github.context.eventName;
     let changedFiles = '';
+    let evaluatedAfterPromptRemoval = false;
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -390,6 +395,7 @@ export async function run(): Promise<void> {
               !matchesPromptGlob(file.filename)),
         );
         if (monitoredPromptRemovedOrRenamedOut) {
+          evaluatedAfterPromptRemoval = true;
           core.warning(
             'A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files.',
           );
@@ -842,8 +848,13 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
-      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+      const reportedFiles =
+        promptFiles.join(', ') ||
+        (evaluatedAfterPromptRemoval ? '(no prompt files remain)' : '');
+      const promptDescription = evaluatedAfterPromptRemoval
+        ? 'LLM prompts were evaluated'
+        : 'LLM prompt was modified';
+      let body = `⚠️ ${promptDescription} in these files: ${reportedFiles}
 
 | Success | Failure |
 |---------|---------|
