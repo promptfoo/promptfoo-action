@@ -37009,11 +37009,12 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
 function preflightPromptfooEnvironmentFiles(configPath, workingDirectory, requiresInspectableConfig = false) {
   const environmentPaths = /* @__PURE__ */ new Set([path6.join(workingDirectory, ".env")]);
   const isStaticConfig = /\.(?:json|ya?ml)$/i.test(configPath);
-  if (requiresInspectableConfig && !isStaticConfig) {
+  if (requiresInspectableConfig && (!isStaticConfig || le(configPath))) {
+    const configType = isStaticConfig ? "globbed" : "executable";
     throw new PromptfooActionError(
-      "Cannot inspect environment files selected by an executable Promptfoo configuration while sharing authenticated results",
+      `Cannot inspect environment files selected by a ${configType} Promptfoo configuration while sharing authenticated results`,
       ErrorCodes.INVALID_CONFIGURATION,
-      "Use a static YAML or JSON configuration, or set no-share: true."
+      "Use a single static YAML or JSON configuration, or set no-share: true."
     );
   }
   if (isStaticConfig && fs7.existsSync(configPath)) {
