@@ -5,7 +5,7 @@
   "author": "Ian Webster",
   "license": "MIT",
   "main": "lib/main.js",
-  "packageManager": "npm@11.18.0",
+  "packageManager": "npm@12.0.2",
   "scripts": {
     "build": "tsc",
     "build:watch": "tsc --watch",
@@ -34,29 +34,27 @@
     "@actions/exec": "^3.0.0",
     "@actions/github": "^9.0.0",
     "@actions/io": "^3.0.2",
-    "csv-parse": "^6.2.0",
     "dotenv": "^17.3.1",
     "glob": "^13.0.6",
-    "minimatch": "^10.2.2",
     "simple-git": "^3.32.1"
   },
   "overrides": {
     "uuid": "^14.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.2",
+    "@biomejs/biome": "2.5.8",
     "@swc/core": "^1.15.11",
     "@types/node": "^25.3.0",
-    "@vercel/ncc": "^0.44.0",
+    "@vercel/ncc": "^0.45.0",
     "@vitest/coverage-v8": "^4.0.18",
     "esbuild": "^0.28.1",
-    "js-yaml": "^5.0.0",
-    "promptfoo": "0.121.17",
-    "typescript": "^6.0.0",
+    "js-yaml": "^5.2.3",
+    "promptfoo": "0.122.0",
+    "typescript": "^7.0.0",
     "vitest": "^4.0.18"
   },
   "engines": {
-    "node": ">=20.0.0",
-    "npm": ">=11.4.0"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0",
+    "npm": ">=12.0.0"
   }
 }
