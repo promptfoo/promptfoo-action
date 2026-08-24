@@ -183,6 +183,70 @@ prompts:
     ).toEqual(['prompts/main.j2', 'shared/system.txt', 'shared/base.md']);
   });
 
+  it('should conservatively watch dynamic scalar template imports', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'prompts: file://prompts/main.j2\n',
+      ],
+      ['/test/working/prompts/main.j2', '{% include partialTemplate %}'],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/main.j2', './']);
+  });
+
+  it('should inspect imported templates regardless of their extension', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'prompts: file://prompts/main.j2\n',
+      ],
+      ['/test/working/prompts/main.j2', '{% include "shared/base.html" %}'],
+      ['/test/working/shared/base.html', '{% include "shared/header.html" %}'],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/main.j2', 'shared/base.html', 'shared/header.html']);
+  });
+
+  it('should track template imports and function selectors inside structured prompts', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'prompts: file://prompts/chat.yaml\n',
+      ],
+      [
+        '/test/working/prompts/chat.yaml',
+        'content: \'{% include "shared/system.txt" %}\'\ngenerator: file://prompts/build.py:create_prompt\n',
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'shared/system.txt', 'prompts/build.py']);
+  });
+
   it('should not read prompt symlinks outside the repository workspace', () => {
     mockFs.readFileSync.mockReturnValue(
       'prompts: file://prompts/secret.yaml\n',

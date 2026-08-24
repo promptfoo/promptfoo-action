@@ -94,6 +94,7 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn((filePath: fs.PathLike) => filePath.toString()),
     unlinkSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -129,6 +130,7 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
@@ -245,6 +247,9 @@ function setupCommonMocks(): MockOctokit {
     }),
   );
   mockFs.existsSync.mockReturnValue(false);
+  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+    filePath.toString(),
+  );
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -917,6 +922,81 @@ describe('GitHub Action Main', () => {
         'Detected changes in config file dependencies',
       );
       expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test('should preserve action prompt overrides after scalar dependencies change', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'shared/system.txt' },
+      ]);
+      mockGlob.sync.mockReturnValue([
+        'prompts/first.txt',
+        'prompts/second.txt',
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['shared/system.txt']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalledWith(
+        'npx',
+        expect.arrayContaining([
+          '--prompts',
+          'prompts/first.txt',
+          'prompts/second.txt',
+        ]),
+        expect.anything(),
+      );
+    });
+
+    test('should run for conservatively watched dynamic template imports', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'shared/dynamic.txt' },
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['./']);
+
+      await run();
+
+      expect(mockExec.exec).toHaveBeenCalled();
+    });
+
+    test.each(['../private/secret.txt', '/private/secret.txt'])(
+      'should reject evaluated prompt paths outside the workspace: %s',
+      async (promptPath) => {
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'shared/system.txt' },
+        ]);
+        mockGlob.sync.mockReturnValue([promptPath]);
+        mockConfig.extractFileDependencies.mockReturnValue([
+          'shared/system.txt',
+        ]);
+
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('must stay within the repository workspace'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      },
+    );
+
+    test('should reject evaluated prompt symlinks outside the workspace', async () => {
+      mockGlob.sync.mockReturnValue(['prompts/linked.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const candidate = filePath.toString();
+        return candidate.endsWith(`${path.sep}linked.txt`)
+          ? path.resolve(process.cwd(), '..', 'private', 'secret.txt')
+          : candidate;
+      });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'shared/system.txt' },
+      ]);
+      mockConfig.extractFileDependencies.mockReturnValue(['shared/system.txt']);
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('must stay within the repository workspace'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should run when a file inside a dependency directory changes', async () => {
