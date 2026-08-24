@@ -34,3 +34,39 @@ jobs:
         run: npm ci
       - name: Run Biome Check
         run: npm run biome:check
+  smoke:
+    name: Packaged action smoke test
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.x'
+      - run: npm install -g npm@12.0.2
+      - run: npm ci
+      - name: Create an offline evaluation
+        run: |
+          cat > "$RUNNER_TEMP/promptfoo-smoke.yaml" <<'EOF'
+          prompts:
+            - smoke
+          providers:
+            - echo
+          tests:
+            - assert:
+                - type: equals
+                  value: smoke
+          EOF
+      - name: Run the committed action bundle
+        uses: ./
+        env:
+          PROMPTFOO_DISABLE_TELEMETRY: '1'
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          config: ${{ runner.temp }}/promptfoo-smoke.yaml
+          promptfoo-version: '0.122.0'
+          no-share: true
+          no-cache: true
+          disable-comment: true
