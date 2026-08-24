@@ -36766,7 +36766,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = path5.isAbsolute(filePath) ? path5.normalize(filePath) : path5.resolve(path5.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36831,9 +36831,15 @@ function extractFileDependencies(configPath) {
       }
     }
     const extractPromptFile = (prompt) => {
-      if (typeof prompt === "string" && prompt.startsWith("file://")) {
-        processFileUrl(prompt);
-      } else if (typeof prompt === "object" && typeof prompt.file === "string") {
+      if (typeof prompt === "string") {
+        if (prompt.startsWith("file://")) {
+          processFileUrl(prompt);
+        } else if (prompt.startsWith("exec:")) {
+          processFileUrl(`file://${prompt.slice("exec:".length)}`);
+        } else if (!/\s/.test(prompt) && /\.(?:txt|md|json|ya?ml|py|[cm]?[jt]s|njk)$/i.test(prompt)) {
+          processFileUrl(`file://${prompt}`);
+        }
+      } else if (typeof prompt.file === "string") {
         const absolutePath = resolveConfigDependency(
           prompt.file,
           "prompt file dependency"
@@ -36905,8 +36911,10 @@ function extractFileDependencies(configPath) {
       return repositoryPath;
     });
   } catch (error2) {
-    const message = error2 instanceof Error ? error2.message : String(error2);
-    throw new Error(`Failed to extract dependencies from config: ${message}`);
+    warning(
+      `Failed to extract dependencies from config: ${error2 instanceof Error ? error2.message : String(error2)}`
+    );
+    return [];
   }
 }
 
