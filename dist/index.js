@@ -36914,7 +36914,11 @@ function extractFileDependencies(configPath) {
     };
     extractTests(config2.tests);
     for (const scenario of config2.scenarios ?? []) {
-      extractTests(scenario.tests);
+      if (typeof scenario === "string") {
+        processTestFile(scenario);
+      } else {
+        extractTests(scenario.tests);
+      }
     }
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
@@ -37581,7 +37585,6 @@ async function run() {
     const promptFiles = [];
     const allPromptFiles = /* @__PURE__ */ new Set();
     const changedFilesList = changedFiles.split("\n").filter((f) => f);
-    const realWorkspaceRoot = fs7.realpathSync(workspaceRoot);
     for (const globPattern of promptFilesGlobs) {
       const matches = Ui(globPattern, {
         cwd: workingDirectory,
@@ -37589,13 +37592,6 @@ async function run() {
       });
       const matchingPrompts = matches.filter((file) => {
         const absolutePromptPath = path6.resolve(workingDirectory, file);
-        if (!isPathInside2(workspaceRoot, absolutePromptPath) || !isPathInside2(realWorkspaceRoot, fs7.realpathSync(absolutePromptPath))) {
-          throw new PromptfooActionError(
-            `Prompt file "${file}" must stay within the repository workspace`,
-            ErrorCodes.INVALID_CONFIGURATION,
-            "Configure prompt globs and symlinks that resolve inside the checkout."
-          );
-        }
         const repositoryFile = toRepositoryPath(
           path6.relative(workspaceRoot, absolutePromptPath)
         );
@@ -37647,6 +37643,19 @@ async function run() {
     if (!forceRun && promptFiles.length < 1 && !configChanged && !dependencyChanged && changedFilesList.length > 0 && promptFilesGlobs.length > 0) {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
+    }
+    if (!useConfigPrompts && promptFiles.length > 0) {
+      const realWorkspaceRoot = fs7.realpathSync(workspaceRoot);
+      for (const file of promptFiles) {
+        const absolutePromptPath = path6.resolve(workingDirectory, file);
+        if (!isPathInside2(workspaceRoot, absolutePromptPath) || !isPathInside2(realWorkspaceRoot, fs7.realpathSync(absolutePromptPath))) {
+          throw new PromptfooActionError(
+            `Prompt file "${file}" must stay within the repository workspace`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            "Configure prompt globs and symlinks that resolve inside the checkout."
+          );
+        }
+      }
     }
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
@@ -37847,8 +37856,8 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const reportedFiles = promptFiles.join(", ");
-      const promptDescription = configChanged || dependencyChanged ? "LLM prompts were evaluated" : "LLM prompt was modified";
+      const reportedFiles = useConfigPrompts ? configPath : promptFiles.join(", ");
+      const promptDescription = useConfigPrompts ? "Configured LLM prompts were evaluated" : configChanged || dependencyChanged ? "LLM prompts were evaluated" : "LLM prompt was modified";
       let body = `\u26A0\uFE0F ${promptDescription} in these files: ${reportedFiles}
 
 | Success | Failure |
@@ -37879,9 +37888,10 @@ async function run() {
         ["Success", output.results.stats.successes.toString()],
         ["Failure", output.results.stats.failures.toString()]
       ]);
-      if (promptFiles.length > 0) {
+      const evaluatedFiles = useConfigPrompts ? [configPath] : promptFiles;
+      if (evaluatedFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
-        summary2.addList(promptFiles);
+        summary2.addList(evaluatedFiles);
       }
       if (repeatCheckResult) {
         summary2.addHeading("Repeat Check", 3);
