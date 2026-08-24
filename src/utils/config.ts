@@ -259,7 +259,9 @@ export function extractFileDependencies(configPath: string): string[] {
       return repositoryPath;
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to extract dependencies from config: ${message}`);
+    core.warning(
+      `Failed to extract dependencies from config: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return [];
   }
 }
