@@ -192,7 +192,15 @@ export async function run(): Promise<void> {
       ? promptsInput.split('\n').filter((line) => line.trim())
       : [];
     const promptGlobMatchers = promptFilesGlobs.map(
-      (pattern) => new Minimatch(pattern),
+      (pattern) =>
+        new Minimatch(pattern, {
+          nocase: ['darwin', 'win32'].includes(process.platform),
+          nocomment: true,
+          nonegate: true,
+        }),
+    );
+    const hasParentTraversalPromptGlob = promptFilesGlobs.some((pattern) =>
+      /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(pattern),
     );
     const configPath: string = core.getInput('config', {
       required: true,
@@ -389,10 +397,13 @@ export async function run(): Promise<void> {
       } else {
         const monitoredPromptRemovedOrRenamedOut = pullRequestFiles.some(
           (file) =>
-            (file.status === 'removed' && matchesPromptGlob(file.filename)) ||
+            (file.status === 'removed' &&
+              (hasParentTraversalPromptGlob ||
+                matchesPromptGlob(file.filename))) ||
             (file.status === 'renamed' &&
-              matchesPromptGlob(file.previous_filename) &&
-              !matchesPromptGlob(file.filename)),
+              (hasParentTraversalPromptGlob ||
+                (matchesPromptGlob(file.previous_filename) &&
+                  !matchesPromptGlob(file.filename)))),
         );
         if (monitoredPromptRemovedOrRenamedOut) {
           evaluatedAfterPromptRemoval = true;

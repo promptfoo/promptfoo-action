@@ -377,6 +377,62 @@ describe('GitHub Action Main', () => {
       );
     });
 
+    test.each(['#prompts/*.txt', '!prompts/*.txt'])(
+      'should preserve literal glob prefixes for %s',
+      async (pattern) => {
+        withInputs({ prompts: pattern });
+        const promptDirectory = pattern.split('/')[0];
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: `${promptDirectory}/old.txt`, status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue([`${promptDirectory}/remaining.txt`]);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockExec.exec).toHaveBeenCalled();
+      },
+    );
+
+    test('should mirror platform case folding for deleted prompt paths', async () => {
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'PROMPTS/OLD.TXT', status: 'removed' },
+      ]);
+      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+      await run();
+
+      if (['darwin', 'win32'].includes(process.platform)) {
+        expect(mockExec.exec).toHaveBeenCalled();
+      } else {
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      }
+    });
+
+    test.each(['removed', 'renamed'])(
+      'should conservatively evaluate %s prompts for traversal globs',
+      async (status) => {
+        withInputs({ prompts: 'prompts/**/../*.txt' });
+        mockOctokit.paginate.mockResolvedValue([
+          {
+            filename: 'archive/old.txt',
+            previous_filename: 'prompts/old.txt',
+            status,
+          },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+
+        await run();
+
+        expect(mockCore.warning).toHaveBeenCalledWith(
+          expect.stringContaining('monitored prompt was removed or moved'),
+        );
+        expect(mockExec.exec).toHaveBeenCalled();
+      },
+    );
+
     test('should process all remaining prompts when a prompt is renamed out of scope', async () => {
       mockOctokit.paginate.mockResolvedValue([
         {
