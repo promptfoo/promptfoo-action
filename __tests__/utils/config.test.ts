@@ -102,6 +102,53 @@ prompts:
     expect(deps).toEqual(['../config/prompts/mapped.txt']);
   });
 
+  it('should follow nested structured mapped prompt dependencies safely', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        "prompts:\n  'file://prompts/chat.yaml': chat\n",
+      ],
+      [
+        '/test/working/prompts/chat.yaml',
+        'shared: &message\n  content: file://partials/system.txt\nmessages:\n  - *message\n  - *message\n  - content: file://prompts/nested.json\nmetadata: null\n',
+      ],
+      [
+        '/test/working/prompts/nested.json',
+        '{"content":"file://prompts/chat.yaml"}',
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([
+      'prompts/chat.yaml',
+      'partials/system.txt',
+      'prompts/nested.json',
+    ]);
+  });
+
+  it('should preserve mapped prompt dependencies when structured parsing fails', () => {
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      filePath.endsWith('promptfooconfig.yaml')
+        ? "prompts:\n  'file://prompts/chat.yaml': chat\n"
+        : '[invalid',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml']);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to inspect structured prompt'),
+    );
+  });
+
   it('should strip function selectors from mapped prompt generators', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:
@@ -135,6 +182,18 @@ prompts:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/prompts/main.txt', '../config/prompts/generate.sh']);
+  });
+
+  it('should extract quoted mapped executable paths without command arguments', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  'exec:"./prompt assets/generator.py" --tone formal': generated prompt
+  'exec:': empty prompt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompt assets/generator.py']);
   });
 
   it('should preserve absolute mapped prompt paths', () => {
