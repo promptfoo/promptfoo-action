@@ -449,7 +449,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const allPromptFiles: string[] = [];
+    const allPromptFiles = new Set<string>();
     const changedFilesList = changedFiles.split('\n').filter((f) => f);
 
     for (const globPattern of promptFilesGlobs) {
@@ -461,9 +461,13 @@ export async function run(): Promise<void> {
         const repositoryFile = toRepositoryPath(
           path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
         );
-        return repositoryFile !== configRepositoryPath;
+        return (
+          repositoryFile !== configRepositoryPath && !allPromptFiles.has(file)
+        );
       });
-      allPromptFiles.push(...matchingPrompts);
+      for (const file of matchingPrompts) {
+        allPromptFiles.add(file);
+      }
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
@@ -812,8 +816,12 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
-      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+      const reportedFiles = promptFiles.join(', ');
+      const promptDescription =
+        configChanged || dependencyChanged
+          ? 'LLM prompts were evaluated'
+          : 'LLM prompt was modified';
+      let body = `⚠️ ${promptDescription} in these files: ${reportedFiles}
 
 | Success | Failure |
 |---------|---------|

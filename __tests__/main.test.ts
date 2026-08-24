@@ -302,7 +302,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('LLM prompts were evaluated'),
       });
     });
 
@@ -941,6 +941,28 @@ describe('GitHub Action Main', () => {
         ]),
         expect.anything(),
       );
+      expect(mockOctokit.rest.issues.createComment).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.stringContaining('LLM prompts were evaluated'),
+        }),
+      );
+    });
+
+    test('should deduplicate prompt matches across overlapping globs', async () => {
+      withInputs({ prompts: 'prompts/*.txt\nprompts/shared.*' });
+      mockOctokit.paginate.mockResolvedValue([
+        { filename: 'promptfooconfig.yaml' },
+      ]);
+      mockGlob.sync.mockImplementation((pattern) =>
+        pattern === 'prompts/*.txt'
+          ? ['prompts/shared.txt', 'prompts/other.txt']
+          : ['prompts/shared.txt'],
+      );
+
+      await run();
+
+      const args = mockExec.exec.mock.calls[0][1] as string[];
+      expect(args.filter((arg) => arg === 'prompts/shared.txt')).toHaveLength(1);
     });
 
     test('should run when a file inside a dependency directory changes', async () => {
@@ -1115,7 +1137,7 @@ describe('GitHub Action Main', () => {
         owner: 'test-owner',
         repo: 'test-repo',
         issue_number: 123,
-        body: expect.stringContaining('LLM prompt was modified'),
+        body: expect.stringContaining('LLM prompts were evaluated'),
       });
 
       // Should still fail the action after posting the comment
