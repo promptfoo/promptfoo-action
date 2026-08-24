@@ -36833,9 +36833,16 @@ function extractFileDependencies(configPath) {
     if (config2.prompts) {
       const prompts = typeof config2.prompts === "string" ? [config2.prompts] : config2.prompts;
       for (const prompt of prompts) {
-        if (typeof prompt === "string" && prompt.startsWith("file://")) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === "object" && prompt.file) {
+        if (typeof prompt === "string") {
+          if (prompt.startsWith("file://")) {
+            const promptPath = prompt.slice("file://".length);
+            const selector = promptPath.lastIndexOf(":");
+            const filePath = selector > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(promptPath.slice(0, selector)) ? promptPath.slice(0, selector) : promptPath;
+            processFileUrl(`file://${filePath}`);
+          } else if (!/\s/.test(prompt) && /\.(?:txt|md|json|ya?ml|py|[cm]?[jt]s|njk)$/i.test(prompt)) {
+            processFileUrl(`file://${prompt}`);
+          }
+        } else if (prompt.file) {
           const absolutePath = resolveConfigDependency(
             prompt.file,
             "prompt file dependency"
