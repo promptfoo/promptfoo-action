@@ -94,6 +94,7 @@ vi.mock('fs', async () => {
     ...actual,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn((filePath: fs.PathLike) => filePath.toString()),
     unlinkSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -129,6 +130,7 @@ const mockExec = exec as unknown as {
 const mockFs = fs as unknown as {
   readFileSync: MockedFunction<typeof fs.readFileSync>;
   existsSync: MockedFunction<typeof fs.existsSync>;
+  realpathSync: MockedFunction<typeof fs.realpathSync>;
   unlinkSync: MockedFunction<typeof fs.unlinkSync>;
 };
 
@@ -245,6 +247,9 @@ function setupCommonMocks(): MockOctokit {
     }),
   );
   mockFs.existsSync.mockReturnValue(false);
+  mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+    filePath.toString(),
+  );
 
   // Setup exec mock
   mockExec.exec.mockResolvedValue(0);
@@ -963,6 +968,40 @@ describe('GitHub Action Main', () => {
 
       const args = mockExec.exec.mock.calls[0][1] as string[];
       expect(args.filter((arg) => arg === 'prompts/shared.txt')).toHaveLength(1);
+    });
+
+    test.each(['../private/secret.txt', '/private/secret.txt'])(
+      'should reject prompt match outside the workspace: %s',
+      async (promptPath) => {
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'promptfooconfig.yaml' },
+        ]);
+        mockGlob.sync.mockReturnValue([promptPath]);
+
+        await run();
+
+        expect(mockCore.setFailed).toHaveBeenCalledWith(
+          expect.stringContaining('must stay within the repository workspace'),
+        );
+        expect(mockExec.exec).not.toHaveBeenCalled();
+      },
+    );
+
+    test('should reject prompt symlinks that resolve outside the workspace', async () => {
+      mockGlob.sync.mockReturnValue(['prompts/linked.txt']);
+      mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+        const candidate = filePath.toString();
+        return candidate.endsWith(`${path.sep}linked.txt`)
+          ? path.resolve(process.cwd(), '..', 'private', 'secret.txt')
+          : candidate;
+      });
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('must stay within the repository workspace'),
+      );
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should run when a file inside a dependency directory changes', async () => {

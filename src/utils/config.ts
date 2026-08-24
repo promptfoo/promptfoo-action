@@ -12,10 +12,16 @@ interface PromptfooTestConfig {
   [key: string]: unknown;
 }
 
+type PromptfooTests =
+  | string
+  | PromptfooTestConfig
+  | Array<string | PromptfooTestConfig>;
+
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
-  tests?: string | PromptfooTestConfig | Array<string | PromptfooTestConfig>;
+  tests?: PromptfooTests;
+  scenarios?: Array<{ tests?: PromptfooTests }>;
   defaultTest?: {
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -253,9 +259,13 @@ export function extractFileDependencies(configPath: string): string[] {
       extractAssertFiles(config.defaultTest.assert);
     }
 
-    // Process tests
-    if (config.tests) {
-      const tests = Array.isArray(config.tests) ? config.tests : [config.tests];
+    const extractTests = (configuredTests?: PromptfooTests): void => {
+      if (!configuredTests) {
+        return;
+      }
+      const tests = Array.isArray(configuredTests)
+        ? configuredTests
+        : [configuredTests];
       for (const test of tests) {
         if (typeof test === 'string') {
           processTestFile(test);
@@ -268,6 +278,11 @@ export function extractFileDependencies(configPath: string): string[] {
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
       }
+    };
+
+    extractTests(config.tests);
+    for (const scenario of config.scenarios ?? []) {
+      extractTests(scenario.tests);
     }
 
     // Convert absolute paths back to relative paths from working directory

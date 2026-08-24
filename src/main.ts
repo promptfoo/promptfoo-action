@@ -38,6 +38,15 @@ function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
 
+function isPathInside(basePath: string, candidatePath: string): boolean {
+  const relativePath = path.relative(basePath, candidatePath);
+  return (
+    relativePath !== '..' &&
+    !relativePath.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativePath)
+  );
+}
+
 /**
  * Conservatively validates user-controlled git revisions before passing them to
  * git. This action accepts only the revision forms it documents for manual
@@ -451,6 +460,7 @@ export async function run(): Promise<void> {
     const promptFiles: string[] = [];
     const allPromptFiles = new Set<string>();
     const changedFilesList = changedFiles.split('\n').filter((f) => f);
+    const realWorkspaceRoot = fs.realpathSync(workspaceRoot);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -458,8 +468,19 @@ export async function run(): Promise<void> {
         nodir: true,
       });
       const matchingPrompts = matches.filter((file) => {
+        const absolutePromptPath = path.resolve(workingDirectory, file);
+        if (
+          !isPathInside(workspaceRoot, absolutePromptPath) ||
+          !isPathInside(realWorkspaceRoot, fs.realpathSync(absolutePromptPath))
+        ) {
+          throw new PromptfooActionError(
+            `Prompt file "${file}" must stay within the repository workspace`,
+            ErrorCodes.INVALID_CONFIGURATION,
+            'Configure prompt globs and symlinks that resolve inside the checkout.',
+          );
+        }
         const repositoryFile = toRepositoryPath(
-          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+          path.relative(workspaceRoot, absolutePromptPath),
         );
         return (
           repositoryFile !== configRepositoryPath && !allPromptFiles.has(file)
