@@ -36887,6 +36887,21 @@ function extractFileDependencies(configPath) {
         extractAssertFiles(test.assert);
       }
     }
+    for (const extension of config2.extensions ?? []) {
+      if (typeof extension !== "string" || !extension.startsWith("file://")) {
+        continue;
+      }
+      const hookSeparator = extension.lastIndexOf(":");
+      const extensionFile = hookSeparator > "file://".length ? extension.slice("file://".length, hookSeparator) : extension.slice("file://".length);
+      const localExtensionFile = path5.isAbsolute(extensionFile) ? path5.relative(configDir, extensionFile) : extensionFile;
+      const extensionPath = resolveConfigDependency(
+        localExtensionFile,
+        "extension hook dependency"
+      );
+      if (extensionPath) {
+        dependencies.add(extensionPath);
+      }
+    }
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
       const repositoryPath = relativePath.split(path5.sep).join("/");
