@@ -36995,9 +36995,17 @@ function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
     targetEnvironment[key] = value;
   }
 }
-function preflightPromptfooEnvironmentFiles(configPath, workingDirectory) {
+function preflightPromptfooEnvironmentFiles(configPath, workingDirectory, requiresInspectableConfig = false) {
   const environmentPaths = /* @__PURE__ */ new Set([path6.join(workingDirectory, ".env")]);
-  if (/\.(?:json|ya?ml)$/i.test(configPath) && fs7.existsSync(configPath)) {
+  const isStaticConfig = /\.(?:json|ya?ml)$/i.test(configPath);
+  if (requiresInspectableConfig && !isStaticConfig) {
+    throw new PromptfooActionError(
+      "Cannot inspect environment files selected by an executable Promptfoo configuration while sharing authenticated results",
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Use a static YAML or JSON configuration, or set no-share: true."
+    );
+  }
+  if (isStaticConfig && fs7.existsSync(configPath)) {
     const config2 = load(fs7.readFileSync(configPath, "utf8"), {
       schema: CORE_SCHEMA.withTags(mergeTag)
     });
@@ -37703,7 +37711,11 @@ async function run() {
       info("No LLM prompt, config files, or dependencies were modified.");
       return;
     }
-    preflightPromptfooEnvironmentFiles(configAbsolutePath, workingDirectory);
+    preflightPromptfooEnvironmentFiles(
+      configAbsolutePath,
+      workingDirectory,
+      !noShare && Boolean(process.env.PROMPTFOO_API_KEY)
+    );
     if (forceRun) {
       info("Force run enabled - running evaluation regardless of changes");
     }
