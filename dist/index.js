@@ -36821,24 +36821,55 @@ function extractFileDependencies(configPath) {
         dependencies.add(absolutePath);
       }
     };
-    const inspectedStructuredPrompts = /* @__PURE__ */ new Set();
+    const inspectedPromptFiles = /* @__PURE__ */ new Set();
     const processPromptFile = (fileUrl) => {
       processFileUrl(fileUrl);
       const filePath = fileUrl.slice("file://".length);
-      if (!/\.(?:json|ya?ml)$/i.test(filePath)) {
+      const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(filePath);
+      const isTextTemplate = /\.(?:txt|md|j2|njk)$/i.test(filePath);
+      if (!isStructuredPrompt && !isTextTemplate) {
         return;
       }
       const absolutePath = resolveConfigDependency(
         filePath,
-        "structured prompt dependency"
+        "prompt file dependency"
       );
-      if (!absolutePath || inspectedStructuredPrompts.has(absolutePath) || !fs6.existsSync(absolutePath)) {
+      if (!absolutePath) {
         return;
       }
-      inspectedStructuredPrompts.add(absolutePath);
+      if (le(filePath)) {
+        for (const match of Ui(absolutePath, { nodir: true })) {
+          const matchedPath = path5.resolve(match);
+          if (isPathInside(dependencyRoot, matchedPath)) {
+            processPromptFile(`file://${matchedPath}`);
+          }
+        }
+        return;
+      }
+      if (inspectedPromptFiles.has(absolutePath) || !fs6.existsSync(absolutePath)) {
+        return;
+      }
       try {
+        const physicalRoot = fs6.realpathSync(dependencyRoot);
+        const physicalPath = fs6.realpathSync(absolutePath);
+        if (!isPathInside(physicalRoot, physicalPath)) {
+          warning(
+            `Ignoring unsafe prompt "${filePath}": target must stay within the repository workspace`
+          );
+          return;
+        }
+        inspectedPromptFiles.add(absolutePath);
+        const contents = fs6.readFileSync(physicalPath, "utf8");
+        if (isTextTemplate) {
+          for (const match of contents.matchAll(
+            /\{%-?\s*(?:include|extends|import|from)\s+(['"])(.*?)\1/g
+          )) {
+            processPromptFile(`file://${match[2]}`);
+          }
+          return;
+        }
         const values = [
-          load(fs6.readFileSync(absolutePath, "utf8"), {
+          load(contents, {
             schema: CORE_SCHEMA.withTags(mergeTag)
           })
         ];
@@ -36851,10 +36882,8 @@ function extractFileDependencies(configPath) {
             values.push(...Object.values(value));
           }
         }
-      } catch (error2) {
-        warning(
-          `Failed to inspect structured prompt "${filePath}": ${String(error2)}`
-        );
+      } catch {
+        warning(`Failed to inspect prompt dependencies in "${filePath}"`);
       }
     };
     if (config2.providers) {
