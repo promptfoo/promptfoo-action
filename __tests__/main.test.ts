@@ -765,14 +765,14 @@ describe('GitHub Action Main', () => {
 
     test('should forward non-auth PROMPTFOO_ variables from environment files', async () => {
       // Protect auth and routing values without blocking benign PROMPTFOO_
-      // settings such as cache paths.
+      // settings such as log levels.
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
 
       const dotenv = await import('dotenv');
       (dotenv.config as Mock).mockImplementation(
         (options?: { processEnv?: Record<string, string> }) => {
-          const parsed = { PROMPTFOO_CACHE_PATH: '/tmp/pf-cache' };
+          const parsed = { PROMPTFOO_LOG_LEVEL: 'info' };
           Object.assign(options?.processEnv ?? process.env, parsed);
           return { parsed };
         },
@@ -783,10 +783,10 @@ describe('GitHub Action Main', () => {
 
         expect(mockCore.setFailed).not.toHaveBeenCalled();
         expect(mockExec.exec.mock.calls[0][2]?.env).toEqual(
-          expect.objectContaining({ PROMPTFOO_CACHE_PATH: '/tmp/pf-cache' }),
+          expect.objectContaining({ PROMPTFOO_LOG_LEVEL: 'info' }),
         );
       } finally {
-        delete process.env.PROMPTFOO_CACHE_PATH;
+        delete process.env.PROMPTFOO_LOG_LEVEL;
       }
     });
 
