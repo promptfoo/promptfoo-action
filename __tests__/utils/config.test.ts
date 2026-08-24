@@ -76,6 +76,90 @@ prompts:
     expect(deps).toContain('../config/prompts/prompt2.txt');
   });
 
+  it('should preserve provider dependencies for legacy mapped prompts', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.py
+prompts:
+  an inline prompt: legacy label
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/providers/provider.py']);
+  });
+
+  it.each([
+    ["prompts:\n  'file://prompts/mapped.txt': label\n", 'prompts/mapped.txt'],
+    ['prompts:\n  prompts/mapped.txt: label\n', 'prompts/mapped.txt'],
+    ['prompts: file://prompts/scalar.txt\n', 'prompts/scalar.txt'],
+    [
+      'prompts: file:///test/working/prompts/scalar.txt\n',
+      'prompts/scalar.txt',
+    ],
+    ['prompts: prompts/scalar.txt\n', 'prompts/scalar.txt'],
+    [
+      "prompts:\n  'file://prompts/generate.py:build': label\n",
+      'prompts/generate.py',
+    ],
+    ['prompts: exec:./scripts/generate.sh\n', 'scripts/generate.sh'],
+    [
+      'prompts: \'exec:"./scripts/my generator.sh" --flag\'\n',
+      'scripts/my generator.sh',
+    ],
+  ])('should track directly declared prompt path %s', (config, expected) => {
+    mockFs.readFileSync.mockReturnValue(config);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([expected]);
+  });
+
+  it('should not inspect or render prompt contents in the wrapper', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "prompts:\n  'file://prompts/chat.yaml': label\n",
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledOnce();
+  });
+
+  it('should normalize Windows drive-letter prompt file URLs', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      mockFs.readFileSync.mockReturnValue(
+        "prompts:\n  'file:///C:/repository/prompts/mapped.txt': label\n",
+      );
+
+      expect(
+        extractFileDependencies('/test/config/promptfooconfig.yaml'),
+      ).toEqual(['../config/C:/repository/prompts/mapped.txt']);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
+  it('should leave empty executable prompt commands to Promptfoo validation', () => {
+    mockFs.readFileSync.mockReturnValue("prompts: 'exec:   '\n");
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should ignore inline object prompts without file paths', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts:\n  - raw: hello world\n    label: greeting\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
   it('should extract test variable files', () => {
     const configContent = `
 tests:
