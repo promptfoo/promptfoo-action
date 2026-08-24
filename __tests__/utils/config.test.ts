@@ -102,6 +102,29 @@ prompts:
     expect(deps).toEqual(['../config/prompts/mapped.txt']);
   });
 
+  it('should strip function selectors from mapped prompt generators', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  'file://prompts/build.py:create_prompt': generated prompt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompts/build.py']);
+  });
+
+  it('should extract mapped prompt paths containing whitespace', () => {
+    mockFs.readFileSync.mockReturnValue(`
+prompts:
+  'prompt assets/my generator.py': generated prompt
+  'This is an inline prompt.txt': inline prompt
+`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompt assets/my generator.py']);
+  });
+
   it('should extract bare and executable mapped prompt paths', () => {
     mockFs.readFileSync.mockReturnValue(`
 prompts:

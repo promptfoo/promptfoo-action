@@ -157,11 +157,18 @@ export function extractFileDependencies(configPath: string): string[] {
     const extractPromptFile = (prompt: PromptEntry): void => {
       if (typeof prompt === 'string') {
         if (prompt.startsWith('file://')) {
-          processFileUrl(prompt);
+          const promptPath = prompt.slice('file://'.length);
+          const selector = promptPath.lastIndexOf(':');
+          const filePath =
+            selector > 1 &&
+            /\.(?:py|[cm]?[jt]s)$/i.test(promptPath.slice(0, selector))
+              ? promptPath.slice(0, selector)
+              : promptPath;
+          processFileUrl(`file://${filePath}`);
         } else if (prompt.startsWith('exec:')) {
           processFileUrl(`file://${prompt.slice('exec:'.length)}`);
         } else if (
-          !/\s/.test(prompt) &&
+          (!/\s/.test(prompt) || /[\\/]/.test(prompt)) &&
           /\.(?:txt|md|json|ya?ml|py|[cm]?[jt]s|njk)$/i.test(prompt)
         ) {
           processFileUrl(`file://${prompt}`);
