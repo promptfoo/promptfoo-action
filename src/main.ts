@@ -523,7 +523,11 @@ export async function run(): Promise<void> {
       return;
     }
 
-    preflightPromptfooEnvironmentFiles(configAbsolutePath, workingDirectory);
+    preflightPromptfooEnvironmentFiles(
+      configAbsolutePath,
+      workingDirectory,
+      !noShare && Boolean(process.env.PROMPTFOO_API_KEY),
+    );
 
     if (forceRun) {
       core.info('Force run enabled - running evaluation regardless of changes');

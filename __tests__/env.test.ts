@@ -250,4 +250,13 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
       preflightPromptfooEnvironmentFiles(configPath, tmpDir),
     ).not.toThrow();
   });
+
+  test('rejects executable configs when authenticated sharing requires inspection', () => {
+    const configPath = path.join(tmpDir, 'promptfooconfig.ts');
+    fs.writeFileSync(configPath, 'export default { providers: ["echo"] };');
+
+    expect(() =>
+      preflightPromptfooEnvironmentFiles(configPath, tmpDir, true),
+    ).toThrow(/executable Promptfoo configuration/);
+  });
 });

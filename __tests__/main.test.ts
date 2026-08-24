@@ -763,6 +763,30 @@ describe('GitHub Action Main', () => {
       }
     });
 
+    test('should reject authenticated sharing with executable configurations', async () => {
+      withInputs({ config: 'promptfooconfig.js' });
+      process.env.PROMPTFOO_API_KEY = 'trusted-workflow-key';
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('executable Promptfoo configuration'),
+      );
+      expect(mockAuth.validatePromptfooApiKey).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
+    });
+
+    test('should allow executable configurations when sharing is disabled', async () => {
+      withInputs({ config: 'promptfooconfig.js' });
+      process.env.PROMPTFOO_API_KEY = 'trusted-workflow-key';
+      mockCore.getBooleanInput.mockImplementation((name) => name === 'no-share');
+
+      await run();
+
+      expect(mockCore.setFailed).not.toHaveBeenCalled();
+      expect(mockExec.exec).toHaveBeenCalledOnce();
+    });
+
     test('should forward non-auth PROMPTFOO_ variables from environment files', async () => {
       // Protect auth and routing values without blocking benign PROMPTFOO_
       // settings such as log levels.

@@ -146,10 +146,20 @@ export function loadEnvironmentFile(
 export function preflightPromptfooEnvironmentFiles(
   configPath: string,
   workingDirectory: string,
+  requiresInspectableConfig = false,
 ): void {
   const environmentPaths = new Set([path.join(workingDirectory, '.env')]);
+  const isStaticConfig = /\.(?:json|ya?ml)$/i.test(configPath);
 
-  if (/\.(?:json|ya?ml)$/i.test(configPath) && fs.existsSync(configPath)) {
+  if (requiresInspectableConfig && !isStaticConfig) {
+    throw new PromptfooActionError(
+      'Cannot inspect environment files selected by an executable Promptfoo configuration while sharing authenticated results',
+      ErrorCodes.INVALID_CONFIGURATION,
+      'Use a static YAML or JSON configuration, or set no-share: true.',
+    );
+  }
+
+  if (isStaticConfig && fs.existsSync(configPath)) {
     const config = loadYaml(fs.readFileSync(configPath, 'utf8'), {
       schema: CORE_SCHEMA.withTags(mergeTag),
     }) as {
