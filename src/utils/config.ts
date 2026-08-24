@@ -9,7 +9,7 @@ type PromptEntry = string | { file?: string; [key: string]: unknown };
 
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: PromptEntry[] | Record<string, string>;
+  prompts?: string | PromptEntry[] | Record<string, string>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -140,109 +140,6 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
-    const inspectedPromptFiles = new Set<string>();
-    const inspectTemplateImports = (contents: string): void => {
-      for (const match of contents.matchAll(
-        /\{%-?\s*(?:include|extends|import|from)\s+([\s\S]+?)-?%\}/g,
-      )) {
-        const selectedTemplate = match[1].trim().match(/^(['"])(.*?)\1/);
-        if (selectedTemplate) {
-          processPromptFile(`file://${selectedTemplate[2]}`, true);
-        } else {
-          dependencies.add(`${dependencyRoot}${path.sep}`);
-        }
-      }
-    };
-    const processPromptFile = (
-      fileUrl: string,
-      importedTemplate = false,
-    ): void => {
-      let filePath = fileUrl.slice('file://'.length);
-      const selector = filePath.lastIndexOf(':');
-      if (
-        selector > 1 &&
-        /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, selector))
-      ) {
-        filePath = filePath.slice(0, selector);
-      }
-      processFileUrl(`file://${filePath}`);
-
-      const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(filePath);
-      const isTextTemplate =
-        importedTemplate || /\.(?:txt|md|j2|njk)$/i.test(filePath);
-      if (!isStructuredPrompt && !isTextTemplate) {
-        return;
-      }
-
-      const absolutePath = resolveConfigDependency(
-        filePath,
-        'prompt file dependency',
-      );
-      if (!absolutePath) {
-        return;
-      }
-
-      if (glob.hasMagic(filePath)) {
-        for (const match of glob.sync(absolutePath, { nodir: true })) {
-          const matchedPath = path.resolve(match);
-          if (isPathInside(dependencyRoot, matchedPath)) {
-            processPromptFile(`file://${matchedPath}`, importedTemplate);
-          }
-        }
-        return;
-      }
-
-      if (
-        inspectedPromptFiles.has(absolutePath) ||
-        !fs.existsSync(absolutePath)
-      ) {
-        return;
-      }
-
-      try {
-        const physicalRoot = fs.realpathSync(dependencyRoot);
-        const physicalPath = fs.realpathSync(absolutePath);
-        if (!isPathInside(physicalRoot, physicalPath)) {
-          core.warning(
-            `Ignoring unsafe prompt "${filePath}": target must stay within the repository workspace`,
-          );
-          return;
-        }
-
-        inspectedPromptFiles.add(absolutePath);
-        const contents = fs.readFileSync(physicalPath, 'utf8');
-        if (isTextTemplate) {
-          inspectTemplateImports(contents);
-          return;
-        }
-
-        const values: unknown[] = [
-          loadYaml(contents, {
-            schema: CORE_SCHEMA.withTags(mergeTag),
-          }),
-        ];
-        const inspectedValues = new Set<object>();
-        for (const value of values) {
-          if (typeof value === 'string') {
-            if (value.startsWith('file://')) {
-              processPromptFile(value);
-            } else {
-              inspectTemplateImports(value);
-            }
-          } else if (
-            value &&
-            typeof value === 'object' &&
-            !inspectedValues.has(value)
-          ) {
-            inspectedValues.add(value);
-            values.push(...Object.values(value));
-          }
-        }
-      } catch {
-        core.warning(`Failed to inspect prompt dependencies in "${filePath}"`);
-      }
-    };
-
     // Extract provider files
     if (config.providers) {
       for (const provider of config.providers) {
@@ -257,52 +154,53 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     }
 
-    const extractPromptFile = (prompt: PromptEntry): void => {
-      if (typeof prompt === 'string') {
-        if (prompt.startsWith('file://')) {
-          const promptPath = prompt.slice('file://'.length);
-          const selector = promptPath.lastIndexOf(':');
-          const filePath =
-            selector > 1 &&
-            /\.(?:py|[cm]?[jt]s)$/i.test(promptPath.slice(0, selector))
-              ? promptPath.slice(0, selector)
-              : promptPath;
-          processPromptFile(`file://${filePath}`);
-        } else if (prompt.startsWith('exec:')) {
-          const executable = prompt
-            .slice('exec:'.length)
-            .trimStart()
-            .match(/^(['"])(.*?)\1|^(\S+)/);
-          if (executable) {
-            processPromptFile(`file://${executable[2] ?? executable[3]}`);
-          }
-        } else if (
-          (!/\s/.test(prompt) || /[\\/]/.test(prompt)) &&
-          /\.(?:txt|md|json|ya?ml|py|[cm]?[jt]s|j2|njk)$/i.test(prompt)
-        ) {
-          processPromptFile(`file://${prompt}`);
-        }
-      } else if (typeof prompt.file === 'string') {
-        const absolutePath = resolveConfigDependency(
-          prompt.file,
-          'prompt file dependency',
-        );
-        if (absolutePath) {
-          dependencies.add(absolutePath);
-        }
-      }
-    };
-
-    // Extract prompt files. Promptfoo supports an array and a mapping form
-    // whose keys contain prompt content and whose values are labels.
+    // Extract prompt files
     if (config.prompts) {
-      if (Array.isArray(config.prompts)) {
-        for (const prompt of config.prompts) {
-          extractPromptFile(prompt);
-        }
-      } else {
-        for (const prompt of Object.keys(config.prompts)) {
-          extractPromptFile(prompt);
+      const prompts =
+        typeof config.prompts === 'string'
+          ? [config.prompts]
+          : Array.isArray(config.prompts)
+            ? config.prompts
+            : Object.keys(config.prompts);
+
+      for (const prompt of prompts) {
+        if (typeof prompt === 'string') {
+          let filePath = prompt;
+          if (prompt.startsWith('exec:')) {
+            const executable = prompt
+              .slice('exec:'.length)
+              .trimStart()
+              .match(/^(['"])(.*?)\1|^(\S+)/);
+            if (!executable) {
+              continue;
+            }
+            filePath = executable[2] ?? executable[3];
+          } else if (prompt.startsWith('file://')) {
+            filePath = prompt.slice('file://'.length);
+          } else if (
+            !/\.(?:cjs|cts|j2|js|jsonl?|md|mjs|mts|py|ts|txt|ya?ml)(?::[A-Za-z_]\w*)?$/i.test(
+              prompt,
+            )
+          ) {
+            continue;
+          }
+
+          const selector = filePath.lastIndexOf(':');
+          if (
+            selector > 1 &&
+            /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, selector))
+          ) {
+            filePath = filePath.slice(0, selector);
+          }
+          processFileUrl(`file://${filePath}`);
+        } else if (prompt.file) {
+          const absolutePath = resolveConfigDependency(
+            prompt.file,
+            'prompt file dependency',
+          );
+          if (absolutePath) {
+            dependencies.add(absolutePath);
+          }
         }
       }
     }
@@ -375,7 +273,7 @@ export function extractFileDependencies(configPath: string): string[] {
     // Convert absolute paths back to relative paths from working directory
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path.sep).join('/') || '.';
+      const repositoryPath = relativePath.split(path.sep).join('/');
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
         return `${repositoryPath}/`;
