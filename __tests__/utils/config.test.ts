@@ -161,10 +161,21 @@ extensions:
 
     expect(deps).toEqual([
       '../config/hooks/setup.js',
+      '../config/',
       '../config/hooks/case.py',
       '../config/hooks/result.js',
       '../config/hooks/report.py',
     ]);
+  });
+
+  it('should watch the repository for executable extension side inputs', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'extensions:\n  - file://hooks/policy.js:beforeAll\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/hooks/policy.js', './']);
   });
 
   it('should ignore remote and malformed extension entries', () => {
