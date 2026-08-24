@@ -11,6 +11,7 @@ vi.mock('fs', async () => {
     ...realFs,
     readFileSync: vi.fn(),
     existsSync: vi.fn(),
+    realpathSync: vi.fn((filePath: fs.PathLike) => filePath.toString()),
     statSync: vi.fn(),
     promises: {
       access: vi.fn(),
@@ -25,6 +26,7 @@ describe('extractFileDependencies', () => {
   const mockFs = fs as unknown as {
     readFileSync: Mock;
     existsSync: Mock;
+    realpathSync: Mock;
     statSync: Mock;
   };
   const mockGlob = glob as unknown as {
@@ -39,6 +41,9 @@ describe('extractFileDependencies', () => {
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
     mockFs.existsSync.mockReturnValue(false);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) =>
+      filePath.toString(),
+    );
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
 
@@ -115,6 +120,92 @@ prompts:
     ]);
   });
 
+  it('should inspect every structured scalar prompt glob match', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'prompts: file://prompts/*.yaml\n',
+      ],
+      [
+        '/test/working/prompts/chat.yaml',
+        'content: file://shared/system.txt\n',
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+    mockGlob.sync.mockReturnValue([
+      '/test/working/prompts/chat.yaml',
+      '/private/secret.yaml',
+    ]);
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'prompts', 'shared/system.txt']);
+  });
+
+  it('should ignore structured scalar prompt paths outside the workspace', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: file://../private/secret.yaml\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should track files imported by scalar text prompt templates', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        'prompts: file://prompts/main.j2\n',
+      ],
+      [
+        '/test/working/prompts/main.j2',
+        '{% include "shared/system.txt" %}\n{% extends "shared/base.md" %}',
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/main.j2', 'shared/system.txt', 'shared/base.md']);
+  });
+
+  it('should not read prompt symlinks outside the repository workspace', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts: file://prompts/secret.yaml\n',
+    );
+    mockFs.existsSync.mockReturnValue(true);
+    mockFs.realpathSync.mockImplementation((filePath: fs.PathLike) => {
+      const candidate = filePath.toString();
+      return candidate.endsWith('/prompts/secret.yaml')
+        ? '/private/secret.yaml'
+        : candidate;
+    });
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/secret.yaml']);
+    expect(mockFs.readFileSync).toHaveBeenCalledTimes(1);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'target must stay within the repository workspace',
+      ),
+    );
+  });
+
   it('should preserve scalar prompt dependencies when structured parsing fails', () => {
     mockFs.readFileSync.mockImplementation((filePath: string) =>
       filePath.endsWith('promptfooconfig.yaml')
@@ -127,7 +218,7 @@ prompts:
       extractFileDependencies('/test/working/promptfooconfig.yaml'),
     ).toEqual(['prompts/chat.yaml']);
     expect(core.warning).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to inspect structured prompt'),
+      expect.stringContaining('Failed to inspect prompt dependencies'),
     );
   });
 

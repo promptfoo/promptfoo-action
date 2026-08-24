@@ -69,7 +69,9 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.isAbsolute(filePath)
+          ? path.normalize(filePath)
+          : path.resolve(path.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -138,31 +140,65 @@ export function extractFileDependencies(configPath: string): string[] {
       }
     };
 
-    const inspectedStructuredPrompts = new Set<string>();
+    const inspectedPromptFiles = new Set<string>();
     const processPromptFile = (fileUrl: string): void => {
       processFileUrl(fileUrl);
 
       const filePath = fileUrl.slice('file://'.length);
-      if (!/\.(?:json|ya?ml)$/i.test(filePath)) {
+      const isStructuredPrompt = /\.(?:json|ya?ml)$/i.test(filePath);
+      const isTextTemplate = /\.(?:txt|md|j2|njk)$/i.test(filePath);
+      if (!isStructuredPrompt && !isTextTemplate) {
         return;
       }
 
       const absolutePath = resolveConfigDependency(
         filePath,
-        'structured prompt dependency',
+        'prompt file dependency',
       );
+      if (!absolutePath) {
+        return;
+      }
+
+      if (glob.hasMagic(filePath)) {
+        for (const match of glob.sync(absolutePath, { nodir: true })) {
+          const matchedPath = path.resolve(match);
+          if (isPathInside(dependencyRoot, matchedPath)) {
+            processPromptFile(`file://${matchedPath}`);
+          }
+        }
+        return;
+      }
+
       if (
-        !absolutePath ||
-        inspectedStructuredPrompts.has(absolutePath) ||
+        inspectedPromptFiles.has(absolutePath) ||
         !fs.existsSync(absolutePath)
       ) {
         return;
       }
-      inspectedStructuredPrompts.add(absolutePath);
 
       try {
+        const physicalRoot = fs.realpathSync(dependencyRoot);
+        const physicalPath = fs.realpathSync(absolutePath);
+        if (!isPathInside(physicalRoot, physicalPath)) {
+          core.warning(
+            `Ignoring unsafe prompt "${filePath}": target must stay within the repository workspace`,
+          );
+          return;
+        }
+
+        inspectedPromptFiles.add(absolutePath);
+        const contents = fs.readFileSync(physicalPath, 'utf8');
+        if (isTextTemplate) {
+          for (const match of contents.matchAll(
+            /\{%-?\s*(?:include|extends|import|from)\s+(['"])(.*?)\1/g,
+          )) {
+            processPromptFile(`file://${match[2]}`);
+          }
+          return;
+        }
+
         const values: unknown[] = [
-          loadYaml(fs.readFileSync(absolutePath, 'utf8'), {
+          loadYaml(contents, {
             schema: CORE_SCHEMA.withTags(mergeTag),
           }),
         ];
@@ -179,10 +215,8 @@ export function extractFileDependencies(configPath: string): string[] {
             values.push(...Object.values(value));
           }
         }
-      } catch (error) {
-        core.warning(
-          `Failed to inspect structured prompt "${filePath}": ${String(error)}`,
-        );
+      } catch {
+        core.warning(`Failed to inspect prompt dependencies in "${filePath}"`);
       }
     };
 
