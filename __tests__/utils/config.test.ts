@@ -178,6 +178,16 @@ extensions:
     ).toEqual(['evals/hooks/policy.js', './']);
   });
 
+  it('should preserve checkout extensions referenced by external configurations', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'extensions:\n  - file:///test/working/hooks/policy.js:beforeAll\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/external/promptfooconfig.yaml'),
+    ).toEqual(['hooks/policy.js', './']);
+  });
+
   it('should ignore remote and malformed extension entries', () => {
     mockFs.readFileSync.mockReturnValue(`
 extensions:
