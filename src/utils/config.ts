@@ -70,7 +70,9 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.isAbsolute(filePath)
+          ? path.normalize(filePath)
+          : path.resolve(path.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -150,13 +152,13 @@ export function extractFileDependencies(configPath: string): string[] {
         return;
       }
 
-      const sheetIndex = filePath.indexOf('#');
-      if (sheetIndex !== -1) {
-        filePath = filePath.slice(0, sheetIndex);
-      }
+      filePath = filePath.replace(/(\.xlsx?)#[^/\\]*$/i, '$1');
 
       const functionIndex = filePath.lastIndexOf(':');
-      if (functionIndex > 1) {
+      if (
+        functionIndex > 1 &&
+        /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, functionIndex))
+      ) {
         filePath = filePath.slice(0, functionIndex);
       }
 

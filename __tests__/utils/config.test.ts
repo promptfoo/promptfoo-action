@@ -114,6 +114,36 @@ tests: tests.jsonl
     expect(deps).toEqual(['../config/tests.jsonl']);
   });
 
+  it('should preserve absolute file-backed test paths', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'tests: file:///test/config/cases.yaml\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/cases.yaml']);
+  });
+
+  it('should preserve literal hashes in non-spreadsheet test paths', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "tests: 'file://tests/cases#production.yaml'\n",
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases#production.yaml']);
+  });
+
+  it('should preserve literal colons in non-generator test paths', () => {
+    mockFs.readFileSync.mockReturnValue(
+      "tests: 'file://tests/cases:production.yaml'\n",
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/tests/cases:production.yaml']);
+  });
+
   it('should extract array file-backed tests and inline dependencies', () => {
     mockFs.readFileSync.mockReturnValue(`
 tests:

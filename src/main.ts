@@ -449,6 +449,7 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
+    const allPromptFiles: string[] = [];
     const changedFilesList = changedFiles.split('\n').filter((f) => f);
 
     for (const globPattern of promptFilesGlobs) {
@@ -456,28 +457,26 @@ export async function run(): Promise<void> {
         cwd: workingDirectory,
         nodir: true,
       });
+      const matchingPrompts = matches.filter((file) => {
+        const repositoryFile = toRepositoryPath(
+          path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
+        );
+        return repositoryFile !== configRepositoryPath;
+      });
+      allPromptFiles.push(...matchingPrompts);
 
       if (changedFilesList.length > 0) {
         // Filter to only changed files
-        const changedMatches = matches.filter((file) => {
+        const changedMatches = matchingPrompts.filter((file) => {
           const repositoryFile = toRepositoryPath(
             path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
           );
-          return (
-            repositoryFile !== configRepositoryPath &&
-            changedFilesList.includes(repositoryFile)
-          );
+          return changedFilesList.includes(repositoryFile);
         });
         promptFiles.push(...changedMatches);
       } else {
         // No changed files info available, include all matches
-        const allMatches = matches.filter((file) => {
-          const repositoryFile = toRepositoryPath(
-            path.relative(workspaceRoot, path.resolve(workingDirectory, file)),
-          );
-          return repositoryFile !== configRepositoryPath;
-        });
-        promptFiles.push(...allMatches);
+        promptFiles.push(...matchingPrompts);
       }
     }
 
@@ -517,6 +516,10 @@ export async function run(): Promise<void> {
           core.info('Detected changes in config file dependencies');
         }
       }
+    }
+
+    if (configChanged || dependencyChanged) {
+      promptFiles.splice(0, promptFiles.length, ...allPromptFiles);
     }
 
     if (
