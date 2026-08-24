@@ -102,6 +102,14 @@ prompts:
     ).toEqual(['../config/prompts/build.py']);
   });
 
+  it('should extract executable scalar prompt scripts', () => {
+    mockFs.readFileSync.mockReturnValue('prompts: exec:./prompts/build.sh\n');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompts/build.sh']);
+  });
+
   it('should expand a scalar file prompt glob', () => {
     mockFs.readFileSync.mockReturnValue('prompts: file://prompts/*.txt\n');
     mockGlob.hasMagic.mockImplementation((value: string) =>
