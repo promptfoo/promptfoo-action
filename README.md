@@ -37,7 +37,7 @@ The action can be configured using the following inputs:
 
 | Parameter | Description | Required |
 | --- | --- | --- |
-| `config` | Promptfoo configuration path or glob pattern, relative to `working-directory` unless absolute. | Yes |
+| `config` | Promptfoo configuration path, relative to `working-directory` unless absolute. | Yes |
 | `github-token` | GitHub token used to list PR files and post PR comments. | Yes |
 | `prompts` | Newline-separated prompt glob patterns, resolved from `working-directory`. Matching changed files are passed to Promptfoo with `--prompts`. If omitted, Promptfoo uses the prompts in `config`. | No |
 | `working-directory` | Base directory for the Promptfoo process and relative config, prompt, environment, and cache paths. Defaults to `.`. | No |
@@ -563,3 +563,9 @@ The PR comment or workflow summary contains aggregate results and a viewer link
 when sharing succeeds. Workflows that require a persistent raw result file
 should run the Promptfoo CLI directly with `--output <path>` and upload that
 file separately.
+
+## Security
+
+To report a suspected vulnerability, follow the private disclosure process in
+[`SECURITY.md`](SECURITY.md). Do not open a public issue, discussion, or pull
+request for security reports.
