@@ -36895,11 +36895,18 @@ function extractFileDependencies(configPath) {
       if (hookSeparator <= "file://".length) {
         continue;
       }
-      processFileUrl(extension.slice(0, hookSeparator));
+      const extensionPath = resolveConfigDependency(
+        extension.slice("file://".length, hookSeparator),
+        "extension hook dependency"
+      );
+      if (extensionPath) {
+        dependencies.add(extensionPath);
+        dependencies.add(`${dependencyRoot}${path5.sep}`);
+      }
     }
     return Array.from(dependencies).map((dep) => {
       const relativePath = path5.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path5.sep).join("/");
+      const repositoryPath = relativePath.split(path5.sep).join("/") || ".";
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith("/")) {
         return `${repositoryPath}/`;
       }
@@ -37589,7 +37596,7 @@ async function run() {
           `Found ${dependencies.length} file dependencies in config: ${dependencies.join(", ")}`
         );
         dependencyChanged = dependencies.some((dep) => {
-          if (changedFilesList.includes(dep)) {
+          if (dep === "./" || changedFilesList.includes(dep)) {
             return true;
           }
           if (dep.endsWith("/") || isDirectory2(dep)) {
