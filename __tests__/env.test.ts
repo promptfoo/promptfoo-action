@@ -39,7 +39,6 @@ describe('findForbiddenEnvFileKey', () => {
 
   test.each([
     'NODE_OPTIONS',
-    'nOdE_oPtIoNs',
     'PATH',
     'LD_PRELOAD',
     'DYLD_INSERT_LIBRARIES',
@@ -53,13 +52,32 @@ describe('findForbiddenEnvFileKey', () => {
     'AWS_CONFIG_FILE',
     'AWS_SHARED_CREDENTIALS_FILE',
     'PROMPTFOO_CACHE_PATH',
+    'PROMPTFOO_CLOUD_API_URL',
+    'PROMPTFOO_FAILED_TEST_EXIT_CODE',
+    'PROMPTFOO_PASS_RATE_THRESHOLD',
+    'PROMPTFOO_REMOTE_API_BASE_URL',
     'GIT_SSH_COMMAND',
-    'git_config_count',
     'GIT_EXTERNAL_DIFF',
     'NPM_CONFIG_REGISTRY',
     'npm_config_script_shell',
+    'https_proxy',
   ])('flags forbidden key %s and returns the original-case key', (key) => {
     expect(findForbiddenEnvFileKey({ [key]: 'x' })).toBe(key);
+  });
+
+  test('preserves case-sensitive POSIX application settings', () => {
+    expect(
+      findForbiddenEnvFileKey(
+        { path: '/api/v1', home: 'local', git_config_count: '1' },
+        'linux',
+      ),
+    ).toBeUndefined();
+  });
+
+  test('rejects mixed-case process controls on Windows', () => {
+    expect(
+      findForbiddenEnvFileKey({ nOdE_oPtIoNs: '--inspect' }, 'win32'),
+    ).toBe('nOdE_oPtIoNs');
   });
 });
 
@@ -134,9 +152,35 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
     expect(target).toEqual({ EXISTING: 'keep' });
   });
 
-  test('detects forbidden keys case-insensitively', () => {
-    const file = writeEnv('.env', 'nOdE_oPtIoNs=--inspect\n');
-    expect(() => loadEnvironmentFile(file, {})).toThrow(/nOdE_oPtIoNs/);
+  test('detects lowercase proxy controls accepted on POSIX', () => {
+    const file = writeEnv('.env', 'https_proxy=https://capture.example\n');
+    expect(() => loadEnvironmentFile(file, {})).toThrow(/https_proxy/);
+  });
+
+  test('preserves trusted policy and routing when an env file overrides them', () => {
+    const target: NodeJS.ProcessEnv = {
+      PROMPTFOO_PASS_RATE_THRESHOLD: '90',
+      PROMPTFOO_REMOTE_API_BASE_URL: 'https://trusted.example',
+    };
+    const thresholdFile = writeEnv(
+      '.env.threshold',
+      'PROMPTFOO_PASS_RATE_THRESHOLD=0\n',
+    );
+    const hostFile = writeEnv(
+      '.env.host',
+      'PROMPTFOO_REMOTE_API_BASE_URL=https://capture.example\n',
+    );
+
+    expect(() => loadEnvironmentFile(thresholdFile, target)).toThrow(
+      /PROMPTFOO_PASS_RATE_THRESHOLD/,
+    );
+    expect(() => loadEnvironmentFile(hostFile, target)).toThrow(
+      /PROMPTFOO_REMOTE_API_BASE_URL/,
+    );
+    expect(target).toEqual({
+      PROMPTFOO_PASS_RATE_THRESHOLD: '90',
+      PROMPTFOO_REMOTE_API_BASE_URL: 'https://trusted.example',
+    });
   });
 
   test('rejects a protected auth variable without leaking any value', () => {

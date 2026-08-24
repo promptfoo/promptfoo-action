@@ -40,6 +40,10 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
   'PATHEXT',
   'PERL5OPT',
   'PROMPTFOO_CACHE_PATH',
+  'PROMPTFOO_CLOUD_API_URL',
+  'PROMPTFOO_FAILED_TEST_EXIT_CODE',
+  'PROMPTFOO_PASS_RATE_THRESHOLD',
+  'PROMPTFOO_REMOTE_API_BASE_URL',
   'PYTHONEXECUTABLE',
   'PYTHONHOME',
   'PYTHONSTARTUP',
@@ -56,6 +60,12 @@ const FORBIDDEN_ENV_FILE_KEYS = new Set([
 // to `git` via simple-git after loading these files, and that child inherits
 // process.env, so git controls belong in the same trust boundary as Node/npm.
 const FORBIDDEN_ENV_FILE_PREFIXES = ['GIT_', 'NPM_CONFIG_'];
+const CASE_INSENSITIVE_PROXY_KEYS = new Set([
+  'ALL_PROXY',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+]);
 
 // Promptfoo authentication settings. A repository-controlled env file must not
 // be able to pair an inherited API key with an attacker-chosen host — the
@@ -70,9 +80,16 @@ const FORBIDDEN_AUTH_KEYS = new Set([
 
 export function findForbiddenEnvFileKey(
   environment: Record<string, string>,
+  platform: NodeJS.Platform = process.platform,
 ): string | undefined {
   return Object.keys(environment).find((key) => {
-    const normalizedKey = key.toUpperCase();
+    const upperCaseKey = key.toUpperCase();
+    const normalizedKey =
+      platform === 'win32' ||
+      CASE_INSENSITIVE_PROXY_KEYS.has(upperCaseKey) ||
+      upperCaseKey.startsWith('NPM_CONFIG_')
+        ? upperCaseKey
+        : key;
     return (
       FORBIDDEN_ENV_FILE_KEYS.has(normalizedKey) ||
       FORBIDDEN_ENV_FILE_PREFIXES.some((prefix) =>
@@ -117,7 +134,7 @@ export function loadEnvironmentFile(
     throw new PromptfooActionError(
       `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
       ErrorCodes.INVALID_CONFIGURATION,
-      'Remove Node, npm, git, executable-resolution, dynamic-loader, and proxy control variables from repository environment files. Configure trusted process controls in the workflow environment instead.',
+      'Remove process, authentication-routing, and evaluation-policy control variables from repository environment files. Configure trusted controls in the workflow environment instead.',
     );
   }
 
@@ -131,13 +148,10 @@ export function loadEnvironmentFile(
   }
 
   // Merge into the shared environment (process.env by default) only after the
-  // file has fully passed the process-control and authentication checks. This
-  // is deliberate: the action itself reads env-file values such as cache paths,
-  // thresholds, and provider settings from process.env, and it also forwards
-  // process.env to the promptfoo child. Validation therefore has to happen
-  // here, at the untrusted-file boundary — not on the final child environment,
-  // which legitimately inherits the trusted runner's own PATH, NODE_OPTIONS,
-  // and workflow-set PROMPTFOO_API_KEY. Preserves later-file-wins ordering.
+  // file has fully passed the process-control and authentication checks. The
+  // action and its child both read process.env, while the final child
+  // environment legitimately inherits trusted runner controls such as PATH.
+  // Preserves the documented later-file-wins ordering for application values.
   for (const [key, value] of Object.entries(fileEnvironment)) {
     targetEnvironment[key] = value;
   }

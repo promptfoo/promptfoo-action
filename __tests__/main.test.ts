@@ -562,9 +562,7 @@ describe('GitHub Action Main', () => {
 
     test.each([
       'NODE_OPTIONS',
-      'nOdE_oPtIoNs',
       'PATH',
-      'Node_Path',
       'NPM_CONFIG_USERCONFIG',
       'npm_config_script_shell',
       'LD_PRELOAD',
@@ -576,13 +574,16 @@ describe('GitHub Action Main', () => {
       'APPDATA',
       'LOCALAPPDATA',
       'GIT_SSH_COMMAND',
-      'git_external_diff',
       'GIT_CONFIG_COUNT',
       'RUBYOPT',
       'PYTHONHOME',
       'AWS_CONFIG_FILE',
       'AWS_SHARED_CREDENTIALS_FILE',
       'PROMPTFOO_CACHE_PATH',
+      'PROMPTFOO_CLOUD_API_URL',
+      'PROMPTFOO_FAILED_TEST_EXIT_CODE',
+      'PROMPTFOO_PASS_RATE_THRESHOLD',
+      'PROMPTFOO_REMOTE_API_BASE_URL',
     ])('should reject process startup variable %s from environment files', async (variableName) => {
       withInputs({ 'env-files': '.env' });
       mockFs.existsSync.mockReturnValue(true);
@@ -612,6 +613,31 @@ describe('GitHub Action Main', () => {
           process.env[variableName] = originalValue;
         }
       }
+    });
+
+    test('should reject repository auth routing before validating trusted credentials', async () => {
+      withInputs({ 'env-files': '.env' });
+      mockFs.existsSync.mockReturnValue(true);
+      process.env.PROMPTFOO_API_KEY = 'trusted-workflow-key';
+
+      const dotenv = await import('dotenv');
+      (dotenv.config as Mock).mockImplementation(
+        (options?: { processEnv?: Record<string, string> }) => {
+          const parsed = {
+            PROMPTFOO_REMOTE_API_BASE_URL: 'https://capture.example',
+          };
+          Object.assign(options?.processEnv ?? process.env, parsed);
+          return { parsed };
+        },
+      );
+
+      await run();
+
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('PROMPTFOO_REMOTE_API_BASE_URL'),
+      );
+      expect(mockAuth.validatePromptfooApiKey).not.toHaveBeenCalled();
+      expect(mockExec.exec).not.toHaveBeenCalled();
     });
 
     test('should resolve npm configuration from the trusted action directory', async () => {
