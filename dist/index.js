@@ -37348,12 +37348,16 @@ async function run() {
       const relativePath = path6.relative(workingDirectory, absoluteFile);
       const workingDirectoryPath = toRepositoryPath(relativePath);
       return promptFilesGlobs.some((pattern) => {
-        const candidate = path6.isAbsolute(pattern) ? absoluteFile : workingDirectoryPath;
-        const normalizedPattern = path6.posix.normalize(pattern);
-        return path6.matchesGlob(candidate, normalizedPattern) || ["darwin", "win32"].includes(process.platform) && path6.matchesGlob(
-          candidate.toLowerCase(),
-          normalizedPattern.toLowerCase()
+        const candidate = path6.isAbsolute(pattern) ? toRepositoryPath(absoluteFile) : workingDirectoryPath;
+        const portablePattern = toRepositoryPath(pattern).replace(
+          /\\([[\]*?{}])/g,
+          "[$1]"
         );
+        const matches = (candidatePattern) => path6.matchesGlob(candidate, candidatePattern) || ["darwin", "win32"].includes(process.platform) && path6.matchesGlob(
+          candidate.toLowerCase(),
+          candidatePattern.toLowerCase()
+        );
+        return matches(portablePattern) || matches(path6.posix.normalize(portablePattern));
       });
     };
     const configAbsolutePath = path6.resolve(workingDirectory, configPath);
