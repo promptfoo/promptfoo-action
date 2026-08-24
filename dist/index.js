@@ -36832,7 +36832,8 @@ function extractFileDependencies(configPath) {
       }
     };
     if (config2.providers) {
-      for (const provider of config2.providers) {
+      const providers = typeof config2.providers === "string" ? [config2.providers] : config2.providers;
+      for (const provider of providers) {
         if (typeof provider === "string" && provider.startsWith("file://")) {
           processFileUrl(provider, true);
         } else if (typeof provider === "object" && provider.id?.startsWith("file://")) {
