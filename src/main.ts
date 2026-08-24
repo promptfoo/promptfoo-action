@@ -498,7 +498,7 @@ export async function run(): Promise<void> {
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
           // Direct file match
-          if (dep === './' || changedFilesList.includes(dep)) {
+          if (changedFilesList.includes(dep)) {
             return true;
           }
 

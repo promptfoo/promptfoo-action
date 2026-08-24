@@ -30,7 +30,6 @@ describe('extractFileDependencies', () => {
   const mockGlob = glob as unknown as {
     hasMagic: Mock;
     sync: Mock;
-    unescape: Mock;
   };
 
   beforeEach(() => {
@@ -39,9 +38,6 @@ describe('extractFileDependencies', () => {
     // Default mock implementations
     mockGlob.hasMagic.mockReturnValue(false);
     mockGlob.sync.mockReturnValue([]);
-    mockGlob.unescape.mockImplementation((value: string) =>
-      value.replace(/\\(.)/g, '$1'),
-    );
     mockFs.existsSync.mockReturnValue(false);
     mockFs.statSync.mockReturnValue({ isDirectory: () => false } as fs.Stats);
   });
@@ -171,62 +167,14 @@ defaultTest: file://default.yaml
     ).toEqual(['../config/defaults/default.yaml']);
   });
 
-  it('should preserve the watcher for absolute default-test dependency globs', () => {
-    mockFs.readFileSync.mockReturnValue(`
-defaultTest:
-  vars:
-    fixture: file:///test/working/fixtures/*.txt
-`);
-    mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
-    );
-
-    expect(
-      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
-    ).toEqual(['fixtures']);
-  });
-
-  it('should preserve literal backslashes in POSIX glob watcher directories', () => {
-    mockFs.readFileSync.mockReturnValue(
-      "defaultTest:\n  vars:\n    fixture: 'file://fixtures\\\\set/*.yaml'\n",
-    );
-    mockGlob.hasMagic.mockImplementation((value: string) =>
-      value.includes('*'),
-    );
-
-    expect(
-      extractFileDependencies('/test/working/promptfooconfig.yaml'),
-    ).toEqual(['fixtures\\set']);
-  });
-
-  it('should watch the repository root for dynamic defaultTest paths', () => {
+  it('should leave dynamic defaultTest resolution to Promptfoo', () => {
     mockFs.readFileSync.mockReturnValue(
       'defaultTest: file://{{ env.DEFAULT_TEST_PATH }}\n',
     );
 
     expect(
       extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
-    ).toEqual(['./']);
-  });
-
-  it('should watch the repository root for defaultTest template blocks', () => {
-    mockFs.readFileSync.mockReturnValue(
-      "defaultTest: 'file://{% if env.CI %}defaults/ci.yaml{% else %}defaults/dev.yaml{% endif %}'\n",
-    );
-
-    expect(
-      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
-    ).toEqual(['./']);
-  });
-
-  it('should watch the repository root for defaultTest template comments', () => {
-    mockFs.readFileSync.mockReturnValue(
-      "defaultTest: 'file://defaults/{# selected environment #}ci.yaml'\n",
-    );
-
-    expect(
-      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
-    ).toEqual(['./']);
+    ).toEqual([]);
   });
 
   it('should reject a file-backed defaultTest outside the repository', () => {

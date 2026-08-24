@@ -117,24 +117,16 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const isAbsoluteGlob = path.isAbsolute(filePath);
-        const globPath = isAbsoluteGlob
-          ? path.relative(dependencyRoot, filePath)
-          : filePath;
-        const pathParts = path.normalize(globPath).split(path.sep);
+        const pathParts = filePath.split('/');
         let basePath = '';
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
             break;
           }
-          const literalPart = glob.unescape(part, {
-            windowsPathsNoEscape: process.platform === 'win32',
-          });
-          basePath = basePath ? path.join(basePath, literalPart) : literalPart;
+          basePath = basePath ? path.join(basePath, part) : part;
         }
         if (basePath) {
-          const globRoot = isAbsoluteGlob ? dependencyRoot : configDir;
-          dependencies.add(path.resolve(path.join(globRoot, basePath)));
+          dependencies.add(path.resolve(path.join(configDir, basePath)));
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
@@ -233,12 +225,11 @@ export function extractFileDependencies(configPath: string): string[] {
     // Process defaultTest
     if (config.defaultTest) {
       if (typeof config.defaultTest === 'string') {
-        if (config.defaultTest.startsWith('file://')) {
-          if (/\{[{%#]/.test(config.defaultTest)) {
-            dependencies.add(`${dependencyRoot}${path.sep}`);
-          } else {
-            processFileUrl(config.defaultTest);
-          }
+        if (
+          config.defaultTest.startsWith('file://') &&
+          !/\{[{%#]/.test(config.defaultTest)
+        ) {
+          processFileUrl(config.defaultTest);
         }
       } else {
         extractVarFiles(config.defaultTest.vars);
@@ -257,7 +248,7 @@ export function extractFileDependencies(configPath: string): string[] {
     // Convert absolute paths back to relative paths from working directory
     return Array.from(dependencies).map((dep) => {
       const relativePath = path.relative(cwd, dep);
-      const repositoryPath = relativePath.split(path.sep).join('/') || '.';
+      const repositoryPath = relativePath.split(path.sep).join('/');
       // Preserve trailing slash for directories
       if (/[\\/]$/.test(dep) && !repositoryPath.endsWith('/')) {
         return `${repositoryPath}/`;

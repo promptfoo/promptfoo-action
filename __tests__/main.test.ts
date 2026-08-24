@@ -919,21 +919,6 @@ describe('GitHub Action Main', () => {
       expect(mockExec.exec).toHaveBeenCalled();
     });
 
-    test('should run when a dynamic dependency watches the repository root', async () => {
-      mockOctokit.paginate.mockResolvedValue([
-        { filename: 'defaults/selected.yaml' },
-      ]);
-      mockGlob.sync.mockReturnValue([]);
-      mockConfig.extractFileDependencies.mockReturnValue(['./']);
-
-      await run();
-
-      expect(mockCore.info).toHaveBeenCalledWith(
-        'Detected changes in config file dependencies',
-      );
-      expect(mockExec.exec).toHaveBeenCalled();
-    });
-
     test('should run when a file inside a dependency directory changes', async () => {
       mockOctokit.paginate.mockResolvedValue([
         { filename: 'data/nested/context.json' },
