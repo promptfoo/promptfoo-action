@@ -46,6 +46,7 @@ describe('findForbiddenEnvFileKey', () => {
     'RUBYOPT',
     'AWS_CONFIG_FILE',
     'AWS_SHARED_CREDENTIALS_FILE',
+    'PROMPTFOO_API_KEY',
     'PROMPTFOO_CACHE_PATH',
     'PROMPTFOO_CLOUD_API_URL',
     'PROMPTFOO_FAILED_TEST_EXIT_CODE',
@@ -155,6 +156,18 @@ describe('loadEnvironmentFile (real dotenv parsing)', () => {
       PROMPTFOO_PASS_RATE_THRESHOLD: '90',
       PROMPTFOO_REMOTE_API_BASE_URL: 'https://trusted.example',
     });
+  });
+
+  test('rejects repository attempts to replace trusted Promptfoo credentials', () => {
+    const target: NodeJS.ProcessEnv = {
+      PROMPTFOO_API_KEY: 'trusted-workflow-key',
+    };
+    const file = writeEnv('.env', 'PROMPTFOO_API_KEY=repository-key\n');
+
+    expect(() => loadEnvironmentFile(file, target)).toThrow(
+      /PROMPTFOO_API_KEY/,
+    );
+    expect(target.PROMPTFOO_API_KEY).toBe('trusted-workflow-key');
   });
 
   test('rejects GIT_ and NPM_CONFIG_ prefixed controls', () => {
