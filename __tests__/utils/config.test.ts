@@ -201,6 +201,70 @@ prompts:
     ).toEqual(['prompts/main.j2', 'shared/system.txt', 'shared/base.md']);
   });
 
+  it('should conservatively watch dynamic mapped template imports', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        "prompts:\n  'file://prompts/main.j2': chat\n",
+      ],
+      ['/test/working/prompts/main.j2', '{% include partialTemplate %}'],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/main.j2', './']);
+  });
+
+  it('should inspect mapped template imports regardless of their extension', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        "prompts:\n  'file://prompts/main.j2': chat\n",
+      ],
+      ['/test/working/prompts/main.j2', '{% include "shared/base.html" %}'],
+      ['/test/working/shared/base.html', '{% include "shared/header.html" %}'],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/main.j2', 'shared/base.html', 'shared/header.html']);
+  });
+
+  it('should track imports and function selectors inside mapped structured prompts', () => {
+    const files = new Map([
+      [
+        '/test/working/promptfooconfig.yaml',
+        "prompts:\n  'file://prompts/chat.yaml': chat\n",
+      ],
+      [
+        '/test/working/prompts/chat.yaml',
+        'content: \'{% include "shared/system.txt" %}\'\ngenerator: file://prompts/build.py:create_prompt\n',
+      ],
+    ]);
+    mockFs.readFileSync.mockImplementation((filePath: string) =>
+      files.get(filePath),
+    );
+    mockFs.existsSync.mockImplementation((filePath: string) =>
+      files.has(filePath),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/promptfooconfig.yaml'),
+    ).toEqual(['prompts/chat.yaml', 'shared/system.txt', 'prompts/build.py']);
+  });
+
   it('should not read mapped prompt symlinks outside the workspace', () => {
     mockFs.readFileSync.mockReturnValue(
       "prompts:\n  'file://prompts/secret.yaml': secret\n",
@@ -261,6 +325,16 @@ prompts:
     expect(
       extractFileDependencies('/test/config/promptfooconfig.yaml'),
     ).toEqual(['../config/prompt assets/my generator.py']);
+  });
+
+  it('should extract bare mapped Jinja prompt paths', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'prompts:\n  prompts/main.j2: generated prompt\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual(['../config/prompts/main.j2']);
   });
 
   it('should extract bare and executable mapped prompt paths', () => {
