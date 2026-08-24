@@ -167,6 +167,21 @@ defaultTest: file://default.yaml
     ).toEqual(['../config/defaults/default.yaml']);
   });
 
+  it('should preserve the watcher for absolute default-test dependency globs', () => {
+    mockFs.readFileSync.mockReturnValue(`
+defaultTest:
+  vars:
+    fixture: file:///test/working/fixtures/*.txt
+`);
+    mockGlob.hasMagic.mockImplementation((value: string) =>
+      value.includes('*'),
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['fixtures']);
+  });
+
   it('should watch the repository root for dynamic defaultTest paths', () => {
     mockFs.readFileSync.mockReturnValue(
       'defaultTest: file://{{ env.DEFAULT_TEST_PATH }}\n',

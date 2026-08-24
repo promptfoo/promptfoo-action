@@ -117,7 +117,11 @@ export function extractFileDependencies(configPath: string): string[] {
 
         // Also add the base directory for watching
         // Extract the non-glob part of the path
-        const pathParts = filePath.split('/');
+        const isAbsoluteGlob = path.isAbsolute(filePath);
+        const globPath = isAbsoluteGlob
+          ? path.relative(dependencyRoot, filePath)
+          : filePath;
+        const pathParts = globPath.split(/[\\/]/);
         let basePath = '';
         for (const part of pathParts) {
           if (glob.hasMagic(part)) {
@@ -126,7 +130,8 @@ export function extractFileDependencies(configPath: string): string[] {
           basePath = basePath ? path.join(basePath, part) : part;
         }
         if (basePath) {
-          dependencies.add(path.resolve(path.join(configDir, basePath)));
+          const globRoot = isAbsoluteGlob ? dependencyRoot : configDir;
+          dependencies.add(path.resolve(path.join(globRoot, basePath)));
         }
       } else if (isDirectory(absolutePath)) {
         // It's a directory, preserve trailing slash if it was there
