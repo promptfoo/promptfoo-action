@@ -36883,7 +36883,7 @@ function extractFileDependencies(configPath) {
     if (config2.defaultTest) {
       if (typeof config2.defaultTest === "string") {
         if (config2.defaultTest.startsWith("file://")) {
-          if (config2.defaultTest.includes("{{")) {
+          if (/\{[{%]/.test(config2.defaultTest)) {
             dependencies.add(`${dependencyRoot}${path5.sep}`);
           } else {
             processFileUrl(config2.defaultTest);
