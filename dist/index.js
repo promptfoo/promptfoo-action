@@ -36766,7 +36766,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = path5.isAbsolute(filePath) ? path5.normalize(filePath) : path5.resolve(path5.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36831,10 +36831,32 @@ function extractFileDependencies(configPath) {
       }
     }
     if (config2.prompts) {
-      for (const prompt of config2.prompts) {
-        if (typeof prompt === "string" && prompt.startsWith("file://")) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === "object" && prompt.file) {
+      const prompts = typeof config2.prompts === "string" ? [config2.prompts] : Array.isArray(config2.prompts) ? config2.prompts : Object.keys(config2.prompts);
+      for (const prompt of prompts) {
+        if (typeof prompt === "string") {
+          let filePath = prompt;
+          if (prompt.startsWith("exec:")) {
+            const executable = prompt.slice("exec:".length).trimStart().match(/^(['"])(.*?)\1|^(\S+)/);
+            if (!executable) {
+              continue;
+            }
+            filePath = executable[2] ?? executable[3];
+          } else if (prompt.startsWith("file://")) {
+            filePath = prompt.slice("file://".length);
+          } else if (!/\.(?:cjs|cts|j2|js|jsonl?|md|mjs|mts|py|ts|txt|ya?ml)(?::[A-Za-z_]\w*)?$/i.test(
+            prompt
+          )) {
+            continue;
+          }
+          const selector = filePath.lastIndexOf(":");
+          if (selector > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, selector))) {
+            filePath = filePath.slice(0, selector);
+          }
+          if (process.platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(filePath)) {
+            filePath = filePath.slice(1);
+          }
+          processFileUrl(`file://${filePath}`);
+        } else if (prompt.file) {
           const absolutePath = resolveConfigDependency(
             prompt.file,
             "prompt file dependency"
