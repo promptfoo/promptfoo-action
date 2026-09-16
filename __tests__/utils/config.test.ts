@@ -147,6 +147,83 @@ shared: &shared
     expect(deps).toEqual(['providers/inherited.py', 'prompts/inherited.txt']);
   });
 
+  it('should extract extension hook files', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://hooks/setup.js:beforeAll
+  - file://hooks/case.py:beforeEach
+  - file://hooks/result.js:afterEach
+  - file://hooks/report.py:afterAll
+  - file://hooks/setup.js:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([
+      '../config/hooks/setup.js',
+      '../config/hooks/case.py',
+      '../config/hooks/result.js',
+      '../config/hooks/report.py',
+    ]);
+  });
+
+  it('should watch only directly declared extension files', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'extensions:\n  - file://hooks/policy.js:beforeAll\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/hooks/policy.js']);
+  });
+
+  it('should support Promptfoo extensions without a hook selector', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'extensions:\n  - file://hooks/policy.js\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['evals/hooks/policy.js']);
+  });
+
+  it('should preserve absolute extension paths inside the checkout', () => {
+    mockFs.readFileSync.mockReturnValue(
+      'extensions:\n  - file:///test/working/hooks/policy.js:beforeAll\n',
+    );
+
+    expect(
+      extractFileDependencies('/test/working/evals/promptfooconfig.yaml'),
+    ).toEqual(['hooks/policy.js']);
+  });
+
+  it('should ignore remote and malformed extension entries', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - https://example.com/hook.js:beforeAll
+  - inline-extension
+  - 42
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+  });
+
+  it('should reject extension hook files outside the repository', () => {
+    mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://../secrets/hook.js:beforeAll
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
   it('should handle empty config', () => {
     mockFs.readFileSync.mockReturnValue('');
 

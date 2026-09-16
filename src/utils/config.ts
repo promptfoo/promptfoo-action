@@ -6,6 +6,7 @@ import * as path from 'path';
 import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
+  extensions?: string[] | null;
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
@@ -229,6 +230,29 @@ export function extractFileDependencies(configPath: string): string[] {
       for (const test of config.tests) {
         extractVarFiles(test.vars);
         extractAssertFiles(test.assert);
+      }
+    }
+
+    // Process extension hook files
+    for (const extension of config.extensions ?? []) {
+      if (typeof extension !== 'string' || !extension.startsWith('file://')) {
+        continue;
+      }
+
+      const hookSeparator = extension.lastIndexOf(':');
+      const extensionFile =
+        hookSeparator > 'file://'.length
+          ? extension.slice('file://'.length, hookSeparator)
+          : extension.slice('file://'.length);
+      const localExtensionFile = path.isAbsolute(extensionFile)
+        ? path.relative(configDir, extensionFile)
+        : extensionFile;
+      const extensionPath = resolveConfigDependency(
+        localExtensionFile,
+        'extension hook dependency',
+      );
+      if (extensionPath) {
+        dependencies.add(extensionPath);
       }
     }
 
