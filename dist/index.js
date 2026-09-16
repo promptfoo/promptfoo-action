@@ -36018,6 +36018,24 @@ function testDocumentSeparator(state, position = state.position) {
   }
   return false;
 }
+function skipByteOrderMark(state) {
+  if (state.position === state.lineStart && state.input.charCodeAt(state.position) === 65279) {
+    state.position++;
+    state.lineStart = state.position;
+  }
+}
+function testDocumentBoundary(state) {
+  if (state.position !== state.lineStart) return false;
+  if (testDocumentSeparator(state)) return true;
+  if (state.input.charCodeAt(state.position) !== 65279) return false;
+  const snapshot = snapshotState(state);
+  skipByteOrderMark(state);
+  skipSeparationSpace(state, true);
+  const ch = state.input.charCodeAt(state.position);
+  const result = state.position === state.lineStart && (ch === 37 || ch === 45 && testDocumentSeparator(state));
+  restoreState(state, snapshot);
+  return result;
+}
 function skipUntilLineEnd(state) {
   let ch = state.input.charCodeAt(state.position);
   while (ch !== 0 && !isEol(ch)) ch = state.input.charCodeAt(++state.position);
@@ -36201,7 +36219,7 @@ function readBlockScalar(state, parentIndent, props) {
       } else if (column > 0) valueEnd = linePosition + column;
       break;
     }
-    if (linePosition === state.lineStart && testDocumentSeparator(state, linePosition)) break;
+    if (testDocumentBoundary(state)) break;
     if (!detectedIndent && contentIndent === -1 && isEol(first2)) maxLeadingIndent = Math.max(maxLeadingIndent, column);
     if (!detectedIndent && contentIndent === -1 && !isEol(first2)) {
       if (first2 === 9 && column < parentIndent) {
@@ -36254,7 +36272,7 @@ function readPlainScalar(state, nodeIndent, nodeContext, props) {
   const inFlow = nodeContext === CONTEXT_FLOW_IN;
   let multiline = false;
   while (ch !== 0) {
-    if (state.position === state.lineStart && testDocumentSeparator(state)) break;
+    if (testDocumentBoundary(state)) break;
     if (ch === 58) {
       const following = state.input.charCodeAt(state.position + 1);
       if (isWsOrEolOrEnd(following) || inFlow && isFlowIndicator(following)) break;
@@ -36611,7 +36629,7 @@ function readDocument(state) {
   const documentEvent = state.events[documentEventIndex];
   if (documentEvent?.type === EVENT_ID.DOCUMENT) documentEvent.explicitEnd = explicitEnd;
   addPopEvent(state);
-  if (!explicitEnd && state.position < state.length && !(state.position === state.lineStart && testDocumentSeparator(state))) throwError(state, "end of the stream or a document separator is expected");
+  if (!explicitEnd && state.position < state.length && !testDocumentBoundary(state)) throwError(state, "end of the stream or a document separator is expected");
 }
 function parseEvents(input, options) {
   const length = input.length;
@@ -36632,8 +36650,8 @@ function parseEvents(input, options) {
   };
   const nullpos = input.indexOf("\0");
   if (nullpos !== -1) YAMLException.throwAt(input, nullpos, "null byte is not allowed in input", state.filename);
-  if (state.input.charCodeAt(state.position) === 65279) state.position++;
   while (state.position < state.length) {
+    skipByteOrderMark(state);
     skipSeparationSpace(state, true);
     if (state.position >= state.length) break;
     const documentStart = state.position;
@@ -36666,27 +36684,108 @@ function load(input, options) {
   if (documents.length === 1) return documents[0];
   throw new YAMLException("expected a single document in the stream, but found more");
 }
-var ESCAPE_SEQUENCES = {};
-ESCAPE_SEQUENCES[0] = "\\0";
-ESCAPE_SEQUENCES[7] = "\\a";
-ESCAPE_SEQUENCES[8] = "\\b";
-ESCAPE_SEQUENCES[9] = "\\t";
-ESCAPE_SEQUENCES[10] = "\\n";
-ESCAPE_SEQUENCES[11] = "\\v";
-ESCAPE_SEQUENCES[12] = "\\f";
-ESCAPE_SEQUENCES[13] = "\\r";
-ESCAPE_SEQUENCES[27] = "\\e";
-ESCAPE_SEQUENCES[34] = '\\"';
-ESCAPE_SEQUENCES[92] = "\\\\";
-ESCAPE_SEQUENCES[133] = "\\N";
-ESCAPE_SEQUENCES[160] = "\\_";
-ESCAPE_SEQUENCES[8232] = "\\L";
-ESCAPE_SEQUENCES[8233] = "\\P";
+function hasBit(mask, bit) {
+  return (mask & 1 << bit) !== 0;
+}
+var DEFAULT_SCALAR_STYLE_RULES = {
+  applyQuoteFlowKeysOption,
+  doubleQuoteForInvisibles,
+  doubleQuoteWhitespaceOnly,
+  applyForceQuotesOption,
+  tryLongOrMultilineAsBlock,
+  quoteInvalidPlain,
+  fallbackToDoubleQuoted
+};
+function _preferredQuotedStyle(layout) {
+  if (layout.presenterOptions.quoteStyle === "single" && hasBit(layout.allowedStylesMask, SCALAR_STYLE.SINGLE_QUOTED)) return SCALAR_STYLE.SINGLE_QUOTED;
+  return SCALAR_STYLE.DOUBLE_QUOTED;
+}
+function applyQuoteFlowKeysOption(layout) {
+  if (!layout.presenterOptions.quoteFlowKeys) return;
+  if (!layout.isKey || !layout.flowOnly || layout.style !== SCALAR_STYLE.PLAIN) return;
+  layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+}
+function doubleQuoteForInvisibles(layout) {
+  if (layout.style === SCALAR_STYLE.PLAIN && /[\t\x7F-\xA0\u2028\u2029\uFEFF\uFFFE\uFFFF]/.test(layout.node.value)) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+}
+function doubleQuoteWhitespaceOnly(layout) {
+  if (layout.style === SCALAR_STYLE.PLAIN && /^\s+$/.test(layout.node.value)) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+}
+function applyForceQuotesOption(layout) {
+  if (!layout.presenterOptions.forceQuotes) return;
+  if (layout.isKey || layout.style !== SCALAR_STYLE.PLAIN) return;
+  layout.style = layout.node.value.includes("\n") ? SCALAR_STYLE.DOUBLE_QUOTED : _preferredQuotedStyle(layout);
+}
+function tryLongOrMultilineAsBlock(layout) {
+  if (layout.style !== SCALAR_STYLE.PLAIN || layout.isKey) return;
+  const value = layout.node.value;
+  const multiline = value.indexOf("\n") !== -1;
+  if (!hasBit(layout.allowedStylesMask, SCALAR_STYLE.LITERAL_BLOCK)) {
+    if (multiline) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+    return;
+  }
+  const w = layout.presenterOptions.lineWidth;
+  if (w === -1) {
+    if (multiline) layout.style = SCALAR_STYLE.LITERAL_BLOCK;
+    return;
+  }
+  const availableWidth = Math.max(Math.min(w, 40), w - layout.shiftOfContent);
+  let position = 0;
+  let shouldFold = false;
+  while (position <= value.length) {
+    let lineEnd = value.length;
+    const nextLineBreak = value.indexOf("\n", position);
+    if (nextLineBreak !== -1) lineEnd = nextLineBreak;
+    const line = value.slice(position, lineEnd);
+    if (line.length > availableWidth && line[0] !== " " && / [^ \t]/.test(line)) shouldFold = true;
+    if (nextLineBreak === -1) break;
+    position = nextLineBreak + 1;
+  }
+  if (shouldFold) layout.style = SCALAR_STYLE.FOLDED_BLOCK;
+  else if (multiline) layout.style = SCALAR_STYLE.LITERAL_BLOCK;
+}
+function quoteInvalidPlain(layout) {
+  if (layout.style === SCALAR_STYLE.PLAIN && !hasBit(layout.allowedStylesMask, SCALAR_STYLE.PLAIN)) layout.style = _preferredQuotedStyle(layout);
+}
+function fallbackToDoubleQuoted(layout) {
+  if (!hasBit(layout.allowedStylesMask, layout.style)) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+}
+var SRC_C_PRINTABLE = "[\\x09\\x0A\\x0D\\x20-\\x7E\\x85\\xA0-\\uD7FF\\uE000-\\uFFFD\\u{10000}-\\u{10FFFF}]";
+var SRC_B_CHAR = "[\\n\\r]";
+var SRC_C_BYTE_ORDER_MARK = "\\uFEFF";
+var SRC_S_WHITE = "[ \\t]";
+var SRC_NB_CHAR = `(?:(?!(?:${SRC_B_CHAR}|${SRC_C_BYTE_ORDER_MARK}))${SRC_C_PRINTABLE})`;
+var SRC_NS_CHAR = `(?:(?!${SRC_S_WHITE})${SRC_NB_CHAR})`;
+var SRC_NB_JSON = "[\\x09\\x20-\\uD7FF\\uE000-\\uFFFF\\u{10000}-\\u{10FFFF}]";
+var SRC_C_INDICATOR = "[-?:,\\[\\]{}#&*!|>'\"%@`]";
+var SRC_C_FLOW_INDICATOR = "[,\\[\\]{}]";
+var SRC_NS_PLAIN_SAFE_FLOW_OUT = SRC_NS_CHAR;
+var SRC_NS_PLAIN_SAFE_FLOW_IN = `(?:(?!${SRC_C_FLOW_INDICATOR})${SRC_NS_CHAR})`;
+var SRC_NS_PLAIN_FIRST_FLOW_OUT = `(?:(?:(?!${SRC_C_INDICATOR})${SRC_NS_CHAR})|[?:-](?=${SRC_NS_PLAIN_SAFE_FLOW_OUT}))`;
+var SRC_NS_PLAIN_FIRST_FLOW_IN = `(?:(?:(?!${SRC_C_INDICATOR})${SRC_NS_CHAR})|[?:-](?=${SRC_NS_PLAIN_SAFE_FLOW_IN}))`;
+var SRC_NS_PLAIN_CHAR_FLOW_OUT = `(?:(?:(?![:#])${SRC_NS_PLAIN_SAFE_FLOW_OUT})|:(?=${SRC_NS_PLAIN_SAFE_FLOW_OUT}))#*`;
+var SRC_NS_PLAIN_CHAR_FLOW_IN = `(?:(?:(?![:#])${SRC_NS_PLAIN_SAFE_FLOW_IN})|:(?=${SRC_NS_PLAIN_SAFE_FLOW_IN}))#*`;
+var SRC_NB_NS_PLAIN_IN_LINE_FLOW_OUT = `(?:${SRC_S_WHITE}*${SRC_NS_PLAIN_CHAR_FLOW_OUT})*`;
+var SRC_NB_NS_PLAIN_IN_LINE_FLOW_IN = `(?:${SRC_S_WHITE}*${SRC_NS_PLAIN_CHAR_FLOW_IN})*`;
+var SRC_NS_PLAIN_ONE_LINE_FLOW_OUT = `${SRC_NS_PLAIN_FIRST_FLOW_OUT}#*${SRC_NB_NS_PLAIN_IN_LINE_FLOW_OUT}`;
+var SRC_NS_PLAIN_ONE_LINE_FLOW_IN = `${SRC_NS_PLAIN_FIRST_FLOW_IN}#*${SRC_NB_NS_PLAIN_IN_LINE_FLOW_IN}`;
+var SRC_NS_PLAIN_ONE_LINE_BLOCK_KEY = SRC_NS_PLAIN_ONE_LINE_FLOW_OUT;
+var SRC_NS_PLAIN_ONE_LINE_FLOW_KEY = SRC_NS_PLAIN_ONE_LINE_FLOW_IN;
+var SRC_S_NS_PLAIN_NEXT_LINE_FLOW_OUT = `\\n+${SRC_NS_PLAIN_CHAR_FLOW_OUT}${SRC_NB_NS_PLAIN_IN_LINE_FLOW_OUT}`;
+var SRC_S_NS_PLAIN_NEXT_LINE_FLOW_IN = `\\n+${SRC_NS_PLAIN_CHAR_FLOW_IN}${SRC_NB_NS_PLAIN_IN_LINE_FLOW_IN}`;
+var SRC_NS_PLAIN_MULTI_LINE_FLOW_OUT = `${SRC_NS_PLAIN_ONE_LINE_FLOW_OUT}(?:${SRC_S_NS_PLAIN_NEXT_LINE_FLOW_OUT})*`;
+var SRC_NS_PLAIN_MULTI_LINE_FLOW_IN = `${SRC_NS_PLAIN_ONE_LINE_FLOW_IN}(?:${SRC_S_NS_PLAIN_NEXT_LINE_FLOW_IN})*`;
+var NS_PLAIN_FLOW_OUT = new RegExp(`^(?:${SRC_NS_PLAIN_MULTI_LINE_FLOW_OUT})$`, "u");
+var NS_PLAIN_FLOW_IN = new RegExp(`^(?:${SRC_NS_PLAIN_MULTI_LINE_FLOW_IN})$`, "u");
+var NS_PLAIN_BLOCK_KEY = new RegExp(`^(?:${SRC_NS_PLAIN_ONE_LINE_BLOCK_KEY})$`, "u");
+var NS_PLAIN_FLOW_KEY = new RegExp(`^(?:${SRC_NS_PLAIN_ONE_LINE_FLOW_KEY})$`, "u");
+var NB_SINGLE_ONE_LINE = new RegExp(`^(?:${SRC_NB_JSON})*$`, "u");
+var NB_SINGLE_MULTI_LINE = new RegExp(`^(?:${SRC_NB_JSON}|\\n)*$`, "u");
+var BLOCK_SCALAR_CONTENT = new RegExp(`^(?:${SRC_NB_CHAR}|\\n)*$`, "u");
 var DEFAULT_PRESENTER_OPTIONS = {
   indent: 2,
   seqNoIndent: false,
   seqInlineFirst: true,
-  sortKeys: false,
   lineWidth: 80,
   flowBracketPadding: false,
   flowSkipCommaSpace: false,
@@ -36694,6 +36793,7 @@ var DEFAULT_PRESENTER_OPTIONS = {
   quoteFlowKeys: false,
   quoteStyle: "single",
   forceQuotes: false,
+  scalarStyleRules: Object.keys(DEFAULT_SCALAR_STYLE_RULES).map((name) => Reflect.get(DEFAULT_SCALAR_STYLE_RULES, name)),
   tagBeforeAnchor: false
 };
 var DEFAULT_DUMP_OPTIONS = {
@@ -36702,6 +36802,7 @@ var DEFAULT_DUMP_OPTIONS = {
   skipInvalid: false,
   noRefs: false,
   flowLevel: -1,
+  sortKeys: false,
   transform: () => {
   }
 };
