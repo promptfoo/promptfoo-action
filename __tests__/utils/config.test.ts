@@ -60,6 +60,109 @@ providers:
     expect(deps).toContain('../config/another_provider.js');
   });
 
+  it.each([
+    ['file://providers/provider.js', '../config/providers/provider.js'],
+    [
+      'file://providers/provider.py:custom_call',
+      '../config/providers/provider.py',
+    ],
+  ])('should canonicalize scalar provider %s', (provider, expected) => {
+    mockFs.readFileSync.mockReturnValue(`providers: ${provider}\n`);
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([expected]);
+  });
+
+  it('should leave scalar remote providers to Promptfoo', () => {
+    mockFs.readFileSync.mockReturnValue('providers: openai:gpt-4\n');
+
+    expect(
+      extractFileDependencies('/test/config/promptfooconfig.yaml'),
+    ).toEqual([]);
+  });
+
+  it('should extract a function-qualified Python provider file', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.py:custom_call
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/provider.py']);
+  });
+
+  it('should extract an object-form function-qualified Python provider', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - id: file://providers/provider.py:custom_call
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/provider.py']);
+  });
+
+  it('should preserve an absolute provider inside the repository', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/repository/providers/provider.py
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual(['providers/provider.py']);
+  });
+
+  it('should reject an absolute provider outside the repository', () => {
+    vi.spyOn(process, 'cwd').mockReturnValue('/test/repository');
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///test/secrets/provider.py
+`);
+
+    const deps = extractFileDependencies(
+      '/test/repository/promptfooconfig.yaml',
+    );
+
+    expect(deps).toEqual([]);
+    expect(core.warning).toHaveBeenCalledWith(
+      expect.stringContaining('must stay within the repository workspace'),
+    );
+  });
+
+  it('should not reinterpret an invalid JavaScript provider suffix', () => {
+    mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file://providers/provider.js:callApi
+`);
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual(['../config/providers/provider.js:callApi']);
+  });
+
+  it('should preserve a Windows drive colon in a Python provider', () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      mockFs.readFileSync.mockReturnValue(`
+providers:
+  - file:///C:/repository/providers/provider.py:custom_call
+`);
+
+      const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+      expect(deps).toEqual(['../config/C:/repository/providers/provider.py']);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
   it('should extract prompt files', () => {
     const configContent = `
 prompts:
@@ -164,6 +267,14 @@ shared: &shared
 
     expect(deps).toEqual([]);
     expect(core.debug).toHaveBeenCalledWith('Config file is empty or invalid');
+  });
+
+  it('should handle an explicit null config', () => {
+    mockFs.readFileSync.mockReturnValue('null');
+
+    const deps = extractFileDependencies('/test/config/promptfooconfig.yaml');
+
+    expect(deps).toEqual([]);
   });
 
   it('should handle invalid YAML gracefully', () => {

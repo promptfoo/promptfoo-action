@@ -36740,6 +36740,15 @@ function isPathInside(baseDir, targetPath) {
   const relativePath = path5.relative(baseDir, targetPath);
   return relativePath === "" || relativePath !== ".." && !relativePath.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relativePath);
 }
+function providerFilePath(fileUrl) {
+  const encodedPath = fileUrl.slice("file://".length);
+  const rawPath = process.platform === "win32" && /^\/[A-Za-z]:[\\/]/.test(encodedPath) ? encodedPath.slice(1) : encodedPath;
+  const functionSeparator = rawPath.lastIndexOf(":");
+  if (functionSeparator > 1 && rawPath.slice(0, functionSeparator).endsWith(".py")) {
+    return rawPath.slice(0, functionSeparator);
+  }
+  return rawPath;
+}
 function extractFileDependencies(configPath) {
   const dependencies = /* @__PURE__ */ new Set();
   const configDir = path5.dirname(configPath);
@@ -36758,7 +36767,7 @@ function extractFileDependencies(configPath) {
       debug("Config file is empty or invalid");
       return [];
     }
-    const resolveConfigDependency = (filePath, source) => {
+    const resolveConfigDependency = (filePath, source, preserveAbsolute = false) => {
       try {
         if (!filePath) {
           throw new Error(`${source} is empty`);
@@ -36766,7 +36775,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = preserveAbsolute && path5.isAbsolute(filePath) ? path5.normalize(filePath) : path5.resolve(path5.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36782,11 +36791,12 @@ function extractFileDependencies(configPath) {
         return void 0;
       }
     };
-    const processFileUrl = (fileUrl) => {
-      const filePath = fileUrl.replace("file://", "");
+    const processFileUrl = (fileUrl, isProvider = false) => {
+      const filePath = isProvider ? providerFilePath(fileUrl) : fileUrl.slice("file://".length);
       const absolutePath = resolveConfigDependency(
         filePath,
-        "config file dependency"
+        "config file dependency",
+        isProvider
       );
       if (!absolutePath) {
         return;
@@ -36822,11 +36832,12 @@ function extractFileDependencies(configPath) {
       }
     };
     if (config2.providers) {
-      for (const provider of config2.providers) {
+      const providers = typeof config2.providers === "string" ? [config2.providers] : config2.providers;
+      for (const provider of providers) {
         if (typeof provider === "string" && provider.startsWith("file://")) {
-          processFileUrl(provider);
+          processFileUrl(provider, true);
         } else if (typeof provider === "object" && provider.id?.startsWith("file://")) {
-          processFileUrl(provider.id);
+          processFileUrl(provider.id, true);
         }
       }
     }
