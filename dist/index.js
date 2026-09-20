@@ -36766,7 +36766,7 @@ function extractFileDependencies(configPath) {
         if (filePath.includes("\0")) {
           throw new Error(`${source} contains an invalid null byte`);
         }
-        const absolutePath = path5.resolve(path5.join(configDir, filePath));
+        const absolutePath = path5.isAbsolute(filePath) ? path5.normalize(filePath) : path5.resolve(path5.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`
@@ -36878,13 +36878,37 @@ function extractFileDependencies(configPath) {
       }
     };
     if (config2.defaultTest) {
-      extractVarFiles(config2.defaultTest.vars);
-      extractAssertFiles(config2.defaultTest.assert);
+      if (typeof config2.defaultTest === "string") {
+        if (config2.defaultTest.startsWith("file://") && !/\{[{%#]/.test(config2.defaultTest)) {
+          processFileUrl(config2.defaultTest);
+        }
+      } else {
+        extractVarFiles(config2.defaultTest.vars);
+        extractAssertFiles(config2.defaultTest.assert);
+      }
     }
+    const processTestFile = (source) => {
+      if (/^[a-z][a-z\d+.-]*:\/\//i.test(source) && !source.startsWith("file://")) {
+        return;
+      }
+      let filePath = source.replace(/^file:\/\//, "").replace(/(\.xlsx?)#[^/\\]*$/i, "$1");
+      const selector = filePath.lastIndexOf(":");
+      if (selector > 1 && /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, selector))) {
+        filePath = filePath.slice(0, selector);
+      }
+      processFileUrl(`file://${filePath}`);
+    };
     if (config2.tests) {
-      for (const test of config2.tests) {
-        extractVarFiles(test.vars);
-        extractAssertFiles(test.assert);
+      const tests = Array.isArray(config2.tests) ? config2.tests : [config2.tests];
+      for (const test of tests) {
+        if (typeof test === "string") {
+          processTestFile(test);
+        } else if (test.path) {
+          processTestFile(test.path);
+        } else {
+          extractVarFiles(test.vars);
+          extractAssertFiles(test.assert);
+        }
       }
     }
     return Array.from(dependencies).map((dep) => {
