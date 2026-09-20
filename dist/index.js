@@ -37336,6 +37336,30 @@ async function run() {
         getInput("working-directory", { required: false }) || "."
       )
     );
+    const matchesPromptGlob = (repositoryFile) => {
+      if (!repositoryFile) {
+        return false;
+      }
+      const absoluteFile = path6.resolve(workspaceRoot, repositoryFile);
+      const repositoryPath = path6.relative(workspaceRoot, absoluteFile);
+      if (repositoryPath === ".." || repositoryPath.startsWith(`..${path6.sep}`) || path6.isAbsolute(repositoryPath)) {
+        return false;
+      }
+      const relativePath = path6.relative(workingDirectory, absoluteFile);
+      const workingDirectoryPath = toRepositoryPath(relativePath);
+      return promptFilesGlobs.some((pattern) => {
+        const candidate = path6.isAbsolute(pattern) ? toRepositoryPath(absoluteFile) : workingDirectoryPath;
+        const portablePattern = toRepositoryPath(pattern).replace(
+          /\\([[\]*?{}])/g,
+          "[$1]"
+        );
+        const matches = (candidatePattern) => path6.matchesGlob(candidate, candidatePattern) || ["darwin", "win32"].includes(process.platform) && path6.matchesGlob(
+          candidate.toLowerCase(),
+          candidatePattern.toLowerCase()
+        );
+        return matches(portablePattern) || matches(path6.posix.normalize(portablePattern));
+      });
+    };
     const configAbsolutePath = path6.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
       path6.relative(workspaceRoot, configAbsolutePath)
@@ -37461,6 +37485,7 @@ async function run() {
     const octokit = getOctokit(githubToken);
     const event = context2.eventName;
     let changedFiles = "";
+    let evaluatedAfterPromptRemoval = false;
     let isPullRequest = false;
     let pullRequestNumber;
     if (event === "pull_request" || event === "pull_request_target") {
@@ -37483,7 +37508,17 @@ async function run() {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join("\n");
+        const monitoredPromptRemovedOrRenamedOut = pullRequestFiles.some(
+          (file) => file.status === "removed" && matchesPromptGlob(file.filename) || file.status === "renamed" && matchesPromptGlob(file.previous_filename) && !matchesPromptGlob(file.filename)
+        );
+        if (monitoredPromptRemovedOrRenamedOut) {
+          evaluatedAfterPromptRemoval = true;
+          warning(
+            "A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files."
+          );
+        } else {
+          changedFiles = pullRequestFiles.map((file) => file.filename).join("\n");
+        }
       }
     } else if (event === "workflow_dispatch") {
       info("Running in workflow_dispatch mode");
@@ -37570,6 +37605,7 @@ async function run() {
         promptFiles.push(...allMatches);
       }
     }
+    promptFiles.splice(0, promptFiles.length, ...new Set(promptFiles));
     const configChanged = changedFilesList.length > 0 && changedFilesList.includes(configRepositoryPath);
     let dependencyChanged = false;
     if (changedFilesList.length > 0) {
@@ -37798,8 +37834,9 @@ async function run() {
       output.results.stats
     );
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(", ");
-      let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
+      const reportedFiles = promptFiles.join(", ") || (evaluatedAfterPromptRemoval ? "(no prompt files remain)" : "");
+      const promptDescription = evaluatedAfterPromptRemoval ? "LLM prompts were evaluated" : "LLM prompt was modified";
+      let body = `\u26A0\uFE0F ${promptDescription} in these files: ${reportedFiles}
 
 | Success | Failure |
 |---------|---------|
