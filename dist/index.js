@@ -19743,322 +19743,402 @@ var require_dist = __commonJS({
   }
 });
 
-// node_modules/dotenv/lib/main.js
-var require_main = __commonJS({
-  "node_modules/dotenv/lib/main.js"(exports2, module2) {
-    var fs8 = require("fs");
-    var path7 = require("path");
-    var os7 = require("os");
-    var crypto2 = require("crypto");
-    var TIPS = [
-      "\u25C8 encrypted .env [www.dotenvx.com]",
-      "\u25C8 secrets for agents [www.dotenvx.com]",
-      "\u2301 auth for agents [www.vestauth.com]",
-      "\u2318 custom filepath { path: '/custom/path/.env' }",
-      "\u2318 enable debugging { debug: true }",
-      "\u2318 override existing { override: true }",
-      "\u2318 suppress logs { quiet: true }",
-      "\u2318 multiple files { path: ['.env.local', '.env'] }"
-    ];
-    function _getRandomTip() {
-      return TIPS[Math.floor(Math.random() * TIPS.length)];
-    }
-    function parseBoolean(value) {
-      if (typeof value === "string") {
-        return !["false", "0", "no", "off", ""].includes(value.toLowerCase());
-      }
-      return Boolean(value);
-    }
-    function supportsAnsi() {
-      return process.stdout.isTTY;
-    }
-    function dim(text) {
-      return supportsAnsi() ? `\x1B[2m${text}\x1B[0m` : text;
-    }
-    var LINE = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg;
-    function parse3(src) {
-      const obj = {};
-      let lines = src.toString();
-      lines = lines.replace(/\r\n?/mg, "\n");
-      let match;
-      while ((match = LINE.exec(lines)) != null) {
-        const key = match[1];
-        let value = match[2] || "";
-        value = value.trim();
-        const maybeQuote = value[0];
-        value = value.replace(/^(['"`])([\s\S]*)\1$/mg, "$2");
-        if (maybeQuote === '"') {
-          value = value.replace(/\\n/g, "\n");
-          value = value.replace(/\\r/g, "\r");
-        }
-        obj[key] = value;
-      }
-      return obj;
-    }
-    function _parseVault(options) {
-      options = options || {};
-      const vaultPath = _vaultPath(options);
-      options.path = vaultPath;
-      const result = DotenvModule.configDotenv(options);
-      if (!result.parsed) {
-        const err = new Error(`MISSING_DATA: Cannot parse ${vaultPath} for an unknown reason`);
-        err.code = "MISSING_DATA";
-        throw err;
-      }
-      const keys = _dotenvKey(options).split(",");
-      const length = keys.length;
-      let decrypted;
-      for (let i2 = 0; i2 < length; i2++) {
-        try {
-          const key = keys[i2].trim();
-          const attrs = _instructions(result, key);
-          decrypted = DotenvModule.decrypt(attrs.ciphertext, attrs.key);
-          break;
-        } catch (error2) {
-          if (i2 + 1 >= length) {
-            throw error2;
-          }
-        }
-      }
-      return DotenvModule.parse(decrypted);
-    }
-    function _warn(message) {
-      console.error(`\u26A0 ${message}`);
-    }
-    function _debug(message) {
-      console.log(`\u2506 ${message}`);
-    }
-    function _log(message) {
-      console.log(`\u25C7 ${message}`);
-    }
-    function _dotenvKey(options) {
-      if (options && options.DOTENV_KEY && options.DOTENV_KEY.length > 0) {
-        return options.DOTENV_KEY;
-      }
-      if (process.env.DOTENV_KEY && process.env.DOTENV_KEY.length > 0) {
-        return process.env.DOTENV_KEY;
-      }
-      return "";
-    }
-    function _instructions(result, dotenvKey) {
-      let uri;
+// node_modules/dotenv/dist/index.cjs
+var require_dist2 = __commonJS({
+  "node_modules/dotenv/dist/index.cjs"(exports2, module2) {
+    var O3 = (e, o2) => () => {
       try {
-        uri = new URL(dotenvKey);
-      } catch (error2) {
-        if (error2.code === "ERR_INVALID_URL") {
-          const err = new Error("INVALID_DOTENV_KEY: Wrong format. Must be in valid uri format like dotenv://:key_1234@dotenvx.com/vault/.env.vault?environment=development");
-          err.code = "INVALID_DOTENV_KEY";
-          throw err;
-        }
-        throw error2;
+        return o2 || e((o2 = { exports: {} }).exports, o2), o2.exports;
+      } catch (t2) {
+        throw o2 = 0, t2;
       }
-      const key = uri.password;
-      if (!key) {
-        const err = new Error("INVALID_DOTENV_KEY: Missing key part");
-        err.code = "INVALID_DOTENV_KEY";
-        throw err;
-      }
-      const environment = uri.searchParams.get("environment");
-      if (!environment) {
-        const err = new Error("INVALID_DOTENV_KEY: Missing environment part");
-        err.code = "INVALID_DOTENV_KEY";
-        throw err;
-      }
-      const environmentKey = `DOTENV_VAULT_${environment.toUpperCase()}`;
-      const ciphertext = result.parsed[environmentKey];
-      if (!ciphertext) {
-        const err = new Error(`NOT_FOUND_DOTENV_ENVIRONMENT: Cannot locate environment ${environmentKey} in your .env.vault file.`);
-        err.code = "NOT_FOUND_DOTENV_ENVIRONMENT";
-        throw err;
-      }
-      return { ciphertext, key };
-    }
-    function _vaultPath(options) {
-      let possibleVaultPath = null;
-      if (options && options.path && options.path.length > 0) {
-        if (Array.isArray(options.path)) {
-          for (const filepath of options.path) {
-            if (fs8.existsSync(filepath)) {
-              possibleVaultPath = filepath.endsWith(".vault") ? filepath : `${filepath}.vault`;
-            }
-          }
-        } else {
-          possibleVaultPath = options.path.endsWith(".vault") ? options.path : `${options.path}.vault`;
-        }
-      } else {
-        possibleVaultPath = path7.resolve(process.cwd(), ".env.vault");
-      }
-      if (fs8.existsSync(possibleVaultPath)) {
-        return possibleVaultPath;
-      }
-      return null;
-    }
-    function _resolveHome(envPath) {
-      return envPath[0] === "~" ? path7.join(os7.homedir(), envPath.slice(1)) : envPath;
-    }
-    function _configVault(options) {
-      const debug3 = parseBoolean(process.env.DOTENV_CONFIG_DEBUG || options && options.debug);
-      const quiet = parseBoolean(process.env.DOTENV_CONFIG_QUIET || options && options.quiet);
-      if (debug3 || !quiet) {
-        _log("loading env from encrypted .env.vault");
-      }
-      const parsed = DotenvModule._parseVault(options);
-      let processEnv = process.env;
-      if (options && options.processEnv != null) {
-        processEnv = options.processEnv;
-      }
-      DotenvModule.populate(processEnv, parsed, options);
-      return { parsed };
-    }
-    function configDotenv(options) {
-      const dotenvPath = path7.resolve(process.cwd(), ".env");
-      let encoding = "utf8";
-      let processEnv = process.env;
-      if (options && options.processEnv != null) {
-        processEnv = options.processEnv;
-      }
-      let debug3 = parseBoolean(processEnv.DOTENV_CONFIG_DEBUG || options && options.debug);
-      let quiet = parseBoolean(processEnv.DOTENV_CONFIG_QUIET || options && options.quiet);
-      if (options && options.encoding) {
-        encoding = options.encoding;
-      } else {
-        if (debug3) {
-          _debug("no encoding is specified (UTF-8 is used by default)");
-        }
-      }
-      let optionPaths = [dotenvPath];
-      if (options && options.path) {
-        if (!Array.isArray(options.path)) {
-          optionPaths = [_resolveHome(options.path)];
-        } else {
-          optionPaths = [];
-          for (const filepath of options.path) {
-            optionPaths.push(_resolveHome(filepath));
-          }
-        }
-      }
-      let lastError;
-      const parsedAll = {};
-      for (const path8 of optionPaths) {
-        try {
-          const parsed = DotenvModule.parse(fs8.readFileSync(path8, { encoding }));
-          DotenvModule.populate(parsedAll, parsed, options);
-        } catch (e) {
-          if (debug3) {
-            _debug(`failed to load ${path8} ${e.message}`);
-          }
-          lastError = e;
-        }
-      }
-      const populated = DotenvModule.populate(processEnv, parsedAll, options);
-      debug3 = parseBoolean(processEnv.DOTENV_CONFIG_DEBUG || debug3);
-      quiet = parseBoolean(processEnv.DOTENV_CONFIG_QUIET || quiet);
-      if (debug3 || !quiet) {
-        const keysCount = Object.keys(populated).length;
-        const shortPaths = [];
-        for (const filePath of optionPaths) {
-          try {
-            const relative4 = path7.relative(process.cwd(), filePath);
-            shortPaths.push(relative4);
-          } catch (e) {
-            if (debug3) {
-              _debug(`failed to load ${filePath} ${e.message}`);
-            }
-            lastError = e;
-          }
-        }
-        _log(`injected env (${keysCount}) from ${shortPaths.join(",")} ${dim(`// tip: ${_getRandomTip()}`)}`);
-      }
-      if (lastError) {
-        return { parsed: parsedAll, error: lastError };
-      } else {
-        return { parsed: parsedAll };
-      }
-    }
-    function config2(options) {
-      if (_dotenvKey(options).length === 0) {
-        return DotenvModule.configDotenv(options);
-      }
-      const vaultPath = _vaultPath(options);
-      if (!vaultPath) {
-        _warn(`you set DOTENV_KEY but you are missing a .env.vault file at ${vaultPath}`);
-        return DotenvModule.configDotenv(options);
-      }
-      return DotenvModule._configVault(options);
-    }
-    function decrypt(encrypted, keyStr) {
-      const key = Buffer.from(keyStr.slice(-64), "hex");
-      let ciphertext = Buffer.from(encrypted, "base64");
-      const nonce = ciphertext.subarray(0, 12);
-      const authTag = ciphertext.subarray(-16);
-      ciphertext = ciphertext.subarray(12, -16);
-      try {
-        const aesgcm = crypto2.createDecipheriv("aes-256-gcm", key, nonce);
-        aesgcm.setAuthTag(authTag);
-        return `${aesgcm.update(ciphertext)}${aesgcm.final()}`;
-      } catch (error2) {
-        const isRange = error2 instanceof RangeError;
-        const invalidKeyLength = error2.message === "Invalid key length";
-        const decryptionFailed = error2.message === "Unsupported state or unable to authenticate data";
-        if (isRange || invalidKeyLength) {
-          const err = new Error("INVALID_DOTENV_KEY: It must be 64 characters long (or more)");
-          err.code = "INVALID_DOTENV_KEY";
-          throw err;
-        } else if (decryptionFailed) {
-          const err = new Error("DECRYPTION_FAILED: Please check your DOTENV_KEY");
-          err.code = "DECRYPTION_FAILED";
-          throw err;
-        } else {
-          throw error2;
-        }
-      }
-    }
-    function populate(processEnv, parsed, options = {}) {
-      const debug3 = Boolean(options && options.debug);
-      const override = Boolean(options && options.override);
-      const populated = {};
-      if (typeof parsed !== "object") {
-        const err = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
-        err.code = "OBJECT_REQUIRED";
-        throw err;
-      }
-      for (const key of Object.keys(parsed)) {
-        if (Object.prototype.hasOwnProperty.call(processEnv, key)) {
-          if (override === true) {
-            processEnv[key] = parsed[key];
-            populated[key] = parsed[key];
-          }
-          if (debug3) {
-            if (override === true) {
-              _debug(`"${key}" is already defined and WAS overwritten`);
-            } else {
-              _debug(`"${key}" is already defined and was NOT overwritten`);
-            }
-          }
-        } else {
-          processEnv[key] = parsed[key];
-          populated[key] = parsed[key];
-        }
-      }
-      return populated;
-    }
-    var DotenvModule = {
-      configDotenv,
-      _configVault,
-      _parseVault,
-      config: config2,
-      decrypt,
-      parse: parse3,
-      populate
     };
-    module2.exports.configDotenv = DotenvModule.configDotenv;
-    module2.exports._configVault = DotenvModule._configVault;
-    module2.exports._parseVault = DotenvModule._parseVault;
-    module2.exports.config = DotenvModule.config;
-    module2.exports.decrypt = DotenvModule.decrypt;
-    module2.exports.parse = DotenvModule.parse;
-    module2.exports.populate = DotenvModule.populate;
-    module2.exports = DotenvModule;
+    var q3 = O3((ve2, j3) => {
+      function I3(e) {
+        return typeof e == "string" ? !["false", "0", "no", "off", ""].includes(e.toLowerCase()) : !!e;
+      }
+      function U3() {
+        let e = {};
+        for (let o2 of ["ENCODING", "PATH", "QUIET", "DEBUG", "OVERRIDE", "FAST"]) {
+          let t2 = process.env[`DOTENV_${o2}`] != null ? process.env[`DOTENV_${o2}`] : process.env[`DOTENV_CONFIG_${o2}`];
+          t2 != null && (e[o2.toLowerCase()] = o2 === "ENCODING" || o2 === "PATH" ? t2 : I3(t2));
+        }
+        return e;
+      }
+      j3.exports = { parseBoolean: I3, optionsFromEnv: U3 };
+    });
+    var T3 = O3((me2, C3) => {
+      var H3 = require("fs"), x3 = require("path"), L3 = require("os"), { parseBoolean: y2, optionsFromEnv: M3 } = q3(), W3 = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg, v2 = new Uint8Array(256);
+      for (let e = 48; e <= 57; e++) v2[e] = 1;
+      for (let e = 65; e <= 90; e++) v2[e] = 1;
+      for (let e = 97; e <= 122; e++) v2[e] = 1;
+      v2[45] = 1;
+      v2[46] = 1;
+      v2[95] = 1;
+      function Q3(e) {
+        let o2 = {}, t2 = e.toString();
+        t2 = t2.replace(/\r\n?/mg, `
+`);
+        let n7;
+        for (; (n7 = W3.exec(t2)) != null; ) {
+          let r2 = n7[1], s = n7[2] || "";
+          s = s.trim();
+          let i2 = s[0];
+          s = s.replace(/^(['"`])([\s\S]*)\1$/mg, "$2"), i2 === '"' && (s = s.replace(/\\n/g, `
+`), s = s.replace(/\\r/g, "\r")), o2[r2] = s;
+        }
+        return o2;
+      }
+      function J2(e) {
+        let o2 = {}, t2 = typeof e == "string" ? e : e.toString();
+        t2.indexOf("\r") !== -1 && (t2 = t2.replace(/\r\n?/g, `
+`));
+        let n7 = t2.length, r2 = 0;
+        for (; r2 < n7; ) {
+          let s = t2.charCodeAt(r2);
+          for (; r2 < n7 && (s === 32 || s === 9 || s === 10 || s === 65279); ) r2++, s = t2.charCodeAt(r2);
+          if (r2 >= n7) break;
+          if (s === 35) {
+            for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            continue;
+          }
+          if (s === 101 && r2 + 6 < n7 && t2.charCodeAt(r2 + 1) === 120 && t2.charCodeAt(r2 + 2) === 112 && t2.charCodeAt(r2 + 3) === 111 && t2.charCodeAt(r2 + 4) === 114 && t2.charCodeAt(r2 + 5) === 116) {
+            let f = t2.charCodeAt(r2 + 6);
+            if (f === 32 || f === 9) for (r2 += 7; r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
+            else s = t2.charCodeAt(r2);
+          }
+          let i2 = r2, l = 0;
+          for (; r2 < n7 && (l = t2.charCodeAt(r2), v2[l]); ) r2++;
+          if (r2 === i2) {
+            for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            continue;
+          }
+          let h2 = t2.slice(i2, r2);
+          if (r2 >= n7 && (l = 0), l === 32 || l === 9) do
+            r2++, l = r2 < n7 ? t2.charCodeAt(r2) : 0;
+          while (l === 32 || l === 9);
+          if (l === 61) r2++;
+          else if (l === 58 && r2 + 1 < n7 && (t2.charCodeAt(r2 + 1) === 32 || t2.charCodeAt(r2 + 1) === 9)) r2++;
+          else {
+            for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            continue;
+          }
+          for (; r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
+          let u;
+          if (s = r2 < n7 ? t2.charCodeAt(r2) : 0, s === 39 || s === 34 || s === 96) {
+            let f = s, c3 = r2 + 1, a = c3;
+            for (; a < n7; ) {
+              let p2 = t2.charCodeAt(a);
+              if (p2 === 92 && a + 1 < n7) {
+                let d = t2.charCodeAt(a + 1);
+                if (d === f || d === 92) {
+                  a += 2;
+                  continue;
+                }
+              }
+              if (p2 === f) break;
+              a++;
+            }
+            if (a >= n7) {
+              let p2 = r2, d = r2;
+              for (; d < n7; ) {
+                let w = t2.charCodeAt(d);
+                if (w === 35 || w === 10) break;
+                d++;
+              }
+              let m = d;
+              for (; m > p2; ) {
+                let w = t2.charCodeAt(m - 1);
+                if (w === 32 || w === 9) m--;
+                else break;
+              }
+              if (u = t2.slice(p2, m), r2 = d, r2 < n7 && t2.charCodeAt(r2) === 35) for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            } else {
+              for (u = t2.slice(c3, a), r2 = a + 1, f === 34 && u.indexOf("\\") !== -1 && (u = u.replace(/\\n/g, `
+`).replace(/\\r/g, "\r")); r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
+              if (r2 < n7 && t2.charCodeAt(r2) === 35) for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            }
+          } else {
+            let f = r2, c3 = t2.indexOf(`
+`, r2);
+            c3 === -1 && (c3 = n7);
+            let a = t2.indexOf("#", r2);
+            (a === -1 || a > c3) && (a = c3);
+            let p2 = a;
+            for (; p2 > f; ) {
+              let d = t2.charCodeAt(p2 - 1);
+              if (d === 32 || d === 9) p2--;
+              else break;
+            }
+            u = f === p2 ? "" : t2.slice(f, p2), r2 = a === c3 ? a : c3;
+          }
+          o2[h2] = u;
+        }
+        return o2;
+      }
+      function K3(e, o2) {
+        return o2 && y2(o2.fast) ? J2(e) : Q3(e);
+      }
+      function b2(e) {
+        console.log(`\u2506 ${e}`);
+      }
+      function X3(e) {
+        console.error(`\u25C7 ${e}`);
+      }
+      function N3(e) {
+        return e[0] === "~" ? x3.join(L3.homedir(), e.slice(1)) : e;
+      }
+      function Y3(e = {}) {
+        return { ...M3(), ...e };
+      }
+      function z2(e) {
+        e = Y3(e);
+        let o2 = x3.resolve(process.cwd(), ".env"), t2 = "utf8", n7 = process.env;
+        e && e.processEnv != null && (n7 = e.processEnv);
+        let r2 = y2(e && e.debug), s = y2(e && e.quiet);
+        e && e.encoding ? t2 = e.encoding : r2 && b2("no encoding is specified (UTF-8 is used by default)");
+        let i2 = [o2];
+        if (e && e.path) if (!Array.isArray(e.path)) i2 = [N3(e.path)];
+        else {
+          i2 = [];
+          for (let c3 of e.path) i2.push(N3(c3));
+        }
+        let l, h2 = {}, u = { fast: e.fast };
+        for (let c3 of i2) try {
+          let a = g.parse(H3.readFileSync(c3, { encoding: t2 }), u);
+          g.populate(h2, a, e);
+        } catch (a) {
+          r2 && b2(`failed to load ${c3} ${a.message}`), l = a;
+        }
+        let f = g.populate(n7, h2, e);
+        if (r2 || !s) {
+          let c3 = Object.keys(f).length, a = [];
+          for (let p2 of i2) try {
+            let d = x3.relative(process.cwd(), p2);
+            a.push(d);
+          } catch (d) {
+            r2 && b2(`failed to load ${p2} ${d.message}`), l = d;
+          }
+          X3(`injected env (${c3}) from ${a.join(",")}`);
+        }
+        return l ? { parsed: h2, error: l } : { parsed: h2 };
+      }
+      function Z2(e) {
+        return g.configDotenv(e);
+      }
+      function ee3(e, o2, t2 = {}) {
+        let n7 = !!(t2 && t2.debug), r2 = !!(t2 && t2.override), s = {};
+        if (e === null || typeof e != "object" || o2 === null || typeof o2 != "object") {
+          let i2 = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
+          throw i2.code = "OBJECT_REQUIRED", i2;
+        }
+        for (let i2 of Object.keys(o2)) Object.prototype.hasOwnProperty.call(e, i2) ? (r2 === true && (e[i2] = o2[i2], s[i2] = o2[i2]), n7 && b2(r2 === true ? `"${i2}" is already defined and WAS overwritten` : `"${i2}" is already defined and was NOT overwritten`)) : (e[i2] = o2[i2], s[i2] = o2[i2]);
+        return s;
+      }
+      var g = { configDotenv: z2, config: Z2, parse: K3, populate: ee3 };
+      C3.exports.configDotenv = g.configDotenv;
+      C3.exports.config = g.config;
+      C3.exports.parse = g.parse;
+      C3.exports.populate = g.populate;
+      C3.exports = g;
+    });
+    var F3 = O3((Ce2, R3) => {
+      var $2 = require("child_process"), te2 = require("fs"), P3 = require("path");
+      function re2(e) {
+        let o2 = ['"'], t2 = 0;
+        for (let n7 of e) {
+          if (n7 === "\\") {
+            t2++;
+            continue;
+          }
+          n7 === '"' ? o2.push("\\".repeat(t2 * 2 + 1), '"') : o2.push("\\".repeat(t2), n7), t2 = 0;
+        }
+        return o2.push("\\".repeat(t2 * 2), '"'), o2.join("");
+      }
+      function _3(e, o2 = 1) {
+        for (let t2 = 0; t2 < o2; t2++) {
+          let n7 = [];
+          for (let r2 of e) {
+            let s = r2.charCodeAt(0), i2 = s >= 48 && s <= 57 || s >= 65 && s <= 90 || s >= 97 && s <= 122, l = "\\/:._-".includes(r2);
+            !i2 && !l && s < 128 && n7.push("^"), n7.push(r2);
+          }
+          e = n7.join("");
+        }
+        return e;
+      }
+      function D3(e, o2) {
+        let t2 = Object.keys(e).reverse().find((n7) => n7.toUpperCase() === o2);
+        return t2 === void 0 ? void 0 : e[t2];
+      }
+      function oe2(e, o2, t2) {
+        let n7 = (D3(o2, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = n7.some((l) => e.toLowerCase().endsWith(l.toLowerCase())) ? ["", ...n7] : [...n7, ""], i2 = /[\\/]/.test(e) ? [t2] : [t2, ...(D3(o2, "PATH") || "").split(";")];
+        for (let l of i2) for (let h2 of s) {
+          let u = P3.resolve(t2, l.replace(/^"|"$/g, ""), e + h2);
+          try {
+            if (te2.statSync(u).isFile()) return u;
+          } catch {
+          }
+        }
+      }
+      function ne3(e, o2, t2) {
+        if (process.platform !== "win32") return $2.spawn(e, o2, t2);
+        let n7 = t2.env || process.env, r2 = oe2(e, n7, t2.cwd || process.cwd());
+        if (r2 && /\.(?:exe|com)$/i.test(r2)) return $2.spawn(r2, o2, t2);
+        let s = /\.(?:bat|cmd)$/i.test(r2 || e), i2 = [_3(P3.normalize(r2 || e))];
+        for (let h2 of o2) i2.push(_3(re2(h2), s ? 2 : 1));
+        let l = i2.join(" ");
+        return $2.spawn(D3(n7, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l}"`], { ...t2, windowsVerbatimArguments: true });
+      }
+      R3.exports = ne3;
+    });
+    var B3 = O3((we2, S2) => {
+      var se2 = require("fs"), ie2 = require("os"), G3 = require("path"), ce2 = require("child_process"), ae2 = F3(), k3 = T3(), { optionsFromEnv: le2 } = q3();
+      function A3() {
+        console.log(["Usage: dotenv run [--help] [-q|--quiet] [--debug] [--override] [--fast] [-f|--file <paths>] [--] <command> [args...]", "", "Run a command with environment variables from a .env file.", "Place dotenv options before the command; all following arguments go to the command.", "", "Options:", "  -f, --file <paths>  .env paths, comma-separated or repeated (default: .env)", "  -q, --quiet suppress the injected env message", "  --debug     enable debug logging", "  --override  override existing environment variables", "  --fast      use the faster character-scanner parser", "", "Environment variables (DOTENV_CONFIG_* names remain as fallbacks):", "  DOTENV_PATH, DOTENV_ENCODING, DOTENV_QUIET,", "  DOTENV_DEBUG, DOTENV_OVERRIDE,", "  DOTENV_FAST"].join(`
+`));
+      }
+      function fe2(e) {
+        let o2 = [], t2 = false, n7, r2, s, i2, l = -1;
+        for (let u = 0; u < e.length; u++) {
+          let f = e[u];
+          if (f === "--") {
+            l = u + 1;
+            break;
+          }
+          if (f === "--help" || f === "-h") return { help: true };
+          if (f === "--quiet" || f === "-q") {
+            n7 = true;
+            continue;
+          }
+          if (f === "--debug") {
+            r2 = true;
+            continue;
+          }
+          if (f === "--override") {
+            s = true;
+            continue;
+          }
+          if (f === "--fast") {
+            i2 = true;
+            continue;
+          }
+          if (f === "-f" || f === "--file" || f.startsWith("-f=") || f.startsWith("--file=")) {
+            let c3 = f.indexOf("="), a = c3 === -1 ? f : f.slice(0, c3), p2 = c3 === -1 ? e[++u] : f.slice(c3 + 1);
+            if (!p2 || p2 === "--") return { error: `${a} requires a path` };
+            let d = p2.split(",").map((m) => m.trim()).filter(Boolean);
+            if (d.length === 0) return { error: `${a} requires a path` };
+            o2.push(...d), t2 = true;
+            continue;
+          }
+          if (f.startsWith("-")) return { error: `unknown option: ${f}` };
+          l = u;
+          break;
+        }
+        let h2 = l === -1 ? [] : e.slice(l);
+        return { paths: o2, pathSet: t2, quiet: n7, debug: r2, override: s, fast: i2, command: h2 };
+      }
+      function ue2(e) {
+        return e[0] === "~" ? G3.join(ie2.homedir(), e.slice(1)) : e;
+      }
+      function de2(e) {
+        let o2 = le2(), t2 = { encoding: o2.encoding || "utf8", quiet: o2.quiet === true, debug: o2.debug === true, override: o2.override === true, fast: o2.fast === true, paths: [".env"], defaultPath: true };
+        return o2.path != null && (t2.paths = [o2.path], t2.defaultPath = false), e.pathSet && (t2.paths = e.paths, t2.defaultPath = false), e.quiet != null && (t2.quiet = e.quiet), e.debug != null && (t2.debug = e.debug), e.override != null && (t2.override = e.override), e.fast != null && (t2.fast = e.fast), t2;
+      }
+      function pe2(e) {
+        let o2 = {}, t2 = [], n7 = { override: e.override, debug: e.debug };
+        for (let s of e.paths) {
+          let i2 = G3.resolve(process.cwd(), ue2(s));
+          try {
+            let l = k3.parse(se2.readFileSync(i2, { encoding: e.encoding }), { fast: e.fast });
+            k3.populate(o2, l, n7), t2.push(s);
+          } catch (l) {
+            if (e.debug && console.log(`\u2506 failed to load ${s} ${l.message}`), !(e.defaultPath && l.code === "ENOENT")) throw l;
+          }
+        }
+        return { injected: k3.populate(process.env, o2, n7), loadedPaths: t2 };
+      }
+      function V3(e) {
+        let o2 = e[0];
+        if (o2 === "--help" || o2 === "-h") {
+          A3();
+          return;
+        }
+        if (o2 !== "run") {
+          A3(), process.exitCode = 1;
+          return;
+        }
+        let t2 = fe2(e.slice(1));
+        if (t2.help) {
+          A3();
+          return;
+        }
+        if (t2.error) {
+          console.error(`dotenv: ${t2.error}`), A3(), process.exitCode = 1;
+          return;
+        }
+        if (t2.command.length === 0) {
+          A3(), process.exitCode = 1;
+          return;
+        }
+        let n7 = de2(t2);
+        try {
+          let c3 = pe2(n7);
+          if (!n7.quiet) {
+            let a = `\u25C7 injected env (${Object.keys(c3.injected).length})`;
+            c3.loadedPaths.length > 0 && (a += ` from ${c3.loadedPaths.join(", ")}`), console.error(a);
+          }
+        } catch (c3) {
+          console.error(`dotenv: ${c3.message}`), process.exitCode = 1;
+          return;
+        }
+        let r2 = !!process.stdin.isTTY, s = process.platform !== "win32" && !r2, i2 = ae2(t2.command[0], t2.command.slice(1), { stdio: "inherit", detached: s }), l = /* @__PURE__ */ new Map(), h2 = 0;
+        function u(c3) {
+          if (!(!i2.pid || i2.exitCode !== null || i2.signalCode !== null)) {
+            if (process.platform === "win32") {
+              ce2.spawnSync("taskkill", ["/pid", String(i2.pid), "/T", "/F"], { stdio: "ignore" });
+              return;
+            }
+            try {
+              process.kill(s ? -i2.pid : i2.pid, c3);
+            } catch (a) {
+              if (a.code !== "ESRCH") throw a;
+            }
+          }
+        }
+        function f() {
+          for (let [c3, a] of l) process.removeListener(c3, a);
+        }
+        for (let c3 of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"]) {
+          let a = () => {
+            if (c3 === "SIGINT") {
+              if (h2++, r2 && process.platform !== "win32" && h2 === 1) return;
+              if (h2 > 1) {
+                u(h2 === 2 ? "SIGTERM" : "SIGKILL");
+                return;
+              }
+            }
+            u(c3);
+          };
+          l.set(c3, a), process.on(c3, a);
+        }
+        i2.on("error", function(c3) {
+          f(), console.error(`dotenv: ${c3.message}`), process.exitCode = 1;
+        }), i2.on("exit", function(c3, a) {
+          f(), typeof c3 == "number" ? process.exit(c3) : (setInterval(() => {
+          }, 1e3), process.kill(process.pid, a));
+        });
+      }
+      S2.exports = V3;
+      require.main === S2 && V3(process.argv.slice(2));
+    });
+    var E2 = T3();
+    var he2 = B3();
+    module2.exports = E2;
+    module2.exports.config = E2.config;
+    module2.exports.configDotenv = E2.configDotenv;
+    module2.exports.parse = E2.parse;
+    module2.exports.populate = E2.populate;
+    require.main === module2 && he2(process.argv.slice(2));
   }
 });
 
@@ -20755,7 +20835,7 @@ var require_src2 = __commonJS({
 });
 
 // node_modules/@kwsites/file-exists/dist/index.js
-var require_dist2 = __commonJS({
+var require_dist3 = __commonJS({
   "node_modules/@kwsites/file-exists/dist/index.js"(exports2) {
     "use strict";
     function __export3(m) {
@@ -20767,7 +20847,7 @@ var require_dist2 = __commonJS({
 });
 
 // node_modules/@kwsites/promise-deferred/dist/index.js
-var require_dist3 = __commonJS({
+var require_dist4 = __commonJS({
   "node_modules/@kwsites/promise-deferred/dist/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
@@ -26029,7 +26109,7 @@ function getOctokit(token, options, ...additionalPlugins) {
 }
 
 // src/main.ts
-var dotenv = __toESM(require_main());
+var dotenv = __toESM(require_dist2());
 var fs7 = __toESM(require("fs"));
 
 // node_modules/glob/dist/esm/index.min.js
@@ -29020,7 +29100,7 @@ Ze.glob = Ze;
 var path6 = __toESM(require("path"));
 
 // node_modules/simple-git/dist/esm/index.js
-var import_file_exists = __toESM(require_dist2(), 1);
+var import_file_exists = __toESM(require_dist3(), 1);
 
 // node_modules/@simple-git/args-pathspec/dist/index.mjs
 var t = /* @__PURE__ */ new WeakMap();
@@ -29038,7 +29118,7 @@ function o(n7) {
 // node_modules/simple-git/dist/esm/index.js
 var import_debug = __toESM(require_src(), 1);
 var import_child_process = require("child_process");
-var import_promise_deferred = __toESM(require_dist3(), 1);
+var import_promise_deferred = __toESM(require_dist4(), 1);
 var import_node_path2 = require("node:path");
 
 // node_modules/@simple-git/argv-parser/dist/index.mjs
@@ -29506,7 +29586,7 @@ function ne2(e, t2) {
 }
 
 // node_modules/simple-git/dist/esm/index.js
-var import_promise_deferred2 = __toESM(require_dist3(), 1);
+var import_promise_deferred2 = __toESM(require_dist4(), 1);
 var import_node_events2 = require("node:events");
 var __defProp2 = Object.defineProperty;
 var __getOwnPropDesc2 = Object.getOwnPropertyDescriptor;
@@ -35543,24 +35623,32 @@ function collectionTagName(state, event, defaultTagName) {
 function isMappingTag(tag) {
   return tag.nodeKind === "mapping";
 }
+function chargeMergeWork(state) {
+  state.totalMergeKeys++;
+  if (state.maxTotalMergeKeys !== -1 && state.totalMergeKeys > state.maxTotalMergeKeys) throwError$1(state, `merge keys exceeded maxTotalMergeKeys (${state.maxTotalMergeKeys})`);
+}
 function mergeKeys(state, frame, source, sourceTag) {
+  chargeMergeWork(state);
   for (const sourceKey of sourceTag.keys(source)) {
-    if (state.maxTotalMergeKeys !== -1 && ++state.totalMergeKeys > state.maxTotalMergeKeys) throwError$1(state, `merge keys exceeded maxTotalMergeKeys (${state.maxTotalMergeKeys})`);
+    chargeMergeWork(state);
     if (frame.tag.has(frame.value, sourceKey)) continue;
     const err = frame.tag.addPair(frame.value, sourceKey, sourceTag.get(source, sourceKey));
     if (err) throwError$1(state, err);
-    (frame.overridable ??= /* @__PURE__ */ new Set()).add(sourceKey);
+    frame.overridable ??= /* @__PURE__ */ new Set();
+    frame.overridable.add(sourceKey);
   }
 }
 function mergeSource(state, frame, source, sourceTag) {
   state.position = frame.keyPosition;
   if (isMappingTag(sourceTag)) mergeKeys(state, frame, source, sourceTag);
-  else if (sourceTag.nodeKind === "sequence" && Array.isArray(source)) for (const element of source) {
-    const elementTag = state.nodeTags.get(element);
-    if (!elementTag) throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
-    mergeKeys(state, frame, element, elementTag);
-  }
-  else throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
+  else if (sourceTag.nodeKind === "sequence" && Array.isArray(source)) {
+    if (source.length > 100) throwError$1(state, "abnormal merge sequence size");
+    for (const element of source) {
+      const elementTag = state.nodeTags.get(element);
+      if (!elementTag) throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
+      mergeKeys(state, frame, element, elementTag);
+    }
+  } else throwError$1(state, "cannot merge mappings; the provided source object is unacceptable");
 }
 function addMappingValue(state, frame, key, value, tag) {
   state.position = frame.keyPosition;
@@ -35903,6 +35991,24 @@ function testDocumentSeparator(state, position = state.position) {
   }
   return false;
 }
+function skipByteOrderMark(state) {
+  if (state.position === state.lineStart && state.input.charCodeAt(state.position) === 65279) {
+    state.position++;
+    state.lineStart = state.position;
+  }
+}
+function testDocumentBoundary(state) {
+  if (state.position !== state.lineStart) return false;
+  if (testDocumentSeparator(state)) return true;
+  if (state.input.charCodeAt(state.position) !== 65279) return false;
+  const snapshot = snapshotState(state);
+  skipByteOrderMark(state);
+  skipSeparationSpace(state, true);
+  const ch = state.input.charCodeAt(state.position);
+  const result = state.position === state.lineStart && (ch === 37 || ch === 45 && testDocumentSeparator(state));
+  restoreState(state, snapshot);
+  return result;
+}
 function skipUntilLineEnd(state) {
   let ch = state.input.charCodeAt(state.position);
   while (ch !== 0 && !isEol(ch)) ch = state.input.charCodeAt(++state.position);
@@ -36086,7 +36192,7 @@ function readBlockScalar(state, parentIndent, props) {
       } else if (column > 0) valueEnd = linePosition + column;
       break;
     }
-    if (linePosition === state.lineStart && testDocumentSeparator(state, linePosition)) break;
+    if (testDocumentBoundary(state)) break;
     if (!detectedIndent && contentIndent === -1 && isEol(first2)) maxLeadingIndent = Math.max(maxLeadingIndent, column);
     if (!detectedIndent && contentIndent === -1 && !isEol(first2)) {
       if (first2 === 9 && column < parentIndent) {
@@ -36139,7 +36245,7 @@ function readPlainScalar(state, nodeIndent, nodeContext, props) {
   const inFlow = nodeContext === CONTEXT_FLOW_IN;
   let multiline = false;
   while (ch !== 0) {
-    if (state.position === state.lineStart && testDocumentSeparator(state)) break;
+    if (testDocumentBoundary(state)) break;
     if (ch === 58) {
       const following = state.input.charCodeAt(state.position + 1);
       if (isWsOrEolOrEnd(following) || inFlow && isFlowIndicator(following)) break;
@@ -36496,7 +36602,7 @@ function readDocument(state) {
   const documentEvent = state.events[documentEventIndex];
   if (documentEvent?.type === EVENT_ID.DOCUMENT) documentEvent.explicitEnd = explicitEnd;
   addPopEvent(state);
-  if (!explicitEnd && state.position < state.length && !(state.position === state.lineStart && testDocumentSeparator(state))) throwError(state, "end of the stream or a document separator is expected");
+  if (!explicitEnd && state.position < state.length && !testDocumentBoundary(state)) throwError(state, "end of the stream or a document separator is expected");
 }
 function parseEvents(input, options) {
   const length = input.length;
@@ -36517,8 +36623,8 @@ function parseEvents(input, options) {
   };
   const nullpos = input.indexOf("\0");
   if (nullpos !== -1) YAMLException.throwAt(input, nullpos, "null byte is not allowed in input", state.filename);
-  if (state.input.charCodeAt(state.position) === 65279) state.position++;
   while (state.position < state.length) {
+    skipByteOrderMark(state);
     skipSeparationSpace(state, true);
     if (state.position >= state.length) break;
     const documentStart = state.position;
@@ -36551,27 +36657,108 @@ function load(input, options) {
   if (documents.length === 1) return documents[0];
   throw new YAMLException("expected a single document in the stream, but found more");
 }
-var ESCAPE_SEQUENCES = {};
-ESCAPE_SEQUENCES[0] = "\\0";
-ESCAPE_SEQUENCES[7] = "\\a";
-ESCAPE_SEQUENCES[8] = "\\b";
-ESCAPE_SEQUENCES[9] = "\\t";
-ESCAPE_SEQUENCES[10] = "\\n";
-ESCAPE_SEQUENCES[11] = "\\v";
-ESCAPE_SEQUENCES[12] = "\\f";
-ESCAPE_SEQUENCES[13] = "\\r";
-ESCAPE_SEQUENCES[27] = "\\e";
-ESCAPE_SEQUENCES[34] = '\\"';
-ESCAPE_SEQUENCES[92] = "\\\\";
-ESCAPE_SEQUENCES[133] = "\\N";
-ESCAPE_SEQUENCES[160] = "\\_";
-ESCAPE_SEQUENCES[8232] = "\\L";
-ESCAPE_SEQUENCES[8233] = "\\P";
+function hasBit(mask, bit) {
+  return (mask & 1 << bit) !== 0;
+}
+var DEFAULT_SCALAR_STYLE_RULES = {
+  applyQuoteFlowKeysOption,
+  doubleQuoteForInvisibles,
+  doubleQuoteWhitespaceOnly,
+  applyForceQuotesOption,
+  tryLongOrMultilineAsBlock,
+  quoteInvalidPlain,
+  fallbackToDoubleQuoted
+};
+function _preferredQuotedStyle(layout) {
+  if (layout.presenterOptions.quoteStyle === "single" && hasBit(layout.allowedStylesMask, SCALAR_STYLE.SINGLE_QUOTED)) return SCALAR_STYLE.SINGLE_QUOTED;
+  return SCALAR_STYLE.DOUBLE_QUOTED;
+}
+function applyQuoteFlowKeysOption(layout) {
+  if (!layout.presenterOptions.quoteFlowKeys) return;
+  if (!layout.isKey || !layout.flowOnly || layout.style !== SCALAR_STYLE.PLAIN) return;
+  layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+}
+function doubleQuoteForInvisibles(layout) {
+  if (layout.style === SCALAR_STYLE.PLAIN && /[\t\x7F-\xA0\u2028\u2029\uFEFF\uFFFE\uFFFF]/.test(layout.node.value)) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+}
+function doubleQuoteWhitespaceOnly(layout) {
+  if (layout.style === SCALAR_STYLE.PLAIN && /^\s+$/.test(layout.node.value)) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+}
+function applyForceQuotesOption(layout) {
+  if (!layout.presenterOptions.forceQuotes) return;
+  if (layout.isKey || layout.style !== SCALAR_STYLE.PLAIN) return;
+  layout.style = layout.node.value.includes("\n") ? SCALAR_STYLE.DOUBLE_QUOTED : _preferredQuotedStyle(layout);
+}
+function tryLongOrMultilineAsBlock(layout) {
+  if (layout.style !== SCALAR_STYLE.PLAIN || layout.isKey) return;
+  const value = layout.node.value;
+  const multiline = value.indexOf("\n") !== -1;
+  if (!hasBit(layout.allowedStylesMask, SCALAR_STYLE.LITERAL_BLOCK)) {
+    if (multiline) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+    return;
+  }
+  const w = layout.presenterOptions.lineWidth;
+  if (w === -1) {
+    if (multiline) layout.style = SCALAR_STYLE.LITERAL_BLOCK;
+    return;
+  }
+  const availableWidth = Math.max(Math.min(w, 40), w - layout.shiftOfContent);
+  let position = 0;
+  let shouldFold = false;
+  while (position <= value.length) {
+    let lineEnd = value.length;
+    const nextLineBreak = value.indexOf("\n", position);
+    if (nextLineBreak !== -1) lineEnd = nextLineBreak;
+    const line = value.slice(position, lineEnd);
+    if (line.length > availableWidth && line[0] !== " " && / [^ \t]/.test(line)) shouldFold = true;
+    if (nextLineBreak === -1) break;
+    position = nextLineBreak + 1;
+  }
+  if (shouldFold) layout.style = SCALAR_STYLE.FOLDED_BLOCK;
+  else if (multiline) layout.style = SCALAR_STYLE.LITERAL_BLOCK;
+}
+function quoteInvalidPlain(layout) {
+  if (layout.style === SCALAR_STYLE.PLAIN && !hasBit(layout.allowedStylesMask, SCALAR_STYLE.PLAIN)) layout.style = _preferredQuotedStyle(layout);
+}
+function fallbackToDoubleQuoted(layout) {
+  if (!hasBit(layout.allowedStylesMask, layout.style)) layout.style = SCALAR_STYLE.DOUBLE_QUOTED;
+}
+var SRC_C_PRINTABLE = "[\\x09\\x0A\\x0D\\x20-\\x7E\\x85\\xA0-\\uD7FF\\uE000-\\uFFFD\\u{10000}-\\u{10FFFF}]";
+var SRC_B_CHAR = "[\\n\\r]";
+var SRC_C_BYTE_ORDER_MARK = "\\uFEFF";
+var SRC_S_WHITE = "[ \\t]";
+var SRC_NB_CHAR = `(?:(?!(?:${SRC_B_CHAR}|${SRC_C_BYTE_ORDER_MARK}))${SRC_C_PRINTABLE})`;
+var SRC_NS_CHAR = `(?:(?!${SRC_S_WHITE})${SRC_NB_CHAR})`;
+var SRC_NB_JSON = "[\\x09\\x20-\\uD7FF\\uE000-\\uFFFF\\u{10000}-\\u{10FFFF}]";
+var SRC_C_INDICATOR = "[-?:,\\[\\]{}#&*!|>'\"%@`]";
+var SRC_C_FLOW_INDICATOR = "[,\\[\\]{}]";
+var SRC_NS_PLAIN_SAFE_FLOW_OUT = SRC_NS_CHAR;
+var SRC_NS_PLAIN_SAFE_FLOW_IN = `(?:(?!${SRC_C_FLOW_INDICATOR})${SRC_NS_CHAR})`;
+var SRC_NS_PLAIN_FIRST_FLOW_OUT = `(?:(?:(?!${SRC_C_INDICATOR})${SRC_NS_CHAR})|[?:-](?=${SRC_NS_PLAIN_SAFE_FLOW_OUT}))`;
+var SRC_NS_PLAIN_FIRST_FLOW_IN = `(?:(?:(?!${SRC_C_INDICATOR})${SRC_NS_CHAR})|[?:-](?=${SRC_NS_PLAIN_SAFE_FLOW_IN}))`;
+var SRC_NS_PLAIN_CHAR_FLOW_OUT = `(?:(?:(?![:#])${SRC_NS_PLAIN_SAFE_FLOW_OUT})|:(?=${SRC_NS_PLAIN_SAFE_FLOW_OUT}))#*`;
+var SRC_NS_PLAIN_CHAR_FLOW_IN = `(?:(?:(?![:#])${SRC_NS_PLAIN_SAFE_FLOW_IN})|:(?=${SRC_NS_PLAIN_SAFE_FLOW_IN}))#*`;
+var SRC_NB_NS_PLAIN_IN_LINE_FLOW_OUT = `(?:${SRC_S_WHITE}*${SRC_NS_PLAIN_CHAR_FLOW_OUT})*`;
+var SRC_NB_NS_PLAIN_IN_LINE_FLOW_IN = `(?:${SRC_S_WHITE}*${SRC_NS_PLAIN_CHAR_FLOW_IN})*`;
+var SRC_NS_PLAIN_ONE_LINE_FLOW_OUT = `${SRC_NS_PLAIN_FIRST_FLOW_OUT}#*${SRC_NB_NS_PLAIN_IN_LINE_FLOW_OUT}`;
+var SRC_NS_PLAIN_ONE_LINE_FLOW_IN = `${SRC_NS_PLAIN_FIRST_FLOW_IN}#*${SRC_NB_NS_PLAIN_IN_LINE_FLOW_IN}`;
+var SRC_NS_PLAIN_ONE_LINE_BLOCK_KEY = SRC_NS_PLAIN_ONE_LINE_FLOW_OUT;
+var SRC_NS_PLAIN_ONE_LINE_FLOW_KEY = SRC_NS_PLAIN_ONE_LINE_FLOW_IN;
+var SRC_S_NS_PLAIN_NEXT_LINE_FLOW_OUT = `\\n+${SRC_NS_PLAIN_CHAR_FLOW_OUT}${SRC_NB_NS_PLAIN_IN_LINE_FLOW_OUT}`;
+var SRC_S_NS_PLAIN_NEXT_LINE_FLOW_IN = `\\n+${SRC_NS_PLAIN_CHAR_FLOW_IN}${SRC_NB_NS_PLAIN_IN_LINE_FLOW_IN}`;
+var SRC_NS_PLAIN_MULTI_LINE_FLOW_OUT = `${SRC_NS_PLAIN_ONE_LINE_FLOW_OUT}(?:${SRC_S_NS_PLAIN_NEXT_LINE_FLOW_OUT})*`;
+var SRC_NS_PLAIN_MULTI_LINE_FLOW_IN = `${SRC_NS_PLAIN_ONE_LINE_FLOW_IN}(?:${SRC_S_NS_PLAIN_NEXT_LINE_FLOW_IN})*`;
+var NS_PLAIN_FLOW_OUT = new RegExp(`^(?:${SRC_NS_PLAIN_MULTI_LINE_FLOW_OUT})$`, "u");
+var NS_PLAIN_FLOW_IN = new RegExp(`^(?:${SRC_NS_PLAIN_MULTI_LINE_FLOW_IN})$`, "u");
+var NS_PLAIN_BLOCK_KEY = new RegExp(`^(?:${SRC_NS_PLAIN_ONE_LINE_BLOCK_KEY})$`, "u");
+var NS_PLAIN_FLOW_KEY = new RegExp(`^(?:${SRC_NS_PLAIN_ONE_LINE_FLOW_KEY})$`, "u");
+var NB_SINGLE_ONE_LINE = new RegExp(`^(?:${SRC_NB_JSON})*$`, "u");
+var NB_SINGLE_MULTI_LINE = new RegExp(`^(?:${SRC_NB_JSON}|\\n)*$`, "u");
+var BLOCK_SCALAR_CONTENT = new RegExp(`^(?:${SRC_NB_CHAR}|\\n)*$`, "u");
 var DEFAULT_PRESENTER_OPTIONS = {
   indent: 2,
   seqNoIndent: false,
   seqInlineFirst: true,
-  sortKeys: false,
   lineWidth: 80,
   flowBracketPadding: false,
   flowSkipCommaSpace: false,
@@ -36579,6 +36766,7 @@ var DEFAULT_PRESENTER_OPTIONS = {
   quoteFlowKeys: false,
   quoteStyle: "single",
   forceQuotes: false,
+  scalarStyleRules: Object.keys(DEFAULT_SCALAR_STYLE_RULES).map((name) => Reflect.get(DEFAULT_SCALAR_STYLE_RULES, name)),
   tagBeforeAnchor: false
 };
 var DEFAULT_DUMP_OPTIONS = {
@@ -36587,6 +36775,7 @@ var DEFAULT_DUMP_OPTIONS = {
   skipInvalid: false,
   noRefs: false,
   flowLevel: -1,
+  sortKeys: false,
   transform: () => {
   }
 };
