@@ -1,0 +1,25 @@
+name: 'action-evaluation'
+
+on:
+  pull_request:
+    paths:
+      - 'prompts/**'
+
+permissions:
+  contents: read
+
+jobs:
+  test: # make sure the action works on a clean machine without building
+    permissions:
+      contents: read
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: ./
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          prompts: |
+            test-prompts/*.{json,txt}
+          config: 'test-prompts/promptfooconfig.yaml'
