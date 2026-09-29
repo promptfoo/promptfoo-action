@@ -36687,6 +36687,7 @@ function doubleQuoteWhitespaceOnly(layout) {
 function applyForceQuotesOption(layout) {
   if (!layout.presenterOptions.forceQuotes) return;
   if (layout.isKey || layout.style !== SCALAR_STYLE.PLAIN) return;
+  if (layout.node.tag !== layout.presenterOptions.schema.defaultScalarTag.tagName) return;
   layout.style = layout.node.value.includes("\n") ? SCALAR_STYLE.DOUBLE_QUOTED : _preferredQuotedStyle(layout);
 }
 function tryLongOrMultilineAsBlock(layout) {
