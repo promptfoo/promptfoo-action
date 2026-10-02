@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.5](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.4...promptfoo-action-v1.3.5) (2026-09-29)
+
+
+### Bug Fixes
+
+* **deps:** repair js-yaml v5 upgrade ([#984](https://github.com/promptfoo/promptfoo-action/issues/984)) ([02e1cfc](https://github.com/promptfoo/promptfoo-action/commit/02e1cfcb91889c776c75bc8c12e3ec4640783f32))
+* **deps:** update dependency dotenv to v18 ([#1021](https://github.com/promptfoo/promptfoo-action/issues/1021)) ([cc2f5e1](https://github.com/promptfoo/promptfoo-action/commit/cc2f5e1955afb0085b5d869838ef09f82a4604a8))
+
 ## [1.3.4](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.3...promptfoo-action-v1.3.4) (2026-06-15)
 
 
