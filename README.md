@@ -45,7 +45,7 @@ The action can be configured using the following inputs:
 | `promptfoo-version` | Version or dist-tag used by `npx promptfoo@<version>`. Defaults to `latest`. | No |
 | `no-share` | Pass `--no-share`, overriding config-level sharing. Defaults to `false`. | No |
 | `use-config-prompts` | Do not override config prompts with changed files matched by `prompts`. Defaults to `false`. | No |
-| `env-files` | Comma-separated application `.env` paths loaded in order from `working-directory`. Later files override earlier files; process-control variables are rejected. | No |
+| `env-files` | Comma-separated application `.env` paths loaded in order from `working-directory`. Later files override earlier files; process-control and Promptfoo authentication variables are rejected. | No |
 | `fail-on-threshold` | Required suite pass percentage from 0 to 100. | No |
 | `max-concurrency` | Value passed to Promptfoo's `--max-concurrency`. Defaults to `4`. | No |
 | `no-table` | Pass `--no-table`. Defaults to `false`. | No |
@@ -276,7 +276,7 @@ jobs:
 
 This is particularly useful for Next.js applications or other frameworks that use `.env` files for configuration. The environment variables from these files will be available to promptfoo during evaluation.
 
-> **Security note:** `env-files` is for _application_ configuration only. Because these files are part of the checked-out repository, a pull request could otherwise use them to hijack the action's own process. The action therefore rejects process-control variables — Node/npm (`NODE_OPTIONS`, `NODE_PATH`, `NPM_CONFIG_*`), git (`GIT_*`), interpreter injection (`RUBYOPT`, `PERL5OPT`, `PYTHONHOME`, ...), executable resolution (`PATH`), dynamic loaders (`LD_PRELOAD`, `DYLD_*`), config-home redirection (`HOME`, `XDG_CONFIG_HOME`, ...), and proxy/TLS controls (`HTTP_PROXY`, `NODE_EXTRA_CA_CERTS`, ...) — and fails the run if any selected file sets one. Ordinary application variables (`NODE_ENV`, provider settings, API keys, `PYTHONPATH` for a Python provider, ...) still pass through. If your evaluation genuinely needs one of these (for example, an outbound proxy or a custom CA for LLM API calls), set it in the trusted workflow `env:` block instead of an `env-files` file:
+> **Security note:** `env-files` is for _application_ configuration only. Because these files are part of the checked-out repository, a pull request could otherwise use them to hijack the action's own process. The action therefore rejects process-control variables — Node/npm (`NODE_OPTIONS`, `NODE_PATH`, `NPM_CONFIG_*`), git (`GIT_*`), interpreter injection (`RUBYOPT`, `PERL5OPT`, `PYTHONHOME`, ...), executable resolution (`PATH`), dynamic loaders (`LD_PRELOAD`, `DYLD_*`), config-home redirection (`HOME`, `XDG_CONFIG_HOME`, ...), and proxy/TLS controls (`HTTP_PROXY`, `NODE_EXTRA_CA_CERTS`, ...). It also rejects Promptfoo authentication settings (`PROMPTFOO_API_KEY`, `PROMPTFOO_REMOTE_API_BASE_URL`) so a checked-in file cannot redirect the credential's destination. The run fails if any selected file sets one of these. Ordinary application variables (`NODE_ENV`, provider settings, provider API keys such as `OPENAI_API_KEY`, `PYTHONPATH` for a Python provider, ...) still pass through. If your evaluation genuinely needs one of these (for example, an outbound proxy or a custom CA for LLM API calls), set it in the trusted workflow `env:` block instead of an `env-files` file:
 >
 > ```yaml
 >       - name: Run promptfoo evaluation
