@@ -204,6 +204,45 @@ export async function run(): Promise<void> {
         core.getInput('working-directory', { required: false }) || '.',
       ),
     );
+    const matchesPromptGlob = (repositoryFile?: string): boolean => {
+      if (!repositoryFile) {
+        return false;
+      }
+
+      const absoluteFile = path.resolve(workspaceRoot, repositoryFile);
+      const repositoryPath = path.relative(workspaceRoot, absoluteFile);
+      if (
+        repositoryPath === '..' ||
+        repositoryPath.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(repositoryPath)
+      ) {
+        return false;
+      }
+
+      const relativePath = path.relative(workingDirectory, absoluteFile);
+      const workingDirectoryPath = toRepositoryPath(relativePath);
+      return promptFilesGlobs.some((pattern) => {
+        const candidate = path.isAbsolute(pattern)
+          ? toRepositoryPath(absoluteFile)
+          : workingDirectoryPath;
+        const portablePattern = toRepositoryPath(pattern).replace(
+          /\\([[\]*?{}])/g,
+          '[$1]',
+        );
+        const matches = (candidatePattern: string): boolean =>
+          path.matchesGlob(candidate, candidatePattern) ||
+          (['darwin', 'win32'].includes(process.platform) &&
+            path.matchesGlob(
+              candidate.toLowerCase(),
+              candidatePattern.toLowerCase(),
+            ));
+
+        return (
+          matches(portablePattern) ||
+          matches(path.posix.normalize(portablePattern))
+        );
+      });
+    };
     const configAbsolutePath = path.resolve(workingDirectory, configPath);
     const configRepositoryPath = toRepositoryPath(
       path.relative(workspaceRoot, configAbsolutePath),
@@ -339,6 +378,7 @@ export async function run(): Promise<void> {
 
     const event = github.context.eventName;
     let changedFiles = '';
+    let evaluatedAfterPromptRemoval = false;
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -364,7 +404,23 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
+        const monitoredPromptRemovedOrRenamedOut = pullRequestFiles.some(
+          (file) =>
+            (file.status === 'removed' && matchesPromptGlob(file.filename)) ||
+            (file.status === 'renamed' &&
+              matchesPromptGlob(file.previous_filename) &&
+              !matchesPromptGlob(file.filename)),
+        );
+        if (monitoredPromptRemovedOrRenamedOut) {
+          evaluatedAfterPromptRemoval = true;
+          core.warning(
+            'A monitored prompt was removed or moved outside the configured prompt globs. Processing all remaining matching prompt files.',
+          );
+        } else {
+          changedFiles = pullRequestFiles
+            .map((file) => file.filename)
+            .join('\n');
+        }
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -480,6 +536,8 @@ export async function run(): Promise<void> {
         promptFiles.push(...allMatches);
       }
     }
+
+    promptFiles.splice(0, promptFiles.length, ...new Set(promptFiles));
 
     const configChanged =
       changedFilesList.length > 0 &&
@@ -809,8 +867,13 @@ export async function run(): Promise<void> {
 
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
-      const modifiedFiles = promptFiles.join(', ');
-      let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
+      const reportedFiles =
+        promptFiles.join(', ') ||
+        (evaluatedAfterPromptRemoval ? '(no prompt files remain)' : '');
+      const promptDescription = evaluatedAfterPromptRemoval
+        ? 'LLM prompts were evaluated'
+        : 'LLM prompt was modified';
+      let body = `⚠️ ${promptDescription} in these files: ${reportedFiles}
 
 | Success | Failure |
 |---------|---------|
