@@ -584,36 +584,39 @@ describe('GitHub Action Main', () => {
       'PROMPTFOO_FAILED_TEST_EXIT_CODE',
       'PROMPTFOO_PASS_RATE_THRESHOLD',
       'PROMPTFOO_REMOTE_API_BASE_URL',
-    ])('should reject process startup variable %s from environment files', async (variableName) => {
-      withInputs({ 'env-files': '.env' });
-      mockFs.existsSync.mockReturnValue(true);
+    ])(
+      'should reject process startup variable %s from environment files',
+      async (variableName) => {
+        withInputs({ 'env-files': '.env' });
+        mockFs.existsSync.mockReturnValue(true);
 
-      const dotenv = await import('dotenv');
-      const originalValue = process.env[variableName];
-      (dotenv.config as Mock).mockImplementation(
-        (options?: { processEnv?: Record<string, string> }) => {
-          const parsed = { [variableName]: 'attacker-controlled' };
-          Object.assign(options?.processEnv ?? process.env, parsed);
-          return { parsed };
-        },
-      );
-
-      try {
-        await run();
-
-        expect(mockCore.setFailed).toHaveBeenCalledWith(
-          expect.stringContaining(variableName),
+        const dotenv = await import('dotenv');
+        const originalValue = process.env[variableName];
+        (dotenv.config as Mock).mockImplementation(
+          (options?: { processEnv?: Record<string, string> }) => {
+            const parsed = { [variableName]: 'attacker-controlled' };
+            Object.assign(options?.processEnv ?? process.env, parsed);
+            return { parsed };
+          },
         );
-        expect(mockExec.exec).not.toHaveBeenCalled();
-        expect(process.env[variableName]).toBe(originalValue);
-      } finally {
-        if (originalValue === undefined) {
-          delete process.env[variableName];
-        } else {
-          process.env[variableName] = originalValue;
+
+        try {
+          await run();
+
+          expect(mockCore.setFailed).toHaveBeenCalledWith(
+            expect.stringContaining(variableName),
+          );
+          expect(mockExec.exec).not.toHaveBeenCalled();
+          expect(process.env[variableName]).toBe(originalValue);
+        } finally {
+          if (originalValue === undefined) {
+            delete process.env[variableName];
+          } else {
+            process.env[variableName] = originalValue;
+          }
         }
-      }
-    });
+      },
+    );
 
     test('should reject repository auth routing before validating trusted credentials', async () => {
       withInputs({ 'env-files': '.env' });
@@ -2562,27 +2565,27 @@ describe('exec error handling with repeat-min-pass', () => {
     delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
   });
 
-  test.each([
-    '',
-    'Infinity',
-  ])('should normalize PROMPTFOO_PASS_RATE_THRESHOLD=%j to 100%%', async (threshold) => {
-    process.env.PROMPTFOO_PASS_RATE_THRESHOLD = threshold;
-    mockFs.readFileSync.mockReturnValue(
-      JSON.stringify({
-        results: {
-          stats: { successes: 3, failures: 1 },
-        },
-      }),
-    );
+  test.each(['', 'Infinity'])(
+    'should normalize PROMPTFOO_PASS_RATE_THRESHOLD=%j to 100%%',
+    async (threshold) => {
+      process.env.PROMPTFOO_PASS_RATE_THRESHOLD = threshold;
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          results: {
+            stats: { successes: 3, failures: 1 },
+          },
+        }),
+      );
 
-    await run();
+      await run();
 
-    expect(mockCore.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('PROMPTFOO_PASS_RATE_THRESHOLD (100%)'),
-    );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('PROMPTFOO_PASS_RATE_THRESHOLD (100%)'),
+      );
 
-    delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
-  });
+      delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
+    },
+  );
 
   test('should honor a valid custom failed-test exit code', async () => {
     process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = '42';
@@ -2600,24 +2603,24 @@ describe('exec error handling with repeat-min-pass', () => {
     delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;
   });
 
-  test.each([
-    '130',
-    '300',
-  ])('should normalize invalid failed-test exit code %s', async (exitCode) => {
-    process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = exitCode;
-    mockExec.exec.mockImplementation((_command, _args, options) => {
-      expect(options?.env?.PROMPTFOO_FAILED_TEST_EXIT_CODE).toBe('100');
-      return Promise.resolve(100);
-    });
+  test.each(['130', '300'])(
+    'should normalize invalid failed-test exit code %s',
+    async (exitCode) => {
+      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = exitCode;
+      mockExec.exec.mockImplementation((_command, _args, options) => {
+        expect(options?.env?.PROMPTFOO_FAILED_TEST_EXIT_CODE).toBe('100');
+        return Promise.resolve(100);
+      });
 
-    await run();
+      await run();
 
-    expect(mockCore.warning).toHaveBeenCalledWith(
-      expect.stringContaining('reserved or invalid'),
-    );
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('reserved or invalid'),
+      );
 
-    delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;
-  });
+      delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;
+    },
+  );
 
   test('should normalize reserved PROMPTFOO_FAILED_TEST_EXIT_CODE before invoking promptfoo', async () => {
     process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = '1';
