@@ -19743,405 +19743,6 @@ var require_dist = __commonJS({
   }
 });
 
-// node_modules/dotenv/dist/index.cjs
-var require_dist2 = __commonJS({
-  "node_modules/dotenv/dist/index.cjs"(exports2, module2) {
-    var O3 = (e, o2) => () => {
-      try {
-        return o2 || e((o2 = { exports: {} }).exports, o2), o2.exports;
-      } catch (t2) {
-        throw o2 = 0, t2;
-      }
-    };
-    var q3 = O3((ve2, j3) => {
-      function I3(e) {
-        return typeof e == "string" ? !["false", "0", "no", "off", ""].includes(e.toLowerCase()) : !!e;
-      }
-      function U3() {
-        let e = {};
-        for (let o2 of ["ENCODING", "PATH", "QUIET", "DEBUG", "OVERRIDE", "FAST"]) {
-          let t2 = process.env[`DOTENV_${o2}`] != null ? process.env[`DOTENV_${o2}`] : process.env[`DOTENV_CONFIG_${o2}`];
-          t2 != null && (e[o2.toLowerCase()] = o2 === "ENCODING" || o2 === "PATH" ? t2 : I3(t2));
-        }
-        return e;
-      }
-      j3.exports = { parseBoolean: I3, optionsFromEnv: U3 };
-    });
-    var T3 = O3((me2, C3) => {
-      var H3 = require("fs"), x3 = require("path"), L3 = require("os"), { parseBoolean: y2, optionsFromEnv: M3 } = q3(), W3 = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg, v2 = new Uint8Array(256);
-      for (let e = 48; e <= 57; e++) v2[e] = 1;
-      for (let e = 65; e <= 90; e++) v2[e] = 1;
-      for (let e = 97; e <= 122; e++) v2[e] = 1;
-      v2[45] = 1;
-      v2[46] = 1;
-      v2[95] = 1;
-      function Q3(e) {
-        let o2 = {}, t2 = e.toString();
-        t2 = t2.replace(/\r\n?/mg, `
-`);
-        let n7;
-        for (; (n7 = W3.exec(t2)) != null; ) {
-          let r2 = n7[1], s = n7[2] || "";
-          s = s.trim();
-          let i2 = s[0];
-          s = s.replace(/^(['"`])([\s\S]*)\1$/mg, "$2"), i2 === '"' && (s = s.replace(/\\n/g, `
-`), s = s.replace(/\\r/g, "\r")), o2[r2] = s;
-        }
-        return o2;
-      }
-      function J2(e) {
-        let o2 = {}, t2 = typeof e == "string" ? e : e.toString();
-        t2.indexOf("\r") !== -1 && (t2 = t2.replace(/\r\n?/g, `
-`));
-        let n7 = t2.length, r2 = 0;
-        for (; r2 < n7; ) {
-          let s = t2.charCodeAt(r2);
-          for (; r2 < n7 && (s === 32 || s === 9 || s === 10 || s === 65279); ) r2++, s = t2.charCodeAt(r2);
-          if (r2 >= n7) break;
-          if (s === 35) {
-            for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
-            continue;
-          }
-          if (s === 101 && r2 + 6 < n7 && t2.charCodeAt(r2 + 1) === 120 && t2.charCodeAt(r2 + 2) === 112 && t2.charCodeAt(r2 + 3) === 111 && t2.charCodeAt(r2 + 4) === 114 && t2.charCodeAt(r2 + 5) === 116) {
-            let f = t2.charCodeAt(r2 + 6);
-            if (f === 32 || f === 9) for (r2 += 7; r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
-            else s = t2.charCodeAt(r2);
-          }
-          let i2 = r2, l = 0;
-          for (; r2 < n7 && (l = t2.charCodeAt(r2), v2[l]); ) r2++;
-          if (r2 === i2) {
-            for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
-            continue;
-          }
-          let h2 = t2.slice(i2, r2);
-          if (r2 >= n7 && (l = 0), l === 32 || l === 9) do
-            r2++, l = r2 < n7 ? t2.charCodeAt(r2) : 0;
-          while (l === 32 || l === 9);
-          if (l === 61) r2++;
-          else if (l === 58 && r2 + 1 < n7 && (t2.charCodeAt(r2 + 1) === 32 || t2.charCodeAt(r2 + 1) === 9)) r2++;
-          else {
-            for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
-            continue;
-          }
-          for (; r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
-          let u;
-          if (s = r2 < n7 ? t2.charCodeAt(r2) : 0, s === 39 || s === 34 || s === 96) {
-            let f = s, c3 = r2 + 1, a = c3;
-            for (; a < n7; ) {
-              let p2 = t2.charCodeAt(a);
-              if (p2 === 92 && a + 1 < n7) {
-                let d = t2.charCodeAt(a + 1);
-                if (d === f || d === 92) {
-                  a += 2;
-                  continue;
-                }
-              }
-              if (p2 === f) break;
-              a++;
-            }
-            if (a >= n7) {
-              let p2 = r2, d = r2;
-              for (; d < n7; ) {
-                let w = t2.charCodeAt(d);
-                if (w === 35 || w === 10) break;
-                d++;
-              }
-              let m = d;
-              for (; m > p2; ) {
-                let w = t2.charCodeAt(m - 1);
-                if (w === 32 || w === 9) m--;
-                else break;
-              }
-              if (u = t2.slice(p2, m), r2 = d, r2 < n7 && t2.charCodeAt(r2) === 35) for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
-            } else {
-              for (u = t2.slice(c3, a), r2 = a + 1, f === 34 && u.indexOf("\\") !== -1 && (u = u.replace(/\\n/g, `
-`).replace(/\\r/g, "\r")); r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
-              if (r2 < n7 && t2.charCodeAt(r2) === 35) for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
-            }
-          } else {
-            let f = r2, c3 = t2.indexOf(`
-`, r2);
-            c3 === -1 && (c3 = n7);
-            let a = t2.indexOf("#", r2);
-            (a === -1 || a > c3) && (a = c3);
-            let p2 = a;
-            for (; p2 > f; ) {
-              let d = t2.charCodeAt(p2 - 1);
-              if (d === 32 || d === 9) p2--;
-              else break;
-            }
-            u = f === p2 ? "" : t2.slice(f, p2), r2 = a === c3 ? a : c3;
-          }
-          o2[h2] = u;
-        }
-        return o2;
-      }
-      function K3(e, o2) {
-        return o2 && y2(o2.fast) ? J2(e) : Q3(e);
-      }
-      function b2(e) {
-        console.log(`\u2506 ${e}`);
-      }
-      function X3(e) {
-        console.error(`\u25C7 ${e}`);
-      }
-      function N3(e) {
-        return e[0] === "~" ? x3.join(L3.homedir(), e.slice(1)) : e;
-      }
-      function Y3(e = {}) {
-        return { ...M3(), ...e };
-      }
-      function z2(e) {
-        e = Y3(e);
-        let o2 = x3.resolve(process.cwd(), ".env"), t2 = "utf8", n7 = process.env;
-        e && e.processEnv != null && (n7 = e.processEnv);
-        let r2 = y2(e && e.debug), s = y2(e && e.quiet);
-        e && e.encoding ? t2 = e.encoding : r2 && b2("no encoding is specified (UTF-8 is used by default)");
-        let i2 = [o2];
-        if (e && e.path) if (!Array.isArray(e.path)) i2 = [N3(e.path)];
-        else {
-          i2 = [];
-          for (let c3 of e.path) i2.push(N3(c3));
-        }
-        let l, h2 = {}, u = { fast: e.fast };
-        for (let c3 of i2) try {
-          let a = g.parse(H3.readFileSync(c3, { encoding: t2 }), u);
-          g.populate(h2, a, e);
-        } catch (a) {
-          r2 && b2(`failed to load ${c3} ${a.message}`), l = a;
-        }
-        let f = g.populate(n7, h2, e);
-        if (r2 || !s) {
-          let c3 = Object.keys(f).length, a = [];
-          for (let p2 of i2) try {
-            let d = x3.relative(process.cwd(), p2);
-            a.push(d);
-          } catch (d) {
-            r2 && b2(`failed to load ${p2} ${d.message}`), l = d;
-          }
-          X3(`injected env (${c3}) from ${a.join(",")}`);
-        }
-        return l ? { parsed: h2, error: l } : { parsed: h2 };
-      }
-      function Z2(e) {
-        return g.configDotenv(e);
-      }
-      function ee3(e, o2, t2 = {}) {
-        let n7 = !!(t2 && t2.debug), r2 = !!(t2 && t2.override), s = {};
-        if (e === null || typeof e != "object" || o2 === null || typeof o2 != "object") {
-          let i2 = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
-          throw i2.code = "OBJECT_REQUIRED", i2;
-        }
-        for (let i2 of Object.keys(o2)) Object.prototype.hasOwnProperty.call(e, i2) ? (r2 === true && (e[i2] = o2[i2], s[i2] = o2[i2]), n7 && b2(r2 === true ? `"${i2}" is already defined and WAS overwritten` : `"${i2}" is already defined and was NOT overwritten`)) : (e[i2] = o2[i2], s[i2] = o2[i2]);
-        return s;
-      }
-      var g = { configDotenv: z2, config: Z2, parse: K3, populate: ee3 };
-      C3.exports.configDotenv = g.configDotenv;
-      C3.exports.config = g.config;
-      C3.exports.parse = g.parse;
-      C3.exports.populate = g.populate;
-      C3.exports = g;
-    });
-    var F3 = O3((Ce2, R3) => {
-      var $2 = require("child_process"), te2 = require("fs"), P3 = require("path");
-      function re2(e) {
-        let o2 = ['"'], t2 = 0;
-        for (let n7 of e) {
-          if (n7 === "\\") {
-            t2++;
-            continue;
-          }
-          n7 === '"' ? o2.push("\\".repeat(t2 * 2 + 1), '"') : o2.push("\\".repeat(t2), n7), t2 = 0;
-        }
-        return o2.push("\\".repeat(t2 * 2), '"'), o2.join("");
-      }
-      function _3(e, o2 = 1) {
-        for (let t2 = 0; t2 < o2; t2++) {
-          let n7 = [];
-          for (let r2 of e) {
-            let s = r2.charCodeAt(0), i2 = s >= 48 && s <= 57 || s >= 65 && s <= 90 || s >= 97 && s <= 122, l = "\\/:._-".includes(r2);
-            !i2 && !l && s < 128 && n7.push("^"), n7.push(r2);
-          }
-          e = n7.join("");
-        }
-        return e;
-      }
-      function D3(e, o2) {
-        let t2 = Object.keys(e).reverse().find((n7) => n7.toUpperCase() === o2);
-        return t2 === void 0 ? void 0 : e[t2];
-      }
-      function oe2(e, o2, t2) {
-        let n7 = (D3(o2, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = n7.some((l) => e.toLowerCase().endsWith(l.toLowerCase())) ? ["", ...n7] : [...n7, ""], i2 = /[\\/]/.test(e) ? [t2] : [t2, ...(D3(o2, "PATH") || "").split(";")];
-        for (let l of i2) for (let h2 of s) {
-          let u = P3.resolve(t2, l.replace(/^"|"$/g, ""), e + h2);
-          try {
-            if (te2.statSync(u).isFile()) return u;
-          } catch {
-          }
-        }
-      }
-      function ne3(e, o2, t2) {
-        if (process.platform !== "win32") return $2.spawn(e, o2, t2);
-        let n7 = t2.env || process.env, r2 = oe2(e, n7, t2.cwd || process.cwd());
-        if (r2 && /\.(?:exe|com)$/i.test(r2)) return $2.spawn(r2, o2, t2);
-        let s = /\.(?:bat|cmd)$/i.test(r2 || e), i2 = [_3(P3.normalize(r2 || e))];
-        for (let h2 of o2) i2.push(_3(re2(h2), s ? 2 : 1));
-        let l = i2.join(" ");
-        return $2.spawn(D3(n7, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l}"`], { ...t2, windowsVerbatimArguments: true });
-      }
-      R3.exports = ne3;
-    });
-    var B3 = O3((we2, S2) => {
-      var se2 = require("fs"), ie2 = require("os"), G3 = require("path"), ce2 = require("child_process"), ae2 = F3(), k3 = T3(), { optionsFromEnv: le2 } = q3();
-      function A3() {
-        console.log(["Usage: dotenv run [--help] [-q|--quiet] [--debug] [--override] [--fast] [-f|--file <paths>] [--] <command> [args...]", "", "Run a command with environment variables from a .env file.", "Place dotenv options before the command; all following arguments go to the command.", "", "Options:", "  -f, --file <paths>  .env paths, comma-separated or repeated (default: .env)", "  -q, --quiet suppress the injected env message", "  --debug     enable debug logging", "  --override  override existing environment variables", "  --fast      use the faster character-scanner parser", "", "Environment variables (DOTENV_CONFIG_* names remain as fallbacks):", "  DOTENV_PATH, DOTENV_ENCODING, DOTENV_QUIET,", "  DOTENV_DEBUG, DOTENV_OVERRIDE,", "  DOTENV_FAST"].join(`
-`));
-      }
-      function fe2(e) {
-        let o2 = [], t2 = false, n7, r2, s, i2, l = -1;
-        for (let u = 0; u < e.length; u++) {
-          let f = e[u];
-          if (f === "--") {
-            l = u + 1;
-            break;
-          }
-          if (f === "--help" || f === "-h") return { help: true };
-          if (f === "--quiet" || f === "-q") {
-            n7 = true;
-            continue;
-          }
-          if (f === "--debug") {
-            r2 = true;
-            continue;
-          }
-          if (f === "--override") {
-            s = true;
-            continue;
-          }
-          if (f === "--fast") {
-            i2 = true;
-            continue;
-          }
-          if (f === "-f" || f === "--file" || f.startsWith("-f=") || f.startsWith("--file=")) {
-            let c3 = f.indexOf("="), a = c3 === -1 ? f : f.slice(0, c3), p2 = c3 === -1 ? e[++u] : f.slice(c3 + 1);
-            if (!p2 || p2 === "--") return { error: `${a} requires a path` };
-            let d = p2.split(",").map((m) => m.trim()).filter(Boolean);
-            if (d.length === 0) return { error: `${a} requires a path` };
-            o2.push(...d), t2 = true;
-            continue;
-          }
-          if (f.startsWith("-")) return { error: `unknown option: ${f}` };
-          l = u;
-          break;
-        }
-        let h2 = l === -1 ? [] : e.slice(l);
-        return { paths: o2, pathSet: t2, quiet: n7, debug: r2, override: s, fast: i2, command: h2 };
-      }
-      function ue2(e) {
-        return e[0] === "~" ? G3.join(ie2.homedir(), e.slice(1)) : e;
-      }
-      function de2(e) {
-        let o2 = le2(), t2 = { encoding: o2.encoding || "utf8", quiet: o2.quiet === true, debug: o2.debug === true, override: o2.override === true, fast: o2.fast === true, paths: [".env"], defaultPath: true };
-        return o2.path != null && (t2.paths = [o2.path], t2.defaultPath = false), e.pathSet && (t2.paths = e.paths, t2.defaultPath = false), e.quiet != null && (t2.quiet = e.quiet), e.debug != null && (t2.debug = e.debug), e.override != null && (t2.override = e.override), e.fast != null && (t2.fast = e.fast), t2;
-      }
-      function pe2(e) {
-        let o2 = {}, t2 = [], n7 = { override: e.override, debug: e.debug };
-        for (let s of e.paths) {
-          let i2 = G3.resolve(process.cwd(), ue2(s));
-          try {
-            let l = k3.parse(se2.readFileSync(i2, { encoding: e.encoding }), { fast: e.fast });
-            k3.populate(o2, l, n7), t2.push(s);
-          } catch (l) {
-            if (e.debug && console.log(`\u2506 failed to load ${s} ${l.message}`), !(e.defaultPath && l.code === "ENOENT")) throw l;
-          }
-        }
-        return { injected: k3.populate(process.env, o2, n7), loadedPaths: t2 };
-      }
-      function V3(e) {
-        let o2 = e[0];
-        if (o2 === "--help" || o2 === "-h") {
-          A3();
-          return;
-        }
-        if (o2 !== "run") {
-          A3(), process.exitCode = 1;
-          return;
-        }
-        let t2 = fe2(e.slice(1));
-        if (t2.help) {
-          A3();
-          return;
-        }
-        if (t2.error) {
-          console.error(`dotenv: ${t2.error}`), A3(), process.exitCode = 1;
-          return;
-        }
-        if (t2.command.length === 0) {
-          A3(), process.exitCode = 1;
-          return;
-        }
-        let n7 = de2(t2);
-        try {
-          let c3 = pe2(n7);
-          if (!n7.quiet) {
-            let a = `\u25C7 injected env (${Object.keys(c3.injected).length})`;
-            c3.loadedPaths.length > 0 && (a += ` from ${c3.loadedPaths.join(", ")}`), console.error(a);
-          }
-        } catch (c3) {
-          console.error(`dotenv: ${c3.message}`), process.exitCode = 1;
-          return;
-        }
-        let r2 = !!process.stdin.isTTY, s = process.platform !== "win32" && !r2, i2 = ae2(t2.command[0], t2.command.slice(1), { stdio: "inherit", detached: s }), l = /* @__PURE__ */ new Map(), h2 = 0;
-        function u(c3) {
-          if (!(!i2.pid || i2.exitCode !== null || i2.signalCode !== null)) {
-            if (process.platform === "win32") {
-              ce2.spawnSync("taskkill", ["/pid", String(i2.pid), "/T", "/F"], { stdio: "ignore" });
-              return;
-            }
-            try {
-              process.kill(s ? -i2.pid : i2.pid, c3);
-            } catch (a) {
-              if (a.code !== "ESRCH") throw a;
-            }
-          }
-        }
-        function f() {
-          for (let [c3, a] of l) process.removeListener(c3, a);
-        }
-        for (let c3 of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"]) {
-          let a = () => {
-            if (c3 === "SIGINT") {
-              if (h2++, r2 && process.platform !== "win32" && h2 === 1) return;
-              if (h2 > 1) {
-                u(h2 === 2 ? "SIGTERM" : "SIGKILL");
-                return;
-              }
-            }
-            u(c3);
-          };
-          l.set(c3, a), process.on(c3, a);
-        }
-        i2.on("error", function(c3) {
-          f(), console.error(`dotenv: ${c3.message}`), process.exitCode = 1;
-        }), i2.on("exit", function(c3, a) {
-          f(), typeof c3 == "number" ? process.exit(c3) : (setInterval(() => {
-          }, 1e3), process.kill(process.pid, a));
-        });
-      }
-      S2.exports = V3;
-      require.main === S2 && V3(process.argv.slice(2));
-    });
-    var E2 = T3();
-    var he2 = B3();
-    module2.exports = E2;
-    module2.exports.config = E2.config;
-    module2.exports.configDotenv = E2.configDotenv;
-    module2.exports.parse = E2.parse;
-    module2.exports.populate = E2.populate;
-    require.main === module2 && he2(process.argv.slice(2));
-  }
-});
-
 // node_modules/ms/index.js
 var require_ms = __commonJS({
   "node_modules/ms/index.js"(exports2, module2) {
@@ -20835,7 +20436,7 @@ var require_src2 = __commonJS({
 });
 
 // node_modules/@kwsites/file-exists/dist/index.js
-var require_dist3 = __commonJS({
+var require_dist2 = __commonJS({
   "node_modules/@kwsites/file-exists/dist/index.js"(exports2) {
     "use strict";
     function __export3(m) {
@@ -20847,7 +20448,7 @@ var require_dist3 = __commonJS({
 });
 
 // node_modules/@kwsites/promise-deferred/dist/index.js
-var require_dist4 = __commonJS({
+var require_dist3 = __commonJS({
   "node_modules/@kwsites/promise-deferred/dist/index.js"(exports2) {
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
@@ -20885,6 +20486,405 @@ var require_dist4 = __commonJS({
     exports2.deferred = deferred2;
     exports2.createDeferred = deferred2;
     exports2.default = deferred2;
+  }
+});
+
+// node_modules/dotenv/dist/index.cjs
+var require_dist4 = __commonJS({
+  "node_modules/dotenv/dist/index.cjs"(exports2, module2) {
+    var O3 = (e, o2) => () => {
+      try {
+        return o2 || e((o2 = { exports: {} }).exports, o2), o2.exports;
+      } catch (t2) {
+        throw o2 = 0, t2;
+      }
+    };
+    var q3 = O3((ve2, j3) => {
+      function I3(e) {
+        return typeof e == "string" ? !["false", "0", "no", "off", ""].includes(e.toLowerCase()) : !!e;
+      }
+      function U3() {
+        let e = {};
+        for (let o2 of ["ENCODING", "PATH", "QUIET", "DEBUG", "OVERRIDE", "FAST"]) {
+          let t2 = process.env[`DOTENV_${o2}`] != null ? process.env[`DOTENV_${o2}`] : process.env[`DOTENV_CONFIG_${o2}`];
+          t2 != null && (e[o2.toLowerCase()] = o2 === "ENCODING" || o2 === "PATH" ? t2 : I3(t2));
+        }
+        return e;
+      }
+      j3.exports = { parseBoolean: I3, optionsFromEnv: U3 };
+    });
+    var T3 = O3((me2, C3) => {
+      var H3 = require("fs"), x3 = require("path"), L3 = require("os"), { parseBoolean: y2, optionsFromEnv: M3 } = q3(), W3 = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg, v2 = new Uint8Array(256);
+      for (let e = 48; e <= 57; e++) v2[e] = 1;
+      for (let e = 65; e <= 90; e++) v2[e] = 1;
+      for (let e = 97; e <= 122; e++) v2[e] = 1;
+      v2[45] = 1;
+      v2[46] = 1;
+      v2[95] = 1;
+      function Q3(e) {
+        let o2 = {}, t2 = e.toString();
+        t2 = t2.replace(/\r\n?/mg, `
+`);
+        let n7;
+        for (; (n7 = W3.exec(t2)) != null; ) {
+          let r2 = n7[1], s = n7[2] || "";
+          s = s.trim();
+          let i2 = s[0];
+          s = s.replace(/^(['"`])([\s\S]*)\1$/mg, "$2"), i2 === '"' && (s = s.replace(/\\n/g, `
+`), s = s.replace(/\\r/g, "\r")), o2[r2] = s;
+        }
+        return o2;
+      }
+      function J2(e) {
+        let o2 = {}, t2 = typeof e == "string" ? e : e.toString();
+        t2.indexOf("\r") !== -1 && (t2 = t2.replace(/\r\n?/g, `
+`));
+        let n7 = t2.length, r2 = 0;
+        for (; r2 < n7; ) {
+          let s = t2.charCodeAt(r2);
+          for (; r2 < n7 && (s === 32 || s === 9 || s === 10 || s === 65279); ) r2++, s = t2.charCodeAt(r2);
+          if (r2 >= n7) break;
+          if (s === 35) {
+            for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            continue;
+          }
+          if (s === 101 && r2 + 6 < n7 && t2.charCodeAt(r2 + 1) === 120 && t2.charCodeAt(r2 + 2) === 112 && t2.charCodeAt(r2 + 3) === 111 && t2.charCodeAt(r2 + 4) === 114 && t2.charCodeAt(r2 + 5) === 116) {
+            let f = t2.charCodeAt(r2 + 6);
+            if (f === 32 || f === 9) for (r2 += 7; r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
+            else s = t2.charCodeAt(r2);
+          }
+          let i2 = r2, l = 0;
+          for (; r2 < n7 && (l = t2.charCodeAt(r2), v2[l]); ) r2++;
+          if (r2 === i2) {
+            for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            continue;
+          }
+          let h2 = t2.slice(i2, r2);
+          if (r2 >= n7 && (l = 0), l === 32 || l === 9) do
+            r2++, l = r2 < n7 ? t2.charCodeAt(r2) : 0;
+          while (l === 32 || l === 9);
+          if (l === 61) r2++;
+          else if (l === 58 && r2 + 1 < n7 && (t2.charCodeAt(r2 + 1) === 32 || t2.charCodeAt(r2 + 1) === 9)) r2++;
+          else {
+            for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            continue;
+          }
+          for (; r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
+          let u;
+          if (s = r2 < n7 ? t2.charCodeAt(r2) : 0, s === 39 || s === 34 || s === 96) {
+            let f = s, c3 = r2 + 1, a = c3;
+            for (; a < n7; ) {
+              let p2 = t2.charCodeAt(a);
+              if (p2 === 92 && a + 1 < n7) {
+                let d = t2.charCodeAt(a + 1);
+                if (d === f || d === 92) {
+                  a += 2;
+                  continue;
+                }
+              }
+              if (p2 === f) break;
+              a++;
+            }
+            if (a >= n7) {
+              let p2 = r2, d = r2;
+              for (; d < n7; ) {
+                let w = t2.charCodeAt(d);
+                if (w === 35 || w === 10) break;
+                d++;
+              }
+              let m = d;
+              for (; m > p2; ) {
+                let w = t2.charCodeAt(m - 1);
+                if (w === 32 || w === 9) m--;
+                else break;
+              }
+              if (u = t2.slice(p2, m), r2 = d, r2 < n7 && t2.charCodeAt(r2) === 35) for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            } else {
+              for (u = t2.slice(c3, a), r2 = a + 1, f === 34 && u.indexOf("\\") !== -1 && (u = u.replace(/\\n/g, `
+`).replace(/\\r/g, "\r")); r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
+              if (r2 < n7 && t2.charCodeAt(r2) === 35) for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+            }
+          } else {
+            let f = r2, c3 = t2.indexOf(`
+`, r2);
+            c3 === -1 && (c3 = n7);
+            let a = t2.indexOf("#", r2);
+            (a === -1 || a > c3) && (a = c3);
+            let p2 = a;
+            for (; p2 > f; ) {
+              let d = t2.charCodeAt(p2 - 1);
+              if (d === 32 || d === 9) p2--;
+              else break;
+            }
+            u = f === p2 ? "" : t2.slice(f, p2), r2 = a === c3 ? a : c3;
+          }
+          o2[h2] = u;
+        }
+        return o2;
+      }
+      function K3(e, o2) {
+        return o2 && y2(o2.fast) ? J2(e) : Q3(e);
+      }
+      function b2(e) {
+        console.log(`\u2506 ${e}`);
+      }
+      function X3(e) {
+        console.error(`\u25C7 ${e}`);
+      }
+      function N3(e) {
+        return e[0] === "~" ? x3.join(L3.homedir(), e.slice(1)) : e;
+      }
+      function Y3(e = {}) {
+        return { ...M3(), ...e };
+      }
+      function z2(e) {
+        e = Y3(e);
+        let o2 = x3.resolve(process.cwd(), ".env"), t2 = "utf8", n7 = process.env;
+        e && e.processEnv != null && (n7 = e.processEnv);
+        let r2 = y2(e && e.debug), s = y2(e && e.quiet);
+        e && e.encoding ? t2 = e.encoding : r2 && b2("no encoding is specified (UTF-8 is used by default)");
+        let i2 = [o2];
+        if (e && e.path) if (!Array.isArray(e.path)) i2 = [N3(e.path)];
+        else {
+          i2 = [];
+          for (let c3 of e.path) i2.push(N3(c3));
+        }
+        let l, h2 = {}, u = { fast: e.fast };
+        for (let c3 of i2) try {
+          let a = g.parse(H3.readFileSync(c3, { encoding: t2 }), u);
+          g.populate(h2, a, e);
+        } catch (a) {
+          r2 && b2(`failed to load ${c3} ${a.message}`), l = a;
+        }
+        let f = g.populate(n7, h2, e);
+        if (r2 || !s) {
+          let c3 = Object.keys(f).length, a = [];
+          for (let p2 of i2) try {
+            let d = x3.relative(process.cwd(), p2);
+            a.push(d);
+          } catch (d) {
+            r2 && b2(`failed to load ${p2} ${d.message}`), l = d;
+          }
+          X3(`injected env (${c3}) from ${a.join(",")}`);
+        }
+        return l ? { parsed: h2, error: l } : { parsed: h2 };
+      }
+      function Z2(e) {
+        return g.configDotenv(e);
+      }
+      function ee3(e, o2, t2 = {}) {
+        let n7 = !!(t2 && t2.debug), r2 = !!(t2 && t2.override), s = {};
+        if (e === null || typeof e != "object" || o2 === null || typeof o2 != "object") {
+          let i2 = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
+          throw i2.code = "OBJECT_REQUIRED", i2;
+        }
+        for (let i2 of Object.keys(o2)) Object.prototype.hasOwnProperty.call(e, i2) ? (r2 === true && (e[i2] = o2[i2], s[i2] = o2[i2]), n7 && b2(r2 === true ? `"${i2}" is already defined and WAS overwritten` : `"${i2}" is already defined and was NOT overwritten`)) : (e[i2] = o2[i2], s[i2] = o2[i2]);
+        return s;
+      }
+      var g = { configDotenv: z2, config: Z2, parse: K3, populate: ee3 };
+      C3.exports.configDotenv = g.configDotenv;
+      C3.exports.config = g.config;
+      C3.exports.parse = g.parse;
+      C3.exports.populate = g.populate;
+      C3.exports = g;
+    });
+    var F3 = O3((Ce2, R3) => {
+      var $2 = require("child_process"), te2 = require("fs"), P3 = require("path");
+      function re2(e) {
+        let o2 = ['"'], t2 = 0;
+        for (let n7 of e) {
+          if (n7 === "\\") {
+            t2++;
+            continue;
+          }
+          n7 === '"' ? o2.push("\\".repeat(t2 * 2 + 1), '"') : o2.push("\\".repeat(t2), n7), t2 = 0;
+        }
+        return o2.push("\\".repeat(t2 * 2), '"'), o2.join("");
+      }
+      function _3(e, o2 = 1) {
+        for (let t2 = 0; t2 < o2; t2++) {
+          let n7 = [];
+          for (let r2 of e) {
+            let s = r2.charCodeAt(0), i2 = s >= 48 && s <= 57 || s >= 65 && s <= 90 || s >= 97 && s <= 122, l = "\\/:._-".includes(r2);
+            !i2 && !l && s < 128 && n7.push("^"), n7.push(r2);
+          }
+          e = n7.join("");
+        }
+        return e;
+      }
+      function D3(e, o2) {
+        let t2 = Object.keys(e).reverse().find((n7) => n7.toUpperCase() === o2);
+        return t2 === void 0 ? void 0 : e[t2];
+      }
+      function oe2(e, o2, t2) {
+        let n7 = (D3(o2, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = n7.some((l) => e.toLowerCase().endsWith(l.toLowerCase())) ? ["", ...n7] : [...n7, ""], i2 = /[\\/]/.test(e) ? [t2] : [t2, ...(D3(o2, "PATH") || "").split(";")];
+        for (let l of i2) for (let h2 of s) {
+          let u = P3.resolve(t2, l.replace(/^"|"$/g, ""), e + h2);
+          try {
+            if (te2.statSync(u).isFile()) return u;
+          } catch {
+          }
+        }
+      }
+      function ne3(e, o2, t2) {
+        if (process.platform !== "win32") return $2.spawn(e, o2, t2);
+        let n7 = t2.env || process.env, r2 = oe2(e, n7, t2.cwd || process.cwd());
+        if (r2 && /\.(?:exe|com)$/i.test(r2)) return $2.spawn(r2, o2, t2);
+        let s = /\.(?:bat|cmd)$/i.test(r2 || e), i2 = [_3(P3.normalize(r2 || e))];
+        for (let h2 of o2) i2.push(_3(re2(h2), s ? 2 : 1));
+        let l = i2.join(" ");
+        return $2.spawn(D3(n7, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l}"`], { ...t2, windowsVerbatimArguments: true });
+      }
+      R3.exports = ne3;
+    });
+    var B3 = O3((we2, S2) => {
+      var se2 = require("fs"), ie2 = require("os"), G3 = require("path"), ce2 = require("child_process"), ae2 = F3(), k3 = T3(), { optionsFromEnv: le2 } = q3();
+      function A3() {
+        console.log(["Usage: dotenv run [--help] [-q|--quiet] [--debug] [--override] [--fast] [-f|--file <paths>] [--] <command> [args...]", "", "Run a command with environment variables from a .env file.", "Place dotenv options before the command; all following arguments go to the command.", "", "Options:", "  -f, --file <paths>  .env paths, comma-separated or repeated (default: .env)", "  -q, --quiet suppress the injected env message", "  --debug     enable debug logging", "  --override  override existing environment variables", "  --fast      use the faster character-scanner parser", "", "Environment variables (DOTENV_CONFIG_* names remain as fallbacks):", "  DOTENV_PATH, DOTENV_ENCODING, DOTENV_QUIET,", "  DOTENV_DEBUG, DOTENV_OVERRIDE,", "  DOTENV_FAST"].join(`
+`));
+      }
+      function fe2(e) {
+        let o2 = [], t2 = false, n7, r2, s, i2, l = -1;
+        for (let u = 0; u < e.length; u++) {
+          let f = e[u];
+          if (f === "--") {
+            l = u + 1;
+            break;
+          }
+          if (f === "--help" || f === "-h") return { help: true };
+          if (f === "--quiet" || f === "-q") {
+            n7 = true;
+            continue;
+          }
+          if (f === "--debug") {
+            r2 = true;
+            continue;
+          }
+          if (f === "--override") {
+            s = true;
+            continue;
+          }
+          if (f === "--fast") {
+            i2 = true;
+            continue;
+          }
+          if (f === "-f" || f === "--file" || f.startsWith("-f=") || f.startsWith("--file=")) {
+            let c3 = f.indexOf("="), a = c3 === -1 ? f : f.slice(0, c3), p2 = c3 === -1 ? e[++u] : f.slice(c3 + 1);
+            if (!p2 || p2 === "--") return { error: `${a} requires a path` };
+            let d = p2.split(",").map((m) => m.trim()).filter(Boolean);
+            if (d.length === 0) return { error: `${a} requires a path` };
+            o2.push(...d), t2 = true;
+            continue;
+          }
+          if (f.startsWith("-")) return { error: `unknown option: ${f}` };
+          l = u;
+          break;
+        }
+        let h2 = l === -1 ? [] : e.slice(l);
+        return { paths: o2, pathSet: t2, quiet: n7, debug: r2, override: s, fast: i2, command: h2 };
+      }
+      function ue2(e) {
+        return e[0] === "~" ? G3.join(ie2.homedir(), e.slice(1)) : e;
+      }
+      function de2(e) {
+        let o2 = le2(), t2 = { encoding: o2.encoding || "utf8", quiet: o2.quiet === true, debug: o2.debug === true, override: o2.override === true, fast: o2.fast === true, paths: [".env"], defaultPath: true };
+        return o2.path != null && (t2.paths = [o2.path], t2.defaultPath = false), e.pathSet && (t2.paths = e.paths, t2.defaultPath = false), e.quiet != null && (t2.quiet = e.quiet), e.debug != null && (t2.debug = e.debug), e.override != null && (t2.override = e.override), e.fast != null && (t2.fast = e.fast), t2;
+      }
+      function pe2(e) {
+        let o2 = {}, t2 = [], n7 = { override: e.override, debug: e.debug };
+        for (let s of e.paths) {
+          let i2 = G3.resolve(process.cwd(), ue2(s));
+          try {
+            let l = k3.parse(se2.readFileSync(i2, { encoding: e.encoding }), { fast: e.fast });
+            k3.populate(o2, l, n7), t2.push(s);
+          } catch (l) {
+            if (e.debug && console.log(`\u2506 failed to load ${s} ${l.message}`), !(e.defaultPath && l.code === "ENOENT")) throw l;
+          }
+        }
+        return { injected: k3.populate(process.env, o2, n7), loadedPaths: t2 };
+      }
+      function V3(e) {
+        let o2 = e[0];
+        if (o2 === "--help" || o2 === "-h") {
+          A3();
+          return;
+        }
+        if (o2 !== "run") {
+          A3(), process.exitCode = 1;
+          return;
+        }
+        let t2 = fe2(e.slice(1));
+        if (t2.help) {
+          A3();
+          return;
+        }
+        if (t2.error) {
+          console.error(`dotenv: ${t2.error}`), A3(), process.exitCode = 1;
+          return;
+        }
+        if (t2.command.length === 0) {
+          A3(), process.exitCode = 1;
+          return;
+        }
+        let n7 = de2(t2);
+        try {
+          let c3 = pe2(n7);
+          if (!n7.quiet) {
+            let a = `\u25C7 injected env (${Object.keys(c3.injected).length})`;
+            c3.loadedPaths.length > 0 && (a += ` from ${c3.loadedPaths.join(", ")}`), console.error(a);
+          }
+        } catch (c3) {
+          console.error(`dotenv: ${c3.message}`), process.exitCode = 1;
+          return;
+        }
+        let r2 = !!process.stdin.isTTY, s = process.platform !== "win32" && !r2, i2 = ae2(t2.command[0], t2.command.slice(1), { stdio: "inherit", detached: s }), l = /* @__PURE__ */ new Map(), h2 = 0;
+        function u(c3) {
+          if (!(!i2.pid || i2.exitCode !== null || i2.signalCode !== null)) {
+            if (process.platform === "win32") {
+              ce2.spawnSync("taskkill", ["/pid", String(i2.pid), "/T", "/F"], { stdio: "ignore" });
+              return;
+            }
+            try {
+              process.kill(s ? -i2.pid : i2.pid, c3);
+            } catch (a) {
+              if (a.code !== "ESRCH") throw a;
+            }
+          }
+        }
+        function f() {
+          for (let [c3, a] of l) process.removeListener(c3, a);
+        }
+        for (let c3 of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"]) {
+          let a = () => {
+            if (c3 === "SIGINT") {
+              if (h2++, r2 && process.platform !== "win32" && h2 === 1) return;
+              if (h2 > 1) {
+                u(h2 === 2 ? "SIGTERM" : "SIGKILL");
+                return;
+              }
+            }
+            u(c3);
+          };
+          l.set(c3, a), process.on(c3, a);
+        }
+        i2.on("error", function(c3) {
+          f(), console.error(`dotenv: ${c3.message}`), process.exitCode = 1;
+        }), i2.on("exit", function(c3, a) {
+          f(), typeof c3 == "number" ? process.exit(c3) : (setInterval(() => {
+          }, 1e3), process.kill(process.pid, a));
+        });
+      }
+      S2.exports = V3;
+      require.main === S2 && V3(process.argv.slice(2));
+    });
+    var E2 = T3();
+    var he2 = B3();
+    module2.exports = E2;
+    module2.exports.config = E2.config;
+    module2.exports.configDotenv = E2.configDotenv;
+    module2.exports.parse = E2.parse;
+    module2.exports.populate = E2.populate;
+    require.main === module2 && he2(process.argv.slice(2));
   }
 });
 
@@ -26109,7 +26109,6 @@ function getOctokit(token, options, ...additionalPlugins) {
 }
 
 // src/main.ts
-var dotenv = __toESM(require_dist2());
 var fs7 = __toESM(require("fs"));
 
 // node_modules/glob/dist/esm/index.min.js
@@ -29100,7 +29099,7 @@ Ze.glob = Ze;
 var path6 = __toESM(require("path"));
 
 // node_modules/simple-git/dist/esm/index.js
-var import_file_exists = __toESM(require_dist3(), 1);
+var import_file_exists = __toESM(require_dist2(), 1);
 
 // node_modules/@simple-git/args-pathspec/dist/index.mjs
 var t = /* @__PURE__ */ new WeakMap();
@@ -29118,7 +29117,7 @@ function o(n7) {
 // node_modules/simple-git/dist/esm/index.js
 var import_debug = __toESM(require_src(), 1);
 var import_child_process = require("child_process");
-var import_promise_deferred = __toESM(require_dist4(), 1);
+var import_promise_deferred = __toESM(require_dist3(), 1);
 var import_node_path2 = require("node:path");
 
 // node_modules/@simple-git/argv-parser/dist/index.mjs
@@ -29586,7 +29585,7 @@ function ne2(e, t2) {
 }
 
 // node_modules/simple-git/dist/esm/index.js
-var import_promise_deferred2 = __toESM(require_dist4(), 1);
+var import_promise_deferred2 = __toESM(require_dist3(), 1);
 var import_node_events2 = require("node:events");
 var __defProp2 = Object.defineProperty;
 var __getOwnPropDesc2 = Object.getOwnPropertyDescriptor;
@@ -36978,6 +36977,91 @@ function extractFileDependencies(configPath) {
   }
 }
 
+// src/utils/env.ts
+var dotenv = __toESM(require_dist4());
+var FORBIDDEN_ENV_FILE_KEYS = /* @__PURE__ */ new Set([
+  "ALL_PROXY",
+  "APPDATA",
+  "AWS_CONFIG_FILE",
+  "AWS_SHARED_CREDENTIALS_FILE",
+  "BASH_ENV",
+  "COMSPEC",
+  "DYLD_FRAMEWORK_PATH",
+  "DYLD_INSERT_LIBRARIES",
+  "DYLD_LIBRARY_PATH",
+  "ENV",
+  "HOME",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "LD_LIBRARY_PATH",
+  "LD_PRELOAD",
+  "LOCALAPPDATA",
+  "NODE_EXTRA_CA_CERTS",
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "NO_PROXY",
+  "PATH",
+  "PATHEXT",
+  "PERL5OPT",
+  "PROMPTFOO_CACHE_PATH",
+  "PROMPTFOO_CLOUD_API_URL",
+  "PROMPTFOO_FAILED_TEST_EXIT_CODE",
+  "PROMPTFOO_PASS_RATE_THRESHOLD",
+  "PROMPTFOO_REMOTE_API_BASE_URL",
+  "PYTHONEXECUTABLE",
+  "PYTHONHOME",
+  "PYTHONSTARTUP",
+  "RUBYOPT",
+  "SHELL",
+  "SSL_CERT_DIR",
+  "SSL_CERT_FILE",
+  "USERPROFILE",
+  "XDG_CONFIG_HOME"
+]);
+var FORBIDDEN_ENV_FILE_PREFIXES = ["GIT_", "NPM_CONFIG_"];
+var CASE_INSENSITIVE_PROXY_KEYS = /* @__PURE__ */ new Set([
+  "ALL_PROXY",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "NO_PROXY"
+]);
+function findForbiddenEnvFileKey(environment, platform2 = process.platform) {
+  return Object.keys(environment).find((key) => {
+    const upperCaseKey = key.toUpperCase();
+    const normalizedKey = platform2 === "win32" || CASE_INSENSITIVE_PROXY_KEYS.has(upperCaseKey) || upperCaseKey.startsWith("NPM_CONFIG_") ? upperCaseKey : key;
+    return FORBIDDEN_ENV_FILE_KEYS.has(normalizedKey) || FORBIDDEN_ENV_FILE_PREFIXES.some(
+      (prefix) => normalizedKey.startsWith(prefix)
+    );
+  });
+}
+function loadEnvironmentFile(envFilePath, targetEnvironment = process.env) {
+  const fileEnvironment = {};
+  const result = dotenv.config({
+    path: envFilePath,
+    override: true,
+    processEnv: fileEnvironment,
+    quiet: true
+  });
+  if (result.error) {
+    throw new PromptfooActionError(
+      `Failed to load ${envFilePath}: ${result.error.message}`,
+      ErrorCodes.ENV_FILE_LOAD_ERROR,
+      "Check that the file exists and has valid .env format"
+    );
+  }
+  const forbiddenKey = findForbiddenEnvFileKey(fileEnvironment);
+  if (forbiddenKey) {
+    throw new PromptfooActionError(
+      `Environment file ${envFilePath} sets forbidden process-control variable ${forbiddenKey}`,
+      ErrorCodes.INVALID_CONFIGURATION,
+      "Remove process, authentication-routing, and evaluation-policy control variables from repository environment files. Configure trusted controls in the workflow environment instead."
+    );
+  }
+  for (const [key, value] of Object.entries(fileEnvironment)) {
+    targetEnvironment[key] = value;
+  }
+}
+
 // src/utils/inputs.ts
 function parseStrictPositiveInt(value, name) {
   const n7 = Number(value);
@@ -37489,20 +37573,8 @@ async function run() {
         const envFilePath = path6.join(workingDirectory, envFile);
         if (fs7.existsSync(envFilePath)) {
           info(`Loading environment variables from ${envFilePath}`);
-          const result = dotenv.config({
-            path: envFilePath,
-            override: true,
-            quiet: true
-          });
-          if (result.error) {
-            throw new PromptfooActionError(
-              `Failed to load ${envFilePath}: ${result.error.message}`,
-              ErrorCodes.ENV_FILE_LOAD_ERROR,
-              `Check that the file exists and has valid .env format`
-            );
-          } else {
-            info(`Successfully loaded ${envFilePath}`);
-          }
+          loadEnvironmentFile(envFilePath);
+          info(`Successfully loaded ${envFilePath}`);
         } else {
           throw new PromptfooActionError(
             `Environment file ${envFilePath} not found`,
@@ -37781,7 +37853,12 @@ async function run() {
     };
     const exitCode = await exec(
       "npx",
-      [`promptfoo@${version}`, ...promptfooArgs],
+      [
+        "--prefix",
+        path6.resolve(__dirname, ".."),
+        `promptfoo@${version}`,
+        ...promptfooArgs
+      ],
       { env, cwd: workingDirectory, ignoreReturnCode: true }
     );
     const isTestFailureExit = exitCode === failedTestExitCode;
