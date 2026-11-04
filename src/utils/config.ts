@@ -5,9 +5,11 @@ import { CORE_SCHEMA, load as loadYaml, mergeTag } from 'js-yaml';
 import * as path from 'path';
 import { isDirectory } from './fs';
 
+type PromptEntry = string | { file?: string; [key: string]: unknown };
+
 export interface PromptfooConfig {
   providers?: Array<string | { id?: string; [key: string]: unknown }>;
-  prompts?: Array<string | { file?: string; [key: string]: unknown }>;
+  prompts?: string | PromptEntry[] | Record<string, string>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
     assert?: Array<{ type?: string; value?: string | { file?: string } }>;
@@ -67,7 +69,9 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath = path.isAbsolute(filePath)
+          ? path.normalize(filePath)
+          : path.resolve(path.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -152,10 +156,50 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Extract prompt files
     if (config.prompts) {
-      for (const prompt of config.prompts) {
-        if (typeof prompt === 'string' && prompt.startsWith('file://')) {
-          processFileUrl(prompt);
-        } else if (typeof prompt === 'object' && prompt.file) {
+      const prompts =
+        typeof config.prompts === 'string'
+          ? [config.prompts]
+          : Array.isArray(config.prompts)
+            ? config.prompts
+            : Object.keys(config.prompts);
+
+      for (const prompt of prompts) {
+        if (typeof prompt === 'string') {
+          let filePath = prompt;
+          if (prompt.startsWith('exec:')) {
+            const executable = prompt
+              .slice('exec:'.length)
+              .trimStart()
+              .match(/^(['"])(.*?)\1|^(\S+)/);
+            if (!executable) {
+              continue;
+            }
+            filePath = executable[2] ?? executable[3];
+          } else if (prompt.startsWith('file://')) {
+            filePath = prompt.slice('file://'.length);
+          } else if (
+            !/\.(?:cjs|cts|j2|js|jsonl?|md|mjs|mts|py|ts|txt|ya?ml)(?::[A-Za-z_]\w*)?$/i.test(
+              prompt,
+            )
+          ) {
+            continue;
+          }
+
+          const selector = filePath.lastIndexOf(':');
+          if (
+            selector > 1 &&
+            /\.(?:py|[cm]?[jt]s)$/i.test(filePath.slice(0, selector))
+          ) {
+            filePath = filePath.slice(0, selector);
+          }
+          if (
+            process.platform === 'win32' &&
+            /^\/[A-Za-z]:[\\/]/.test(filePath)
+          ) {
+            filePath = filePath.slice(1);
+          }
+          processFileUrl(`file://${filePath}`);
+        } else if (prompt.file) {
           const absolutePath = resolveConfigDependency(
             prompt.file,
             'prompt file dependency',
