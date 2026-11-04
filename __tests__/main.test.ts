@@ -408,9 +408,9 @@ describe('GitHub Action Main', () => {
       await run();
 
       const args = mockExec.exec.mock.calls[0][1] as string[];
-      expect(args.filter((arg) => arg === 'prompts/remaining.txt')).toHaveLength(
-        1,
-      );
+      expect(
+        args.filter((arg) => arg === 'prompts/remaining.txt'),
+      ).toHaveLength(1);
     });
 
     test('should preserve brace alternatives in deleted-prompt globs', async () => {
@@ -462,20 +462,29 @@ describe('GitHub Action Main', () => {
       },
     );
 
-    test('should mirror platform case folding for deleted prompt paths', async () => {
-      mockOctokit.paginate.mockResolvedValue([
-        { filename: 'PROMPTS/OLD.TXT', status: 'removed' },
-      ]);
-      mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
+    test.each([...new Set([process.platform, 'darwin'])])(
+      'should mirror %s case folding for deleted prompt paths',
+      async (platform) => {
+        const originalPlatform = process.platform;
+        mockOctokit.paginate.mockResolvedValue([
+          { filename: 'PROMPTS/OLD.TXT', status: 'removed' },
+        ]);
+        mockGlob.sync.mockReturnValue(['prompts/remaining.txt']);
 
-      await run();
+        try {
+          Object.defineProperty(process, 'platform', { value: platform });
+          await run();
+        } finally {
+          Object.defineProperty(process, 'platform', {
+            value: originalPlatform,
+          });
+        }
 
-      if (['darwin', 'win32'].includes(process.platform)) {
-        expect(mockExec.exec).toHaveBeenCalled();
-      } else {
-        expect(mockExec.exec).not.toHaveBeenCalled();
-      }
-    });
+        expect(mockExec.exec).toHaveBeenCalledTimes(
+          ['darwin', 'win32'].includes(platform) ? 1 : 0,
+        );
+      },
+    );
 
     test.each(['removed', 'renamed'])(
       'should conservatively evaluate %s prompts for traversal globs',
@@ -2752,27 +2761,27 @@ describe('exec error handling with repeat-min-pass', () => {
     delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
   });
 
-  test.each([
-    '',
-    'Infinity',
-  ])('should normalize PROMPTFOO_PASS_RATE_THRESHOLD=%j to 100%%', async (threshold) => {
-    process.env.PROMPTFOO_PASS_RATE_THRESHOLD = threshold;
-    mockFs.readFileSync.mockReturnValue(
-      JSON.stringify({
-        results: {
-          stats: { successes: 3, failures: 1 },
-        },
-      }),
-    );
+  test.each(['', 'Infinity'])(
+    'should normalize PROMPTFOO_PASS_RATE_THRESHOLD=%j to 100%%',
+    async (threshold) => {
+      process.env.PROMPTFOO_PASS_RATE_THRESHOLD = threshold;
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          results: {
+            stats: { successes: 3, failures: 1 },
+          },
+        }),
+      );
 
-    await run();
+      await run();
 
-    expect(mockCore.setFailed).toHaveBeenCalledWith(
-      expect.stringContaining('PROMPTFOO_PASS_RATE_THRESHOLD (100%)'),
-    );
+      expect(mockCore.setFailed).toHaveBeenCalledWith(
+        expect.stringContaining('PROMPTFOO_PASS_RATE_THRESHOLD (100%)'),
+      );
 
-    delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
-  });
+      delete process.env.PROMPTFOO_PASS_RATE_THRESHOLD;
+    },
+  );
 
   test('should honor a valid custom failed-test exit code', async () => {
     process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = '42';
@@ -2790,24 +2799,24 @@ describe('exec error handling with repeat-min-pass', () => {
     delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;
   });
 
-  test.each([
-    '130',
-    '300',
-  ])('should normalize invalid failed-test exit code %s', async (exitCode) => {
-    process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = exitCode;
-    mockExec.exec.mockImplementation((_command, _args, options) => {
-      expect(options?.env?.PROMPTFOO_FAILED_TEST_EXIT_CODE).toBe('100');
-      return Promise.resolve(100);
-    });
+  test.each(['130', '300'])(
+    'should normalize invalid failed-test exit code %s',
+    async (exitCode) => {
+      process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = exitCode;
+      mockExec.exec.mockImplementation((_command, _args, options) => {
+        expect(options?.env?.PROMPTFOO_FAILED_TEST_EXIT_CODE).toBe('100');
+        return Promise.resolve(100);
+      });
 
-    await run();
+      await run();
 
-    expect(mockCore.warning).toHaveBeenCalledWith(
-      expect.stringContaining('reserved or invalid'),
-    );
+      expect(mockCore.warning).toHaveBeenCalledWith(
+        expect.stringContaining('reserved or invalid'),
+      );
 
-    delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;
-  });
+      delete process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE;
+    },
+  );
 
   test('should normalize reserved PROMPTFOO_FAILED_TEST_EXIT_CODE before invoking promptfoo', async () => {
     process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE = '1';
