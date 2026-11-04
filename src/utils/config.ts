@@ -6,7 +6,7 @@ import * as path from 'path';
 import { isDirectory } from './fs';
 
 export interface PromptfooConfig {
-  providers?: Array<string | { id?: string; [key: string]: unknown }>;
+  providers?: string | Array<string | { id?: string; [key: string]: unknown }>;
   prompts?: Array<string | { file?: string; [key: string]: unknown }>;
   tests?: Array<{
     vars?: { [key: string]: string | { file?: string } };
@@ -27,6 +27,22 @@ function isPathInside(baseDir: string, targetPath: string): boolean {
       !relativePath.startsWith(`..${path.sep}`) &&
       !path.isAbsolute(relativePath))
   );
+}
+
+function providerFilePath(fileUrl: string): string {
+  const encodedPath = fileUrl.slice('file://'.length);
+  const rawPath =
+    process.platform === 'win32' && /^\/[A-Za-z]:[\\/]/.test(encodedPath)
+      ? encodedPath.slice(1)
+      : encodedPath;
+  const functionSeparator = rawPath.lastIndexOf(':');
+  if (
+    functionSeparator > 1 &&
+    rawPath.slice(0, functionSeparator).endsWith('.py')
+  ) {
+    return rawPath.slice(0, functionSeparator);
+  }
+  return rawPath;
 }
 
 /**
@@ -58,6 +74,7 @@ export function extractFileDependencies(configPath: string): string[] {
     const resolveConfigDependency = (
       filePath: string,
       source: string,
+      preserveAbsolute = false,
     ): string | undefined => {
       try {
         if (!filePath) {
@@ -67,7 +84,10 @@ export function extractFileDependencies(configPath: string): string[] {
           throw new Error(`${source} contains an invalid null byte`);
         }
 
-        const absolutePath = path.resolve(path.join(configDir, filePath));
+        const absolutePath =
+          preserveAbsolute && path.isAbsolute(filePath)
+            ? path.normalize(filePath)
+            : path.resolve(path.join(configDir, filePath));
         if (!isPathInside(dependencyRoot, absolutePath)) {
           throw new Error(
             `${source} must stay within the repository workspace`,
@@ -86,11 +106,14 @@ export function extractFileDependencies(configPath: string): string[] {
     };
 
     // Helper function to process file:// paths with glob support
-    const processFileUrl = (fileUrl: string): void => {
-      const filePath = fileUrl.replace('file://', '');
+    const processFileUrl = (fileUrl: string, isProvider = false): void => {
+      const filePath = isProvider
+        ? providerFilePath(fileUrl)
+        : fileUrl.slice('file://'.length);
       const absolutePath = resolveConfigDependency(
         filePath,
         'config file dependency',
+        isProvider,
       );
       if (!absolutePath) {
         return;
@@ -138,14 +161,18 @@ export function extractFileDependencies(configPath: string): string[] {
 
     // Extract provider files
     if (config.providers) {
-      for (const provider of config.providers) {
+      const providers =
+        typeof config.providers === 'string'
+          ? [config.providers]
+          : config.providers;
+      for (const provider of providers) {
         if (typeof provider === 'string' && provider.startsWith('file://')) {
-          processFileUrl(provider);
+          processFileUrl(provider, true);
         } else if (
           typeof provider === 'object' &&
           provider.id?.startsWith('file://')
         ) {
-          processFileUrl(provider.id);
+          processFileUrl(provider.id, true);
         }
       }
     }
