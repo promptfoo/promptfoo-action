@@ -36966,8 +36966,9 @@ function extractFileDependencies(configPath) {
       if (typeof extension !== "string" || !extension.startsWith("file://")) {
         continue;
       }
-      const hookSeparator = extension.lastIndexOf(":");
-      const extensionFile = hookSeparator > "file://".length ? extension.slice("file://".length, hookSeparator) : extension.slice("file://".length);
+      const filePath = extension.slice("file://".length);
+      const normalizedPath = process.platform === "win32" ? filePath.replace(/^\/([A-Za-z]:[\\/])/, "$1") : filePath;
+      const extensionFile = normalizedPath.replace(/:[^:/\\]+$/, "");
       const localExtensionFile = path5.isAbsolute(extensionFile) ? path5.relative(configDir, extensionFile) : extensionFile;
       const extensionPath = resolveConfigDependency(
         localExtensionFile,

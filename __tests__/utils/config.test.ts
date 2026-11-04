@@ -197,6 +197,26 @@ extensions:
     ).toEqual(['hooks/policy.js']);
   });
 
+  it('should keep the Windows drive when stripping an optional extension selector', () => {
+    const originalPlatform = process.platform;
+    try {
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      mockFs.readFileSync.mockReturnValue(`
+extensions:
+  - file://C:/repository/hooks/policy.js
+  - file:///C:/repository/hooks/setup.js:beforeAll
+`);
+      expect(
+        extractFileDependencies('/test/config/promptfooconfig.yaml'),
+      ).toEqual([
+        '../config/C:/repository/hooks/policy.js',
+        '../config/C:/repository/hooks/setup.js',
+      ]);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform });
+    }
+  });
+
   it('should ignore remote and malformed extension entries', () => {
     mockFs.readFileSync.mockReturnValue(`
 extensions:
