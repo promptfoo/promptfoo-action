@@ -46,7 +46,7 @@ const { mockGitInterface } = vi.hoisted(() => ({
     }),
     revparse: vi.fn(() => Promise.resolve('mock-commit-hash\n')),
     diff: vi.fn(() =>
-      Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+      Promise.resolve('prompts/prompt1.txt\0promptfooconfig.yaml\0'),
     ),
   },
 }));
@@ -163,7 +163,7 @@ function setupCommonMocks(): MockOctokit {
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
-    'prompts/prompt1.txt\npromptfooconfig.yaml',
+    'prompts/prompt1.txt\0promptfooconfig.yaml\0',
   );
   mockCache.cleanupOldCache.mockResolvedValue(0);
   mockCache.createCacheManifest.mockResolvedValue();
@@ -619,6 +619,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -690,6 +691,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -882,6 +884,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -1552,6 +1555,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',

@@ -182,7 +182,9 @@ When triggered manually:
 - If `files` is provided, those paths are treated as the changed-file set.
 - Only changed files that also match `prompts` are passed through
   `--prompts`.
-- If `base` is provided, the action compares that ref with `HEAD`.
+- If `base` is provided, the action compares that ref with `HEAD`. Git-based
+  comparisons preserve each filename, including accented characters, tabs,
+  and line breaks. The manual `files` input accepts one path per line.
 - If neither input is provided, the action compares `HEAD~1` with `HEAD`.
 - Results will be displayed in the workflow summary instead of a PR comment
 
