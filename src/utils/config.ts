@@ -97,7 +97,7 @@ export function extractFileDependencies(configPath: string): string[] {
       }
 
       // Check if the path contains glob patterns
-      if (glob.hasMagic(filePath)) {
+      if (glob.hasMagic(filePath, { magicalBraces: true })) {
         // It's a glob pattern, expand it
         const matches = glob.sync(absolutePath, { nodir: true });
         for (const match of matches) {
@@ -116,7 +116,7 @@ export function extractFileDependencies(configPath: string): string[] {
         const pathParts = filePath.split('/');
         let basePath = '';
         for (const part of pathParts) {
-          if (glob.hasMagic(part)) {
+          if (glob.hasMagic(part, { magicalBraces: true })) {
             break;
           }
           basePath = basePath ? path.join(basePath, part) : part;
