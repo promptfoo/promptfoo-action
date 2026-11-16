@@ -276,7 +276,7 @@ jobs:
           env-files: '.env,.env.test.local' # Load multiple .env files
 ```
 
-Files are loaded in the order listed. A later file overrides earlier files and existing workflow environment variables. Explicit provider inputs still take precedence when the action runs Promptfoo. The action masks supported provider credentials loaded from these files in workflow logs.
+Files are loaded in the order listed. A later file overrides earlier files and existing workflow environment variables. Explicit provider inputs still take precedence when the action runs Promptfoo. The action masks supported provider credentials loaded from these files in workflow logs. Quoted values can span multiple lines, including when the runner sets `DOTENV_FAST=true`.
 
 ## Custom Provider Detection
 
