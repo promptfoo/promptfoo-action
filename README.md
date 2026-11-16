@@ -308,6 +308,7 @@ changed files.
    providers:
      - file://providers/*.py          # All Python files in providers/
      - file://lib/**/*.js            # All JS files recursively in lib/
+     - file://providers/{alpha,beta}/entry.js  # Either named provider entry point
    ```
 
 ### How It Works
