@@ -24,23 +24,24 @@ test('compares revisions with the options used for push events', async () => {
 
   try {
     git('init', '-q');
-    writeFileSync(join(dir, 'prompt.txt'), 'first');
-    git('add', 'prompt.txt');
+    writeFileSync(join(dir, 'café.txt'), 'first');
+    git('add', 'café.txt');
     commit('Initial prompt');
     const before = git('rev-parse', 'HEAD');
 
-    writeFileSync(join(dir, 'prompt.txt'), 'second');
-    git('add', 'prompt.txt');
+    writeFileSync(join(dir, 'café.txt'), 'second');
+    git('add', 'café.txt');
     commit('Update prompt');
     const after = git('rev-parse', 'HEAD');
 
     const changed = await simpleGit(dir).diff([
       '--name-only',
+      '-z',
       before,
       after,
       '--',
     ]);
-    expect(changed.trim()).toBe('prompt.txt');
+    expect(changed.split('\0').filter(Boolean)).toEqual(['café.txt']);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

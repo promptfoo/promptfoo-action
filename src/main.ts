@@ -34,6 +34,20 @@ import {
 const gitInterface = simpleGit();
 const GITHUB_PULL_REQUEST_FILES_LIMIT = 3000;
 
+async function changedPathsBetween(
+  base: string,
+  head: string,
+): Promise<string[]> {
+  const paths = await gitInterface.diff([
+    '--name-only',
+    '-z',
+    base,
+    head,
+    '--',
+  ]);
+  return paths.split('\0').filter(Boolean);
+}
+
 function toRepositoryPath(filePath: string): string {
   return filePath.split(path.sep).join('/');
 }
@@ -338,7 +352,7 @@ export async function run(): Promise<void> {
     const octokit = github.getOctokit(githubToken);
 
     const event = github.context.eventName;
-    let changedFiles = '';
+    let changedFiles: string[] = [];
     let isPullRequest = false;
     let pullRequestNumber: number | undefined;
 
@@ -364,7 +378,7 @@ export async function run(): Promise<void> {
           `GitHub only returns the first ${GITHUB_PULL_REQUEST_FILES_LIMIT} files changed in a pull request. Processing all matching prompt files to avoid missing changes.`,
         );
       } else {
-        changedFiles = pullRequestFiles.map((file) => file.filename).join('\n');
+        changedFiles = pullRequestFiles.map((file) => file.filename);
       }
     } else if (event === 'workflow_dispatch') {
       core.info('Running in workflow_dispatch mode');
@@ -381,27 +395,21 @@ export async function run(): Promise<void> {
 
       if (filesInput) {
         // Option 1: Use provided file list
-        changedFiles = filesInput;
-        core.info(`Using manually specified files: ${changedFiles}`);
+        changedFiles = filesInput.split('\n').filter(Boolean);
+        core.info(`Using manually specified files: ${filesInput}`);
       } else {
         // Option 2: Compare against base (default to previous commit)
         validateGitRevision(compareBase);
         try {
-          changedFiles = await gitInterface.diff([
-            '--name-only',
-            compareBase,
-            'HEAD',
-            '--',
-          ]);
+          changedFiles = await changedPathsBetween(compareBase, 'HEAD');
           core.info(
-            `Comparing against ${compareBase}, found changed files: ${changedFiles}`,
+            `Comparing against ${compareBase}, found changed files: ${changedFiles.join('\n')}`,
           );
         } catch (error) {
           // Option 3: If comparison fails, we'll process all matching prompt files
           core.warning(
             `Could not compare against ${compareBase}: ${error}. Will process all matching prompt files.`,
           );
-          changedFiles = '';
         }
       }
     } else if (event === 'push') {
@@ -419,27 +427,20 @@ export async function run(): Promise<void> {
         validateCommitSha(beforeSha, 'before commit');
         validateCommitSha(afterSha, 'after commit');
         try {
-          changedFiles = await gitInterface.diff([
-            '--name-only',
-            beforeSha,
-            afterSha,
-            '--',
-          ]);
+          changedFiles = await changedPathsBetween(beforeSha, afterSha);
           core.info(
-            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles}`,
+            `Comparing ${beforeSha}..${afterSha}, found changed files: ${changedFiles.join('\n')}`,
           );
         } catch (error) {
           core.warning(
             `Could not compare commits: ${error}. Will process all matching prompt files.`,
           );
-          changedFiles = '';
         }
       } else {
         // First commit or unable to get before SHA
         core.info(
           'Unable to determine changed files from push event. Will process all matching prompt files.',
         );
-        changedFiles = '';
       }
     } else {
       core.warning(
@@ -449,7 +450,6 @@ export async function run(): Promise<void> {
 
     // Resolve glob patterns to file paths
     const promptFiles: string[] = [];
-    const changedFilesList = changedFiles.split('\n').filter((f) => f);
 
     for (const globPattern of promptFilesGlobs) {
       const matches = glob.sync(globPattern, {
@@ -457,7 +457,7 @@ export async function run(): Promise<void> {
         nodir: true,
       });
 
-      if (changedFilesList.length > 0) {
+      if (changedFiles.length > 0) {
         // Filter to only changed files
         const changedMatches = matches.filter((file) => {
           const repositoryFile = toRepositoryPath(
@@ -465,7 +465,7 @@ export async function run(): Promise<void> {
           );
           return (
             repositoryFile !== configRepositoryPath &&
-            changedFilesList.includes(repositoryFile)
+            changedFiles.includes(repositoryFile)
           );
         });
         promptFiles.push(...changedMatches);
@@ -482,12 +482,11 @@ export async function run(): Promise<void> {
     }
 
     const configChanged =
-      changedFilesList.length > 0 &&
-      changedFilesList.includes(configRepositoryPath);
+      changedFiles.length > 0 && changedFiles.includes(configRepositoryPath);
 
     // Extract dependencies from config file
     let dependencyChanged = false;
-    if (changedFilesList.length > 0) {
+    if (changedFiles.length > 0) {
       const dependencies =
         extractFileDependencies(configAbsolutePath).map(toRepositoryPath);
       if (dependencies.length > 0) {
@@ -498,14 +497,14 @@ export async function run(): Promise<void> {
         // Check if any changed file matches the dependencies
         dependencyChanged = dependencies.some((dep) => {
           // Direct file match
-          if (changedFilesList.includes(dep)) {
+          if (changedFiles.includes(dep)) {
             return true;
           }
 
           // Check if the dependency is a directory and any changed file is within it
           if (dep.endsWith('/') || isDirectory(dep)) {
             const depDir = dep.endsWith('/') ? dep : `${dep}/`;
-            return changedFilesList.some((changedFile) =>
+            return changedFiles.some((changedFile) =>
               changedFile.startsWith(depDir),
             );
           }
@@ -524,7 +523,7 @@ export async function run(): Promise<void> {
       promptFiles.length < 1 &&
       !configChanged &&
       !dependencyChanged &&
-      changedFilesList.length > 0 &&
+      changedFiles.length > 0 &&
       promptFilesGlobs.length > 0
     ) {
       // We have changed files info but no prompt files were modified
@@ -537,7 +536,7 @@ export async function run(): Promise<void> {
       core.info('Force run enabled - running evaluation regardless of changes');
     }
 
-    if (changedFilesList.length === 0) {
+    if (changedFiles.length === 0) {
       core.info(
         `Processing all matching prompt files: ${promptFiles.join(', ')}`,
       );
@@ -807,14 +806,16 @@ export async function run(): Promise<void> {
       output.results.stats,
     );
 
+    const { successes, failures, errors = 0 } = output.results.stats;
+
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const modifiedFiles = promptFiles.join(', ');
       let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
-| Success | Failure |
-|---------|---------|
-| ${output.results.stats.successes}      | ${output.results.stats.failures}       |
+| Success | Failure | Error |
+|---------|---------|-------|
+| ${successes} | ${failures} | ${errors} |
 
 `;
       if (repeatCheckResult) {
@@ -841,8 +842,9 @@ export async function run(): Promise<void> {
             { data: 'Metric', header: true },
             { data: 'Count', header: true },
           ],
-          ['Success', output.results.stats.successes.toString()],
-          ['Failure', output.results.stats.failures.toString()],
+          ['Success', successes.toString()],
+          ['Failure', failures.toString()],
+          ['Error', errors.toString()],
         ]);
 
       if (promptFiles.length > 0) {
@@ -865,8 +867,9 @@ export async function run(): Promise<void> {
 
       // Also output to console
       core.info('=== Promptfoo Evaluation Results ===');
-      core.info(`Success: ${output.results.stats.successes}`);
-      core.info(`Failure: ${output.results.stats.failures}`);
+      core.info(`Success: ${successes}`);
+      core.info(`Failure: ${failures}`);
+      core.info(`Error: ${errors}`);
       if (output.shareableUrl) {
         core.info(`View results: ${output.shareableUrl}`);
       }

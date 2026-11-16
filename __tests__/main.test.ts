@@ -46,7 +46,7 @@ const { mockGitInterface } = vi.hoisted(() => ({
     }),
     revparse: vi.fn(() => Promise.resolve('mock-commit-hash\n')),
     diff: vi.fn(() =>
-      Promise.resolve('prompts/prompt1.txt\npromptfooconfig.yaml'),
+      Promise.resolve('prompts/prompt1.txt\0promptfooconfig.yaml\0'),
     ),
   },
 }));
@@ -163,7 +163,7 @@ function setupCommonMocks(): MockOctokit {
   mockGitInterface.diff.mockClear();
   mockGitInterface.revparse.mockResolvedValue('mock-commit-hash\n');
   mockGitInterface.diff.mockResolvedValue(
-    'prompts/prompt1.txt\npromptfooconfig.yaml',
+    'prompts/prompt1.txt\0promptfooconfig.yaml\0',
   );
   mockCache.cleanupOldCache.mockResolvedValue(0);
   mockCache.createCacheManifest.mockResolvedValue();
@@ -619,6 +619,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '-z',
           'a'.repeat(40),
           'b'.repeat(40),
           '--',
@@ -690,6 +691,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '-z',
         'a'.repeat(40),
         'b'.repeat(40),
         '--',
@@ -882,6 +884,7 @@ describe('GitHub Action Main', () => {
       if (diffCalls.length > 0) {
         expect(diffCalls[0][0]).toEqual([
           '--name-only',
+          '-z',
           'feature-branch',
           'HEAD',
           '--',
@@ -1330,6 +1333,22 @@ describe('GitHub Action Main', () => {
       const commentBody =
         mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
       expect(commentBody).toContain('View eval results in CI console');
+      expect(commentBody).toContain('| 1 | 0 | 0 |');
+    });
+
+    test('should include execution errors separately from assertion failures in PR comments', async () => {
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          results: { stats: { successes: 2, failures: 1, errors: 3 } },
+        }),
+      );
+
+      await run();
+
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(commentBody).toContain('| Success | Failure | Error |');
+      expect(commentBody).toContain('| 2 | 1 | 3 |');
     });
 
     test('should write repeat results to a non-PR workflow summary', async () => {
@@ -1363,7 +1382,7 @@ describe('GitHub Action Main', () => {
                 description: 'Test A',
               },
             ],
-            stats: { successes: 1, failures: 1 },
+            stats: { successes: 1, failures: 0, errors: 1 },
           },
         }),
       );
@@ -1380,6 +1399,10 @@ describe('GitHub Action Main', () => {
       expect(mockCore.summary.addRaw).toHaveBeenCalledWith(
         'View eval results in CI console',
       );
+      expect(mockCore.summary.addTable).toHaveBeenCalledWith(
+        expect.arrayContaining([['Error', '1']]),
+      );
+      expect(mockCore.info).toHaveBeenCalledWith('Error: 1');
       expect(mockCore.summary.write).toHaveBeenCalled();
     });
 
@@ -1532,6 +1555,7 @@ describe('GitHub Action Main', () => {
 
       expect(mockGitInterface.diff).toHaveBeenCalledWith([
         '--name-only',
+        '-z',
         'feature/JIRA-123_update-deps',
         'HEAD',
         '--',
