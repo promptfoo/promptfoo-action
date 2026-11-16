@@ -17,7 +17,7 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24.x'
-      - run: npm install -g npm@12.0.2
+      - run: npm install -g npm@12.2.2
       - run: npm ci
       - run: npm run all
   style-check:
@@ -30,8 +30,8 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24.x'
-      - name: Install npm 12.0.2
-        run: npm install -g npm@12.0.2
+      - name: Install npm 12.2.2
+        run: npm install -g npm@12.2.2
       - name: Install Dependencies
         run: npm ci
       - name: Run Biome Check
