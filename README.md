@@ -559,8 +559,9 @@ To reduce console output in CI, set `no-table: true` and `no-progress-bar: true`
 The action creates a uniquely named JSON result file for internal processing and
 deletes it after parsing. It does not leave `output.json` in the workspace.
 
-The PR comment or workflow summary contains aggregate results and a viewer link
-when sharing succeeds. Workflows that require a persistent raw result file
+The PR comment and workflow summary report successful tests, assertion failures,
+and execution errors separately. Older CLI versions that omit the error count
+show zero errors. When sharing succeeds, the summary also includes a viewer link. Workflows that require a persistent raw result file
 should run the Promptfoo CLI directly with `--output <path>` and upload that
 file separately.
 
