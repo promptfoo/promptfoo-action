@@ -12,11 +12,14 @@ permissions:
 jobs:
   build: # make sure build/ci work properly
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['24.x', '26.x']
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '24.x'
+          node-version: ${{ matrix.node }}
       - run: npm install -g npm@12.2.2
       - run: npm ci
       - run: npm run all
@@ -26,10 +29,10 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - name: Use Node 24.x
+      - name: Use Node 26.x
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: '24.x'
+          node-version: '26.x'
       - name: Install npm 12.2.2
         run: npm install -g npm@12.2.2
       - name: Install Dependencies
