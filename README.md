@@ -139,6 +139,12 @@ jobs:
           cache-path: '.promptfoo-cache'
 ```
 
+The action reads changed files in pages of 100. GitHub returns at most 3,000
+files per pull request. When the list reaches that limit, the action warns and
+evaluates all files matching `prompts` so changes beyond the limit are covered.
+This can increase model usage. If no files match, or if `use-config-prompts` is
+enabled, the evaluation uses the prompts in `config`.
+
 ### Manual Trigger (workflow_dispatch)
 
 You can also trigger evaluations manually using workflow_dispatch:
@@ -276,7 +282,7 @@ jobs:
           env-files: '.env,.env.test.local' # Load multiple .env files
 ```
 
-Files are loaded in the order listed. A later file overrides earlier files and existing workflow environment variables. Explicit provider inputs still take precedence when the action runs Promptfoo. The action masks supported provider credentials loaded from these files in workflow logs.
+Files are loaded in the order listed. A later file overrides earlier files and existing workflow environment variables. Explicit provider inputs still take precedence when the action runs Promptfoo. The action masks supported provider credentials loaded from these files in workflow logs. Quoted values can span multiple lines, including when the runner sets `DOTENV_FAST=true`.
 
 ## Custom Provider Detection
 

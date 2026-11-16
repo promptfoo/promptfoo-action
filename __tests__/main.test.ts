@@ -4,6 +4,7 @@ import * as exec from '@actions/exec';
 import * as github from '@actions/github';
 import * as fs from 'fs';
 import { load as loadYaml } from 'js-yaml';
+import { fetch, MockAgent } from 'undici';
 import {
   afterEach,
   beforeEach,
@@ -304,6 +305,64 @@ describe('GitHub Action Main', () => {
         issue_number: 123,
         body: expect.stringContaining('LLM prompt was modified'),
       });
+    });
+
+    test('passes a changed prompt from the second page of PR files to the evaluator', async () => {
+      const baseUrl = 'https://api.github.invalid';
+      const filesPath =
+        '/repos/test-owner/test-repo/pulls/123/files?per_page=100';
+      const secondPage = `${filesPath}&page=2`;
+      const dispatcher = new MockAgent();
+      dispatcher.disableNetConnect();
+
+      try {
+        const api = dispatcher.get(baseUrl);
+        api
+          .intercept({ path: filesPath })
+          .reply(200, [{ filename: 'README.md' }], {
+            headers: {
+              'content-type': 'application/json',
+              link: `<${baseUrl}${secondPage}>; rel="next"`,
+            },
+          });
+        api
+          .intercept({ path: secondPage })
+          .reply(200, [{ filename: 'prompts/changed.txt' }], {
+            headers: { 'content-type': 'application/json' },
+          });
+        // The suite aliases @actions/github to its mock. Resolve the installed
+        // client so Octokit follows the Link header through Undici.
+        const { getOctokit }: typeof github = await import(
+          import.meta.resolve('@actions/github')
+        );
+        mockGithub.getOctokit.mockReturnValue(
+          getOctokit('test-token', {
+            baseUrl,
+            request: {
+              fetch: (url, init) => fetch(url, { ...init, dispatcher }),
+            },
+          }),
+        );
+        mockCore.getBooleanInput.mockImplementation(
+          (name) => name === 'disable-comment',
+        );
+        mockGlob.sync.mockReturnValue([
+          'prompts/changed.txt',
+          'prompts/unchanged.txt',
+        ]);
+
+        await run();
+
+        const args = mockExec.exec.mock.calls[0]?.[1];
+        expect(args).toEqual(
+          expect.arrayContaining(['--prompts', 'prompts/changed.txt']),
+        );
+        expect(args).not.toContain('prompts/unchanged.txt');
+        expect(mockCore.setFailed).not.toHaveBeenCalled();
+        dispatcher.assertNoPendingInterceptors();
+      } finally {
+        await dispatcher.close();
+      }
     });
 
     test('should skip evaluation when no relevant files change', async () => {
