@@ -40,6 +40,9 @@
     "simple-git": "^4.0.0"
   },
   "overrides": {
+    "promptfoo@0.125.1": {
+      "@hono/node-server": "2.1.6"
+    },
     "uuid": "^14.0.0"
   },
   "devDependencies": {
