@@ -37591,25 +37591,33 @@ async function run() {
         }
       }
     }
-    const apiKeys = [
-      openaiApiKey,
-      azureApiKey,
-      anthropicApiKey,
-      huggingfaceApiKey,
-      awsAccessKeyId,
-      awsSecretAccessKey,
-      replicateApiKey,
-      palmApiKey,
-      vertexApiKey,
-      cohereApiKey,
-      mistralApiKey,
-      groqApiKey,
-      process.env.PROMPTFOO_API_KEY
-    ];
-    for (const key of apiKeys) {
-      if (key) {
-        setSecret(key);
+    const providerInputs = {
+      OPENAI_API_KEY: openaiApiKey,
+      AZURE_OPENAI_API_KEY: azureApiKey,
+      ANTHROPIC_API_KEY: anthropicApiKey,
+      HF_API_TOKEN: huggingfaceApiKey,
+      AWS_ACCESS_KEY_ID: awsAccessKeyId,
+      AWS_SECRET_ACCESS_KEY: awsSecretAccessKey,
+      REPLICATE_API_KEY: replicateApiKey,
+      PALM_API_KEY: palmApiKey,
+      VERTEX_API_KEY: vertexApiKey,
+      COHERE_API_KEY: cohereApiKey,
+      MISTRAL_API_KEY: mistralApiKey,
+      GROQ_API_KEY: groqApiKey
+    };
+    const providerOverrides = {};
+    for (const [name, inputValue] of Object.entries(providerInputs)) {
+      const environmentValue = process.env[name];
+      if (environmentValue && environmentValue !== inputValue) {
+        setSecret(environmentValue);
       }
+      if (inputValue) {
+        setSecret(inputValue);
+        providerOverrides[name] = inputValue;
+      }
+    }
+    if (process.env.PROMPTFOO_API_KEY) {
+      setSecret(process.env.PROMPTFOO_API_KEY);
     }
     setSecret(githubToken);
     const octokit = getOctokit(githubToken);
@@ -37843,19 +37851,7 @@ async function run() {
     const env = {
       ...process.env,
       // Includes cache settings and environment variable fallbacks
-      // Override with action inputs if provided (takes precedence over env vars)
-      ...openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {},
-      ...azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {},
-      ...anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {},
-      ...huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {},
-      ...awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {},
-      ...awsSecretAccessKey ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey } : {},
-      ...replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {},
-      ...palmApiKey ? { PALM_API_KEY: palmApiKey } : {},
-      ...vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {},
-      ...cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {},
-      ...mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {},
-      ...groqApiKey ? { GROQ_API_KEY: groqApiKey } : {},
+      ...providerOverrides,
       ...process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE ? { PROMPTFOO_FAILED_TEST_EXIT_CODE: failedTestExitCode.toString() } : {}
     };
     const exitCode = await exec(
