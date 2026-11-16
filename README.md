@@ -276,7 +276,7 @@ jobs:
           env-files: '.env,.env.test.local' # Load multiple .env files
 ```
 
-This is particularly useful for Next.js applications or other frameworks that use `.env` files for configuration. The environment variables from these files will be available to promptfoo during evaluation.
+Files are loaded in the order listed. A later file overrides earlier files and existing workflow environment variables. Explicit provider inputs still take precedence when the action runs Promptfoo. The action masks supported provider credentials loaded from these files in workflow logs.
 
 ## Custom Provider Detection
 
@@ -302,6 +302,7 @@ changed files.
    providers:
      - file://providers/*.py          # All Python files in providers/
      - file://lib/**/*.js            # All JS files recursively in lib/
+     - file://providers/{alpha,beta}/entry.js  # Either named provider entry point
    ```
 
 ### How It Works
