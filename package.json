@@ -36,9 +36,13 @@
     "@actions/io": "^3.0.2",
     "dotenv": "^18.0.1",
     "glob": "^14.0.6",
+    "js-yaml": "^5.2.3",
     "simple-git": "^4.0.0"
   },
   "overrides": {
+    "promptfoo@0.125.1": {
+      "@hono/node-server": "2.1.6"
+    },
     "uuid": "^14.0.0"
   },
   "devDependencies": {
@@ -48,7 +52,6 @@
     "@vercel/ncc": "^0.45.0",
     "@vitest/coverage-v8": "^5.0.0",
     "esbuild": "^0.28.1",
-    "js-yaml": "^5.2.3",
     "promptfoo": "0.125.1",
     "typescript": "^7.0.0",
     "vitest": "^5.0.0"
