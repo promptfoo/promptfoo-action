@@ -59,6 +59,13 @@ security boundaries include:
 - Integrity of the bundled `dist/` action, release tags, and Promptfoo
   invocation.
 
+To triage a dependency advisory, check out the action commit used by the
+workflow. `npm ls --all --package-lock-only --omit=dev` lists its production
+dependency tree. Check `dist/index.js.map` to see which modules ship in the
+action bundle. The development dependency on Promptfoo supplies CLI types for
+the build. The workflow runs the CLI version selected by `promptfoo-version`
+through `npx`. Include that resolved CLI version when reporting its dependencies.
+
 When reporting an input-validation or filesystem issue, identify the
 attacker-controlled value and explain how the attacker controls it. When
 reporting secret exposure, use a canary value and identify the unintended
