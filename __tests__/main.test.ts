@@ -534,30 +534,28 @@ describe('GitHub Action Main', () => {
       }
     });
 
-    test('should load environment files when specified', async () => {
-      mockCore.getInput.mockImplementation((name: string) => {
-        const inputs: Record<string, string> = {
-          'github-token': 'mock-github-token',
-          config: 'promptfooconfig.yaml',
-          prompts: 'prompts/*.txt',
-          'env-files': '.env,.env.local',
-        };
-        return inputs[name] || '';
+    test('should load environment files quietly in precedence order', async () => {
+      withInputs({
+        'working-directory': 'evals',
+        'env-files': '.env, .env.local',
       });
-
-      mockFs.existsSync.mockImplementation((filePath: fs.PathLike) => {
-        const pathStr = filePath.toString();
-        return pathStr.includes('.env');
-      });
-
+      mockFs.existsSync.mockReturnValue(true);
       const dotenv = await import('dotenv');
-      (dotenv.config as Mock).mockReturnValue({ error: null });
+      vi.mocked(dotenv.config).mockReturnValue({ parsed: {} });
 
       await run();
 
-      expect(mockCore.info).toHaveBeenCalledWith(
-        expect.stringContaining('Loading environment variables from'),
-      );
+      const directory = path.join(process.cwd(), 'evals');
+      expect(vi.mocked(dotenv.config).mock.calls).toEqual([
+        [{ path: path.join(directory, '.env'), override: true, quiet: true }],
+        [
+          {
+            path: path.join(directory, '.env.local'),
+            override: true,
+            quiet: true,
+          },
+        ],
+      ]);
     });
 
     test('should fail when an environment file cannot be loaded', async () => {
