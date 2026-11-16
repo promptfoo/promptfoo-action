@@ -1330,6 +1330,22 @@ describe('GitHub Action Main', () => {
       const commentBody =
         mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
       expect(commentBody).toContain('View eval results in CI console');
+      expect(commentBody).toContain('| 1 | 0 | 0 |');
+    });
+
+    test('should include execution errors separately from assertion failures in PR comments', async () => {
+      mockFs.readFileSync.mockReturnValue(
+        JSON.stringify({
+          results: { stats: { successes: 2, failures: 1, errors: 3 } },
+        }),
+      );
+
+      await run();
+
+      const commentBody =
+        mockOctokit.rest.issues.createComment.mock.calls[0][0].body;
+      expect(commentBody).toContain('| Success | Failure | Error |');
+      expect(commentBody).toContain('| 2 | 1 | 3 |');
     });
 
     test('should write repeat results to a non-PR workflow summary', async () => {
@@ -1363,7 +1379,7 @@ describe('GitHub Action Main', () => {
                 description: 'Test A',
               },
             ],
-            stats: { successes: 1, failures: 1 },
+            stats: { successes: 1, failures: 0, errors: 1 },
           },
         }),
       );
@@ -1380,6 +1396,10 @@ describe('GitHub Action Main', () => {
       expect(mockCore.summary.addRaw).toHaveBeenCalledWith(
         'View eval results in CI console',
       );
+      expect(mockCore.summary.addTable).toHaveBeenCalledWith(
+        expect.arrayContaining([['Error', '1']]),
+      );
+      expect(mockCore.info).toHaveBeenCalledWith('Error: 1');
       expect(mockCore.summary.write).toHaveBeenCalled();
     });
 

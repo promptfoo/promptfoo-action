@@ -38267,13 +38267,14 @@ async function run() {
     const promptfooSuiteSuccessRate = calculateSuccessRate(
       output.results.stats
     );
+    const { successes, failures, errors = 0 } = output.results.stats;
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const modifiedFiles = promptFiles.join(", ");
       let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
 
-| Success | Failure |
-|---------|---------|
-| ${output.results.stats.successes}      | ${output.results.stats.failures}       |
+| Success | Failure | Error |
+|---------|---------|-------|
+| ${successes} | ${failures} | ${errors} |
 
 `;
       if (repeatCheckResult) {
@@ -38296,8 +38297,9 @@ async function run() {
           { data: "Metric", header: true },
           { data: "Count", header: true }
         ],
-        ["Success", output.results.stats.successes.toString()],
-        ["Failure", output.results.stats.failures.toString()]
+        ["Success", successes.toString()],
+        ["Failure", failures.toString()],
+        ["Error", errors.toString()]
       ]);
       if (promptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
@@ -38314,8 +38316,9 @@ async function run() {
       }
       await summary2.write();
       info("=== Promptfoo Evaluation Results ===");
-      info(`Success: ${output.results.stats.successes}`);
-      info(`Failure: ${output.results.stats.failures}`);
+      info(`Success: ${successes}`);
+      info(`Failure: ${failures}`);
+      info(`Error: ${errors}`);
       if (output.shareableUrl) {
         info(`View results: ${output.shareableUrl}`);
       }
