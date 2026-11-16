@@ -19607,268 +19607,261 @@ var require_lib = __commonJS({
 // node_modules/dotenv/dist/index.cjs
 var require_dist = __commonJS({
   "node_modules/dotenv/dist/index.cjs"(exports2, module2) {
-    var O4 = (e, o2) => () => {
+    var j4 = (e, n) => () => {
       try {
-        return o2 || e((o2 = { exports: {} }).exports, o2), o2.exports;
+        return n || e((n = { exports: {} }).exports, n), n.exports;
       } catch (t2) {
-        throw o2 = 0, t2;
+        throw n = 0, t2;
       }
     };
-    var q3 = O4((Ce3, j4) => {
-      function I4(e) {
+    var k3 = j4((xe3, U3) => {
+      function G4(e) {
         return typeof e == "string" ? !["false", "0", "no", "off", ""].includes(e.toLowerCase()) : !!e;
       }
-      function B3() {
-        let e = {};
-        for (let o2 of ["ENCODING", "PATH", "QUIET", "DEBUG", "OVERRIDE", "FAST"]) {
-          let t2 = process.env[`DOTENV_${o2}`] != null ? process.env[`DOTENV_${o2}`] : process.env[`DOTENV_CONFIG_${o2}`];
-          t2 != null && (e[o2.toLowerCase()] = o2 === "ENCODING" || o2 === "PATH" ? t2 : I4(t2));
+      function Y4(e = process.env) {
+        let n = {};
+        for (let t2 of ["ENCODING", "PATH", "QUIET", "DEBUG", "OVERRIDE", "FAST"]) {
+          let o2 = e[`DOTENV_${t2}`] != null ? e[`DOTENV_${t2}`] : e[`DOTENV_CONFIG_${t2}`];
+          o2 != null && (n[t2.toLowerCase()] = t2 === "ENCODING" || t2 === "PATH" ? o2 : G4(o2));
         }
-        return e;
+        return n;
       }
-      j4.exports = { parseBoolean: I4, optionsFromEnv: B3 };
+      U3.exports = { parseBoolean: G4, optionsFromEnv: Y4 };
     });
-    var y2 = O4((we3, C3) => {
-      var H4 = require("fs"), x3 = require("path"), L4 = require("os"), { URL: M5, fileURLToPath: W3 } = require("url"), { parseBoolean: T3, optionsFromEnv: Q4 } = q3(), J4 = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg, v3 = new Uint8Array(256);
-      for (let e = 48; e <= 57; e++) v3[e] = 1;
-      for (let e = 65; e <= 90; e++) v3[e] = 1;
-      for (let e = 97; e <= 122; e++) v3[e] = 1;
-      v3[45] = 1;
-      v3[46] = 1;
-      v3[95] = 1;
-      function K4(e) {
-        let o2 = {}, t2 = e.toString();
+    var N4 = j4((ye3, x3) => {
+      var z4 = require("fs"), I4 = require("path"), Z4 = require("os"), { URL: ee4, fileURLToPath: te3 } = require("url"), { parseBoolean: $4, optionsFromEnv: B3 } = k3(), re3 = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg, b3 = new Uint8Array(256);
+      for (let e = 48; e <= 57; e++) b3[e] = 1;
+      for (let e = 65; e <= 90; e++) b3[e] = 1;
+      for (let e = 97; e <= 122; e++) b3[e] = 1;
+      b3[45] = 1;
+      b3[46] = 1;
+      b3[95] = 1;
+      function ne3(e) {
+        let n = {}, t2 = e.toString();
         t2 = t2.replace(/\r\n?/mg, `
 `);
-        let n;
-        for (; (n = J4.exec(t2)) != null; ) {
-          let r8 = n[1], s = n[2] || "";
+        let o2;
+        for (; (o2 = re3.exec(t2)) != null; ) {
+          let r8 = o2[1], s = o2[2] || "";
           s = s.trim();
           let i = s[0];
           s = s.replace(/^(['"`])([\s\S]*)\1$/mg, "$2"), i === '"' && (s = s.replace(/\\n/g, `
-`), s = s.replace(/\\r/g, "\r")), o2[r8] = s;
+`), s = s.replace(/\\r/g, "\r")), n[r8] = s;
         }
-        return o2;
+        return n;
       }
-      function X4(e) {
-        let o2 = {}, t2 = typeof e == "string" ? e : e.toString();
+      function w2(e) {
+        return e <= 32 ? e === 32 || e >= 9 && e <= 13 : e >= 160 && (e === 160 || e === 5760 || e >= 8192 && e <= 8202 || e === 8232 || e === 8233 || e === 8239 || e === 8287 || e === 12288 || e === 65279);
+      }
+      function q3(e) {
+        return e === 10 || e === 8232 || e === 8233;
+      }
+      function oe4(e) {
+        let n = {}, t2 = typeof e == "string" ? e : e.toString();
         t2.indexOf("\r") !== -1 && (t2 = t2.replace(/\r\n?/g, `
 `));
-        let n = t2.length, r8 = 0;
-        for (; r8 < n; ) {
+        let o2 = t2.length, r8 = 0;
+        for (; r8 < o2; ) {
           let s = t2.charCodeAt(r8);
-          for (; r8 < n && (s === 32 || s === 9 || s === 10 || s === 65279); ) r8++, s = t2.charCodeAt(r8);
-          if (r8 >= n) break;
+          for (; r8 < o2 && w2(s); ) r8++, s = t2.charCodeAt(r8);
+          if (r8 >= o2) break;
           if (s === 35) {
-            for (; r8 < n && t2.charCodeAt(r8) !== 10; ) r8++;
+            for (; r8 < o2 && !q3(t2.charCodeAt(r8)); ) r8++;
             continue;
           }
-          if (s === 101 && r8 + 6 < n && t2.charCodeAt(r8 + 1) === 120 && t2.charCodeAt(r8 + 2) === 112 && t2.charCodeAt(r8 + 3) === 111 && t2.charCodeAt(r8 + 4) === 114 && t2.charCodeAt(r8 + 5) === 116) {
-            let f3 = t2.charCodeAt(r8 + 6);
-            if (f3 === 32 || f3 === 9) for (r8 += 7; r8 < n && ((s = t2.charCodeAt(r8)) === 32 || s === 9); ) r8++;
-            else s = t2.charCodeAt(r8);
+          let i = -1;
+          if (s === 101 && r8 + 6 < o2 && t2.charCodeAt(r8 + 1) === 120 && t2.charCodeAt(r8 + 2) === 112 && t2.charCodeAt(r8 + 3) === 111 && t2.charCodeAt(r8 + 4) === 114 && t2.charCodeAt(r8 + 5) === 116) {
+            let v3 = t2.charCodeAt(r8 + 6);
+            if (w2(v3)) {
+              let u2 = r8 + 7;
+              for (; u2 < o2 && w2(t2.charCodeAt(u2)); ) u2++;
+              b3[t2.charCodeAt(u2)] && (i = r8 + 6, r8 = u2);
+            } else s = t2.charCodeAt(r8);
           }
-          let i = r8, l3 = 0;
-          for (; r8 < n && (l3 = t2.charCodeAt(r8), v3[l3]); ) r8++;
-          if (r8 === i) {
-            for (; r8 < n && t2.charCodeAt(r8) !== 10; ) r8++;
+          let l3 = r8, d2 = 0;
+          for (; r8 < o2 && (d2 = t2.charCodeAt(r8), b3[d2]); ) r8++;
+          if (r8 === l3) {
+            for (; r8 < o2 && !q3(t2.charCodeAt(r8)); ) r8++;
             continue;
           }
-          let h3 = t2.slice(i, r8);
-          if (r8 >= n && (l3 = 0), l3 === 32 || l3 === 9) do
-            r8++, l3 = r8 < n ? t2.charCodeAt(r8) : 0;
-          while (l3 === 32 || l3 === 9);
-          if (l3 === 61) r8++;
-          else if (l3 === 58 && r8 + 1 < n && (t2.charCodeAt(r8 + 1) === 32 || t2.charCodeAt(r8 + 1) === 9)) r8++;
+          let h3 = t2.slice(l3, r8), f3 = r8;
+          if (r8 >= o2 && (d2 = 0), w2(d2)) do
+            r8++, d2 = r8 < o2 ? t2.charCodeAt(r8) : 0;
+          while (w2(d2));
+          if (d2 === 61) r8++;
+          else if (d2 === 58 && r8 === f3 && r8 + 1 < o2 && w2(t2.charCodeAt(r8 + 1))) r8 += 2;
           else {
-            for (; r8 < n && t2.charCodeAt(r8) !== 10; ) r8++;
+            for (r8 = i === -1 ? f3 : i; r8 < o2 && !q3(t2.charCodeAt(r8)); ) r8++;
             continue;
           }
-          for (; r8 < n && ((s = t2.charCodeAt(r8)) === 32 || s === 9); ) r8++;
-          let u2;
-          if (s = r8 < n ? t2.charCodeAt(r8) : 0, s === 39 || s === 34 || s === 96) {
-            let f3 = s, c3 = r8 + 1, a = c3;
-            for (; a < n; ) {
-              let d2 = t2.charCodeAt(a);
-              if (d2 === 92 && a + 1 < n) {
-                let p2 = t2.charCodeAt(a + 1);
-                if (p2 === f3 || p2 === 92) {
-                  a += 2;
-                  continue;
-                }
-              }
-              if (d2 === f3) break;
-              a++;
+          let c3 = r8, a = r8;
+          for (; a < o2 && w2(t2.charCodeAt(a)); ) a++;
+          let g2 = t2.charCodeAt(a), p2, y2 = false;
+          if (g2 === 39 || g2 === 34 || g2 === 96) {
+            let v3 = t2[a], u2 = t2.indexOf(v3, a + 1), m2 = -1, C3 = -1;
+            for (; u2 !== -1; ) {
+              let O4 = t2.charCodeAt(u2 - 1) === 92, E4 = u2 + 1;
+              for (; E4 < o2 && !q3(t2.charCodeAt(E4)) && w2(t2.charCodeAt(E4)); ) E4++;
+              if ((E4 === o2 || q3(t2.charCodeAt(E4)) || t2.charCodeAt(E4) === 35) && (m2 = u2, C3 = E4), !O4) break;
+              u2 = t2.indexOf(v3, u2 + 1);
             }
-            if (a >= n) {
-              let d2 = r8, p2 = r8;
-              for (; p2 < n; ) {
-                let w2 = t2.charCodeAt(p2);
-                if (w2 === 35 || w2 === 10) break;
-                p2++;
-              }
-              let m2 = p2;
-              for (; m2 > d2; ) {
-                let w2 = t2.charCodeAt(m2 - 1);
-                if (w2 === 32 || w2 === 9) m2--;
-                else break;
-              }
-              if (u2 = t2.slice(d2, m2), r8 = p2, r8 < n && t2.charCodeAt(r8) === 35) for (; r8 < n && t2.charCodeAt(r8) !== 10; ) r8++;
-            } else {
-              for (u2 = t2.slice(c3, a), r8 = a + 1, f3 === 34 && u2.indexOf("\\") !== -1 && (u2 = u2.replace(/\\n/g, `
-`).replace(/\\r/g, "\r")); r8 < n && ((s = t2.charCodeAt(r8)) === 32 || s === 9); ) r8++;
-              if (r8 < n && t2.charCodeAt(r8) === 35) for (; r8 < n && t2.charCodeAt(r8) !== 10; ) r8++;
+            if (m2 !== -1) {
+              if (p2 = t2.slice(a + 1, m2), r8 = C3, t2.charCodeAt(r8) === 35) for (; r8 < o2 && !q3(t2.charCodeAt(r8)); ) r8++;
+              y2 = true;
             }
-          } else {
-            let f3 = r8, c3 = t2.indexOf(`
-`, r8);
-            c3 === -1 && (c3 = n);
-            let a = t2.indexOf("#", r8);
-            (a === -1 || a > c3) && (a = c3);
-            let d2 = a;
-            for (; d2 > f3; ) {
-              let p2 = t2.charCodeAt(d2 - 1);
-              if (p2 === 32 || p2 === 9) d2--;
-              else break;
-            }
-            u2 = f3 === d2 ? "" : t2.slice(f3, d2), r8 = a === c3 ? a : c3;
           }
-          o2[h3] = u2;
+          if (!y2) {
+            let v3 = t2.indexOf(`
+`, c3);
+            v3 === -1 && (v3 = o2);
+            let u2;
+            if (o2 < 4096) u2 = t2.indexOf("#", c3), (u2 === -1 || u2 > v3) && (u2 = v3);
+            else for (u2 = c3; u2 < v3 && t2.charCodeAt(u2) !== 35; ) u2++;
+            let m2 = c3, C3 = u2;
+            for (; m2 < C3 && w2(t2.charCodeAt(m2)); ) m2++;
+            for (; C3 > m2 && w2(t2.charCodeAt(C3 - 1)); ) C3--;
+            let O4 = t2.charCodeAt(m2);
+            if (p2 = t2.slice(m2, C3), p2.includes("\u2028") || p2.includes("\u2029") ? p2 = p2.replace(/^(['"`])([\s\S]*)\1$/mg, "$2") : C3 - m2 >= 2 && (O4 === 39 || O4 === 34 || O4 === 96) && t2.charCodeAt(C3 - 1) === O4 && (p2 = t2.slice(m2 + 1, C3 - 1)), r8 = u2, u2 < v3) for (; r8 < o2 && !q3(t2.charCodeAt(r8)); ) r8++;
+          }
+          g2 === 34 && (y2 || a < r8) && p2.indexOf("\\") !== -1 && (p2 = p2.replace(/\\n/g, `
+`).replace(/\\r/g, "\r")), n[h3] = p2;
         }
-        return o2;
+        return n;
       }
-      function Y4(e, o2) {
-        return o2 && T3(o2.fast) ? X4(e) : K4(e);
+      function se3(e, n) {
+        return n && $4(n.fast) ? oe4(e) : ne3(e);
       }
-      function b3(e) {
+      function T3(e) {
         console.log(`\u2506 ${e}`);
       }
-      function z4(e) {
+      function ie2(e) {
         console.error(`\u25C7 ${e}`);
       }
-      function N4(e) {
-        return e[0] === "~" ? x3.join(L4.homedir(), e.slice(1)) : e;
+      function V4(e) {
+        return e[0] === "~" ? I4.join(Z4.homedir(), e.slice(1)) : e;
       }
-      function Z4(e = {}) {
-        return { ...Q4(), ...e };
+      function ce3(e = {}) {
+        let n = { ...e };
+        for (let t2 of Object.keys(n)) n[t2] === void 0 && delete n[t2];
+        return { ...B3(), ...n };
       }
-      function ee4(e) {
-        e = Z4(e);
-        let o2 = x3.resolve(process.cwd(), ".env"), t2 = "utf8", n = process.env;
-        e && e.processEnv != null && (n = e.processEnv);
-        let r8 = T3(e && e.debug), s = T3(e && e.quiet);
-        e && e.encoding ? t2 = e.encoding : r8 && b3("no encoding is specified (UTF-8 is used by default)");
-        let i = [o2];
-        if (e && e.path) if (!Array.isArray(e.path)) i = [N4(e.path)];
+      function ae3(e) {
+        e = ce3(e);
+        let n = I4.resolve(process.cwd(), ".env"), t2 = "utf8", o2 = process.env;
+        e && e.processEnv != null && (o2 = e.processEnv);
+        let r8 = $4(e && e.debug);
+        e && e.encoding ? t2 = e.encoding : r8 && T3("no encoding is specified (UTF-8 is used by default)");
+        let s = [n];
+        if (e && e.path) if (!Array.isArray(e.path)) s = [V4(e.path)];
         else {
-          i = [];
-          for (let c3 of e.path) i.push(N4(c3));
+          s = [];
+          for (let c3 of e.path) s.push(V4(c3));
         }
-        let l3, h3 = {}, u2 = { fast: e.fast };
-        for (let c3 of i) try {
-          let a = g2.parse(H4.readFileSync(c3, { encoding: t2 }), u2);
-          g2.populate(h3, a, e);
+        let i, l3 = {}, d2 = { fast: e.fast };
+        for (let c3 of s) try {
+          let a = A4.parse(z4.readFileSync(c3, { encoding: t2 }), d2);
+          A4.populate(l3, a, e);
         } catch (a) {
-          r8 && b3(`failed to load ${c3} ${a.message}`), l3 = a;
+          r8 && T3(`failed to load ${c3} ${a.message}`), i = a;
         }
-        let f3 = g2.populate(n, h3, e);
-        if (r8 || !s) {
-          let c3 = Object.keys(f3).length, a = [];
-          for (let d2 of i) try {
-            let p2 = x3.relative(process.cwd(), d2 instanceof M5 ? W3(d2) : d2);
+        let h3 = A4.populate(o2, l3, e), f3 = $4(Object.prototype.hasOwnProperty.call(e, "quiet") ? e.quiet : B3(o2).quiet);
+        if (r8 || !f3) {
+          let c3 = Object.keys(h3).length, a = [];
+          for (let g2 of s) try {
+            let p2 = I4.relative(process.cwd(), g2 instanceof ee4 ? te3(g2) : g2);
             a.push(p2);
           } catch (p2) {
-            r8 && b3(`failed to load ${d2} ${p2.message}`), l3 = p2;
+            r8 && T3(`failed to load ${g2} ${p2.message}`), i = p2;
           }
-          z4(`injected env (${c3}) from ${a.join(",")}`);
+          ie2(`injected env (${c3}) from ${a.join(",")}`);
         }
-        return l3 ? { parsed: h3, error: l3 } : { parsed: h3 };
+        return i ? { parsed: l3, error: i } : { parsed: l3 };
       }
-      function te3(e) {
-        return g2.configDotenv(e);
+      function le3(e) {
+        return A4.configDotenv(e);
       }
-      function re3(e, o2, t2 = {}) {
-        let n = !!(t2 && t2.debug), r8 = !!(t2 && t2.override), s = {};
-        if (e === null || typeof e != "object" || o2 === null || typeof o2 != "object") {
+      function fe3(e, n, t2 = {}) {
+        let o2 = $4(t2 && t2.debug), r8 = $4(t2 && t2.override), s = {};
+        if (e === null || typeof e != "object" || n === null || typeof n != "object") {
           let i = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
           throw i.code = "OBJECT_REQUIRED", i;
         }
-        for (let i of Object.keys(o2)) Object.prototype.hasOwnProperty.call(e, i) ? (r8 === true && (e[i] = o2[i], s[i] = o2[i]), n && b3(r8 === true ? `"${i}" is already defined and WAS overwritten` : `"${i}" is already defined and was NOT overwritten`)) : (e[i] = o2[i], s[i] = o2[i]);
+        for (let i of Object.keys(n)) Object.prototype.hasOwnProperty.call(e, i) ? (r8 === true && (e[i] = n[i], s[i] = n[i]), o2 && T3(r8 === true ? `"${i}" is already defined and WAS overwritten` : `"${i}" is already defined and was NOT overwritten`)) : (e[i] = n[i], s[i] = n[i]);
         return s;
       }
-      var g2 = { configDotenv: ee4, config: te3, parse: Y4, populate: re3 };
-      C3.exports.configDotenv = g2.configDotenv;
-      C3.exports.config = g2.config;
-      C3.exports.parse = g2.parse;
-      C3.exports.populate = g2.populate;
-      C3.exports = g2;
+      var A4 = { configDotenv: ae3, config: le3, parse: se3, populate: fe3 };
+      x3.exports.configDotenv = A4.configDotenv;
+      x3.exports.config = A4.config;
+      x3.exports.parse = A4.parse;
+      x3.exports.populate = A4.populate;
+      x3.exports = A4;
     });
-    var F4 = O4((be3, R4) => {
-      var $4 = require("child_process"), oe4 = require("fs"), P4 = require("path");
-      function ne3(e) {
-        let o2 = ['"'], t2 = 0;
-        for (let n of e) {
-          if (n === "\\") {
+    var M5 = j4((Te2, W3) => {
+      var _4 = require("child_process"), ue3 = require("fs"), L4 = require("path");
+      function de3(e) {
+        let n = ['"'], t2 = 0;
+        for (let o2 of e) {
+          if (o2 === "\\") {
             t2++;
             continue;
           }
-          n === '"' ? o2.push("\\".repeat(t2 * 2 + 1), '"') : o2.push("\\".repeat(t2), n), t2 = 0;
+          o2 === '"' ? n.push("\\".repeat(t2 * 2 + 1), '"') : n.push("\\".repeat(t2), o2), t2 = 0;
         }
-        return o2.push("\\".repeat(t2 * 2), '"'), o2.join("");
+        return n.push("\\".repeat(t2 * 2), '"'), n.join("");
       }
-      function _4(e, o2 = 1) {
-        for (let t2 = 0; t2 < o2; t2++) {
-          let n = [];
+      function H4(e, n = 1) {
+        for (let t2 = 0; t2 < n; t2++) {
+          let o2 = [];
           for (let r8 of e) {
             let s = r8.charCodeAt(0), i = s >= 48 && s <= 57 || s >= 65 && s <= 90 || s >= 97 && s <= 122, l3 = "\\/:._-".includes(r8);
-            !i && !l3 && s < 128 && n.push("^"), n.push(r8);
+            !i && !l3 && s < 128 && o2.push("^"), o2.push(r8);
           }
-          e = n.join("");
+          e = o2.join("");
         }
         return e;
       }
-      function D3(e, o2) {
-        let t2 = Object.keys(e).reverse().find((n) => n.toUpperCase() === o2);
+      function P4(e, n) {
+        let t2 = Object.keys(e).reverse().find((o2) => o2.toUpperCase() === n);
         return t2 === void 0 ? void 0 : e[t2];
       }
-      function se3(e, o2, t2) {
-        let n = (D3(o2, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = n.some((l3) => e.toLowerCase().endsWith(l3.toLowerCase())) ? ["", ...n] : [...n, ""], i = /[\\/]/.test(e) ? [t2] : [t2, ...(D3(o2, "PATH") || "").split(";")];
-        for (let l3 of i) for (let h3 of s) {
-          let u2 = P4.resolve(t2, l3.replace(/^"|"$/g, ""), e + h3);
+      function pe3(e, n, t2) {
+        let o2 = (P4(n, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = o2.some((l3) => e.toLowerCase().endsWith(l3.toLowerCase())) ? ["", ...o2] : [...o2, ""], i = /[\\/]/.test(e) ? [t2] : [t2, ...(P4(n, "PATH") || "").split(";")];
+        for (let l3 of i) for (let d2 of s) {
+          let h3 = L4.resolve(t2, l3.replace(/^"|"$/g, ""), e + d2);
           try {
-            if (oe4.statSync(u2).isFile()) return u2;
+            if (ue3.statSync(h3).isFile()) return h3;
           } catch {
           }
         }
       }
-      function ie2(e, o2, t2) {
-        if (process.platform !== "win32") return $4.spawn(e, o2, t2);
-        let n = t2.env || process.env, r8 = se3(e, n, t2.cwd || process.cwd());
-        if (r8 && /\.(?:exe|com)$/i.test(r8)) return $4.spawn(r8, o2, t2);
-        let s = /\.(?:bat|cmd)$/i.test(r8 || e), i = [_4(P4.normalize(r8 || e))];
-        for (let h3 of o2) i.push(_4(ne3(h3), s ? 2 : 1));
+      function he3(e, n, t2) {
+        if (process.platform !== "win32") return _4.spawn(e, n, t2);
+        let o2 = t2.env || process.env, r8 = pe3(e, o2, t2.cwd || process.cwd());
+        if (r8 && /\.(?:exe|com)$/i.test(r8)) return _4.spawn(r8, n, t2);
+        let s = /\.(?:bat|cmd)$/i.test(r8 || e), i = [H4(L4.normalize(r8 || e))];
+        for (let d2 of n) i.push(H4(de3(d2), s ? 2 : 1));
         let l3 = i.join(" ");
-        return $4.spawn(D3(n, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l3}"`], { ...t2, windowsVerbatimArguments: true });
+        return _4.spawn(P4(o2, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l3}"`], { ...t2, windowsVerbatimArguments: true });
       }
-      R4.exports = ie2;
+      W3.exports = he3;
     });
-    var V4 = O4((Ae3, S3) => {
-      var ce3 = require("fs"), ae3 = require("os"), G4 = require("path"), le3 = require("child_process"), fe3 = F4(), k3 = y2(), { optionsFromEnv: ue3 } = q3();
-      function A4() {
+    var X4 = j4(($e3, F4) => {
+      var ge3 = require("fs"), me3 = require("os"), Q4 = require("path"), ve3 = require("child_process"), Ce3 = M5(), R4 = N4(), { optionsFromEnv: J4 } = k3();
+      function D3() {
         console.log(["Usage: dotenv run [--help] [-q|--quiet] [--debug] [--override] [--fast] [-f|--file <paths>] [--] <command> [args...]", "", "Run a command with environment variables from a .env file.", "Place dotenv options before the command; all following arguments go to the command.", "", "Options:", "  -f, --file <paths>  .env paths, comma-separated or repeated (default: .env)", "  -q, --quiet suppress the injected env message", "  --debug     enable debug logging", "  --override  override existing environment variables", "  --fast      use the faster character-scanner parser", "", "Environment variables (DOTENV_CONFIG_* names remain as fallbacks):", "  DOTENV_PATH, DOTENV_ENCODING, DOTENV_QUIET,", "  DOTENV_DEBUG, DOTENV_OVERRIDE,", "  DOTENV_FAST"].join(`
 `));
       }
-      function de3(e) {
-        let o2 = [], t2 = false, n, r8, s, i, l3 = -1;
-        for (let u2 = 0; u2 < e.length; u2++) {
-          let f3 = e[u2];
+      function we3(e) {
+        let n = [], t2 = false, o2, r8, s, i, l3 = -1;
+        for (let h3 = 0; h3 < e.length; h3++) {
+          let f3 = e[h3];
           if (f3 === "--") {
-            l3 = u2 + 1;
+            l3 = h3 + 1;
             break;
           }
           if (f3 === "--help" || f3 === "-h") return { help: true };
           if (f3 === "--quiet" || f3 === "-q") {
-            n = true;
+            o2 = true;
             continue;
           }
           if (f3 === "--debug") {
@@ -19884,79 +19877,79 @@ var require_dist = __commonJS({
             continue;
           }
           if (f3 === "-f" || f3 === "--file" || f3.startsWith("-f=") || f3.startsWith("--file=")) {
-            let c3 = f3.indexOf("="), a = c3 === -1 ? f3 : f3.slice(0, c3), d2 = c3 === -1 ? e[++u2] : f3.slice(c3 + 1);
-            if (!d2 || d2 === "--") return { error: `${a} requires a path` };
-            let p2 = d2.split(",").map((m2) => m2.trim()).filter(Boolean);
+            let c3 = f3.indexOf("="), a = c3 === -1 ? f3 : f3.slice(0, c3), g2 = c3 === -1 ? e[++h3] : f3.slice(c3 + 1);
+            if (!g2 || g2 === "--") return { error: `${a} requires a path` };
+            let p2 = g2.split(",").map((y2) => y2.trim()).filter(Boolean);
             if (p2.length === 0) return { error: `${a} requires a path` };
-            o2.push(...p2), t2 = true;
+            n.push(...p2), t2 = true;
             continue;
           }
           if (f3.startsWith("-")) return { error: `unknown option: ${f3}` };
-          l3 = u2;
+          l3 = h3;
           break;
         }
-        let h3 = l3 === -1 ? [] : e.slice(l3);
-        return { paths: o2, pathSet: t2, quiet: n, debug: r8, override: s, fast: i, command: h3 };
+        let d2 = l3 === -1 ? [] : e.slice(l3);
+        return { paths: n, pathSet: t2, quiet: o2, debug: r8, override: s, fast: i, command: d2 };
       }
-      function pe3(e) {
-        return e[0] === "~" ? G4.join(ae3.homedir(), e.slice(1)) : e;
+      function Ae3(e) {
+        return e[0] === "~" ? Q4.join(me3.homedir(), e.slice(1)) : e;
       }
-      function he3(e) {
-        let o2 = ue3(), t2 = { encoding: o2.encoding || "utf8", quiet: o2.quiet === true, debug: o2.debug === true, override: o2.override === true, fast: o2.fast === true, paths: [".env"], defaultPath: true };
-        return o2.path != null && (t2.paths = [o2.path], t2.defaultPath = false), e.pathSet && (t2.paths = e.paths, t2.defaultPath = false), e.quiet != null && (t2.quiet = e.quiet), e.debug != null && (t2.debug = e.debug), e.override != null && (t2.override = e.override), e.fast != null && (t2.fast = e.fast), t2;
+      function Ee3(e) {
+        let n = J4(), t2 = { encoding: n.encoding || "utf8", quiet: n.quiet, debug: n.debug === true, override: n.override === true, fast: n.fast === true, paths: [".env"], defaultPath: true };
+        return n.path && (t2.paths = [n.path], t2.defaultPath = false), e.pathSet && (t2.paths = e.paths, t2.defaultPath = false), e.quiet != null && (t2.quiet = e.quiet), e.debug != null && (t2.debug = e.debug), e.override != null && (t2.override = e.override), e.fast != null && (t2.fast = e.fast), t2;
       }
-      function ge3(e) {
-        let o2 = {}, t2 = [], n = { override: e.override, debug: e.debug };
+      function be3(e) {
+        let n = {}, t2 = [], o2 = { override: e.override, debug: e.debug };
         for (let s of e.paths) {
-          let i = G4.resolve(process.cwd(), pe3(s));
+          let i = Q4.resolve(process.cwd(), Ae3(s));
           try {
-            let l3 = k3.parse(ce3.readFileSync(i, { encoding: e.encoding }), { fast: e.fast });
-            k3.populate(o2, l3, n), t2.push(s);
+            let l3 = R4.parse(ge3.readFileSync(i, { encoding: e.encoding }), { fast: e.fast });
+            R4.populate(n, l3, o2), t2.push(s);
           } catch (l3) {
             if (e.debug && console.log(`\u2506 failed to load ${s} ${l3.message}`), !(e.defaultPath && l3.code === "ENOENT")) throw l3;
           }
         }
-        return { injected: k3.populate(process.env, o2, n), loadedPaths: t2 };
+        return { injected: R4.populate(process.env, n, o2), loadedPaths: t2 };
       }
-      function U3(e) {
-        let o2 = e[0];
-        if (o2 === "--help" || o2 === "-h") {
-          A4();
+      function K4(e) {
+        let n = e[0];
+        if (n === "--help" || n === "-h") {
+          D3();
           return;
         }
-        if (o2 !== "run") {
-          A4(), process.exitCode = 1;
+        if (n !== "run") {
+          D3(), process.exitCode = 1;
           return;
         }
-        let t2 = de3(e.slice(1));
+        let t2 = we3(e.slice(1));
         if (t2.help) {
-          A4();
+          D3();
           return;
         }
         if (t2.error) {
-          console.error(`dotenv: ${t2.error}`), A4(), process.exitCode = 1;
+          console.error(`dotenv: ${t2.error}`), D3(), process.exitCode = 1;
           return;
         }
         if (t2.command.length === 0) {
-          A4(), process.exitCode = 1;
+          D3(), process.exitCode = 1;
           return;
         }
-        let n = he3(t2);
+        let o2 = Ee3(t2);
         try {
-          let c3 = ge3(n);
-          if (!n.quiet) {
-            let a = `\u25C7 injected env (${Object.keys(c3.injected).length})`;
-            c3.loadedPaths.length > 0 && (a += ` from ${c3.loadedPaths.join(", ")}`), console.error(a);
+          let c3 = be3(o2);
+          if (!(o2.quiet == null ? J4().quiet : o2.quiet)) {
+            let g2 = `\u25C7 injected env (${Object.keys(c3.injected).length})`;
+            c3.loadedPaths.length > 0 && (g2 += ` from ${c3.loadedPaths.join(", ")}`), console.error(g2);
           }
         } catch (c3) {
           console.error(`dotenv: ${c3.message}`), process.exitCode = 1;
           return;
         }
-        let r8 = !!process.stdin.isTTY, s = process.platform !== "win32" && !r8, i = fe3(t2.command[0], t2.command.slice(1), { stdio: "inherit", detached: s }), l3 = /* @__PURE__ */ new Map(), h3 = 0;
-        function u2(c3) {
+        let r8 = !!process.stdin.isTTY, s = process.platform !== "win32" && !r8, i = Ce3(t2.command[0], t2.command.slice(1), { stdio: "inherit", detached: s }), l3 = /* @__PURE__ */ new Map(), d2 = 0;
+        function h3(c3) {
           if (!(!i.pid || i.exitCode !== null || i.signalCode !== null)) {
             if (process.platform === "win32") {
-              le3.spawnSync("taskkill", ["/pid", String(i.pid), "/T", "/F"], { stdio: "ignore" });
+              ve3.spawnSync("taskkill", ["/pid", String(i.pid), "/T", "/F"], { stdio: "ignore" });
               return;
             }
             try {
@@ -19972,13 +19965,13 @@ var require_dist = __commonJS({
         for (let c3 of ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"]) {
           let a = () => {
             if (c3 === "SIGINT") {
-              if (h3++, r8 && process.platform !== "win32" && h3 === 1) return;
-              if (h3 > 1) {
-                u2(h3 === 2 ? "SIGTERM" : "SIGKILL");
+              if (d2++, r8 && process.platform !== "win32" && d2 === 1) return;
+              if (d2 > 1) {
+                h3(d2 === 2 ? "SIGTERM" : "SIGKILL");
                 return;
               }
             }
-            u2(c3);
+            h3(c3);
           };
           l3.set(c3, a), process.on(c3, a);
         }
@@ -19989,17 +19982,17 @@ var require_dist = __commonJS({
           }, 1e3), process.kill(process.pid, a));
         });
       }
-      S3.exports = U3;
-      require.main === S3 && U3(process.argv.slice(2));
+      F4.exports = K4;
+      require.main === F4 && K4(process.argv.slice(2));
     });
-    var E4 = y2();
-    var ve3 = V4();
-    module2.exports = E4;
-    module2.exports.config = E4.config;
-    module2.exports.configDotenv = E4.configDotenv;
-    module2.exports.parse = E4.parse;
-    module2.exports.populate = E4.populate;
-    require.main === module2 && ve3(process.argv.slice(2));
+    var S3 = N4();
+    var qe2 = X4();
+    module2.exports = S3;
+    module2.exports.config = S3.config;
+    module2.exports.configDotenv = S3.configDotenv;
+    module2.exports.parse = S3.parse;
+    module2.exports.populate = S3.populate;
+    require.main === module2 && qe2(process.argv.slice(2));
   }
 });
 
