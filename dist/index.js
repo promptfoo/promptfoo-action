@@ -19930,11 +19930,11 @@ var require_dist = __commonJS({
         throw o2 = 0, t2;
       }
     };
-    var q4 = O4((ve3, j4) => {
+    var q4 = O4((Ce3, j4) => {
       function I4(e) {
         return typeof e == "string" ? !["false", "0", "no", "off", ""].includes(e.toLowerCase()) : !!e;
       }
-      function U3() {
+      function B4() {
         let e = {};
         for (let o2 of ["ENCODING", "PATH", "QUIET", "DEBUG", "OVERRIDE", "FAST"]) {
           let t2 = process.env[`DOTENV_${o2}`] != null ? process.env[`DOTENV_${o2}`] : process.env[`DOTENV_CONFIG_${o2}`];
@@ -19942,22 +19942,22 @@ var require_dist = __commonJS({
         }
         return e;
       }
-      j4.exports = { parseBoolean: I4, optionsFromEnv: U3 };
+      j4.exports = { parseBoolean: I4, optionsFromEnv: B4 };
     });
-    var T3 = O4((me3, C3) => {
-      var H4 = require("fs"), x4 = require("path"), L4 = require("os"), { parseBoolean: y2, optionsFromEnv: M5 } = q4(), W4 = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg, v3 = new Uint8Array(256);
+    var y2 = O4((we3, C3) => {
+      var H4 = require("fs"), x4 = require("path"), L4 = require("os"), { URL: M5, fileURLToPath: W4 } = require("url"), { parseBoolean: T3, optionsFromEnv: Q4 } = q4(), J3 = /(?:^|^)\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?(?:$|$)/mg, v3 = new Uint8Array(256);
       for (let e = 48; e <= 57; e++) v3[e] = 1;
       for (let e = 65; e <= 90; e++) v3[e] = 1;
       for (let e = 97; e <= 122; e++) v3[e] = 1;
       v3[45] = 1;
       v3[46] = 1;
       v3[95] = 1;
-      function Q4(e) {
+      function K4(e) {
         let o2 = {}, t2 = e.toString();
         t2 = t2.replace(/\r\n?/mg, `
 `);
         let n7;
-        for (; (n7 = W4.exec(t2)) != null; ) {
+        for (; (n7 = J3.exec(t2)) != null; ) {
           let r2 = n7[1], s = n7[2] || "";
           s = s.trim();
           let i = s[0];
@@ -19966,7 +19966,7 @@ var require_dist = __commonJS({
         }
         return o2;
       }
-      function J3(e) {
+      function X4(e) {
         let o2 = {}, t2 = typeof e == "string" ? e : e.toString();
         t2.indexOf("\r") !== -1 && (t2 = t2.replace(/\r\n?/g, `
 `));
@@ -20005,31 +20005,31 @@ var require_dist = __commonJS({
           if (s = r2 < n7 ? t2.charCodeAt(r2) : 0, s === 39 || s === 34 || s === 96) {
             let f3 = s, c3 = r2 + 1, a = c3;
             for (; a < n7; ) {
-              let p2 = t2.charCodeAt(a);
-              if (p2 === 92 && a + 1 < n7) {
-                let d2 = t2.charCodeAt(a + 1);
-                if (d2 === f3 || d2 === 92) {
+              let d2 = t2.charCodeAt(a);
+              if (d2 === 92 && a + 1 < n7) {
+                let p2 = t2.charCodeAt(a + 1);
+                if (p2 === f3 || p2 === 92) {
                   a += 2;
                   continue;
                 }
               }
-              if (p2 === f3) break;
+              if (d2 === f3) break;
               a++;
             }
             if (a >= n7) {
-              let p2 = r2, d2 = r2;
-              for (; d2 < n7; ) {
-                let w2 = t2.charCodeAt(d2);
+              let d2 = r2, p2 = r2;
+              for (; p2 < n7; ) {
+                let w2 = t2.charCodeAt(p2);
                 if (w2 === 35 || w2 === 10) break;
-                d2++;
+                p2++;
               }
-              let m2 = d2;
-              for (; m2 > p2; ) {
+              let m2 = p2;
+              for (; m2 > d2; ) {
                 let w2 = t2.charCodeAt(m2 - 1);
                 if (w2 === 32 || w2 === 9) m2--;
                 else break;
               }
-              if (u2 = t2.slice(p2, m2), r2 = d2, r2 < n7 && t2.charCodeAt(r2) === 35) for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
+              if (u2 = t2.slice(d2, m2), r2 = p2, r2 < n7 && t2.charCodeAt(r2) === 35) for (; r2 < n7 && t2.charCodeAt(r2) !== 10; ) r2++;
             } else {
               for (u2 = t2.slice(c3, a), r2 = a + 1, f3 === 34 && u2.indexOf("\\") !== -1 && (u2 = u2.replace(/\\n/g, `
 `).replace(/\\r/g, "\r")); r2 < n7 && ((s = t2.charCodeAt(r2)) === 32 || s === 9); ) r2++;
@@ -20041,38 +20041,38 @@ var require_dist = __commonJS({
             c3 === -1 && (c3 = n7);
             let a = t2.indexOf("#", r2);
             (a === -1 || a > c3) && (a = c3);
-            let p2 = a;
-            for (; p2 > f3; ) {
-              let d2 = t2.charCodeAt(p2 - 1);
-              if (d2 === 32 || d2 === 9) p2--;
+            let d2 = a;
+            for (; d2 > f3; ) {
+              let p2 = t2.charCodeAt(d2 - 1);
+              if (p2 === 32 || p2 === 9) d2--;
               else break;
             }
-            u2 = f3 === p2 ? "" : t2.slice(f3, p2), r2 = a === c3 ? a : c3;
+            u2 = f3 === d2 ? "" : t2.slice(f3, d2), r2 = a === c3 ? a : c3;
           }
           o2[h3] = u2;
         }
         return o2;
       }
-      function K4(e, o2) {
-        return o2 && y2(o2.fast) ? J3(e) : Q4(e);
+      function Y4(e, o2) {
+        return o2 && T3(o2.fast) ? X4(e) : K4(e);
       }
       function b3(e) {
         console.log(`\u2506 ${e}`);
       }
-      function X4(e) {
+      function z3(e) {
         console.error(`\u25C7 ${e}`);
       }
       function N4(e) {
         return e[0] === "~" ? x4.join(L4.homedir(), e.slice(1)) : e;
       }
-      function Y4(e = {}) {
-        return { ...M5(), ...e };
+      function Z3(e = {}) {
+        return { ...Q4(), ...e };
       }
-      function z3(e) {
-        e = Y4(e);
+      function ee4(e) {
+        e = Z3(e);
         let o2 = x4.resolve(process.cwd(), ".env"), t2 = "utf8", n7 = process.env;
         e && e.processEnv != null && (n7 = e.processEnv);
-        let r2 = y2(e && e.debug), s = y2(e && e.quiet);
+        let r2 = T3(e && e.debug), s = T3(e && e.quiet);
         e && e.encoding ? t2 = e.encoding : r2 && b3("no encoding is specified (UTF-8 is used by default)");
         let i = [o2];
         if (e && e.path) if (!Array.isArray(e.path)) i = [N4(e.path)];
@@ -20090,20 +20090,20 @@ var require_dist = __commonJS({
         let f3 = g2.populate(n7, h3, e);
         if (r2 || !s) {
           let c3 = Object.keys(f3).length, a = [];
-          for (let p2 of i) try {
-            let d2 = x4.relative(process.cwd(), p2);
-            a.push(d2);
-          } catch (d2) {
-            r2 && b3(`failed to load ${p2} ${d2.message}`), l3 = d2;
+          for (let d2 of i) try {
+            let p2 = x4.relative(process.cwd(), d2 instanceof M5 ? W4(d2) : d2);
+            a.push(p2);
+          } catch (p2) {
+            r2 && b3(`failed to load ${d2} ${p2.message}`), l3 = p2;
           }
-          X4(`injected env (${c3}) from ${a.join(",")}`);
+          z3(`injected env (${c3}) from ${a.join(",")}`);
         }
         return l3 ? { parsed: h3, error: l3 } : { parsed: h3 };
       }
-      function Z3(e) {
+      function te3(e) {
         return g2.configDotenv(e);
       }
-      function ee4(e, o2, t2 = {}) {
+      function re3(e, o2, t2 = {}) {
         let n7 = !!(t2 && t2.debug), r2 = !!(t2 && t2.override), s = {};
         if (e === null || typeof e != "object" || o2 === null || typeof o2 != "object") {
           let i = new Error("OBJECT_REQUIRED: Please check the processEnv argument being passed to populate");
@@ -20112,16 +20112,16 @@ var require_dist = __commonJS({
         for (let i of Object.keys(o2)) Object.prototype.hasOwnProperty.call(e, i) ? (r2 === true && (e[i] = o2[i], s[i] = o2[i]), n7 && b3(r2 === true ? `"${i}" is already defined and WAS overwritten` : `"${i}" is already defined and was NOT overwritten`)) : (e[i] = o2[i], s[i] = o2[i]);
         return s;
       }
-      var g2 = { configDotenv: z3, config: Z3, parse: K4, populate: ee4 };
+      var g2 = { configDotenv: ee4, config: te3, parse: Y4, populate: re3 };
       C3.exports.configDotenv = g2.configDotenv;
       C3.exports.config = g2.config;
       C3.exports.parse = g2.parse;
       C3.exports.populate = g2.populate;
       C3.exports = g2;
     });
-    var F4 = O4((Ce3, R4) => {
-      var $3 = require("child_process"), te3 = require("fs"), P4 = require("path");
-      function re3(e) {
+    var F4 = O4((be3, R4) => {
+      var $3 = require("child_process"), oe4 = require("fs"), P4 = require("path");
+      function ne4(e) {
         let o2 = ['"'], t2 = 0;
         for (let n7 of e) {
           if (n7 === "\\") {
@@ -20147,34 +20147,34 @@ var require_dist = __commonJS({
         let t2 = Object.keys(e).reverse().find((n7) => n7.toUpperCase() === o2);
         return t2 === void 0 ? void 0 : e[t2];
       }
-      function oe4(e, o2, t2) {
+      function se3(e, o2, t2) {
         let n7 = (D3(o2, "PATHEXT") || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean), s = n7.some((l3) => e.toLowerCase().endsWith(l3.toLowerCase())) ? ["", ...n7] : [...n7, ""], i = /[\\/]/.test(e) ? [t2] : [t2, ...(D3(o2, "PATH") || "").split(";")];
         for (let l3 of i) for (let h3 of s) {
           let u2 = P4.resolve(t2, l3.replace(/^"|"$/g, ""), e + h3);
           try {
-            if (te3.statSync(u2).isFile()) return u2;
+            if (oe4.statSync(u2).isFile()) return u2;
           } catch {
           }
         }
       }
-      function ne4(e, o2, t2) {
+      function ie3(e, o2, t2) {
         if (process.platform !== "win32") return $3.spawn(e, o2, t2);
-        let n7 = t2.env || process.env, r2 = oe4(e, n7, t2.cwd || process.cwd());
+        let n7 = t2.env || process.env, r2 = se3(e, n7, t2.cwd || process.cwd());
         if (r2 && /\.(?:exe|com)$/i.test(r2)) return $3.spawn(r2, o2, t2);
         let s = /\.(?:bat|cmd)$/i.test(r2 || e), i = [_4(P4.normalize(r2 || e))];
-        for (let h3 of o2) i.push(_4(re3(h3), s ? 2 : 1));
+        for (let h3 of o2) i.push(_4(ne4(h3), s ? 2 : 1));
         let l3 = i.join(" ");
         return $3.spawn(D3(n7, "COMSPEC") || "cmd.exe", ["/d", "/v:off", "/s", "/c", `"${l3}"`], { ...t2, windowsVerbatimArguments: true });
       }
-      R4.exports = ne4;
+      R4.exports = ie3;
     });
-    var B4 = O4((we3, S3) => {
-      var se3 = require("fs"), ie3 = require("os"), G4 = require("path"), ce3 = require("child_process"), ae3 = F4(), k3 = T3(), { optionsFromEnv: le3 } = q4();
+    var V4 = O4((Ae3, S3) => {
+      var ce3 = require("fs"), ae3 = require("os"), G4 = require("path"), le3 = require("child_process"), fe3 = F4(), k3 = y2(), { optionsFromEnv: ue3 } = q4();
       function A4() {
         console.log(["Usage: dotenv run [--help] [-q|--quiet] [--debug] [--override] [--fast] [-f|--file <paths>] [--] <command> [args...]", "", "Run a command with environment variables from a .env file.", "Place dotenv options before the command; all following arguments go to the command.", "", "Options:", "  -f, --file <paths>  .env paths, comma-separated or repeated (default: .env)", "  -q, --quiet suppress the injected env message", "  --debug     enable debug logging", "  --override  override existing environment variables", "  --fast      use the faster character-scanner parser", "", "Environment variables (DOTENV_CONFIG_* names remain as fallbacks):", "  DOTENV_PATH, DOTENV_ENCODING, DOTENV_QUIET,", "  DOTENV_DEBUG, DOTENV_OVERRIDE,", "  DOTENV_FAST"].join(`
 `));
       }
-      function fe3(e) {
+      function de3(e) {
         let o2 = [], t2 = false, n7, r2, s, i, l3 = -1;
         for (let u2 = 0; u2 < e.length; u2++) {
           let f3 = e[u2];
@@ -20200,11 +20200,11 @@ var require_dist = __commonJS({
             continue;
           }
           if (f3 === "-f" || f3 === "--file" || f3.startsWith("-f=") || f3.startsWith("--file=")) {
-            let c3 = f3.indexOf("="), a = c3 === -1 ? f3 : f3.slice(0, c3), p2 = c3 === -1 ? e[++u2] : f3.slice(c3 + 1);
-            if (!p2 || p2 === "--") return { error: `${a} requires a path` };
-            let d2 = p2.split(",").map((m2) => m2.trim()).filter(Boolean);
-            if (d2.length === 0) return { error: `${a} requires a path` };
-            o2.push(...d2), t2 = true;
+            let c3 = f3.indexOf("="), a = c3 === -1 ? f3 : f3.slice(0, c3), d2 = c3 === -1 ? e[++u2] : f3.slice(c3 + 1);
+            if (!d2 || d2 === "--") return { error: `${a} requires a path` };
+            let p2 = d2.split(",").map((m2) => m2.trim()).filter(Boolean);
+            if (p2.length === 0) return { error: `${a} requires a path` };
+            o2.push(...p2), t2 = true;
             continue;
           }
           if (f3.startsWith("-")) return { error: `unknown option: ${f3}` };
@@ -20214,19 +20214,19 @@ var require_dist = __commonJS({
         let h3 = l3 === -1 ? [] : e.slice(l3);
         return { paths: o2, pathSet: t2, quiet: n7, debug: r2, override: s, fast: i, command: h3 };
       }
-      function ue3(e) {
-        return e[0] === "~" ? G4.join(ie3.homedir(), e.slice(1)) : e;
+      function pe3(e) {
+        return e[0] === "~" ? G4.join(ae3.homedir(), e.slice(1)) : e;
       }
-      function de3(e) {
-        let o2 = le3(), t2 = { encoding: o2.encoding || "utf8", quiet: o2.quiet === true, debug: o2.debug === true, override: o2.override === true, fast: o2.fast === true, paths: [".env"], defaultPath: true };
+      function he3(e) {
+        let o2 = ue3(), t2 = { encoding: o2.encoding || "utf8", quiet: o2.quiet === true, debug: o2.debug === true, override: o2.override === true, fast: o2.fast === true, paths: [".env"], defaultPath: true };
         return o2.path != null && (t2.paths = [o2.path], t2.defaultPath = false), e.pathSet && (t2.paths = e.paths, t2.defaultPath = false), e.quiet != null && (t2.quiet = e.quiet), e.debug != null && (t2.debug = e.debug), e.override != null && (t2.override = e.override), e.fast != null && (t2.fast = e.fast), t2;
       }
-      function pe3(e) {
+      function ge3(e) {
         let o2 = {}, t2 = [], n7 = { override: e.override, debug: e.debug };
         for (let s of e.paths) {
-          let i = G4.resolve(process.cwd(), ue3(s));
+          let i = G4.resolve(process.cwd(), pe3(s));
           try {
-            let l3 = k3.parse(se3.readFileSync(i, { encoding: e.encoding }), { fast: e.fast });
+            let l3 = k3.parse(ce3.readFileSync(i, { encoding: e.encoding }), { fast: e.fast });
             k3.populate(o2, l3, n7), t2.push(s);
           } catch (l3) {
             if (e.debug && console.log(`\u2506 failed to load ${s} ${l3.message}`), !(e.defaultPath && l3.code === "ENOENT")) throw l3;
@@ -20234,7 +20234,7 @@ var require_dist = __commonJS({
         }
         return { injected: k3.populate(process.env, o2, n7), loadedPaths: t2 };
       }
-      function V4(e) {
+      function U3(e) {
         let o2 = e[0];
         if (o2 === "--help" || o2 === "-h") {
           A4();
@@ -20244,7 +20244,7 @@ var require_dist = __commonJS({
           A4(), process.exitCode = 1;
           return;
         }
-        let t2 = fe3(e.slice(1));
+        let t2 = de3(e.slice(1));
         if (t2.help) {
           A4();
           return;
@@ -20257,9 +20257,9 @@ var require_dist = __commonJS({
           A4(), process.exitCode = 1;
           return;
         }
-        let n7 = de3(t2);
+        let n7 = he3(t2);
         try {
-          let c3 = pe3(n7);
+          let c3 = ge3(n7);
           if (!n7.quiet) {
             let a = `\u25C7 injected env (${Object.keys(c3.injected).length})`;
             c3.loadedPaths.length > 0 && (a += ` from ${c3.loadedPaths.join(", ")}`), console.error(a);
@@ -20268,11 +20268,11 @@ var require_dist = __commonJS({
           console.error(`dotenv: ${c3.message}`), process.exitCode = 1;
           return;
         }
-        let r2 = !!process.stdin.isTTY, s = process.platform !== "win32" && !r2, i = ae3(t2.command[0], t2.command.slice(1), { stdio: "inherit", detached: s }), l3 = /* @__PURE__ */ new Map(), h3 = 0;
+        let r2 = !!process.stdin.isTTY, s = process.platform !== "win32" && !r2, i = fe3(t2.command[0], t2.command.slice(1), { stdio: "inherit", detached: s }), l3 = /* @__PURE__ */ new Map(), h3 = 0;
         function u2(c3) {
           if (!(!i.pid || i.exitCode !== null || i.signalCode !== null)) {
             if (process.platform === "win32") {
-              ce3.spawnSync("taskkill", ["/pid", String(i.pid), "/T", "/F"], { stdio: "ignore" });
+              le3.spawnSync("taskkill", ["/pid", String(i.pid), "/T", "/F"], { stdio: "ignore" });
               return;
             }
             try {
@@ -20305,17 +20305,17 @@ var require_dist = __commonJS({
           }, 1e3), process.kill(process.pid, a));
         });
       }
-      S3.exports = V4;
-      require.main === S3 && V4(process.argv.slice(2));
+      S3.exports = U3;
+      require.main === S3 && U3(process.argv.slice(2));
     });
-    var E3 = T3();
-    var he3 = B4();
+    var E3 = y2();
+    var ve3 = V4();
     module2.exports = E3;
     module2.exports.config = E3.config;
     module2.exports.configDotenv = E3.configDotenv;
     module2.exports.parse = E3.parse;
     module2.exports.populate = E3.populate;
-    require.main === module2 && he3(process.argv.slice(2));
+    require.main === module2 && ve3(process.argv.slice(2));
   }
 });
 
@@ -36394,25 +36394,33 @@ async function run() {
         }
       }
     }
-    const apiKeys = [
-      openaiApiKey,
-      azureApiKey,
-      anthropicApiKey,
-      huggingfaceApiKey,
-      awsAccessKeyId,
-      awsSecretAccessKey,
-      replicateApiKey,
-      palmApiKey,
-      vertexApiKey,
-      cohereApiKey,
-      mistralApiKey,
-      groqApiKey,
-      process.env.PROMPTFOO_API_KEY
-    ];
-    for (const key of apiKeys) {
-      if (key) {
-        setSecret(key);
+    const providerInputs = {
+      OPENAI_API_KEY: openaiApiKey,
+      AZURE_OPENAI_API_KEY: azureApiKey,
+      ANTHROPIC_API_KEY: anthropicApiKey,
+      HF_API_TOKEN: huggingfaceApiKey,
+      AWS_ACCESS_KEY_ID: awsAccessKeyId,
+      AWS_SECRET_ACCESS_KEY: awsSecretAccessKey,
+      REPLICATE_API_KEY: replicateApiKey,
+      PALM_API_KEY: palmApiKey,
+      VERTEX_API_KEY: vertexApiKey,
+      COHERE_API_KEY: cohereApiKey,
+      MISTRAL_API_KEY: mistralApiKey,
+      GROQ_API_KEY: groqApiKey
+    };
+    const providerOverrides = {};
+    for (const [name, inputValue] of Object.entries(providerInputs)) {
+      const environmentValue = process.env[name];
+      if (environmentValue && environmentValue !== inputValue) {
+        setSecret(environmentValue);
       }
+      if (inputValue) {
+        setSecret(inputValue);
+        providerOverrides[name] = inputValue;
+      }
+    }
+    if (process.env.PROMPTFOO_API_KEY) {
+      setSecret(process.env.PROMPTFOO_API_KEY);
     }
     setSecret(githubToken);
     const octokit = getOctokit(githubToken);
@@ -36632,19 +36640,7 @@ async function run() {
     const env = {
       ...process.env,
       // Includes cache settings and environment variable fallbacks
-      // Override with action inputs if provided (takes precedence over env vars)
-      ...openaiApiKey ? { OPENAI_API_KEY: openaiApiKey } : {},
-      ...azureApiKey ? { AZURE_OPENAI_API_KEY: azureApiKey } : {},
-      ...anthropicApiKey ? { ANTHROPIC_API_KEY: anthropicApiKey } : {},
-      ...huggingfaceApiKey ? { HF_API_TOKEN: huggingfaceApiKey } : {},
-      ...awsAccessKeyId ? { AWS_ACCESS_KEY_ID: awsAccessKeyId } : {},
-      ...awsSecretAccessKey ? { AWS_SECRET_ACCESS_KEY: awsSecretAccessKey } : {},
-      ...replicateApiKey ? { REPLICATE_API_KEY: replicateApiKey } : {},
-      ...palmApiKey ? { PALM_API_KEY: palmApiKey } : {},
-      ...vertexApiKey ? { VERTEX_API_KEY: vertexApiKey } : {},
-      ...cohereApiKey ? { COHERE_API_KEY: cohereApiKey } : {},
-      ...mistralApiKey ? { MISTRAL_API_KEY: mistralApiKey } : {},
-      ...groqApiKey ? { GROQ_API_KEY: groqApiKey } : {},
+      ...providerOverrides,
       ...process.env.PROMPTFOO_FAILED_TEST_EXIT_CODE ? { PROMPTFOO_FAILED_TEST_EXIT_CODE: failedTestExitCode.toString() } : {}
     };
     const exitCode = await exec(
