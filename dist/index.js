@@ -36241,7 +36241,7 @@ function readBlockScalar(state, parentIndent, props) {
         state.position = linePosition + column;
         throwError(state, "tab characters must not be used in indentation");
       }
-      if (column < maxLeadingIndent) {
+      if (column >= parentIndent && column < maxLeadingIndent) {
         state.position = linePosition + column;
         throwError(state, "bad indentation of a mapping entry");
       }
@@ -36451,13 +36451,16 @@ function readBlockMapping(state, nodeIndent, flowIndent, props) {
           ch = state.input.charCodeAt(++state.position);
           if (!isWsOrEolOrEnd(ch)) throwError(state, "a whitespace character is expected after the key-value separator within a block mapping");
           if (!mappingOpened) {
-            restoreState(state, beforeKey);
-            addMappingEvent(state, beforeKey.position, props.anchorStart, props.anchorEnd, props.tagStart, props.tagEnd, COLLECTION_STYLE.BLOCK);
+            state.events.splice(beforeKey.eventsLength, 0, {
+              type: EVENT_ID.MAPPING,
+              start: beforeKey.position,
+              anchorStart: props.anchorStart,
+              anchorEnd: props.anchorEnd,
+              tagStart: props.tagStart,
+              tagEnd: props.tagEnd,
+              style: COLLECTION_STYLE.BLOCK
+            });
             mappingOpened = true;
-            parseNode(state, flowIndent, CONTEXT_FLOW_OUT, false, true);
-            ch = state.input.charCodeAt(state.position);
-            while (isWhiteSpace(ch)) ch = state.input.charCodeAt(++state.position);
-            state.position++;
           }
           detected = true;
           atExplicitKey = false;
@@ -37914,13 +37917,14 @@ async function run() {
     const promptfooSuiteSuccessRate = calculateSuccessRate(
       output.results.stats
     );
+    const { successes, failures, errors = 0 } = output.results.stats;
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const modifiedFiles = promptFiles.join(", ");
       let body = `\u26A0\uFE0F LLM prompt was modified in these files: ${modifiedFiles}
 
-| Success | Failure |
-|---------|---------|
-| ${output.results.stats.successes}      | ${output.results.stats.failures}       |
+| Success | Failure | Error |
+|---------|---------|-------|
+| ${successes} | ${failures} | ${errors} |
 
 `;
       if (repeatCheckResult) {
@@ -37943,8 +37947,9 @@ async function run() {
           { data: "Metric", header: true },
           { data: "Count", header: true }
         ],
-        ["Success", output.results.stats.successes.toString()],
-        ["Failure", output.results.stats.failures.toString()]
+        ["Success", successes.toString()],
+        ["Failure", failures.toString()],
+        ["Error", errors.toString()]
       ]);
       if (promptFiles.length > 0) {
         summary2.addHeading("Evaluated Files", 3);
@@ -37961,8 +37966,9 @@ async function run() {
       }
       await summary2.write();
       info("=== Promptfoo Evaluation Results ===");
-      info(`Success: ${output.results.stats.successes}`);
-      info(`Failure: ${output.results.stats.failures}`);
+      info(`Success: ${successes}`);
+      info(`Failure: ${failures}`);
+      info(`Error: ${errors}`);
       if (output.shareableUrl) {
         info(`View results: ${output.shareableUrl}`);
       }

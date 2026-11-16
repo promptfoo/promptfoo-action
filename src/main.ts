@@ -807,14 +807,16 @@ export async function run(): Promise<void> {
       output.results.stats,
     );
 
+    const { successes, failures, errors = 0 } = output.results.stats;
+
     // Comment on PR or output results
     if (isPullRequest && pullRequestNumber && !disableComment) {
       const modifiedFiles = promptFiles.join(', ');
       let body = `⚠️ LLM prompt was modified in these files: ${modifiedFiles}
 
-| Success | Failure |
-|---------|---------|
-| ${output.results.stats.successes}      | ${output.results.stats.failures}       |
+| Success | Failure | Error |
+|---------|---------|-------|
+| ${successes} | ${failures} | ${errors} |
 
 `;
       if (repeatCheckResult) {
@@ -841,8 +843,9 @@ export async function run(): Promise<void> {
             { data: 'Metric', header: true },
             { data: 'Count', header: true },
           ],
-          ['Success', output.results.stats.successes.toString()],
-          ['Failure', output.results.stats.failures.toString()],
+          ['Success', successes.toString()],
+          ['Failure', failures.toString()],
+          ['Error', errors.toString()],
         ]);
 
       if (promptFiles.length > 0) {
@@ -865,8 +868,9 @@ export async function run(): Promise<void> {
 
       // Also output to console
       core.info('=== Promptfoo Evaluation Results ===');
-      core.info(`Success: ${output.results.stats.successes}`);
-      core.info(`Failure: ${output.results.stats.failures}`);
+      core.info(`Success: ${successes}`);
+      core.info(`Failure: ${failures}`);
+      core.info(`Error: ${errors}`);
       if (output.shareableUrl) {
         core.info(`View results: ${output.shareableUrl}`);
       }
