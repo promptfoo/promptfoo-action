@@ -1,14 +1,13 @@
 # Changelog
 
-## [1.3.5](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.4...promptfoo-action-v1.3.5) (2026-11-16)
+## [1.3.5](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.4...promptfoo-action-v1.3.5) (2026-11-18)
 
+### Fixes
 
-### Bug Fixes
-
-* **deps:** repair js-yaml v5 upgrade ([#984](https://github.com/promptfoo/promptfoo-action/issues/984)) ([02e1cfc](https://github.com/promptfoo/promptfoo-action/commit/02e1cfcb91889c776c75bc8c12e3ec4640783f32))
-* **deps:** update dependency dotenv to v18 ([#1021](https://github.com/promptfoo/promptfoo-action/issues/1021)) ([cc2f5e1](https://github.com/promptfoo/promptfoo-action/commit/cc2f5e1955afb0085b5d869838ef09f82a4604a8))
-* **deps:** update dependency glob to v14 [security] ([#1036](https://github.com/promptfoo/promptfoo-action/issues/1036)) ([e242db5](https://github.com/promptfoo/promptfoo-action/commit/e242db59519f0724d495f237b01351e302612919))
-* **deps:** update dependency simple-git to v4 [security] ([#1037](https://github.com/promptfoo/promptfoo-action/issues/1037)) ([9e44d9e](https://github.com/promptfoo/promptfoo-action/commit/9e44d9e18e3c584a46fe499ce405fd060f8e21fc))
+- Pushes and manual runs that compare Git revisions now preserve filenames containing non-ASCII characters or newlines when deciding which prompts to evaluate. The action also updates simple-git to v4, which fixes an upstream bypass of its unsafe Git option checks. [#1037](https://github.com/promptfoo/promptfoo-action/pull/1037)
+- Config dependency tracking now expands brace-only file patterns such as `file://prompts/{a,b}.txt`. The bundled glob v14 also fixes an upstream issue where canceled directory walks could keep reading files. [#1036](https://github.com/promptfoo/promptfoo-action/pull/1036)
+- YAML config discovery uses js-yaml v5 and continues to support YAML merge keys and empty config files. The bundled parser includes a fix for excessive CPU use on nested flow collections. [#984](https://github.com/promptfoo/promptfoo-action/pull/984) · [#999](https://github.com/promptfoo/promptfoo-action/pull/999)
+- The action now loads environment files with dotenv v18. [#1021](https://github.com/promptfoo/promptfoo-action/pull/1021)
 
 ## [1.3.4](https://github.com/promptfoo/promptfoo-action/compare/promptfoo-action-v1.3.3...promptfoo-action-v1.3.4) (2026-06-15)
 
