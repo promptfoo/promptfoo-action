@@ -1,5 +1,4 @@
 import os
-import subprocess
 import tempfile
 import unittest
 from contextlib import chdir
@@ -104,14 +103,26 @@ class ReleaseNotesTest(unittest.TestCase):
                 self.assertEqual(tags, {tag: notes.remote_tag(tag) for tag in tags})
 
                 # Replaying an old run must never roll back an alias that has advanced.
-                git("commit", "-q", "--allow-empty", "-m", "later release")
+                Path("package.json").write_text('{"version":"1.4.0"}')
+                git("add", "package.json")
+                git("commit", "-qm", "later release")
                 git("tag", "-fa", "v1", "-m", "newer")
                 git("push", "-q", "--force", "origin", "refs/tags/v1")
                 newer = git("rev-parse", "HEAD")
-                with self.assertRaises(subprocess.CalledProcessError):
+                with self.assertRaisesRegex(ValueError, "unrecognized release"):
                     notes.publish(REPO, sha, "")
                 self.assertEqual(notes.remote_tag("v1")[1], newer)
                 self.assertIn("needs attention", comments.call_args.args[-1])
+                git("tag", "promptfoo-action-v1.4.0")
+                git("push", "-q", "origin", "refs/tags/promptfoo-action-v1.4.0")
+                notes.publish(REPO, sha, "")
+                self.assertIn("### Published", comments.call_args.args[-1])
+                self.assertIn(
+                    "`v1` now points to the later release `promptfoo-action-v1.4.0`",
+                    comments.call_args.args[-1],
+                )
+                self.assertEqual(notes.remote_tag("v1")[1], newer)
+                self.assertEqual(notes.remote_tag("v1.3")[1], sha)
 
 
 if __name__ == "__main__":

@@ -196,12 +196,37 @@ def publish(repo, sha, created_tag):
                 raise ValueError("Published notes differ from the tagged changelog")
         aliases = ["v" + version.split(".")[0], "v" + ".".join(version.split(".")[:2])]
         updates, leases = [], []
+        targets = dict.fromkeys([tag, *aliases], sha)
+        advanced = {}
         for alias in aliases:
             oid, current = remote_tag(alias)
             if current == sha:
                 continue
             if current:
                 run("git", "fetch", "--no-tags", "origin", current)
+                # On a retry, another release may already own this alias. Only
+                # accept a descendant that has its own matching version tag.
+                if (
+                    subprocess.run(
+                        ["git", "merge-base", "--is-ancestor", sha, current]
+                    ).returncode
+                    == 0
+                ):
+                    newer = json.loads(run("git", "show", f"{current}:package.json"))[
+                        "version"
+                    ]
+                    if not (
+                        re.fullmatch(VERSION, newer)
+                        and newer.startswith(alias[1:] + ".")
+                        and newer != version
+                        and remote_tag(TAG_PREFIX + newer)[1] == current
+                    ):
+                        raise ValueError(
+                            f"{alias} points to an unrecognized release at {current}"
+                        )
+                    targets[alias] = current
+                    advanced[alias] = newer
+                    continue
                 run("git", "merge-base", "--is-ancestor", current, sha)
             ref = f"refs/tags/{alias}"
             run("git", "tag", "-fa", alias, sha, "-m", f"Release {alias}")
@@ -209,15 +234,19 @@ def publish(repo, sha, created_tag):
             leases.append(f"--force-with-lease={ref}:{oid}")
         if updates:
             run("git", "push", "--atomic", *leases, "origin", *updates)
-        for ref in [tag, *aliases]:
-            if remote_tag(ref)[1] != sha:
-                raise ValueError(f"{ref} does not resolve to {sha}")
-        refs = ", ".join(f"`{ref}`" for ref in [tag, *aliases])
+        for ref, target in targets.items():
+            if remote_tag(ref)[1] != target:
+                raise ValueError(f"{ref} does not resolve to {target}")
+        refs = ", ".join(f"`{ref}`" for ref, target in targets.items() if target == sha)
         message = (
             f"### Published\n\n[{version}]({release['html_url']}) uses the tagged changelog. "
             f"{refs} resolve to [`{sha[:7]}`](https://github.com/{repo}/commit/{sha}). "
             f"[Release workflow]({url})"
         )
+        for alias, newer in advanced.items():
+            message += (
+                f"\n\n`{alias}` now points to the later release `{TAG_PREFIX}{newer}`."
+            )
     except Exception:
         comment(
             repo,
