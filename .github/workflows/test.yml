@@ -37,5 +37,7 @@ jobs:
         run: npm install -g npm@12.2.2
       - name: Install Dependencies
         run: npm ci
+      - name: Test release note extraction and tag verification
+        run: python3 -m unittest discover -s .github/scripts
       - name: Run Biome Check
         run: npm run biome:check

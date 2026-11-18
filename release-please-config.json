@@ -1,4 +1,5 @@
 {
+  "pull-request-header": "Review the proposed action release below.\n",
   "packages": {
     ".": {
       "release-type": "node"

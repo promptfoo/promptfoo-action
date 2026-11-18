@@ -579,3 +579,26 @@ file separately.
 To report a suspected vulnerability, follow the private disclosure process in
 [`SECURITY.md`](SECURITY.md). Do not open a public issue, discussion, or pull
 request for security reports.
+
+## Reviewing an action release
+
+On the release PR, review the preview of the proposed `CHANGELOG.md` section.
+Follow its compare link to check what changed since the previous action tag.
+The preview flags features, fixes, performance changes, breaking changes, and
+security updates without an explicit reference. A maintainer can group related
+changes and explain migration steps with examples.
+
+To correct a squash-merged change, add a [Release Please commit
+override](https://github.com/googleapis/release-please#how-can-i-fix-release-notes)
+to the original PR description and run the `release-please` workflow on
+`main`. For example:
+
+```text
+BEGIN_COMMIT_OVERRIDE
+fix: recognize filenames containing newlines when comparing Git revisions
+END_COMMIT_OVERRIDE
+```
+
+This wording survives release PR refreshes. GitHub publishes the tagged
+changelog section. A status comment on the merged PR links to that release
+and its workflow after the exact, major, and minor tags have been verified.
